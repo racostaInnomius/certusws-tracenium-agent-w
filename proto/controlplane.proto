@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package tracenium.control;
+
+service ControlPlane {
+  rpc Connect(stream ControlMessage) returns (stream ControlMessage);
+}
+
+enum AckStatus {
+  ACK_OK = 0;
+  ACK_RETRY = 1;
+  ACK_REJECTED = 2;
+}
+
+message Ack {
+  string eventId = 1;
+  AckStatus status = 2;
+  string message = 3;
+  string receivedAtUtc = 4;
+  string serverTimeUtc = 5;
+}
+
+message Hello {
+  string deviceId = 1;
+  string tenantId = 2;
+  string agentVersion = 3;
+  string protocolVersion = 4;
+}
+
+message Facts {
+  string eventId = 1;
+  bytes payloadJson = 2;
+  string deviceId = 3;
+}
+
+message RunJob {
+  string jobId = 1;
+}
+
+message RotateCert {
+  string reason = 1;
+}
+
+message ControlMessage {
+  string traceId = 10;
+
+  oneof msg {
+    Hello hello = 1;
+    Facts facts = 2;
+    RunJob runJob = 3;
+    RotateCert rotateCert = 4;
+    Ack ack = 5;
+  }
+}

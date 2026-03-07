@@ -1,0 +1,23 @@
+<service>
+  <id>TraceniumAgentCore</id>
+  <name>Tracenium Agent Core</name>
+  <description>Tracenium Agent Core - Control plane, outbox, scheduler.</description>
+
+  <workingdirectory>%BASE%\app</workingdirectory>
+
+  <!-- Si empacas Node embebido -->
+  <executable>%BASE%\node\node.exe</executable>
+  <arguments>"%BASE%\app\dist\index.js"</arguments>
+
+  <logpath>%BASE%\logs</logpath>
+	  <log mode="roll-by-time">
+  	<pattern>yyyyMMdd</pattern>
+  	<keepFiles>14</keepFiles>
+	  </log>
+
+  <env name="NODE_ENV" value="production" />
+  <env name="GRPC_ENDPOINT" value="api.tracenium.com:50051" />
+  <env name="CHANNEL" value="stable" />
+
+  <onfailure action="restart" delay="5 sec" />
+</service>
