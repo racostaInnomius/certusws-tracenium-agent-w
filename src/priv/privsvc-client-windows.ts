@@ -89,7 +89,8 @@ export class PrivSvcClient extends EventEmitter {
 
   private onData(data: Buffer | string) {
     const chunk = typeof data === "string" ? data : data.toString("utf8");
-    this.emit("debug", { stage: "raw_chunk", chunk });
+    //this.emit("debug", { stage: "raw_chunk", chunk });
+    this.emit("debug", { stage: "raw_chunk" });
     this.buffer += chunk;
     // Safety: prevent unbounded memory growth on malformed streams
     if (this.buffer.length > MAX_BUFFER_CHARS) {
@@ -109,13 +110,15 @@ export class PrivSvcClient extends EventEmitter {
       let msg: any;
       try {
         msg = JSON.parse(txt);
-        this.emit("debug", { stage: "parsed", msg });
+        //this.emit("debug", { stage: "parsed", msg });
+        this.emit("debug", { stage: "parsed" });
       } catch {
         this.emit("debug", { stage: "parse_error", raw: txt });
         continue;
       }
 
-      this.emit("debug", { stage: "dispatch", msg });
+      //this.emit("debug", { stage: "dispatch", msg });
+      this.emit("debug", { stage: "dispatch" });
 
       // Response path: has id + ok/error shape
       const id = msg?.id;
@@ -136,7 +139,8 @@ export class PrivSvcClient extends EventEmitter {
           clearTimeout(p.timer);
           p.resolve(msg as PrivSvcResponse);
         } else {
-          this.emit("debug", { stage: "orphan_response", msg });
+          //this.emit("debug", { stage: "orphan_response", msg });
+          this.emit("debug", { stage: "orphan_response" });
         }
         continue;
       }
@@ -241,7 +245,7 @@ export class PrivSvcClient extends EventEmitter {
         let wrote = false;
         try {
           const payload = JSON.stringify(req) + "\n";
-          this.emit("debug", { stage: "ipc_write", size: payload.length, id });
+          this.emit("debug", id);
           wrote = sock.write(payload);
         } catch (e: any) {
           clearTimeout(timer);

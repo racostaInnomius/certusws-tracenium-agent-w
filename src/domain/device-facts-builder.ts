@@ -31,9 +31,7 @@ async function buildHardwareNamespace() {
     graphics,
     net,
     time,
-    currentLoad,
     cpuCurrentSpeed,
-    temp,
     audio,
     bluetooth,
     usb,
@@ -57,9 +55,7 @@ async function buildHardwareNamespace() {
     si.graphics(),
     si.networkInterfaces(),
     si.time(),
-    si.currentLoad(),
     si.cpuCurrentSpeed(),
-    si.cpuTemperature(),
     si.audio(),
     si.bluetoothDevices(),
     si.usb(),
@@ -122,8 +118,6 @@ async function buildHardwareNamespace() {
     printer,
     time,
     cpuCurrentSpeed,
-    currentLoad,
-    temp,
     users,
     battery,
     mem,
@@ -211,6 +205,24 @@ export async function buildDeviceFacts(
   const hardware = await buildHardwareNamespace();
   const { baseline, baselineHash } = buildDeviceBaseline(ctx, hardware);
 
+  try {
+    const sw = (namespaces as any)?.amm?.software;
+    console.log("[FACTS BUILDER] incoming software", {
+      hasSoftware: !!sw,
+      count: sw?.count,
+      hasItems: !!sw?.items,
+      itemsLength: Array.isArray(sw?.items) ? sw.items.length : undefined
+    });
+  } catch {}
+
+  try {
+    const swOut = (namespaces as any)?.amm?.software;
+    console.log("[FACTS BUILDER] outgoing software (post-clone)", {
+      hasItems: !!swOut?.items,
+      itemsLength: Array.isArray(swOut?.items) ? swOut.items.length : undefined
+    });
+  } catch {}
+
   return {
     schemaVersion: "1.0",
     collectedAtUtc: new Date().toISOString(),
@@ -225,14 +237,28 @@ export async function buildDeviceFacts(
     },
     namespaces: {
       ...namespaces,
-      amm: {
-        ...(namespaces.amm || {}),
-        hardware: {
-          ...hardware.static,
-          ...hardware.runtime
-        },
-        software: namespaces.amm?.software
-      }
+      amm: (() => {
+        const ammIn: any = (namespaces as any)?.amm || {};
+        const swIn: any = ammIn.software;
+
+        const software =
+          swIn
+            ? {
+                count: swIn.count ?? 0,
+                delta: swIn.delta ?? null,
+                items: Array.isArray(swIn.items) ? [...swIn.items] : undefined
+              }
+            : undefined;
+
+        return {
+          ...ammIn,
+          ...(software ? { software } : {}),
+          hardware: {
+            ...hardware.static,
+            ...hardware.runtime
+          }
+        };
+      })()
     },
     _meta: {
       baselineHash

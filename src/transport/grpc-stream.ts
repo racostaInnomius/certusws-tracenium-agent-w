@@ -10,6 +10,8 @@ import { buildDeviceFacts } from "../domain/device-facts-builder";
 type PendingAck = {
   outboxId: number;
   sentAtMs: number;
+  baselineHash?: string | null;
+  namespace?: string;
 };
 
 const SEND_INTERVAL_MS = 2000;
@@ -38,12 +40,15 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
   // ensure state reset on each stream start
   rotationInProgress = false;
 
-  // Load persisted baseline hash from SQLite state
+  // Load persisted baseline hash and sent flag from SQLite state
   let lastBaselineHash: string | null = null;
+  let baselineSent = false;
   try {
-    lastBaselineHash = outbox.getState("baselineHash");
+    lastBaselineHash = outbox.getState("baselineHash:amm");
+    baselineSent = outbox.getState("baselineSent:amm") === "1";
   } catch {
     lastBaselineHash = null;
+    baselineSent = false;
   }
 
   const stop = (opts?: { localClose?: boolean }) => {
@@ -110,6 +115,16 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
       if (status === 0 /* ACK_OK */) {
         try {
           outbox.markSent(p.outboxId);
+
+          if (p.baselineHash) {
+            lastBaselineHash = p.baselineHash;
+            baselineSent = true;
+            try {
+              outbox.setState("baselineHash:amm", p.baselineHash);
+              outbox.setState("baselineSent:amm", "1");
+            } catch {}
+          }
+
         } catch (e: any) {
           logger.error("markSent failed:", p.outboxId, e?.message || e);
         }
@@ -324,10 +339,15 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
         try {
           if (ev.type === "FACTS_SNAPSHOT") {
             // Baseline deduplication
-            const parsedPayload: any = ev.payload_json || null;
+            const parsedPayload: any =
+              typeof ev.payload_json === "string"
+                ? JSON.parse(ev.payload_json)
+                : ev.payload_json;
 
             const baselineHash = parsedPayload?._meta?.baselineHash;
-            if (baselineHash && baselineHash === lastBaselineHash) {
+            const forceBaseline = parsedPayload?._meta?.forceBaseline === true;
+
+            if (baselineHash && baselineHash === lastBaselineHash && baselineSent && !forceBaseline) {
               if (typeof (logger as any).debug === "function") {
                 (logger as any).debug("Skipping FACTS (baseline unchanged)", { eventId });
               }
@@ -339,7 +359,29 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
 
             logger.info("Sending FACTS event", { outboxId, eventId, type: ev.type });
 
-            pending.set(eventId, { outboxId, sentAtMs: Date.now() });
+            pending.set(eventId, {
+              outboxId,
+              sentAtMs: Date.now(),
+              baselineHash,
+              namespace: "amm"
+            });
+
+            logger.info("FACTS payload metadata", {
+              eventId,
+              baselineHash,
+              baselineSent,
+              forceBaseline
+            });
+            try {
+              const sw = parsedPayload?.namespaces?.amm?.software;
+              logger.info("STREAM FINAL SOFTWARE CHECK", {
+                hasItems: !!sw?.items,
+                itemsLength: sw?.items?.length,
+                keys: Object.keys(sw || {})
+              });
+            } catch (e: any) {
+              logger.error("STREAM SOFTWARE CHECK FAILED", e?.message || e);
+            }
 
             stream.write({
               facts: {
@@ -354,17 +396,15 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
               }
             });
 
-            if (baselineHash) {
-              lastBaselineHash = baselineHash;
-              try {
-                outbox.setState("baselineHash", baselineHash);
-              } catch {}
-            }
 
           } else if (ev.type === "FACTS_DELTA") {
             logger.info("Sending FACTS_DELTA event", { outboxId, eventId });
 
-            pending.set(eventId, { outboxId, sentAtMs: Date.now() });
+            pending.set(eventId, {
+              outboxId,
+              sentAtMs: Date.now(),
+              namespace: "amm"
+            });
 
             stream.write({
               facts: {

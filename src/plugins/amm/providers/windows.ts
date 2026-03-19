@@ -47,7 +47,8 @@ export type AmmNamespace = {
 
   software: {
     count: number;
-    delta: any;
+    items?: any[];
+    delta?: any;
   };
 };
 
@@ -153,13 +154,21 @@ export async function collectWindowsSoftwareInventory(ctx: AgentContext) {
     meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
   });
 
+  // FIX: support both "apps" (old contract) and "items" (current PrivSvc contract)
+  const apps = (resp.result?.items ?? resp.result?.apps ?? []) as RawApp[];
+
+  console.log("[WINDOWS] RAW INVENTORY", {
+    hasItems: Array.isArray(resp.result?.items),
+    hasApps: Array.isArray(resp.result?.apps),
+    countItems: resp.result?.items?.length,
+    countApps: resp.result?.apps?.length
+  });
+
   if (!resp.ok) {
     throw new Error(
       `PrivSvc inventory failed: ${resp.error?.code} ${resp.error?.message}`
     );
   }
-
-  const apps = (resp.result?.apps ?? []) as RawApp[];
 
   const normalized = apps
     .map((a) =>
@@ -173,6 +182,11 @@ export async function collectWindowsSoftwareInventory(ctx: AgentContext) {
       })
     )
     .filter((x) => x && x.name);
+
+  console.log("[WINDOWS] NORMALIZED INVENTORY", {
+    inputCount: apps.length,
+    normalizedCount: normalized.length
+  });
 
   return {
     count: normalized.length,
@@ -196,7 +210,7 @@ export const windowsProvider = {
       firewall: { status: "unknown" }
     };
 
-    let software: any = { count: 0, delta: null };
+    let software: any = { count: 0, items: undefined, delta: null };
 
     try {
       security = await collectWindowsSecurity(ctx);
@@ -207,17 +221,111 @@ export const windowsProvider = {
     try {
       const result = await collectWindowsSoftwareInventory(ctx);
 
-      const previous = loadSoftwareBaseline();
-      const deltaResult = computeSoftwareDelta(result.apps as any, previous);
-
-      if (deltaResult.hasChanges) {
-        saveSoftwareBaseline(result.apps as any);
+      if (!result.apps || result.apps.length === 0) {
+        console.warn("[AGENT] EMPTY INVENTORY RECEIVED — SKIPPING BASELINE UPDATE");
+        return {
+          hardware: base.hardware,
+          security,
+          software: {
+            count: 0,
+            items: [],
+            delta: null
+          }
+        };
       }
 
-      software = {
-        count: deltaResult.currentCount,
-        delta: deltaResult.delta
-      };
+      console.log("[AGENT] INVENTORY BEFORE BASELINE", {
+        count: result.apps.length,
+        //sample: result.apps.slice(0, 3)
+      });
+
+      const previous = loadSoftwareBaseline();
+      const isFirstRun = !previous || previous.length === 0;
+
+      // Fix: ensure baseline is sent at least once per agent runtime
+      // (avoids scenario where local baseline exists but backend never received it)
+      if (!(global as any).__softwareBaselineSent) {
+        console.log("[AGENT] SOFTWARE BASELINE FORCED", {
+          count: result.apps.length
+        });
+
+        software = {
+          count: result.apps.length,
+          items: result.apps,
+          delta: null
+        };
+
+        if (result.apps && result.apps.length > 0) {
+          saveSoftwareBaseline(result.apps as any);
+        } else {
+          console.warn("[AGENT] SKIP saving empty baseline");
+        }
+
+        // CRITICAL FIX: ensure baselineSent is set AFTER valid payload
+        if (result.apps && result.apps.length > 0) {
+          (global as any).__softwareBaselineSent = true;
+        }
+
+      } else if (isFirstRun) {
+        console.log("[AGENT] SOFTWARE BASELINE (first run)", {
+          count: result.apps.length
+        });
+
+        software = {
+          count: result.apps.length,
+          items: result.apps,
+          delta: null
+        };
+
+        if (result.apps && result.apps.length > 0) {
+          saveSoftwareBaseline(result.apps as any);
+        } else {
+          console.warn("[AGENT] SKIP saving empty baseline");
+        }
+
+      } else {
+        const deltaResult = computeSoftwareDelta(result.apps as any, previous);
+
+        if (deltaResult.hasChanges) {
+          console.log("[AGENT] SOFTWARE DELTA", {
+            added: deltaResult.delta?.added?.length ?? 0,
+            removed: deltaResult.delta?.removed?.length ?? 0,
+            updated: deltaResult.delta?.updated?.length ?? 0
+          });
+
+          if (result.apps && result.apps.length > 0) {
+            saveSoftwareBaseline(result.apps as any);
+          } else {
+            console.warn("[AGENT] SKIP saving empty baseline");
+          }
+
+          software = {
+            count: deltaResult.currentCount,
+            items: result.apps, // CRITICAL: NEVER drop items
+            delta: deltaResult.delta
+          };
+        } else {
+          console.log("[AGENT] SOFTWARE NO CHANGES");
+
+          software = {
+            count: deltaResult.currentCount,
+            items: result.apps, // CRITICAL: keep current state
+            delta: null
+          };
+        }
+      }
+
+      console.log("[AGENT] software payload ready", {
+        count: software.count,
+        hasItems: !!software.items,
+        items: software.items?.length,
+        hasDelta: !!software.delta
+      });
+
+      console.log("[AGENT] payload size estimate (software only)", {
+        approxBytes: JSON.stringify(software).length
+      });
+
     } catch {
       // keep empty
     }

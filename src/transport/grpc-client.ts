@@ -242,7 +242,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
           else throw new Error("facts.payloadJson must be Buffer or string");
 
           const payloadSizeBytes = Buffer.byteLength(payloadJsonStr, "utf8");
-          logger.info("[grpc-client] FACTS payload size", { eventId, payloadSizeBytes });
+          logger.info("[grpc-client] FACTS payload size", payloadSizeBytes);
 
           // If payload fits, send normally
           if (payloadSizeBytes <= MAX_FACTS_IPC_BYTES) {
@@ -318,10 +318,10 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
           // Heartbeat is handled internally by PrivSvc on the gRPC stream.
           logger.info("[grpc-client] heartbeat (handled by PrivSvc stream)", {
-            deviceId,
-            uptimeSeconds,
-            agentVersion,
-            policyVersion
+            //deviceId,
+            //uptimeSeconds,
+            //agentVersion,
+            //policyVersion
           });
 
           return;

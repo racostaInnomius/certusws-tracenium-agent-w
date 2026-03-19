@@ -1,6 +1,7 @@
 // privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/SecurityPosture.cs
 using System.Diagnostics;
 using System.Text.Json;
+using System.Linq;
 
 namespace Tracenium.PrivSvc.Windows.Ipc;
 
@@ -38,9 +39,20 @@ public static class SecurityPosture
             if (string.IsNullOrWhiteSpace(output))
                 return new { status = "unknown" };
 
-            var arr = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(output);
+            List<Dictionary<string, object>>? arr;
+
+            if (output.TrimStart().StartsWith("["))
+            {
+                arr = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(output);
+            }
+            else
+            {
+                var single = JsonSerializer.Deserialize<Dictionary<string, object>>(output);
+                arr = single != null ? new List<Dictionary<string, object>> { single } : null;
+            }
+
             if (arr == null || arr.Count == 0)
-                return new { status = "disabled" };
+                return new { status = "unknown" };
 
             var enabledDrives = arr
                 .Where(v => v.ContainsKey("VolumeStatus") &&
@@ -49,10 +61,17 @@ public static class SecurityPosture
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .ToList();
 
+            double coverage = 0;
+            if (arr.Count > 0)
+            {
+                coverage = (double)enabledDrives.Count / arr.Count;
+            }
+
             return new
             {
                 status = enabledDrives.Count > 0 ? "enabled" : "disabled",
-                drives = enabledDrives
+                drives = enabledDrives,
+                coverage
             };
         }
         catch
@@ -66,19 +85,39 @@ public static class SecurityPosture
         try
         {
             var output = RunPs(
-                "Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled | ConvertTo-Json"
+                "Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, AMServiceEnabled | ConvertTo-Json"
             );
 
             if (string.IsNullOrWhiteSpace(output))
                 return new { status = "unknown" };
 
-            var obj = JsonSerializer.Deserialize<Dictionary<string, object>>(output);
+            Dictionary<string, object>? obj;
 
-            if (obj != null &&
-                obj.TryGetValue("RealTimeProtectionEnabled", out var val) &&
-                bool.TryParse(val?.ToString(), out var enabled))
+            if (output.TrimStart().StartsWith("["))
             {
-                return new { status = enabled ? "enabled" : "disabled" };
+                var arr = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(output);
+                obj = arr?.FirstOrDefault();
+            }
+            else
+            {
+                obj = JsonSerializer.Deserialize<Dictionary<string, object>>(output);
+            }
+
+            if (obj != null)
+            {
+                bool rtEnabled = false;
+                bool svcEnabled = false;
+
+                if (obj.TryGetValue("RealTimeProtectionEnabled", out var rtVal))
+                    bool.TryParse(rtVal?.ToString(), out rtEnabled);
+
+                if (obj.TryGetValue("AMServiceEnabled", out var svcVal))
+                    bool.TryParse(svcVal?.ToString(), out svcEnabled);
+
+                if (!svcEnabled)
+                    return new { status = "not_present" };
+
+                return new { status = rtEnabled ? "enabled" : "disabled" };
             }
 
             return new { status = "unknown" };
@@ -94,26 +133,45 @@ public static class SecurityPosture
         try
         {
             var output = RunPs(
-                "Get-NetFirewallProfile | Select-Object Enabled | ConvertTo-Json -Depth 3"
+                "Get-NetFirewallProfile | Select-Object Name, Enabled | ConvertTo-Json -Depth 3"
             );
 
             if (string.IsNullOrWhiteSpace(output))
                 return new { status = "unknown" };
 
+            List<Dictionary<string, object>>? arr;
+
             if (output.TrimStart().StartsWith("["))
             {
-                var arr = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(output);
-                if (arr != null && arr.Any(p =>
-                        p.TryGetValue("Enabled", out var v) &&
-                        bool.TryParse(v?.ToString(), out var b) && b))
-                {
-                    return new { status = "enabled" };
-                }
-
-                return new { status = "disabled" };
+                arr = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(output);
+            }
+            else
+            {
+                var single = JsonSerializer.Deserialize<Dictionary<string, object>>(output);
+                arr = single != null ? new List<Dictionary<string, object>> { single } : null;
             }
 
-            return new { status = "unknown" };
+            if (arr == null || arr.Count == 0)
+                return new { status = "unknown" };
+
+            var profiles = arr.ToDictionary(
+                p => p.ContainsKey("Name") ? p["Name"]?.ToString()?.ToLowerInvariant() ?? "unknown" : "unknown",
+                p =>
+                {
+                    if (p.TryGetValue("Enabled", out var v) &&
+                        bool.TryParse(v?.ToString(), out var b))
+                        return b;
+
+                    return false;
+                });
+
+            var anyEnabled = profiles.Values.Any(v => v);
+
+            return new
+            {
+                status = anyEnabled ? "enabled" : "disabled",
+                profiles
+            };
         }
         catch
         {
@@ -124,7 +182,7 @@ public static class SecurityPosture
     private static string RunPs(string command)
     {
         var psi = new ProcessStartInfo("powershell",
-            $"-NoProfile -Command \"{command}\"")
+            $"-NoProfile -ExecutionPolicy Bypass -Command \"{command}\"")
         {
             CreateNoWindow = true,
             UseShellExecute = false,
@@ -136,7 +194,14 @@ public static class SecurityPosture
         if (proc == null) return "";
 
         var stdout = proc.StandardOutput.ReadToEnd();
+        var stderr = proc.StandardError.ReadToEnd();
+
         proc.WaitForExit(15000);
+
+        if (!string.IsNullOrWhiteSpace(stderr))
+        {
+            Console.WriteLine($"[PrivSvc][SecurityPosture] PowerShell stderr: {stderr}");
+        }
 
         return stdout;
     }

@@ -150,7 +150,10 @@ class Scheduler {
 
       logger.info("FACTS_SNAPSHOT enqueued", {
         deviceId: ctx.enrollment.deviceId,
-        softwareCount: ammNamespace.softwareInventory?.count
+        softwareHasItems: !!ammNamespace.software?.items,
+        softwareItemsLength: Array.isArray(ammNamespace.software?.items)
+        ? ammNamespace.software.items.length
+        : undefined
       });
 
     } catch (err) {
