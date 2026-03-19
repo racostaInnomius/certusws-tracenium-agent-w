@@ -3,11 +3,13 @@ import os from "os";
 import path from "path";
 import fs from "fs";
 import Database from "better-sqlite3";
+import zlib from "zlib";
 
 export type OutboxStatus = "PENDING" | "IN_FLIGHT" | "SENT" | "FAILED";
 
 export type OutboxEventType =
   | "FACTS_SNAPSHOT"
+  | "FACTS_DELTA"
   | "JOB_RESULT"
   | "LOG_BUNDLE"
   | "RCM_SESSION_META";
@@ -20,6 +22,9 @@ export interface EnqueueInput {
 interface OutboxAttemptsRow {
   attempts: number;
 }
+
+const MAX_ATTEMPTS = 20;
+const COMPRESS_THRESHOLD_BYTES = 50 * 1024; // 50KB
 
 function utcNow(): string {
   return new Date().toISOString();
@@ -37,6 +42,31 @@ function addSecondsIso(iso: string, secs: number): string {
   const d = new Date(iso);
   d.setSeconds(d.getSeconds() + secs);
   return d.toISOString();
+}
+
+function maybeCompressPayload(json: string): string {
+  const size = Buffer.byteLength(json, "utf8");
+
+  if (size < COMPRESS_THRESHOLD_BYTES) return json;
+
+  try {
+    const gz = zlib.gzipSync(Buffer.from(json, "utf8"));
+    return "gz:" + gz.toString("base64");
+  } catch {
+    return json;
+  }
+}
+
+function maybeDecompressPayload(value: string): string {
+  if (!value.startsWith("gz:")) return value;
+
+  try {
+    const b64 = value.slice(3);
+    const buf = Buffer.from(b64, "base64");
+    return zlib.gunzipSync(buf).toString("utf8");
+  } catch {
+    return value;
+  }
 }
 
 function defaultDbPath(): string {
@@ -90,12 +120,47 @@ export class SqliteOutbox {
 
       CREATE INDEX IF NOT EXISTS idx_outbox_status_next
         ON outbox_events(status, next_attempt_at_utc);
+
+      CREATE INDEX IF NOT EXISTS idx_outbox_inflight
+        ON outbox_events(status, locked_at_utc);
+
+      CREATE TABLE IF NOT EXISTS agent_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at_utc TEXT NOT NULL
+      );
     `);
 
     this.recoverStaleInflight(600);
   }
 
   enqueue(input: EnqueueInput): number {
+    const rawJson = JSON.stringify(input.payload);
+    const hash = require("crypto")
+      .createHash("sha256")
+      .update(rawJson)
+      .digest("hex");
+
+    const payloadJson = maybeCompressPayload(rawJson);
+    // prevent extremely large payloads from entering the outbox
+    const maxBytes = 2 * 1024 * 1024; // 2MB safety limit
+    if (Buffer.byteLength(payloadJson, "utf8") > maxBytes) {
+      throw new Error("Outbox payload too large (>2MB)");
+    }
+
+    const existing = this.db
+      .prepare(`
+        SELECT id FROM outbox_events
+        WHERE payload_json = ?
+          AND status IN ('PENDING','IN_FLIGHT')
+        LIMIT 1
+      `)
+      .get(payloadJson) as { id: number } | undefined;
+
+    if (existing && typeof existing.id === "number") {
+      return existing.id;
+    }
+
     const stmt = this.db.prepare(`
       INSERT INTO outbox_events
       (type, created_at_utc, payload_json, status, attempts, next_attempt_at_utc)
@@ -107,14 +172,14 @@ export class SqliteOutbox {
     const result = stmt.run(
       input.type,
       now,
-      JSON.stringify(input.payload),
+      payloadJson,
       now
     );
 
     return Number(result.lastInsertRowid);
   }
 
-  leaseReady(limit = 25): any[] {
+  leaseReady(limit = 25): Array<Record<string, any>> {
     const now = utcNow();
 
     const tx = this.db.transaction(() => {
@@ -127,11 +192,11 @@ export class SqliteOutbox {
           ORDER BY id ASC
           LIMIT ?
         `)
-        .all(now, limit);
+        .all(now, limit) as Array<{ id: number }>;
 
       if (candidates.length === 0) return [];
 
-      const ids = candidates.map((r: any) => r.id);
+      const ids = candidates.map((r: { id: number }) => Number(r.id));
 
       const placeholders = ids.map(() => "?").join(",");
 
@@ -141,14 +206,36 @@ export class SqliteOutbox {
             locked_at_utc=?,
             lock_owner=?
         WHERE id IN (${placeholders})
-      `).run(now, this.lockOwner, ...ids);
+          AND status='PENDING'
+          AND (lock_owner IS NULL OR lock_owner=?)
+      `).run(now, this.lockOwner, ...ids, this.lockOwner);
 
-      return this.db.prepare(`
+      const rows = this.db.prepare(`
         SELECT *
         FROM outbox_events
         WHERE id IN (${placeholders})
+          AND status='IN_FLIGHT'
+          AND lock_owner=?
         ORDER BY id ASC
-      `).all(...ids);
+      `).all(...ids, this.lockOwner);
+
+      return rows.map((r: any) => {
+        let payload = r.payload_json;
+
+        if (typeof payload === "string") {
+          const decompressed = maybeDecompressPayload(payload);
+          try {
+            payload = JSON.parse(decompressed);
+          } catch {
+            payload = decompressed;
+          }
+        }
+
+        return {
+          ...r,
+          payload_json: payload
+        };
+      });
     });
 
     return tx();
@@ -174,6 +261,20 @@ export class SqliteOutbox {
       .get(id) as OutboxAttemptsRow | undefined;
 
     const attempts = (row?.attempts ?? 0) + 1;
+
+    if (attempts >= MAX_ATTEMPTS) {
+      this.db.prepare(`
+        UPDATE outbox_events
+        SET status='FAILED',
+            attempts=?,
+            locked_at_utc=NULL,
+            lock_owner=NULL,
+            last_error=?
+        WHERE id=?
+      `).run(attempts, error.slice(0, 2000), id);
+      return;
+    }
+
     const next = addSecondsIso(utcNow(), computeBackoffSeconds(attempts));
 
     this.db.prepare(`
@@ -209,8 +310,30 @@ export class SqliteOutbox {
 
     this.db.prepare(`
       DELETE FROM outbox_events
-      WHERE status='SENT'
-        AND sent_at_utc < ?
-    `).run(cutoff);
+      WHERE (status='SENT' AND sent_at_utc < ?)
+         OR (status='FAILED' AND created_at_utc < ?)
+    `).run(cutoff, cutoff);
+  }
+
+  getState(key: string): string | null {
+    const row = this.db
+      .prepare(`SELECT value FROM agent_state WHERE key=?`)
+      .get(key) as { value: string } | undefined;
+
+    return row?.value ?? null;
+  }
+
+  setState(key: string, value: string) {
+    const now = utcNow();
+
+    this.db.prepare(`
+      INSERT INTO agent_state (key, value, updated_at_utc)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value=excluded.value,
+        updated_at_utc=excluded.updated_at_utc
+    `).run(key, value, now);
   }
 }
+
+export const outbox = new SqliteOutbox();

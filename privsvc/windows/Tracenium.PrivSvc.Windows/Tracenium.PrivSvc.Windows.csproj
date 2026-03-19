@@ -21,7 +21,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Assets\root-ca.crt" />
+    <Content Include="assets\root-ca.crt">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
     <Protobuf Include="..\..\..\proto\controlplane.proto"
               ProtoRoot="../../../proto"
               GrpcServices="Client" />

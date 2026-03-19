@@ -60,7 +60,7 @@ public sealed class Router
             "win.ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 service = "TraceniumPrivSvc",
-                version = "0.1.0",
+                version = "1.0.65",
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
@@ -83,6 +83,7 @@ public sealed class Router
             // NOTE: These handlers should enforce LocalSystem if required.
             "win.grpc.connect" => IpcGrpcHandlers.HandleConnect(req, _ => { }),
             "win.grpc.facts.send" => IpcGrpcHandlers.HandleFactsSend(req),
+            "win.grpc.facts.chunk" => IpcGrpcHandlers.HandleFactsChunk(req),
             "win.grpc.close" => IpcGrpcHandlers.HandleClose(req),
 
             _ => Task.FromResult(PrivSvcResponse.Fail(req.Id, "not_supported", $"Unsupported method: {req.Method}"))

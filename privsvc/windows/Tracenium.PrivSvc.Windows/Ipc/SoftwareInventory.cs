@@ -12,6 +12,7 @@ public static class SoftwareInventory
         try
         {
             bool includeStoreApps = GetBool(req.Params, "includeStoreApps", true);
+            Console.WriteLine($"[PrivSvc][SoftwareInventory] Starting inventory collection. includeStoreApps={includeStoreApps}");
 
             var apps = new List<object>();
 
@@ -20,11 +21,15 @@ public static class SoftwareInventory
             apps.AddRange(ReadUninstallRegistry(RegistryHive.LocalMachine, RegistryView.Registry32));
             apps.AddRange(ReadUninstallRegistry(RegistryHive.CurrentUser, RegistryView.Registry64));
             apps.AddRange(ReadUninstallRegistry(RegistryHive.CurrentUser, RegistryView.Registry32));
+            Console.WriteLine($"[PrivSvc][SoftwareInventory] Registry inventory collected. Items={apps.Count}");
 
             // AppX (Store) via PowerShell (pragmatic v1)
             if (includeStoreApps)
             {
-                apps.AddRange(ReadAppxPackagesPowerShell());
+                var before = apps.Count;
+                var storeApps = ReadAppxPackagesPowerShell().ToList();
+                apps.AddRange(storeApps);
+                Console.WriteLine($"[PrivSvc][SoftwareInventory] Store apps collected. Added={storeApps.Count} Total={apps.Count}");
             }
 
             // Optional: dedup basic (Name+Version+Publisher)
@@ -33,6 +38,7 @@ public static class SoftwareInventory
                 .Distinct()
                 .Select(s => JsonSerializer.Deserialize<Dictionary<string, object>>(s)!)
                 .ToList();
+            Console.WriteLine($"[PrivSvc][SoftwareInventory] Deduplicated inventory count={dedup.Count}");
 
             var result = new
             {
@@ -44,6 +50,7 @@ public static class SoftwareInventory
         }
         catch (Exception ex)
         {
+            Console.WriteLine($"[PrivSvc][SoftwareInventory] ERROR: {ex.Message}");
             return Task.FromResult(PrivSvcResponse.Fail(req.Id, "inventory_error", ex.Message));
         }
     }
@@ -121,9 +128,16 @@ public static class SoftwareInventory
         var stdout = proc.StandardOutput.ReadToEnd();
         var stderr = proc.StandardError.ReadToEnd();
         proc.WaitForExit(30_000);
+        if (!string.IsNullOrWhiteSpace(stderr))
+        {
+            Console.WriteLine($"[PrivSvc][SoftwareInventory] PowerShell stderr: {stderr}");
+        }
 
         if (proc.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout))
+        {
+            Console.WriteLine($"[PrivSvc][SoftwareInventory] PowerShell returned no results. ExitCode={proc.ExitCode}");
             return list;
+        }
 
         try
         {

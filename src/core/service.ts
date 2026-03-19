@@ -3,6 +3,7 @@ import { bootstrapContext } from "./bootstrap";
 import { scheduler } from "./scheduler";
 import { logger } from "../bootstrap/logger";
 import { startGrpcStream } from "../transport/grpc-stream";
+import { outbox } from "../queue/sqlite-outbox";
 
 let shuttingDown = false;
 
@@ -11,7 +12,33 @@ export async function startService() {
     logger.info("Starting Tracenium Agent Core...");
 
     const ctx = await bootstrapContext();
+    // DEBUG: observe raw IPC messages from PrivSvc
+    try {
+      if (ctx.priv && typeof (ctx.priv as any).on === "function") {
+        (ctx.priv as any).on("debug", (d: any) => {
+          logger.info("[PrivSvc DEBUG]", d);
+        });
+      }
+    } catch (e: any) {
+      logger.warn("Failed to attach PrivSvc debug listener", e?.message || e);
+    }
+    // initialize persistent outbox (recover events from previous runs)
+    try {
+      outbox.recoverStaleInflight(600); // 10 minutes
+      logger.info("Outbox recovery completed");
+    } catch (e: any) {
+      logger.warn("Outbox recovery failed", e?.message || e);
+    }
     logger.info("Enrolled:", ctx.enrollment.tenantId, ctx.enrollment.deviceId);
+
+    try {
+      const snapshot = ctx.policyRuntime?.snapshot?.();
+      if (snapshot) {
+        logger.info("Active runtime policy", snapshot);
+      }
+    } catch (e: any) {
+      logger.warn("Failed to read policy runtime snapshot", e?.message || e);
+    }
     
     // Ping PrivSvc (best-effort)
     if (process.platform === "win32") {
@@ -34,8 +61,20 @@ export async function startService() {
       }
     }
 
+    // start control-plane stream
     startGrpcStream(ctx);
+
+    // start task scheduler (policy-driven)
     await scheduler.start(ctx);
+
+    // periodic outbox cleanup
+    setInterval(() => {
+      try {
+        outbox.cleanup(14);
+      } catch (e: any) {
+        logger.warn("Outbox cleanup failed", e?.message || e);
+      }
+    }, 12 * 60 * 60 * 1000); // every 12h
 
     logger.info("Agent Core started.");
   } catch (err: any) {
@@ -51,7 +90,7 @@ process.on("SIGTERM", async () => {
 
   logger.warn("Shutdown signal received...");
 
-  // TODO: implement scheduler.stop() when available
+  // TODO: implement scheduler.stopAll() for multipipeline shutdown when needed
 
   process.exit(0);
 });

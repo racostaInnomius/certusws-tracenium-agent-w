@@ -16,6 +16,7 @@ export type PrivSvcMethod =
   // gRPC bridge (PrivSvc owns mTLS private key + channel)
   | "win.grpc.connect"
   | "win.grpc.facts.send"
+  | "win.grpc.facts.chunk"
   | "win.grpc.close";
 
 /**
@@ -23,9 +24,15 @@ export type PrivSvcMethod =
  * Node must subscribe to these via a push sink / session.
  */
 export type PrivSvcPushMethod =
+  | "win.grpc.connected"
   | "win.grpc.ack"
   | "win.grpc.control.rotateCert"
   | "win.grpc.control.runJob"
+  | "win.grpc.control.policyUpdate"
+  | "win.grpc.control.requestFacts"
+  | "win.grpc.control.disconnect"
+  | "win.grpc.control.agentUpdate"
+  | "win.grpc.control.streamClosed"
   | "win.grpc.disconnected"
   | "win.log";
 
@@ -56,7 +63,7 @@ export type PrivSvcResponse =
  */
 export type PrivSvcPush = {
   v: 1;
-  id: string;
+  id?: string;
   method: PrivSvcPushMethod;
   params?: Record<string, any>;
   meta?: {

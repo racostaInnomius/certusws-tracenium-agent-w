@@ -10,8 +10,18 @@ export class EnrollmentStore {
 
   load(): EnrollmentState | null {
     if (!fs.existsSync(this.statePath)) return null;
-    const raw = fs.readFileSync(this.statePath, "utf8");
-    return JSON.parse(raw) as EnrollmentState;
+    try {
+      const raw = fs.readFileSync(this.statePath, "utf8");
+      const parsed = JSON.parse(raw) as EnrollmentState;
+
+      if (!parsed?.tenantId || !parsed?.deviceId) {
+        return null;
+      }
+
+      return parsed;
+    } catch {
+      return null;
+    }
   }
 
   save(state: EnrollmentState) {

@@ -3,67 +3,139 @@ import os from "os";
 import si from "systeminformation";
 import type { AgentContext } from "../core/agent-context";
 import type { DeviceFacts } from "./device-facts";
+import crypto from "crypto";
 
-async function buildDeviceIdentity(ctx: AgentContext) {
-  const osInfo = await si.osInfo();
-  const system = await si.system();
-  const cpu = await si.cpu();
-  const mem = await si.mem();
-  const net = await si.networkInterfaces();
-
+function buildDeviceIdentity(ctx: AgentContext) {
   const platform = os.platform() as "win32" | "darwin" | "linux";
-  const family: "windows" | "macos" | "linux" =
-    platform === "win32"
-      ? "windows"
-      : platform === "darwin"
-      ? "macos"
-      : "linux";
-
   return {
     deviceId: ctx.enrollment.deviceId,
     tenantId: ctx.enrollment.tenantId,
-
     hostname: os.hostname(),
-    fqdn: undefined,
-    domain: process.env.USERDOMAIN || undefined,
+    fqdn: os.hostname(),
+    domain: platform === "win32" ? process.env.USERDOMAIN || undefined : undefined,
+    platform
+  };
+}
 
-    platform,
+async function buildHardwareNamespace() {
+  const [
+    osInfo,
+    system,
+    baseboard,
+    chassis,
+    bios,
+    cpu,
+    mem,
+    memLayout,
+    diskLayout,
+    graphics,
+    net,
+    time,
+    currentLoad,
+    cpuCurrentSpeed,
+    temp,
+    audio,
+    bluetooth,
+    usb,
+    printer,
+    users,
+    battery,
+    fsSize,
+    wifiNetworks,
+    networkStats,
+    inetLatency
+  ] = await Promise.all([
+    si.osInfo(),
+    si.system(),
+    si.baseboard(),
+    si.chassis(),
+    si.bios(),
+    si.cpu(),
+    si.mem(),
+    si.memLayout(),
+    si.diskLayout(),
+    si.graphics(),
+    si.networkInterfaces(),
+    si.time(),
+    si.currentLoad(),
+    si.cpuCurrentSpeed(),
+    si.cpuTemperature(),
+    si.audio(),
+    si.bluetoothDevices(),
+    si.usb(),
+    si.printer(),
+    si.users(),
+    si.battery(),
+    si.fsSize(),
+    si.wifiNetworks(),
+    si.networkStats(),
+    si.inetLatency("8.8.8.8")
+  ]);
 
+  const isVirtual =
+    system.virtual === true ||
+    (typeof system.virtual === "string" &&
+      String(system.virtual).toLowerCase().includes("virtual"));
+
+  const staticPart = {
+    version: {},
+    system: {
+      manufacturer: system.manufacturer,
+      model: system.model,
+      version: system.version,
+      serial: system.serial,
+      uuid: system.uuid,
+      sku: system.sku,
+      virtual: isVirtual
+    },
+    baseboard,
+    chassis,
+    bios: [bios],
     os: {
-      family,
-      edition: osInfo.distro || undefined,
-      version: osInfo.release || undefined,
-      build: osInfo.build || undefined,
-      arch: os.arch() as "x64" | "arm64" | "x86"
+      platform: os.platform(),
+      distro: osInfo.distro,
+      release: osInfo.release,
+      kernel: osInfo.kernel,
+      arch: os.arch(),
+      hostname: os.hostname()
     },
-
-    hardware: {
-      manufacturer: system.manufacturer || undefined,
-      model: system.model || undefined,
-      serialNumber: system.serial || undefined,
-      uuid: system.uuid || undefined,
-      cpu: {
-        vendor: cpu.manufacturer || undefined,
-        model: cpu.brand || undefined,
-        cores: cpu.cores || undefined,
-        threads: cpu.physicalCores || undefined
-      },
-      memoryBytes: mem.total || undefined,
-      isVirtualMachine: Boolean(system.virtual)
+    uuid: {
+      os: (osInfo as any).uuid ?? undefined,
+      hardware: system.uuid
     },
+    versions: {
+      kernel: osInfo.kernel,
+      node: process.version,
+      v8: process.versions.v8
+    },
+    cpu,
+    graphics,
+    memLayout,
+    diskLayout
+  };
 
-    network: {
-      interfaces: net
-        .filter((i) => !i.internal)
-        .map((i) => ({
-          name: i.iface,
-          mac: i.mac || undefined,
-          ipv4: i.ip4 ? [i.ip4] : [],
-          ipv6: i.ip6 ? [i.ip6] : [],
-          gateway: (i as any).gateway || undefined,
-          dns: []
-        }))
-    }
+  const runtimePart = {
+    networkInterfaces: net,
+    audio,
+    bluetooth,
+    usb,
+    printer,
+    time,
+    cpuCurrentSpeed,
+    currentLoad,
+    temp,
+    users,
+    battery,
+    mem,
+    fsSize,
+    inetLatency,
+    wifiNetworks,
+    networkStats
+  };
+
+  return {
+    static: staticPart,
+    runtime: runtimePart
   };
 }
 
@@ -91,15 +163,79 @@ function buildAgentInfo(ctx: AgentContext) {
   };
 }
 
+function stableStringify(obj: any): string {
+  if (obj === null || typeof obj !== "object") return JSON.stringify(obj);
+  if (Array.isArray(obj)) return `[${obj.map(stableStringify).join(",")}]`;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map(k => `"${k}":${stableStringify(obj[k])}`).join(",")}}`;
+}
+
+function hashObject(obj: any): string {
+  const json = stableStringify(obj);
+  return "sha256:" + crypto.createHash("sha256").update(json).digest("hex");
+}
+
+export function buildDeviceBaseline(
+  ctx: AgentContext,
+  hardware: { static: any; runtime: any }
+) {
+  const device = buildDeviceIdentity(ctx);
+  const agent = buildAgentInfo(ctx);
+
+  const baseline = {
+    device,
+    agent,
+    hardware: hardware.static // ONLY static part participates in baseline
+  };
+
+  return {
+    baseline,
+    baselineHash: hashObject(baseline)
+  };
+}
+
+export async function buildDeviceDelta(
+  ctx: AgentContext,
+  namespaces: Record<string, any>
+) {
+  return {
+    namespaces,
+    collectedAtUtc: new Date().toISOString()
+  };
+}
+
 export async function buildDeviceFacts(
   ctx: AgentContext,
   namespaces: Record<string, any>
 ): Promise<DeviceFacts> {
+  const hardware = await buildHardwareNamespace();
+  const { baseline, baselineHash } = buildDeviceBaseline(ctx, hardware);
+
   return {
     schemaVersion: "1.0",
     collectedAtUtc: new Date().toISOString(),
-    agent: buildAgentInfo(ctx),
-    device: await buildDeviceIdentity(ctx),
-    namespaces
-  };
+    agent: baseline.agent,
+    device: {
+      deviceId: baseline.device.deviceId,
+      tenantId: baseline.device.tenantId,
+      hostname: baseline.device.hostname,
+      fqdn: baseline.device.fqdn,
+      domain: baseline.device.domain,
+      platform: baseline.device.platform
+    },
+    namespaces: {
+      ...namespaces,
+      amm: {
+        ...(namespaces.amm || {}),
+        hardware: {
+          ...hardware.static,
+          ...hardware.runtime
+        },
+        software: namespaces.amm?.software
+      }
+    },
+    _meta: {
+      baselineHash
+    }
+  } as any;
 }

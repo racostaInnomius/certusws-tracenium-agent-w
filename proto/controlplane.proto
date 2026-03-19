@@ -6,6 +6,8 @@ service ControlPlane {
   rpc Connect(stream ControlMessage) returns (stream ControlMessage);
 }
 
+// ---------------- ACK ----------------
+
 enum AckStatus {
   ACK_OK = 0;
   ACK_RETRY = 1;
@@ -20,18 +22,43 @@ message Ack {
   string serverTimeUtc = 5;
 }
 
-message Hello {
-  string deviceId = 1;
-  string tenantId = 2;
-  string agentVersion = 3;
-  string protocolVersion = 4;
+message Error {
+  string code = 1;
+  string message = 2;
 }
+
+// ---------------- AGENT -> SERVER ----------------
+
+message Hello {
+  string eventId = 1;
+
+  string deviceId = 2;
+  string tenantId = 3;
+  string agentVersion = 4;
+  string protocolVersion = 5;
+  string policyVersion = 6;
+
+  repeated string capabilities = 7;
+}
+
 
 message Facts {
   string eventId = 1;
   bytes payloadJson = 2;
   string deviceId = 3;
 }
+
+message Heartbeat {
+  string eventId = 1;
+  string deviceId = 2;
+  int64 uptimeSeconds = 3;
+
+  // useful for detecting version/policy drift
+  string agentVersion = 4;
+  string policyVersion = 5;
+}
+
+// ---------------- SERVER -> AGENT ----------------
 
 message RunJob {
   string jobId = 1;
@@ -41,14 +68,47 @@ message RotateCert {
   string reason = 1;
 }
 
+message PolicyUpdate {
+  string policyVersion = 1;
+  bytes policyJson = 2;
+}
+
+message Disconnect {
+  string reason = 1;
+}
+
+message AgentUpdate {
+  string version = 1;
+  string downloadUrl = 2;
+  string checksum = 3;
+}
+
+message RequestFacts {
+  string factType = 1;
+}
+
+// ---------------- CONTROL PLANE MESSAGE ----------------
+
 message ControlMessage {
   string traceId = 10;
 
   oneof msg {
+
+    // agent -> server
     Hello hello = 1;
     Facts facts = 2;
-    RunJob runJob = 3;
-    RotateCert rotateCert = 4;
-    Ack ack = 5;
+    Heartbeat heartbeat = 3;
+
+    // server -> agent
+    RunJob runJob = 4;
+    RotateCert rotateCert = 5;
+    PolicyUpdate policyUpdate = 6;
+    Disconnect disconnect = 7;
+    AgentUpdate agentUpdate = 8;
+    RequestFacts requestFacts = 9;
+
+    // bidirectional
+    Ack ack = 11;
+    Error error = 12;
   }
 }

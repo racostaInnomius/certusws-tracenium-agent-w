@@ -1,4 +1,3 @@
-// privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/NamedPipeServer.cs
 using System.IO.Pipes;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -47,9 +46,9 @@ public sealed class NamedPipeServer
     private NamedPipeServerStream CreateServerStreamWithAcl()
     {
         // Allow only:
-        // - LocalSystem (service)
-        // - LocalService (recommended Core account)
-        // - Administrators (support)
+        // - LocalSystem (PrivSvc service)
+        // - NT SERVICE\TraceniumAgentCore (AgentCore client service)
+        // - Administrators (support / debugging)
         var ps = new PipeSecurity();
 
         ps.AddAccessRule(new PipeAccessRule(
@@ -57,10 +56,23 @@ public sealed class NamedPipeServer
             PipeAccessRights.FullControl,
             AccessControlType.Allow));
 
-        ps.AddAccessRule(new PipeAccessRule(
-            new SecurityIdentifier(WellKnownSidType.LocalServiceSid, null),
-            PipeAccessRights.ReadWrite,
-            AccessControlType.Allow));
+
+        // Allow the AgentCore Windows service
+        try
+        {
+            var agentCoreSid = (SecurityIdentifier)
+                new NTAccount("NT SERVICE", "TraceniumAgentCore")
+                .Translate(typeof(SecurityIdentifier));
+
+            ps.AddAccessRule(new PipeAccessRule(
+                agentCoreSid,
+                PipeAccessRights.ReadWrite,
+                AccessControlType.Allow));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve SID for NT SERVICE\\TraceniumAgentCore");
+        }
 
         ps.AddAccessRule(new PipeAccessRule(
             new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
@@ -98,13 +110,44 @@ public sealed class NamedPipeServer
                 if (line is null) break; // client disconnected
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
-                PrivSvcResponse resp;
+                // Basic DoS protection: reject excessively large IPC messages
+                string? reqId = null;
                 try
                 {
-                    var req = JsonSerializer.Deserialize<PrivSvcRequest>(line, JsonOpts);
+                    using var doc = JsonDocument.Parse(line);
+                    if (doc.RootElement.TryGetProperty("id", out var idProp))
+                    {
+                        reqId = idProp.GetString();
+                    }
+                }
+                catch
+                {
+                    // best effort only; bad JSON will be handled below
+                }
+
+                if (line.Length > 64 * 1024) // 64KB limit
+                {
+                    _logger.LogWarning("IPC request too large, rejecting. reqId={ReqId}", reqId);
+                    var err = PrivSvcResponse.Fail(reqId ?? "", "request_too_large", "IPC request exceeds allowed size.");
+                    var errJson = JsonSerializer.Serialize(err, JsonOpts);
+
+                    try
+                    {
+                        await writer.WriteLineAsync(errJson);
+                    }
+                    catch { }
+
+                    break;
+                }
+
+                PrivSvcResponse resp;
+                PrivSvcRequest? req = null;
+                try
+                {
+                    req = JsonSerializer.Deserialize<PrivSvcRequest>(line, JsonOpts);
                     if (req is null)
                     {
-                        resp = PrivSvcResponse.Fail("", "bad_json", "Could not parse request.");
+                        resp = PrivSvcResponse.Fail(reqId ?? "", "bad_json", "Could not parse request.");
                     }
                     else
                     {
@@ -113,22 +156,37 @@ public sealed class NamedPipeServer
                 }
                 catch (JsonException jex)
                 {
-                    _logger.LogWarning(jex, "Bad JSON received.");
-                    resp = PrivSvcResponse.Fail("", "bad_json", "Invalid JSON.");
+                    _logger.LogWarning(jex, "Bad JSON received. reqId={ReqId}", reqId);
+                    resp = PrivSvcResponse.Fail(reqId ?? "", "bad_json", "Invalid JSON.");
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Handler error.");
-                    resp = PrivSvcResponse.Fail("", "internal_error", "Unhandled server error.");
+                    _logger.LogError(ex, "Handler error. reqId={ReqId}", req?.Id ?? reqId);
+                    resp = PrivSvcResponse.Fail(req?.Id ?? reqId ?? "", "internal_error", "Unhandled server error.");
                 }
 
                 var respJson = JsonSerializer.Serialize(resp, JsonOpts);
-                await writer.WriteLineAsync(respJson);
+
+                try
+                {
+                    await writer.WriteLineAsync(respJson);
+                }
+                catch (IOException)
+                {
+                    // client closed the pipe while we were responding
+                    _logger.LogDebug("Client disconnected while writing response.");
+                    break;
+                }
             }
         }
         catch (OperationCanceledException)
         {
             // normal on shutdown
+        }
+        catch (IOException)
+        {
+            // normal when client closes pipe early
+            _logger.LogDebug("Pipe closed by client.");
         }
         catch (Exception ex)
         {

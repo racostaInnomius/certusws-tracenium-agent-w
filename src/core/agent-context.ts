@@ -3,10 +3,17 @@ import { EnrollmentState } from "../bootstrap/enrollment-state";
 import { config } from "../bootstrap/config";
 import { EnrollmentStore } from "../bootstrap/enrollment-store";
 import { PrivSvcClient } from "../priv/privsvc-client-windows";
+import { PolicyStore } from "./policy-store";
+import { PolicyRuntime } from "./policy-runtime";
+import { PluginManager } from "./plugin-manager";
+
 
 export type AgentContext = {
   config: typeof config;
   enrollment: EnrollmentState;
   store: EnrollmentStore;
   priv: PrivSvcClient;
+  policy: PolicyStore;
+  policyRuntime: PolicyRuntime;
+  plugins: PluginManager;
 };

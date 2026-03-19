@@ -3,21 +3,10 @@ import os from "os";
 import si from "systeminformation";
 import type { AgentContext } from "../../../core/agent-context";
 import { normalizeApp } from "../../../domain/normalize-app";
+import { computeSoftwareDelta } from "../../../domain/software-inventory-delta";
+import { loadSoftwareBaseline, saveSoftwareBaseline } from "../../../domain/software-baseline-repo";
 
 export type AmmNamespace = {
-  device: {
-    hostname: string;
-    domain?: string;
-    platform: "windows";
-    os: {
-      family: "windows";
-      edition?: string;
-      version?: string;
-      build?: string;
-      arch: "x64" | "arm64" | "x86";
-    };
-  };
-
   hardware: {
     manufacturer?: string;
     model?: string;
@@ -56,15 +45,9 @@ export type AmmNamespace = {
     firewall?: { status: "enabled" | "disabled" | "unknown" };
   };
 
-  softwareInventory: {
+  software: {
     count: number;
-    apps: Array<
-      ReturnType<typeof normalizeApp> extends infer R
-        ? R extends null
-          ? never
-          : R
-        : never
-    >;
+    delta: any;
   };
 };
 
@@ -81,7 +64,7 @@ type RawApp = {
  * L2: device + hardware (non-privileged reads via systeminformation)
  */
 async function collectWindowsDeviceAndHardware(): Promise<
-  Pick<AmmNamespace, "device" | "hardware">
+  Pick<AmmNamespace, "hardware">
 > {
   const [osInfo, system, cpu, mem, diskLayout, fsSize] = await Promise.all([
     si.osInfo(),
@@ -95,19 +78,6 @@ async function collectWindowsDeviceAndHardware(): Promise<
   const arch = os.arch() as "x64" | "arm64" | "x86";
 
   return {
-    device: {
-      hostname: os.hostname(),
-      domain: process.env.USERDOMAIN || undefined,
-      platform: "windows",
-      os: {
-        family: "windows",
-        edition: osInfo.distro || undefined,
-        version: osInfo.release || undefined,
-        build: osInfo.build || undefined,
-        arch
-      }
-    },
-
     hardware: {
       manufacturer: system.manufacturer || undefined,
       model: system.model || undefined,
@@ -226,7 +196,7 @@ export const windowsProvider = {
       firewall: { status: "unknown" }
     };
 
-    let softwareInventory: AmmNamespace["softwareInventory"] = { count: 0, apps: [] };
+    let software: any = { count: 0, delta: null };
 
     try {
       security = await collectWindowsSecurity(ctx);
@@ -236,18 +206,26 @@ export const windowsProvider = {
 
     try {
       const result = await collectWindowsSoftwareInventory(ctx);
-      softwareInventory = {
-        count: result.count,
-        apps: result.apps as any
+
+      const previous = loadSoftwareBaseline();
+      const deltaResult = computeSoftwareDelta(result.apps as any, previous);
+
+      if (deltaResult.hasChanges) {
+        saveSoftwareBaseline(result.apps as any);
+      }
+
+      software = {
+        count: deltaResult.currentCount,
+        delta: deltaResult.delta
       };
     } catch {
       // keep empty
     }
 
     return {
-      ...base,
+      hardware: base.hardware,
       security,
-      softwareInventory
+      software
     };
   }
 };

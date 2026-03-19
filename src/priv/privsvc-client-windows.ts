@@ -23,8 +23,26 @@ export class PrivSvcClient extends EventEmitter {
   private pending = new Map<string, Pending>();
   private closedByClient = false;
 
+  private earlyPushQueue: any[] = [];
+  private pushListenerAttached = false;
+
   onPush(cb: (msg: any) => void) {
+    this.pushListenerAttached = true;
+    this.removeAllListeners("push");
     this.on("push", cb);
+
+    // Flush any early buffered pushes
+    if (this.earlyPushQueue.length > 0) {
+      for (const msg of this.earlyPushQueue) {
+        try {
+          this.emit("debug", { stage: "push_flush", msg });
+          cb(msg);
+        } catch (e) {
+          this.emit("error", e);
+        }
+      }
+      this.earlyPushQueue = [];
+    }
   }
 
   private async ensureConnected(): Promise<void> {
@@ -34,7 +52,11 @@ export class PrivSvcClient extends EventEmitter {
     if (this.closedByClient) throw new Error("PrivSvc client is closed");
 
     this.connecting = new Promise<void>((resolve, reject) => {
-      const s = net.createConnection(PIPE_PATH);
+      const s = new net.Socket();
+
+      s.on("data", (data) => this.onData(data));
+      s.on("error", (err) => this.onSocketError(err));
+      s.on("close", () => this.onSocketClose());
 
       s.on("connect", () => {
         this.socket = s;
@@ -42,10 +64,6 @@ export class PrivSvcClient extends EventEmitter {
         this.connecting = null;
         resolve();
       });
-
-      s.on("data", (data) => this.onData(data));
-      s.on("error", (err) => this.onSocketError(err));
-      s.on("close", () => this.onSocketClose());
 
       // safety timeout for connect
       const t = setTimeout(() => {
@@ -56,13 +74,22 @@ export class PrivSvcClient extends EventEmitter {
 
       s.once("connect", () => clearTimeout(t));
       s.once("error", () => clearTimeout(t));
+
+      s.connect(PIPE_PATH);
     });
 
-    return this.connecting;
+    const conn = this.connecting;
+    if (!conn) return;
+    await conn;
+
+    if (!this.socket || this.socket.destroyed) {
+      throw new Error("PrivSvc connection failed after connect attempt");
+    }
   }
 
   private onData(data: Buffer | string) {
     const chunk = typeof data === "string" ? data : data.toString("utf8");
+    this.emit("debug", { stage: "raw_chunk", chunk });
     this.buffer += chunk;
     // Safety: prevent unbounded memory growth on malformed streams
     if (this.buffer.length > MAX_BUFFER_CHARS) {
@@ -76,40 +103,85 @@ export class PrivSvcClient extends EventEmitter {
     this.buffer = lines.pop() || "";
 
     for (const line of lines) {
-      const txt = line.trim();
+      let txt = line.replace(/\r$/, "").trim();
       if (!txt) continue;
 
       let msg: any;
       try {
         msg = JSON.parse(txt);
+        this.emit("debug", { stage: "parsed", msg });
       } catch {
-        // ignore malformed
+        this.emit("debug", { stage: "parse_error", raw: txt });
         continue;
       }
 
-      // Response path: has id and ok/error
+      this.emit("debug", { stage: "dispatch", msg });
+
+      // Response path: has id + ok/error shape
       const id = msg?.id;
-      if (id && this.pending.has(id)) {
-        const p = this.pending.get(id)!;
-        this.pending.delete(id);
-        clearTimeout(p.timer);
-        p.resolve(msg as PrivSvcResponse);
+      const isResponse =
+        typeof id === "string" &&
+        (Object.prototype.hasOwnProperty.call(msg, "ok") ||
+         Object.prototype.hasOwnProperty.call(msg, "error"));
+
+      if (isResponse) {
+        if (!id) {
+          this.emit("error", new Error("PrivSvc response without id"));
+          continue;
+        }
+
+        if (this.pending.has(id)) {
+          const p = this.pending.get(id)!;
+          this.pending.delete(id);
+          clearTimeout(p.timer);
+          p.resolve(msg as PrivSvcResponse);
+        } else {
+          this.emit("debug", { stage: "orphan_response", msg });
+        }
         continue;
       }
 
-      // Push path (ACK/control)
-      this.emit("push", msg);
+      // Push path: must have method
+      const isPush = typeof msg?.method === "string";
+
+      if (isPush) {
+        if (this.pushListenerAttached) {
+          this.emit("debug", { stage: "push_emit", msg });
+          this.emit("push", msg);
+        } else {
+          this.emit("debug", { stage: "push_buffered", msg });
+          if (this.earlyPushQueue.length < 1000) {
+            this.earlyPushQueue.push(msg);
+          }
+        }
+        continue;
+      }
+
+      // Unknown message shape
+      this.emit("debug", { stage: "unknown_message", msg });
     }
   }
 
   private onSocketError(err: any) {
+    const errCode = String(err?.code || "");
+    const errMessage = String(err?.message || err || "");
+
+    if (errCode === "EPIPE" || /EPIPE/i.test(errMessage)) {
+      this.emit("debug", { stage: "epipe_detected", errCode, errMessage });
+    }
+
+    const sock = this.socket;
+    this.socket = null;
+
     // fail all pending
     for (const [id, p] of this.pending.entries()) {
       this.pending.delete(id);
       clearTimeout(p.timer);
-      p.reject(new Error(err?.message || `PrivSvc socket error (${id})`));
+      p.reject(new Error(errMessage || `PrivSvc socket error (${id})`));
     }
-    this.socket = null;
+
+    try { sock?.destroy(); } catch {}
+
     this.emit("error", err);
   }
 
@@ -122,7 +194,17 @@ export class PrivSvcClient extends EventEmitter {
       p.reject(new Error(`PrivSvc connection closed (${id})`));
     }
     // Notify higher layers (bridge) that the stream is gone
-    this.emit("push", { method: "win.grpc.disconnected", params: { manual: wasManual } });
+    const disconnectMsg = { method: "win.grpc.disconnected", params: { manual: wasManual } };
+
+    if (this.pushListenerAttached) {
+      this.emit("debug", { stage: "push_emit", msg: disconnectMsg });
+      this.emit("push", disconnectMsg);
+    } else {
+      this.emit("debug", { stage: "push_buffered", msg: disconnectMsg });
+      if (this.earlyPushQueue.length < 1000) {
+        this.earlyPushQueue.push(disconnectMsg);
+      }
+    }
     this.emit("close");
     this.buffer = "";
     this.socket = null;
@@ -148,11 +230,28 @@ export class PrivSvcClient extends EventEmitter {
       this.pending.set(id, { resolve, reject, timer });
 
       try {
-        const payload = JSON.stringify(req) + "\n";
-        const ok = this.socket!.write(payload);
-        if (!ok) {
-          // Apply backpressure: wait for drain before considering the pipe healthy
-          this.socket!.once("drain", () => {});
+        const sock = this.socket;
+        if (!sock || sock.destroyed || sock.writable === false) {
+          clearTimeout(timer);
+          this.pending.delete(id);
+          reject(new Error("PrivSvc socket not available"));
+          return;
+        }
+
+        let wrote = false;
+        try {
+          const payload = JSON.stringify(req) + "\n";
+          this.emit("debug", { stage: "ipc_write", size: payload.length, id });
+          wrote = sock.write(payload);
+        } catch (e: any) {
+          clearTimeout(timer);
+          this.pending.delete(id);
+          reject(e);
+          return;
+        }
+
+        if (!wrote) {
+          sock.once("drain", () => {});
         }
       } catch (e: any) {
         clearTimeout(timer);

@@ -32,44 +32,6 @@ export interface DeviceIdentity {
   domain?: string;
 
   platform: "win32" | "darwin" | "linux";
-
-  os: {
-    family: "windows" | "macos" | "linux";
-    edition?: string;
-    version?: string;
-    build?: string;
-    arch: "x64" | "arm64" | "x86";
-  };
-
-  hardware: {
-    manufacturer?: string;
-    model?: string;
-    serialNumber?: string;
-    uuid?: string;
-
-    cpu?: {
-      vendor?: string;
-      model?: string;
-      cores?: number;
-      threads?: number;
-    };
-
-    memoryBytes?: number;
-    isVirtualMachine?: boolean;
-  };
-
-  network: {
-    interfaces: NetworkInterface[];
-  };
-}
-
-export interface NetworkInterface {
-  name: string;
-  mac?: string;
-  ipv4?: string[];
-  ipv6?: string[];
-  gateway?: string;
-  dns?: string[];
 }
 
 export interface Namespaces {

@@ -9,7 +9,6 @@ public static class CryptoCsr
 {
     // Clave persistente en CNG - LocalMachine (Machine Keyset)
     // Nota: con MachineKeySet el key material se guarda en el equipo.
-    private const string DefaultKeyName = "tracenium-agentcore-p256";
 
     public static Task<PrivSvcResponse> HandleGenerateCsr(PrivSvcRequest req)
     {
@@ -27,9 +26,17 @@ public static class CryptoCsr
 
             dnsName ??= Environment.MachineName;
 
-            // 1) Abrir/crear key persistente (CNG)
+            // 1) Abrir/crear key persistente (CNG) - one key per device
+            string keyName = $"tracenium-{deviceId}";
             bool created;
-            using var ecdsa = OpenOrCreateMachineKey(DefaultKeyName, reuse, out created);
+            using var ecdsa = OpenOrCreateMachineKey(keyName, reuse, out created);
+
+            // Diagnostic logging (helps identify key reuse vs creation)
+            try
+            {
+                Console.WriteLine($"[PrivSvc][Crypto] CNG key '{keyName}' created: {created}");
+            }
+            catch { }
 
             // 2) Construir CSR
             // Subject minimal (CN=dnsName)
@@ -69,7 +76,8 @@ public static class CryptoCsr
 
             var result = new
             {
-                keyId = DefaultKeyName,
+                keyId = keyName,
+                deviceId,
                 dnsName,
                 csrPem,
                 algo = "ECDSA_P256",
@@ -90,48 +98,79 @@ public static class CryptoCsr
     {
         created = false;
 
-        // Intentar abrir si existe
+        // First attempt: open existing key if reuse is allowed.
         if (reuseExisting)
         {
-            try
-            {
-                var existing = CngKey.Open(keyName, CngProvider.MicrosoftSoftwareKeyStorageProvider);
-                return new ECDsaCng(existing);
-            }
-            catch
-            {
-                // no existe -> crear
-            }
+        try
+        {
+            var existing = CngKey.Open(
+                keyName,
+                CngProvider.MicrosoftSoftwareKeyStorageProvider,
+                CngKeyOpenOptions.MachineKey
+            );
+            return new ECDsaCng(existing);
+        }
+        catch
+        {
+            // Ignore and continue to creation path.
+        }
         }
         else
         {
-            // si no reusa: si existe, lo borra
-            try
+        // If reuse is disabled, delete the key if it exists.
+        try
+        {
+            if (CngKey.Exists(keyName, CngProvider.MicrosoftSoftwareKeyStorageProvider))
             {
-                var toDelete = CngKey.Open(keyName, CngProvider.MicrosoftSoftwareKeyStorageProvider);
+                var toDelete = CngKey.Open(
+                    keyName,
+                    CngProvider.MicrosoftSoftwareKeyStorageProvider,
+                    CngKeyOpenOptions.MachineKey
+                );
                 toDelete.Delete();
             }
-            catch { }
+        }
+        catch
+        {
+            // Ignore delete errors.
+        }
         }
 
         var creationParams = new CngKeyCreationParameters
         {
-            Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider,
-            ExportPolicy = CngExportPolicies.None, // NO exportable
-            KeyUsage = CngKeyUsages.Signing,
-            KeyCreationOptions = CngKeyCreationOptions.MachineKey
+        Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider,
+        ExportPolicy = CngExportPolicies.None, // NO exportable
+        KeyUsage = CngKeyUsages.Signing,
+        KeyCreationOptions = CngKeyCreationOptions.MachineKey
         };
 
         creationParams.Parameters.Add(
             new CngProperty("Length", BitConverter.GetBytes(256), CngPropertyOptions.None)
         );
 
-        // ECDSA P-256
+        try
+        {
+        // Try to create the key.
         var key = CngKey.Create(CngAlgorithm.ECDsaP256, keyName, creationParams);
         created = true;
         return new ECDsaCng(key);
-    }
+        }
+        catch (CryptographicException ex)
+        {
+        // If creation fails because the key already exists, open it.
+        if (ex.Message.Contains("exists", StringComparison.OrdinalIgnoreCase))
+        {
+            var existing = CngKey.Open(
+                keyName,
+                CngProvider.MicrosoftSoftwareKeyStorageProvider,
+                CngKeyOpenOptions.MachineKey
+            );
+            return new ECDsaCng(existing);
+        }
 
+        throw;
+        }
+    }
     private static string PemEncode(string label, byte[] der)
     {
         var b64 = Convert.ToBase64String(der, Base64FormattingOptions.InsertLineBreaks);
@@ -146,7 +185,6 @@ public static class CryptoCsr
 
         if (val is string s) return s;
 
-        // cuando viene de JSON a veces llega como JsonElement
         if (val is JsonElement je)
         {
             if (je.ValueKind == JsonValueKind.String) return je.GetString();

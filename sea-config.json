@@ -1,0 +1,4 @@
+{
+  "main": "build/agent.bundle.js",
+  "output": "build/agent.sea.blob"
+}

@@ -67,6 +67,7 @@ export function generateInstallId(data: {
 
 export function normalizeApp(input: RawAppInput): SoftwareApplication | null {
   const name = cleanString(input.name);
+  const normalizedName = name?.toLowerCase();
   if (!name) return null;
 
   const version = cleanString(input.version);
@@ -77,9 +78,9 @@ export function normalizeApp(input: RawAppInput): SoftwareApplication | null {
   const detectedAtUtc = new Date().toISOString();
 
   const installId = generateInstallId({
-    name,
+    name: normalizedName || name,
     version,
-    publisher,
+    publisher: publisher?.toLowerCase(),
     source: input.source,
     installLocation,
     packageFamilyName
@@ -89,7 +90,7 @@ export function normalizeApp(input: RawAppInput): SoftwareApplication | null {
     name,
     version,
     publisher,
-    source: input.source as any,
+    source: input.source,
     installLocation,
     packageFamilyName,
     installId,
