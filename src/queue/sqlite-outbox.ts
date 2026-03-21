@@ -106,6 +106,7 @@ export class SqliteOutbox {
         type TEXT NOT NULL,
         created_at_utc TEXT NOT NULL,
         payload_json TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
 
         status TEXT NOT NULL,
         attempts INTEGER NOT NULL DEFAULT 0,
@@ -124,12 +125,37 @@ export class SqliteOutbox {
       CREATE INDEX IF NOT EXISTS idx_outbox_inflight
         ON outbox_events(status, locked_at_utc);
 
+      CREATE INDEX IF NOT EXISTS idx_outbox_payload_hash
+        ON outbox_events(payload_hash);
+
       CREATE TABLE IF NOT EXISTS agent_state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
         updated_at_utc TEXT NOT NULL
       );
     `);
+
+    // ensure payload_hash column exists (for older DBs)
+    const cols = this.db.prepare(`PRAGMA table_info(outbox_events)`).all() as Array<{ name: string }>;
+    const hasPayloadHash = cols.some(c => c.name === "payload_hash");
+    if (!hasPayloadHash) {
+      this.db.exec(`ALTER TABLE outbox_events ADD COLUMN payload_hash TEXT`);
+      // backfill hash for existing rows
+      const rows = this.db.prepare(`SELECT id, payload_json FROM outbox_events`).all() as Array<{ id: number; payload_json: string }>;
+      const upd = this.db.prepare(`UPDATE outbox_events SET payload_hash=? WHERE id=?`);
+      for (const r of rows) {
+        try {
+          const decompressed = typeof r.payload_json === "string" ? maybeDecompressPayload(r.payload_json) : String(r.payload_json);
+          const raw = typeof decompressed === "string" ? decompressed : JSON.stringify(decompressed);
+          const h = require("crypto").createHash("sha256").update(raw).digest("hex");
+          upd.run(h, r.id);
+        } catch {
+          // fallback: hash stored string
+          const h = require("crypto").createHash("sha256").update(String(r.payload_json)).digest("hex");
+          upd.run(h, r.id);
+        }
+      }
+    }
 
     this.recoverStaleInflight(600);
   }
@@ -151,11 +177,11 @@ export class SqliteOutbox {
     const existing = this.db
       .prepare(`
         SELECT id FROM outbox_events
-        WHERE payload_json = ?
+        WHERE payload_hash = ?
           AND status IN ('PENDING','IN_FLIGHT')
         LIMIT 1
       `)
-      .get(payloadJson) as { id: number } | undefined;
+      .get(hash) as { id: number } | undefined;
 
     if (existing && typeof existing.id === "number") {
       return existing.id;
@@ -163,8 +189,8 @@ export class SqliteOutbox {
 
     const stmt = this.db.prepare(`
       INSERT INTO outbox_events
-      (type, created_at_utc, payload_json, status, attempts, next_attempt_at_utc)
-      VALUES (?, ?, ?, 'PENDING', 0, ?)
+      (type, created_at_utc, payload_json, payload_hash, status, attempts, next_attempt_at_utc)
+      VALUES (?, ?, ?, ?, 'PENDING', 0, ?)
     `);
 
     const now = utcNow();
@@ -173,6 +199,7 @@ export class SqliteOutbox {
       input.type,
       now,
       payloadJson,
+      hash,
       now
     );
 
@@ -243,16 +270,20 @@ export class SqliteOutbox {
 
   markSent(id: number) {
     const now = utcNow();
-
-    this.db.prepare(`
+    const res = this.db.prepare(`
       UPDATE outbox_events
       SET status='SENT',
           sent_at_utc=?,
           locked_at_utc=NULL,
           lock_owner=NULL,
           last_error=NULL
-      WHERE id=?
+      WHERE id=? AND status='IN_FLIGHT'
     `).run(now, id);
+
+    if ((res as any)?.changes === 0) {
+      // eslint-disable-next-line no-console
+      console.warn("markSent: no rows updated (unexpected state)", { id });
+    }
   }
 
   markFailed(id: number, error: string) {
@@ -292,14 +323,28 @@ export class SqliteOutbox {
   recoverStaleInflight(ttlSeconds: number) {
     const cutoff = addSecondsIso(utcNow(), -ttlSeconds);
 
-    this.db.prepare(`
-      UPDATE outbox_events
-      SET status='PENDING',
-          locked_at_utc=NULL,
-          lock_owner=NULL
+    const rows = this.db.prepare(`
+      SELECT id, attempts
+      FROM outbox_events
       WHERE status='IN_FLIGHT'
         AND locked_at_utc < ?
-    `).run(cutoff);
+    `).all(cutoff) as Array<{ id: number; attempts: number }>;
+
+    const upd = this.db.prepare(`
+      UPDATE outbox_events
+      SET status='PENDING',
+          attempts=?,
+          next_attempt_at_utc=?,
+          locked_at_utc=NULL,
+          lock_owner=NULL
+      WHERE id=?
+    `);
+
+    for (const r of rows) {
+      const nextAttempts = (r.attempts ?? 0) + 1;
+      const next = addSecondsIso(utcNow(), computeBackoffSeconds(nextAttempts));
+      upd.run(nextAttempts, next, r.id);
+    }
   }
 
   cleanup(retentionDays = 14) {

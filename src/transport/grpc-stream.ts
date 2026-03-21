@@ -56,6 +56,9 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
     logger.warn("gRPC stream: stop() invoked, closing stream and timers");
     stopped = true;
     rotationInProgress = false;
+    if (pending.size > 0) {
+      logger.warn("Clearing pending ACKs on stop", { count: pending.size });
+    }
     pending.clear();
     try { if (startDelayTimer) clearTimeout(startDelayTimer); } catch {}
     try { if (senderInterval) clearInterval(senderInterval); } catch {}
@@ -93,11 +96,20 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
     //logger.info("gRPC stream: message received", Object.keys(msg || {}));
     if (msg?.connected === true) {
       logger.info("gRPC stream: bridge ready", msg);
+      rotationInProgress = false;
       return;
     }
     // ACK
     if (msg.ack) {
-      const eventId: string = String(msg.ack.eventId || "");
+      const rawEventId = msg.ack.eventId;
+      const eventId: string = String(rawEventId ?? "").trim();
+
+      logger.info("ACK received (normalized)", {
+        rawEventId,
+        normalizedEventId: eventId,
+        pendingSize: pending.size
+      });
+
       const status: number = Number(msg.ack.status ?? 0); // enum numeric
       const message: string = msg.ack.message || "";
 
@@ -105,7 +117,10 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
 
       const p = pending.get(eventId);
       if (!p) {
-        // late or already processed
+        logger.warn("ACK without pending match", {
+          eventId,
+          pendingKeysSample: Array.from(pending.keys()).slice(0, 5)
+        });
         return;
       }
 
@@ -245,9 +260,7 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
     if (msg.disconnect) {
       logger.warn("gRPC control message: disconnect requested by server");
       stop();
-      if (!stopped) {
-        setTimeout(() => startGrpcStream(ctx), RECONNECT_DELAY_MS);
-      }
+      setTimeout(() => startGrpcStream(ctx), RECONNECT_DELAY_MS);
       return;
     }
   });
@@ -258,9 +271,7 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
     logger.warn("gRPC stream: scheduling reconnect in", RECONNECT_DELAY_MS, "ms");
     // Do not mark events SENT here. IN_FLIGHT will be recovered by TTL.
     stop();
-    if (!stopped) {
-      setTimeout(() => startGrpcStream(ctx), RECONNECT_DELAY_MS);
-    }
+    setTimeout(() => startGrpcStream(ctx), RECONNECT_DELAY_MS);
   });
 
   stream.on("end", () => {
@@ -268,9 +279,7 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
     logger.warn("gRPC bridge closed. Reconnecting soon...");
     logger.warn("gRPC stream: end event received, scheduling reconnect in", RECONNECT_DELAY_MS, "ms");
     stop();
-    if (!stopped) {
-      setTimeout(() => startGrpcStream(ctx), RECONNECT_DELAY_MS);
-    }
+    setTimeout(() => startGrpcStream(ctx), RECONNECT_DELAY_MS);
   });
 
 

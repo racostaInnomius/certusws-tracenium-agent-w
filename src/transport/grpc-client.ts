@@ -72,7 +72,12 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       logger.info("[grpc-client] push message", { method, params });
 
       if (method === "win.grpc.ack") {
-        stream.emit("data", { ack: params });
+        const normalized = {
+          ...params,
+          eventId: String(params?.eventId ?? "").trim()
+        };
+
+        stream.emit("data", { ack: normalized });
         return;
       }
 

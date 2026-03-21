@@ -6,6 +6,17 @@ import type { PrivSvcRequest, PrivSvcResponse } from "./ipc-types";
 
 const PIPE_PATH = "\\\\.\\pipe\\tracenium.privsvc.v1";
 const DEFAULT_TIMEOUT_MS = 8000;
+
+function getTimeoutForMethod(method: string): number {
+  switch (method) {
+    case "win.software.inventory":
+      return 30000; // inventory can be heavy (WMI/registry)
+    case "win.security.posture":
+      return 15000;
+    default:
+      return DEFAULT_TIMEOUT_MS;
+  }
+}
 const CONNECT_TIMEOUT_MS = 8000;
 const MAX_PENDING = 500; // hard cap to prevent unbounded growth
 const MAX_BUFFER_CHARS = 2 * 1024 * 1024; // 2MB safety cap
@@ -74,6 +85,7 @@ export class PrivSvcClient extends EventEmitter {
 
       s.once("connect", () => clearTimeout(t));
       s.once("error", () => clearTimeout(t));
+      s.once("close", () => clearTimeout(t));
 
       s.connect(PIPE_PATH);
     });
@@ -118,7 +130,14 @@ export class PrivSvcClient extends EventEmitter {
       }
 
       //this.emit("debug", { stage: "dispatch", msg });
-      this.emit("debug", { stage: "dispatch" });
+      this.emit("debug", {
+        stage: "dispatch",
+        id: msg?.id,
+        method: msg?.method,
+        hasOk: Object.prototype.hasOwnProperty.call(msg, "ok"),
+        hasError: Object.prototype.hasOwnProperty.call(msg, "error"),
+        pendingSize: this.pending.size,
+      });
 
       // Response path: has id + ok/error shape
       const id = msg?.id;
@@ -137,10 +156,14 @@ export class PrivSvcClient extends EventEmitter {
           const p = this.pending.get(id)!;
           this.pending.delete(id);
           clearTimeout(p.timer);
+          this.emit("debug", { stage: "response_match", id });
           p.resolve(msg as PrivSvcResponse);
         } else {
-          //this.emit("debug", { stage: "orphan_response", msg });
-          this.emit("debug", { stage: "orphan_response" });
+          this.emit("debug", {
+            stage: "orphan_response",
+            id,
+            pendingSize: this.pending.size,
+          });
         }
         continue;
       }
@@ -225,11 +248,13 @@ export class PrivSvcClient extends EventEmitter {
 
     return new Promise<PrivSvcResponse>((resolve, reject) => {
       const id = req.id!;
+      const timeoutMs = getTimeoutForMethod(req.method);
 
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        this.emit("debug", { stage: "timeout", id, method: req.method });
         reject(new Error("PrivSvc timeout"));
-      }, DEFAULT_TIMEOUT_MS);
+      }, timeoutMs);
 
       this.pending.set(id, { resolve, reject, timer });
 
@@ -245,7 +270,7 @@ export class PrivSvcClient extends EventEmitter {
         let wrote = false;
         try {
           const payload = JSON.stringify(req) + "\n";
-          this.emit("debug", id);
+          this.emit("debug", { stage: "call_write", id, method: req.method });
           wrote = sock.write(payload);
         } catch (e: any) {
           clearTimeout(timer);
