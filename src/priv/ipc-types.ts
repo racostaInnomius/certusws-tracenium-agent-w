@@ -7,34 +7,34 @@
  * use the `PrivSvcPushMethod` union below.
  */
 export type PrivSvcMethod =
-  | "win.ping"
-  | "win.identity"
-  | "win.software.inventory"
-  | "win.security.posture"
-  | "win.crypto.csr.generate" // enrollment CSR generation
-  | "win.crypto.cert.install" // install client cert (bind to existing key)
+  | "ping"
+  | "identity"
+  | "software.inventory"
+  | "security.posture"
+  | "crypto.csr.generate" // enrollment CSR generation
+  | "crypto.cert.install" // install client cert (bind to existing key)
   // gRPC bridge (PrivSvc owns mTLS private key + channel)
-  | "win.grpc.connect"
-  | "win.grpc.facts.send"
-  | "win.grpc.facts.chunk"
-  | "win.grpc.close";
+  | "grpc.connect"
+  | "grpc.facts.send"
+  | "grpc.facts.chunk"
+  | "grpc.close";
 
 /**
  * Methods that PrivSvc can PUSH to Node (unsolicited events).
  * Node must subscribe to these via a push sink / session.
  */
 export type PrivSvcPushMethod =
-  | "win.grpc.connected"
-  | "win.grpc.ack"
-  | "win.grpc.control.rotateCert"
-  | "win.grpc.control.runJob"
-  | "win.grpc.control.policyUpdate"
-  | "win.grpc.control.requestFacts"
-  | "win.grpc.control.disconnect"
-  | "win.grpc.control.agentUpdate"
-  | "win.grpc.control.streamClosed"
-  | "win.grpc.disconnected"
-  | "win.log";
+  | "grpc.connected"
+  | "grpc.ack"
+  | "grpc.control.rotateCert"
+  | "grpc.control.runJob"
+  | "grpc.control.policyUpdate"
+  | "grpc.control.requestFacts"
+  | "grpc.control.disconnect"
+  | "grpc.control.agentUpdate"
+  | "grpc.control.streamClosed"
+  | "grpc.disconnected"
+  | "log";
 
 export type PrivSvcRequest = {
   v: 1;
@@ -59,7 +59,7 @@ export type PrivSvcResponse =
  * Push envelope format coming from PrivSvc.
  *
  * Examples:
- *  - { v:1, id:"...", method:"win.grpc.ack", params:{eventId,status,message,receivedAtUtc}, meta:{...} }
+ *  - { v:1, id:"...", method:"grpc.ack", params:{eventId,status,message,receivedAtUtc}, meta:{...} }
  */
 export type PrivSvcPush = {
   v: 1;

@@ -14,12 +14,19 @@ function ensureDbDir() {
   }
 }
 
+let dbInstance: Database.Database | null = null;
+
 function getDb(): Database.Database {
+  if (dbInstance) return dbInstance;
+
   ensureDbDir();
-  const db = new Database(DB_PATH);
-  db.pragma("journal_mode = WAL");
-  db.pragma("synchronous = NORMAL");
-  return db;
+  dbInstance = new Database(DB_PATH);
+  dbInstance.pragma("journal_mode = WAL");
+  dbInstance.pragma("synchronous = NORMAL");
+
+  initSchema(dbInstance);
+
+  return dbInstance;
 }
 
 function initSchema(db: Database.Database) {
@@ -40,6 +47,9 @@ function initSchema(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_software_baseline_publisher
       ON software_baseline(publisher);
+
+    CREATE INDEX IF NOT EXISTS idx_software_baseline_install_id
+      ON software_baseline(install_id);
   `);
 }
 
@@ -48,7 +58,6 @@ function initSchema(db: Database.Database) {
  */
 export function loadSoftwareBaseline(): SoftwareApplication[] {
   const db = getDb();
-  initSchema(db);
 
   const rows = db
     .prepare(
@@ -63,6 +72,7 @@ export function loadSoftwareBaseline(): SoftwareApplication[] {
         package_family_name as packageFamilyName,
         detected_at_utc as detectedAtUtc
       FROM software_baseline
+      ORDER BY install_id
       `
     )
     .all();
@@ -73,9 +83,9 @@ export function loadSoftwareBaseline(): SoftwareApplication[] {
 /**
  * Replace baseline atomically (full snapshot overwrite)
  */
+// @deprecated Use incremental baseline (upsertSoftwareBaseline + deleteSoftwareByIds)
 export function saveSoftwareBaseline(apps: SoftwareApplication[]) {
   const db = getDb();
-  initSchema(db);
 
   const insertStmt = db.prepare(`
     INSERT INTO software_baseline (
@@ -105,7 +115,8 @@ export function saveSoftwareBaseline(apps: SoftwareApplication[]) {
 
     for (const app of apps) {
       if (!app?.installId || !app?.name || !app?.source) {
-        continue; // skip invalid rows
+        console.warn("[BASELINE] Skipping invalid software row", app);
+        continue;
       }
       insertStmt.run({
         installId: app.installId,
@@ -127,8 +138,9 @@ export function saveSoftwareBaseline(apps: SoftwareApplication[]) {
  * Upsert baseline incrementally (optional optimization)
  */
 export function upsertSoftwareBaseline(apps: SoftwareApplication[]) {
+  if (!apps?.length) return;
+
   const db = getDb();
-  initSchema(db);
 
   const upsert = db.prepare(`
     INSERT INTO software_baseline (
@@ -157,12 +169,15 @@ export function upsertSoftwareBaseline(apps: SoftwareApplication[]) {
       source = excluded.source,
       install_location = excluded.install_location,
       package_family_name = excluded.package_family_name,
-      detected_at_utc = excluded.detected_at_utc
+      detected_at_utc = COALESCE(software_baseline.detected_at_utc, excluded.detected_at_utc)
   `);
 
   const tx = db.transaction((apps: SoftwareApplication[]) => {
     for (const app of apps) {
-      if (!app?.installId || !app?.name || !app?.source) continue;
+      if (!app?.installId || !app?.name || !app?.source) {
+        console.warn("[BASELINE] Skipping invalid software row", app);
+        continue;
+      }
 
       upsert.run({
         installId: app.installId,
@@ -187,17 +202,12 @@ export function deleteSoftwareByIds(installIds: string[]) {
   if (!installIds.length) return;
 
   const db = getDb();
-  initSchema(db);
 
+  const placeholders = installIds.map(() => "?").join(",");
   const stmt = db.prepare(`
-    DELETE FROM software_baseline WHERE install_id = ?
+    DELETE FROM software_baseline
+    WHERE install_id IN (${placeholders})
   `);
 
-  const tx = db.transaction((ids: string[]) => {
-    for (const id of ids) {
-      stmt.run(id);
-    }
-  });
-
-  tx(installIds);
+  stmt.run(...installIds);
 }

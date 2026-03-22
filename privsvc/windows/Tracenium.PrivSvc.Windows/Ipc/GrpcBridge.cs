@@ -173,7 +173,7 @@ private BridgeState _state = BridgeState.Disconnected;
                     PushToAll(new
                     {
                         v = 1,
-                        method = "win.grpc.control.deadStream",
+                        method = "grpc.control.deadStream",
                         @params = new
                         {
                             connectedAtUtc = _connectedAtUtc == DateTime.MinValue ? null : _connectedAtUtc.ToString("o"),
@@ -308,7 +308,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
         {
             try
             {
-                Log($"Replaying cached win.grpc.connected to new sink sinkId={sinkId}");
+                Log($"Replaying cached grpc.connected to new sink sinkId={sinkId}");
                 push(_lastConnectionPush);
             }
             catch (Exception ex)
@@ -325,7 +325,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
             var evt = new
             {
                 v = 1,
-                method = "win.grpc.connected",
+                method = "grpc.connected",
                 @params = new
                 {
                     target = _lastConnectOptions.Target,
@@ -339,7 +339,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
 
             try
             {
-                Log($"Replaying synthesized win.grpc.connected (fallback) sinkId={sinkId}");
+                Log($"Replaying synthesized grpc.connected (fallback) sinkId={sinkId}");
                 push(evt);
             }
             catch (Exception ex)
@@ -552,7 +552,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                         PushToAll(new
                         {
                             v = 1,
-                            method = "win.grpc.control.helloError",
+                            method = "grpc.control.helloError",
                             @params = new { message = ex.Message, atUtc = DateTime.UtcNow.ToString("o") }
                         });
                     }      
@@ -612,7 +612,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
             PushToAll(new
             {
                 v = 1,
-                method = "win.grpc.control.queueFull",
+                method = "grpc.control.queueFull",
                 @params = new
                 {
                     eventId,
@@ -694,7 +694,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
             PushToAll(new
             {
                 v = 1,
-                method = "win.grpc.disconnected",
+                method = "grpc.disconnected",
                 @params = new { atUtc = DateTime.UtcNow.ToString("o") }
             });
         }
@@ -767,7 +767,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                     PushToAll(new
                     {
                         v = 1,
-                        method = "win.grpc.control.streamError",
+                        method = "grpc.control.streamError",
                         @params = new { message = ex.Message, atUtc = DateTime.UtcNow.ToString("o") }
                     });
 
@@ -826,9 +826,9 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
 
                         // EMITIR CONNECTED SOLO AQUÍ (READY REAL)
                         var connectedPush = new
-                            {
+                        {
                             v = 1,
-                            method = "win.grpc.connected",
+                            method = "grpc.connected",
                             @params = new
                             {
                                 target = _lastConnectOptions?.Target,
@@ -837,9 +837,9 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                             }
                         };
 
-                         _lastConnectionPush = connectedPush;
+                        _lastConnectionPush = connectedPush;
 
-                        Log("Sending push: win.grpc.connected (HELLO ACK confirmed)");
+                        Log("Sending push: grpc.connected (HELLO ACK confirmed)");
 
                         PushToAll(connectedPush);
                     }
@@ -848,7 +848,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                     PushToAll(new
                     {
                         v = 1,
-                        method = "win.grpc.ack",
+                        method = "grpc.ack",
                         @params = new
                         {
                             eventId = msg.Ack.EventId,
@@ -864,7 +864,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                     PushToAll(new
                     {
                         v = 1,
-                        method = "win.grpc.control.rotateCert",
+                        method = "grpc.control.rotateCert",
                         @params = new
                         {
                             reason = msg.RotateCert.Reason ?? "server_request",
@@ -878,7 +878,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                     PushToAll(new
                     {
                         v = 1,
-                        method = "win.grpc.control.runJob",
+                        method = "grpc.control.runJob",
                         @params = new
                         {
                             jobId = msg.RunJob.JobId ?? "",
@@ -892,7 +892,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                     PushToAll(new
                     {
                         v = 1,
-                        method = "win.grpc.control.policyUpdate",
+                        method = "grpc.control.policyUpdate",
                         @params = new
                         {
                             policyVersion = msg.PolicyUpdate.PolicyVersion ?? string.Empty,
@@ -909,7 +909,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                     PushToAll(new
                     {
                         v = 1,
-                        method = "win.grpc.control.requestFacts",
+                        method = "grpc.control.requestFacts",
                         @params = new
                         {
                             factType = msg.RequestFacts.FactType ?? "inventory",
@@ -923,7 +923,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                     PushToAll(new
                     {
                         v = 1,
-                        method = "win.grpc.control.disconnect",
+                        method = "grpc.control.disconnect",
                         @params = new
                         {
                             reason = msg.Disconnect.Reason ?? "server_request",
@@ -937,7 +937,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                     PushToAll(new
                     {
                         v = 1,
-                        method = "win.grpc.control.agentUpdate",
+                        method = "grpc.control.agentUpdate",
                         @params = new
                         {
                             version = msg.AgentUpdate.Version ?? string.Empty,
@@ -962,7 +962,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                 PushToAll(new
                 {
                     v = 1,
-                    method = "win.grpc.control.receiverError",
+                    method = "grpc.control.receiverError",
                     @params = new { message = ex.Message, atUtc = DateTime.UtcNow.ToString("o") }
                 });
 
@@ -1012,7 +1012,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                     PushToAll(new
                     {
                         v = 1,
-                        method = "win.grpc.control.helloTimeout",
+                        method = "grpc.control.helloTimeout",
                         @params = new
                         {
                             timeoutSeconds = _helloAckTimeout.TotalSeconds,

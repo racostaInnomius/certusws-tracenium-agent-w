@@ -153,7 +153,7 @@ public static class IpcGrpcHandlers
                 var ready = await GrpcBridgeSingleton.Instance.WaitForReadyAsync(TimeSpan.FromSeconds(35));
                 Console.WriteLine($"[IpcGrpcHandlers] Bridge ready={ready} connectionId={connectionId}");
 
-                // As a safety net: emit win.grpc.connected directly via IPC delegate
+                // As a safety net: emit grpc.connected directly via IPC delegate
                 if (ready && push != null)
                 {
                     try
@@ -161,7 +161,7 @@ public static class IpcGrpcHandlers
                         var evt = new
                         {
                             v = 1,
-                            method = "win.grpc.connected",
+                            method = "grpc.connected",
                             @params = new
                             {
                                 target = target,
@@ -171,7 +171,7 @@ public static class IpcGrpcHandlers
                         };
 
                         var json = System.Text.Json.JsonSerializer.Serialize(evt);
-                        Console.WriteLine($"[IpcGrpcHandlers] DIRECT PUSH win.grpc.connected payload={json}");
+                        Console.WriteLine($"[IpcGrpcHandlers] DIRECT PUSH grpc.connected payload={json}");
 
                         push(evt);
 

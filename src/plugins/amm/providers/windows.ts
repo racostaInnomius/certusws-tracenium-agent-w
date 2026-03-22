@@ -3,54 +3,10 @@ import os from "os";
 import si from "systeminformation";
 import type { AgentContext } from "../../../core/agent-context";
 import { normalizeApp } from "../../../domain/normalize-app";
-import { computeSoftwareDelta } from "../../../domain/software-inventory-delta";
-import { loadSoftwareBaseline, saveSoftwareBaseline } from "../../../domain/software-baseline-repo";
-
-export type AmmNamespace = {
-  hardware: {
-    manufacturer?: string;
-    model?: string;
-    serialNumber?: string;
-    uuid?: string;
-    cpu?: {
-      vendor?: string;
-      model?: string;
-      cores?: number;
-      threads?: number;
-    };
-    memoryBytes?: number;
-    disks?: Array<{
-      name?: string;
-      type?: string;
-      sizeBytes?: number;
-      serial?: string;
-    }>;
-    filesystems?: Array<{
-      fs?: string;
-      type?: string;
-      sizeBytes?: number;
-      usedBytes?: number;
-      mount?: string;
-    }>;
-    isVirtualMachine?: boolean;
-  };
-
-  security: {
-    /**
-     * "unknown" until we implement win.security.posture in PrivSvc.
-     * Keep these fields stable now; backend can accept partials.
-     */
-    bitlocker?: { status: "enabled" | "disabled" | "unknown"; drives?: string[] };
-    defender?: { status: "enabled" | "disabled" | "unknown" };
-    firewall?: { status: "enabled" | "disabled" | "unknown" };
-  };
-
-  software: {
-    count: number;
-    items?: any[];
-    delta?: any;
-  };
-};
+import { computeSoftwareDelta, toBaselineOps } from "../../../domain/software-inventory-delta";
+import { loadSoftwareBaseline, upsertSoftwareBaseline, deleteSoftwareByIds } from "../../../domain/software-baseline-repo";
+import type { AmmNamespace } from "../../../domain/amm-types";
+import type { SoftwareApplication } from "../../../domain/normalize-app";
 
 type RawApp = {
   name?: string | null;
@@ -80,33 +36,28 @@ async function collectWindowsDeviceAndHardware(): Promise<
 
   return {
     hardware: {
-      manufacturer: system.manufacturer || undefined,
-      model: system.model || undefined,
-      serialNumber: system.serial || undefined,
-      uuid: system.uuid || undefined,
-      cpu: {
-        vendor: cpu.manufacturer || undefined,
-        model: cpu.brand || undefined,
-        cores: cpu.cores || undefined,
-        threads: cpu.physicalCores || undefined
-      },
-      memoryBytes: mem.total || undefined,
-      isVirtualMachine: Boolean((system as any).virtual),
-
-      disks: (diskLayout || []).map((d: any) => ({
-        name: d.name || d.device || undefined,
-        type: d.type || undefined,
-        sizeBytes: typeof d.size === "number" ? d.size : undefined,
-        serial: d.serialNum || d.serial || undefined
-      })),
-
-      filesystems: (fsSize || []).map((f: any) => ({
-        fs: f.fs || undefined,
-        type: f.type || undefined,
-        sizeBytes: typeof f.size === "number" ? f.size : undefined,
-        usedBytes: typeof f.used === "number" ? f.used : undefined,
-        mount: f.mount || undefined
-      }))
+      static: {
+        system: {
+          manufacturer: system.manufacturer || undefined,
+          model: system.model || undefined,
+          version: system.version || undefined,
+          serial: system.serial || undefined,
+          uuid: system.uuid || undefined,
+          virtual: Boolean((system as any).virtual)
+        } as any,
+        cpu: {
+          manufacturer: cpu.manufacturer || undefined,
+          brand: cpu.brand || undefined,
+          cores: cpu.cores || undefined,
+          physicalCores: cpu.physicalCores || undefined
+        } as any,
+        memLayout: undefined,
+        diskLayout: diskLayout || undefined
+      } as any,
+      runtime: {
+        mem: mem ? { total: mem.total } : undefined,
+        fsSize: fsSize || undefined
+      } as any
     }
   };
 }
@@ -127,7 +78,7 @@ async function collectWindowsSecurity(ctx: AgentContext): Promise<AmmNamespace["
     const resp = await ctx.priv.call({
       v: 1,
       id: `sec_${Date.now()}`,
-      method: "win.security.posture",
+      method: "security.posture",
       params: { includeBitlocker: true, includeDefender: true, includeFirewall: true },
       meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
     });
@@ -149,7 +100,7 @@ export async function collectWindowsSoftwareInventory(ctx: AgentContext) {
   const resp = await ctx.priv.call({
     v: 1,
     id: `inv_${Date.now()}`,
-    method: "win.software.inventory",
+    method: "software.inventory",
     params: { includeStoreApps: true },
     meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
   });
@@ -210,7 +161,12 @@ export const windowsProvider = {
       firewall: { status: "unknown" }
     };
 
-    let software: any = { count: 0, items: undefined, delta: null };
+    let software: AmmNamespace["software"] = {
+      count: 0,
+      items: undefined,
+      delta: null,
+      hasChanges: false
+    };
 
     try {
       security = await collectWindowsSecurity(ctx);
@@ -220,71 +176,59 @@ export const windowsProvider = {
 
     try {
       const result = await collectWindowsSoftwareInventory(ctx);
+      // ensure typing
+      const apps: SoftwareApplication[] = result.apps as SoftwareApplication[];
 
-      if (!result.apps || result.apps.length === 0) {
-        console.warn("[AGENT] EMPTY INVENTORY RECEIVED — SKIPPING BASELINE UPDATE");
+      if (!apps || apps.length === 0) {
+        console.warn("[AGENT] EMPTY INVENTORY RECEIVED — CLEARING BASELINE");
+
+        const previous: SoftwareApplication[] = loadSoftwareBaseline() ?? [];
+        const ids = previous
+          .map(x => x.installId)
+          .filter((id): id is string => Boolean(id));
+        deleteSoftwareByIds(ids);
+
         return {
           hardware: base.hardware,
           security,
           software: {
             count: 0,
             items: [],
-            delta: null
+            delta: null,
+            hasChanges: true
           }
         };
       }
 
       console.log("[AGENT] INVENTORY BEFORE BASELINE", {
-        count: result.apps.length,
-        //sample: result.apps.slice(0, 3)
+        count: apps.length,
+        //sample: apps.slice(0, 3)
       });
 
-      const previous = loadSoftwareBaseline();
-      const isFirstRun = !previous || previous.length === 0;
+      // Ensure deterministic ordering before delta + hashing
+      apps.sort((a: SoftwareApplication, b: SoftwareApplication) =>
+        (a.installId ?? "").localeCompare(b.installId ?? "")
+      );
 
-      // Fix: ensure baseline is sent at least once per agent runtime
-      // (avoids scenario where local baseline exists but backend never received it)
-      if (!(global as any).__softwareBaselineSent) {
-        console.log("[AGENT] SOFTWARE BASELINE FORCED", {
-          count: result.apps.length
-        });
+      const previous: SoftwareApplication[] = loadSoftwareBaseline() ?? [];
+      const isFirstRun = previous.length === 0;
 
-        software = {
-          count: result.apps.length,
-          items: result.apps,
-          delta: null
-        };
-
-        if (result.apps && result.apps.length > 0) {
-          saveSoftwareBaseline(result.apps as any);
-        } else {
-          console.warn("[AGENT] SKIP saving empty baseline");
-        }
-
-        // CRITICAL FIX: ensure baselineSent is set AFTER valid payload
-        if (result.apps && result.apps.length > 0) {
-          (global as any).__softwareBaselineSent = true;
-        }
-
-      } else if (isFirstRun) {
+      if (isFirstRun) {
         console.log("[AGENT] SOFTWARE BASELINE (first run)", {
-          count: result.apps.length
+          count: apps.length
         });
 
         software = {
-          count: result.apps.length,
-          items: result.apps,
-          delta: null
+          count: apps.length,
+          items: apps,
+          delta: null,
+          hasChanges: true
         };
 
-        if (result.apps && result.apps.length > 0) {
-          saveSoftwareBaseline(result.apps as any);
-        } else {
-          console.warn("[AGENT] SKIP saving empty baseline");
-        }
+        upsertSoftwareBaseline(apps);
 
       } else {
-        const deltaResult = computeSoftwareDelta(result.apps as any, previous);
+        const deltaResult = computeSoftwareDelta(apps, previous);
 
         if (deltaResult.hasChanges) {
           console.log("[AGENT] SOFTWARE DELTA", {
@@ -293,24 +237,37 @@ export const windowsProvider = {
             updated: deltaResult.delta?.updated?.length ?? 0
           });
 
-          if (result.apps && result.apps.length > 0) {
-            saveSoftwareBaseline(result.apps as any);
-          } else {
-            console.warn("[AGENT] SKIP saving empty baseline");
+          const { upserts, deletes } = toBaselineOps(deltaResult.delta);
+
+          if (upserts.length > 0) {
+            upsertSoftwareBaseline(upserts);
+          }
+
+          if (deletes.length > 0) {
+            deleteSoftwareByIds(deletes);
           }
 
           software = {
             count: deltaResult.currentCount,
-            items: result.apps, // CRITICAL: NEVER drop items
-            delta: deltaResult.delta
+            items: apps, // CRITICAL: NEVER drop items
+            delta: deltaResult.delta,
+            hasChanges: true
           };
         } else {
-          console.log("[AGENT] SOFTWARE NO CHANGES");
+          console.log("[AGENT] SOFTWARE NO CHANGES — SKIP PAYLOAD");
 
           software = {
             count: deltaResult.currentCount,
-            items: result.apps, // CRITICAL: keep current state
-            delta: null
+            items: undefined, // avoid affecting baseline hash / payload
+            delta: null,
+            hasChanges: false
+          };
+
+          // Do not update baseline, do not trigger downstream send
+          return {
+            hardware: base.hardware,
+            security,
+            software
           };
         }
       }

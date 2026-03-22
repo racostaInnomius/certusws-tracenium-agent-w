@@ -42,19 +42,17 @@ function normalizePublisher(publisher?: string | null): string | undefined {
 
 export function generateInstallId(data: {
   name: string;
-  version?: string;
-  publisher?: string;
   source: string;
-  installLocation?: string;
   packageFamilyName?: string;
+  publisher?: string;
 }): string {
+// Stable identity: avoid volatile fields (version, location)
+// include publisher to reduce collisions
   const base = [
-    data.name || "",
-    data.version || "",
-    data.publisher || "",
-    data.source || "",
-    data.installLocation || "",
-    data.packageFamilyName || ""
+    (data.name || "").toLowerCase(),
+    (data.publisher || "").toLowerCase(),
+    data.packageFamilyName || "",
+    (data.source || "").toLowerCase()
   ].join("|");
 
   const hash = crypto
@@ -79,18 +77,16 @@ export function normalizeApp(input: RawAppInput): SoftwareApplication | null {
 
   const installId = generateInstallId({
     name: normalizedName || name,
-    version,
-    publisher: publisher?.toLowerCase(),
     source: input.source,
-    installLocation,
-    packageFamilyName
+    packageFamilyName,
+    publisher
   });
 
   return {
     name,
     version,
     publisher,
-    source: input.source,
+    source: input.source.toLowerCase(),
     installLocation,
     packageFamilyName,
     installId,

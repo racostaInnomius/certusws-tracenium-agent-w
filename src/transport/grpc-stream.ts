@@ -4,8 +4,8 @@ import { createGrpcClient } from "./grpc-client";
 import { outbox } from "../queue/sqlite-outbox";
 import { logger } from "../bootstrap/logger";
 import { PolicyStore } from "../core/policy-store";
-import { collectAMM } from "../plugins/amm";
 import { buildDeviceFacts } from "../domain/device-facts-builder";
+import type { Namespaces, DeviceFacts } from "../domain/device-facts";
 
 type PendingAck = {
   outboxId: number;
@@ -86,7 +86,7 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
   });
 
   // NOTE:
-  // HELLO is now sent by PrivSvc during win.grpc.connect().
+  // HELLO is now sent by PrivSvc during grpc.connect().
   // If you want to keep the same mental model, you can still write hello and PrivSvc will ignore.
   // stream.write({ hello: { ... } });
 
@@ -230,19 +230,45 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
 
       (async () => {
         try {
-          const ammNamespace = await collectAMM(ctx);
-          const facts = await buildDeviceFacts(ctx, { amm: ammNamespace });
+          const namespaces = {} as Namespaces;
 
+          // AMM
+          if (ctx.policyRuntime.pluginEnabled("amm")) {
+            try {
+              namespaces.amm = await ctx.plugins.run("amm.collect");
+            } catch (err) {
+              logger.error("AMM collect failed (requestFacts)", { err });
+            }
+          }
+
+          // SCM (future-ready)
+          if (ctx.policyRuntime.pluginEnabled("scm")) {
+            try {
+              namespaces.scm = await ctx.plugins.run("scm.collect");
+            } catch (err) {
+              logger.error("SCM collect failed (requestFacts)", { err });
+            }
+          }
+
+          if (Object.keys(namespaces).length === 0) {
+            logger.warn("requestFacts: no namespaces collected, skipping");
+            return;
+          }
+
+          const facts = await buildDeviceFacts(ctx, namespaces);
+
+          // IMPORTANT: requestFacts ignores hasChanges (server explicitly requested)
           outbox.enqueue({
             type: "FACTS_SNAPSHOT",
             payload: facts
           });
 
-          const softwareCount = Number((ammNamespace as any)?.software?.count ?? 0);
+          const softwareCount = Number(namespaces.amm?.software?.count ?? 0);
 
           logger.info("Immediate FACTS_SNAPSHOT enqueued from requestFacts", {
             factType: msg.requestFacts?.factType || "inventory",
-            softwareCount,
+            modules: Object.keys(namespaces),
+            softwareCount
           });
         } catch (err: any) {
           logger.error("requestFacts immediate collection failed", err?.message || err);
@@ -348,7 +374,7 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
         try {
           if (ev.type === "FACTS_SNAPSHOT") {
             // Baseline deduplication
-            const parsedPayload: any =
+            const parsedPayload: DeviceFacts =
               typeof ev.payload_json === "string"
                 ? JSON.parse(ev.payload_json)
                 : ev.payload_json;
@@ -372,7 +398,9 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
               outboxId,
               sentAtMs: Date.now(),
               baselineHash,
-              namespace: "amm"
+              namespace: parsedPayload?.namespaces
+                ? Object.keys(parsedPayload.namespaces)[0]
+                : "amm"
             });
 
             logger.info("FACTS payload metadata", {
@@ -396,6 +424,10 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
               facts: {
                 eventId,
                 deviceId: ctx.enrollment.deviceId,
+                namespace:
+                  parsedPayload?.namespaces
+                    ? Object.keys(parsedPayload.namespaces)[0]
+                    : "amm",
                 payloadJson: Buffer.from(
                   typeof ev.payload_json === "string"
                     ? ev.payload_json
@@ -419,6 +451,7 @@ const pending = new Map<string, PendingAck>(); // eventId -> pending metadata
               facts: {
                 eventId,
                 deviceId: ctx.enrollment.deviceId,
+                namespace: "amm",
                 payloadJson: Buffer.from(
                   typeof ev.payload_json === "string"
                     ? ev.payload_json

@@ -2,6 +2,7 @@
 import { EventEmitter } from "events";
 import { AgentContext } from "../core/agent-context";
 import { logger } from "../bootstrap/logger";
+import { runUpdateTask } from "../update/update-task";
 
 function normalizeTarget(url: string): string {
   return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
@@ -71,7 +72,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       const params = pushMsg?.params ?? {};
       logger.info("[grpc-client] push message", { method, params });
 
-      if (method === "win.grpc.ack") {
+      if (method === "grpc.ack") {
         const normalized = {
           ...params,
           eventId: String(params?.eventId ?? "").trim()
@@ -81,51 +82,64 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         return;
       }
 
-      if (method === "win.grpc.connected") {
+      if (method === "grpc.connected") {
         connected = true;
         logger.info("[grpc-client] PrivSvc confirmed gRPC connected (READY)");
         stream.emit("data", { connected: true });
         return;
       }
 
-      if (method === "win.grpc.control.runJob") {
+      if (method === "grpc.control.runJob") {
         stream.emit("data", { runJob: params });
         return;
       }
 
-      if (method === "win.grpc.control.rotateCert") {
+      if (method === "grpc.control.rotateCert") {
         stream.emit("data", { rotateCert: params });
         return;
       }
 
-      if (method === "win.grpc.control.policyUpdate") {
+      if (method === "grpc.control.policyUpdate") {
         stream.emit("data", { policyUpdate: params });
         return;
       }
 
-      if (method === "win.grpc.control.requestFacts") {
+      if (method === "grpc.control.requestFacts") {
         stream.emit("data", { requestFacts: params });
         return;
       }
 
-      if (method === "win.grpc.control.disconnect") {
+      if (method === "grpc.control.disconnect") {
         stream.emit("data", { disconnect: params });
         return;
       }
 
-      if (method === "win.grpc.control.agentUpdate") {
+      if (method === "grpc.control.agentUpdate") {
         stream.emit("data", { agentUpdate: params });
+
+        // trigger update task asynchronously (do not block push handler)
+        setImmediate(() => {
+          runUpdateTask(ctx, {
+            force: true,
+            logger
+          }).catch((err: any) => {
+            logger.error("[grpc-client] agentUpdate execution failed", {
+              err: err?.message || err
+            });
+          });
+        });
+
         return;
       }
 
-      if (method === "win.grpc.control.streamClosed" || method === "win.grpc.disconnected") {
+      if (method === "grpc.control.streamClosed" || method === "grpc.disconnected") {
         logger.warn("[grpc-client] gRPC bridge reported disconnect");
         connected = false;
         connectPromise = null;
         ended = false;
 
         // Remote disconnect: notify listeners, but do NOT mark this stream as locally ended
-        // and do NOT send win.grpc.close back to PrivSvc.
+        // and do NOT send grpc.close back to PrivSvc.
         stream.emit("end");
         return;
       }
@@ -164,7 +178,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         const resp = await (ctx.priv as any).call({
           v: 1,
           id: "grpc-connect",
-          method: "win.grpc.connect",
+          method: "grpc.connect",
           params: {
             target,
             clientCertThumbprint,
@@ -196,13 +210,13 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
       if (result.connected === true) {
         connected = false;
-        logger.info("[grpc-client] bridge accepted connect request, waiting for win.grpc.connected");
+        logger.info("[grpc-client] bridge accepted connect request, waiting for grpc.connected");
         return;
       }
 
         // Otherwise wait for the push notification from the bridge.
         connected = false;
-        logger.info("[grpc-client] connect request accepted, waiting for win.grpc.connected confirmation");
+        logger.info("[grpc-client] connect request accepted, waiting for grpc.connected confirmation");
       } catch (e: any) {
         connected = false;
         logger.error("[grpc-client] connect failed", e?.message || e);
@@ -254,7 +268,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
             const resp = await (ctx.priv as any).call({
               v: 1,
               id: `facts-${eventId}`,
-              method: "win.grpc.facts.send",
+              method: "grpc.facts.send",
               params: { eventId, payloadJson: payloadJsonStr },
               meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
             });
@@ -286,7 +300,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
             const resp = await (ctx.priv as any).call({
               v: 1,
               id: `facts-chunk-${eventId}-${i}`,
-              method: "win.grpc.facts.chunk",
+              method: "grpc.facts.chunk",
               params: {
                 eventId,
                 chunkIndex: i,
@@ -363,7 +377,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       .call({
         v: 1,
         id: "grpc-close",
-        method: "win.grpc.close",
+        method: "grpc.close",
         params: {},
         meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
       })

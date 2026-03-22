@@ -6,16 +6,19 @@ import { startGrpcStream } from "../transport/grpc-stream";
 import { outbox } from "../queue/sqlite-outbox";
 
 let shuttingDown = false;
+let currentCtx: any = null;
+let cleanupTimer: NodeJS.Timeout | undefined;
 
 export async function startService() {
   try {
     logger.info("Starting Tracenium Agent Core...");
 
     const ctx = await bootstrapContext();
+    currentCtx = ctx;
     // DEBUG: observe raw IPC messages from PrivSvc
     try {
-      if (ctx.priv && typeof (ctx.priv as any).on === "function") {
-        (ctx.priv as any).on("debug", (d: any) => {
+      if (ctx.priv?.on) {
+        ctx.priv.on("debug", (d: any) => {
           logger.info("[PrivSvc DEBUG]", d);
         });
       }
@@ -29,7 +32,10 @@ export async function startService() {
     } catch (e: any) {
       logger.warn("Outbox recovery failed", e?.message || e);
     }
-    logger.info("Enrolled:", ctx.enrollment.tenantId, ctx.enrollment.deviceId);
+    logger.info("Enrolled", {
+      tenantId: ctx.enrollment.tenantId,
+      deviceId: ctx.enrollment.deviceId
+    });
 
     try {
       const snapshot = ctx.policyRuntime?.snapshot?.();
@@ -41,15 +47,18 @@ export async function startService() {
     }
     
     // Ping PrivSvc (best-effort)
-    if (process.platform === "win32") {
+    if (ctx.priv) {
       try {
-        const resp = await ctx.priv.call({
-          v: 1,
-          id: `ping_${Date.now()}`,
-          method: "win.ping",
-          params: {},
-          meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
-        });
+        const resp: any = await Promise.race([
+          ctx.priv.call({
+            v: 1,
+            id: `ping_${Date.now()}`,
+            method: "ping",
+            params: {},
+            meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("PrivSvc ping timeout")), 3000))
+        ]);
 
         if (resp.ok) {
           logger.info("PrivSvc ping OK:", resp.result);
@@ -68,7 +77,7 @@ export async function startService() {
     await scheduler.start(ctx);
 
     // periodic outbox cleanup
-    setInterval(() => {
+    cleanupTimer = setInterval(() => {
       try {
         outbox.cleanup(14);
       } catch (e: any) {
@@ -90,7 +99,21 @@ process.on("SIGTERM", async () => {
 
   logger.warn("Shutdown signal received...");
 
-  // TODO: implement scheduler.stopAll() for multipipeline shutdown when needed
+  try {
+    if (cleanupTimer) {
+      clearInterval(cleanupTimer);
+    }
+
+    if (typeof (scheduler as any).stop === "function") {
+      await (scheduler as any).stop(currentCtx);
+    }
+
+    if (currentCtx?.priv?.close) {
+      currentCtx.priv.close();
+    }
+  } catch (e: any) {
+    logger.error("Shutdown error", e?.message || e);
+  }
 
   process.exit(0);
 });

@@ -85,8 +85,8 @@ async function generateCsrViaPrivSvc(): Promise<{ csrPem: string; deviceId: stri
 
   // tenantId is no longer derived from the token.
   // The backend resolves the tenant from the bootstrapToken during enrollment.
-  // PrivSvc only needs a stable numeric value for CSR generation context.
-  const tenantId = "0";
+  // PrivSvc only needs a stable value for CSR generation context.
+  const tenantId = "bootstrap";
 
   const deviceId = getDeviceId();
 
@@ -96,7 +96,7 @@ async function generateCsrViaPrivSvc(): Promise<{ csrPem: string; deviceId: stri
   const request = JSON.stringify({
     v: 1,
     id: `csr_${Date.now()}`,
-    method: "win.crypto.csr.generate",
+    method: "crypto.csr.generate",
     params: {
       tenantId,
       deviceId,
@@ -115,7 +115,7 @@ async function generateCsrViaPrivSvc(): Promise<{ csrPem: string; deviceId: stri
     const timeout = setTimeout(() => {
       client.destroy();
       reject(new Error("PrivSvc CSR request timeout"));
-    }, 15000);
+    }, 30000);
 
     client.on("connect", () => {
       // send request but DO NOT close the pipe yet
@@ -176,12 +176,12 @@ async function installCertViaPrivSvc(clientCertPem: string, caBundlePem: string)
   const net = await import("net");
 
   const deviceId = getDeviceId();
-  const tenantId = "0";
+  const tenantId = "bootstrap";
 
   const request = JSON.stringify({
     v: 1,
     id: `cert_install_${Date.now()}`,
-    method: "win.crypto.cert.install",
+    method: "crypto.cert.install",
     params: {
       deviceId: deviceId,
       clientCertPem: clientCertPem,
@@ -200,7 +200,7 @@ async function installCertViaPrivSvc(clientCertPem: string, caBundlePem: string)
     const timeout = setTimeout(() => {
       client.destroy();
       reject(new Error("PrivSvc cert install timeout"));
-    }, 15000);
+    }, 30000);
 
     client.on("connect", () => {
       client.write(request + "\n");

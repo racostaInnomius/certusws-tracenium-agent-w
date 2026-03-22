@@ -27,15 +27,17 @@ export function computeSoftwareDelta(
   const currMap = new Map<string, SoftwareApplication>();
 
   for (const app of previous) {
-    if (app?.installId) {
-      prevMap.set(String(app.installId), app);
-    }
+    const id = app?.installId ? String(app.installId) : "";
+    if (!id) continue;
+    // last-write-wins for duplicates
+    prevMap.set(id, app);
   }
 
   for (const app of current) {
-    if (app?.installId) {
-      currMap.set(String(app.installId), app);
-    }
+    const id = app?.installId ? String(app.installId) : "";
+    if (!id) continue;
+    // last-write-wins for duplicates
+    currMap.set(id, app);
   }
 
   const added: SoftwareApplication[] = [];
@@ -43,7 +45,7 @@ export function computeSoftwareDelta(
   const updated: SoftwareApplication[] = [];
 
   // Added + Updated
-  for (const app of current) {
+  for (const app of currMap.values()) {
     if (!app?.installId) continue;
     const prev = prevMap.get(app.installId);
 
@@ -58,7 +60,7 @@ export function computeSoftwareDelta(
   }
 
   // Removed
-  for (const app of previous) {
+  for (const app of prevMap.values()) {
     if (!app?.installId) continue;
     if (!currMap.has(app.installId)) {
       removed.push(app);
@@ -75,7 +77,7 @@ export function computeSoftwareDelta(
 
   const unchanged = Math.max(
     0,
-    current.length - added.length - updated.length
+    currMap.size - added.length - updated.length
   );
 
   const delta: SoftwareDelta = {
@@ -90,7 +92,7 @@ export function computeSoftwareDelta(
     hasChanges: Boolean(
       added.length || removed.length || updated.length
     ),
-    currentCount: current.length
+    currentCount: currMap.size
   };
 }
 
@@ -139,8 +141,13 @@ function normalize(value?: string | null): string {
 /**
  * Optional helper to convert delta into event-based model.
  */
+export type SoftwareEvent =
+  | { type: "installed"; app: SoftwareApplication }
+  | { type: "removed"; installId: string }
+  | { type: "updated"; app: SoftwareApplication };
+
 export function toSoftwareEvents(delta: SoftwareDelta) {
-  const events: any[] = [];
+  const events: SoftwareEvent[] = [];
 
   for (const app of delta.added) {
     events.push({
@@ -164,4 +171,22 @@ export function toSoftwareEvents(delta: SoftwareDelta) {
   }
 
   return events;
+}
+
+/**
+ * Convert delta into incremental baseline operations.
+ * - upserts: added + updated
+ * - deletes: installIds of removed
+ */
+export function toBaselineOps(delta: SoftwareDelta) {
+  const upserts: SoftwareApplication[] = [
+    ...delta.added,
+    ...delta.updated
+  ];
+
+  const deletes: string[] = delta.removed
+    .map(a => a.installId)
+    .filter((id): id is string => Boolean(id));
+
+  return { upserts, deletes };
 }

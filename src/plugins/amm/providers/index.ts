@@ -3,10 +3,25 @@ import { windowsProvider } from "./windows";
 import { macProvider } from "./macos";
 import { linuxProvider } from "./linux";
 
-export function getProvider(platform: string) {
-  if (platform === "win32") return windowsProvider;
-  if (platform === "darwin") return macProvider;
-  if (platform === "linux") return linuxProvider;
+import type { AgentContext } from "../../../core/agent-context";
+import type { AmmNamespace } from "../../../domain/amm-types";
 
-  throw new Error(`Unsupported platform: ${platform}`);
+export interface AmmProvider {
+  collect(ctx: AgentContext): Promise<AmmNamespace>;
+}
+
+export function getProvider(platform: NodeJS.Platform): AmmProvider {
+  switch (platform) {
+    case "win32":
+      return windowsProvider;
+
+    case "darwin":
+      return macProvider;
+
+    case "linux":
+      return linuxProvider;
+
+    default:
+      throw new Error(`Unsupported platform: ${platform}`);
+  }
 }

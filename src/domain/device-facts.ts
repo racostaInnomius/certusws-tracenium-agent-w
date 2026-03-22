@@ -1,12 +1,28 @@
 // src/domain/device-facts.ts
 
+import type { AmmNamespace } from "./amm-types";
+
+export type AgentCapability =
+  | "realtime"
+  | "remote-exec"
+  | "file-transfer"
+  | "self-update"
+  | (string & {});
+
 export interface DeviceFacts {
-  schemaVersion: "1.0";
+  schemaVersion: string;
   collectedAtUtc: string;
 
   agent: AgentInfo;
   device: DeviceIdentity;
   namespaces: Namespaces;
+
+  _meta?: {
+    baselineHash: string;
+    forceBaseline?: boolean;
+    sequence?: number;
+    partial?: boolean;
+  };
 }
 
 export interface AgentInfo {
@@ -14,7 +30,7 @@ export interface AgentInfo {
   coreVersion: string;
 
   osProvider: "windows" | "macos" | "linux";
-  capabilities: string[];
+  capabilities: AgentCapability[];
 
   install: {
     installId: string;
@@ -31,12 +47,13 @@ export interface DeviceIdentity {
   fqdn?: string;
   domain?: string;
 
-  platform: "win32" | "darwin" | "linux";
+  platform: "windows" | "macos" | "linux";
 }
 
 export interface Namespaces {
-  amm?: any;
-  scm?: any;
-  pmm?: any;
-  rcm?: any;
+  // Plugins (modules)
+  amm: AmmNamespace;
+  scm?: unknown;
+  pmm?: unknown;
+  rcm?: unknown;
 }

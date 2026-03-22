@@ -44,8 +44,8 @@ public sealed class Router
             req.Meta?.DeviceId);
 
         // Enforce LocalSystem for sensitive operations (crypto + gRPC bridge)
-        if (req.Method.StartsWith("win.grpc.", StringComparison.OrdinalIgnoreCase) ||
-            req.Method.StartsWith("win.crypto.", StringComparison.OrdinalIgnoreCase))
+        if (req.Method.StartsWith("grpc.", StringComparison.OrdinalIgnoreCase) ||
+            req.Method.StartsWith("crypto.", StringComparison.OrdinalIgnoreCase))
         {
             if (!IsLocalSystem())
             {
@@ -57,14 +57,14 @@ public sealed class Router
         // Route
         return req.Method switch
         {
-            "win.ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
+            "ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 service = "TraceniumPrivSvc",
                 version = "1.0.76",
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
-            "win.identity" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
+            "identity" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 user = WindowsIdentity.GetCurrent().Name,
                 isSystem = WindowsIdentity.GetCurrent().IsSystem,
@@ -72,19 +72,19 @@ public sealed class Router
             })),
 
             // Inventory / posture
-            "win.software.inventory" => SoftwareInventory.Handle(req),
-            "win.security.posture" => SecurityPosture.Handle(req),
+            "software.inventory" => SoftwareInventory.Handle(req),
+            "security.posture" => SecurityPosture.Handle(req),
 
             // Crypto
-            "win.crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),
-            "win.crypto.cert.install" => CryptoCertInstall.HandleInstallCert(req),
+            "crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),
+            "crypto.cert.install" => CryptoCertInstall.HandleInstallCert(req),
 
             // gRPC bridge (session mode)
             // NOTE: These handlers should enforce LocalSystem if required.
-            "win.grpc.connect" => IpcGrpcHandlers.HandleConnect(req, _ => { }),
-            "win.grpc.facts.send" => IpcGrpcHandlers.HandleFactsSend(req),
-            "win.grpc.facts.chunk" => IpcGrpcHandlers.HandleFactsChunk(req),
-            "win.grpc.close" => IpcGrpcHandlers.HandleClose(req),
+            "grpc.connect" => IpcGrpcHandlers.HandleConnect(req, _ => { }),
+            "grpc.facts.send" => IpcGrpcHandlers.HandleFactsSend(req),
+            "grpc.facts.chunk" => IpcGrpcHandlers.HandleFactsChunk(req),
+            "grpc.close" => IpcGrpcHandlers.HandleClose(req),
 
             _ => Task.FromResult(PrivSvcResponse.Fail(req.Id, "not_supported", $"Unsupported method: {req.Method}"))
         };

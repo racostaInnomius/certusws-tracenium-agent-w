@@ -4,12 +4,16 @@ import { outbox } from "../queue/sqlite-outbox";
 import { logger } from "../bootstrap/logger";
 import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { AgentContext } from "./agent-context";
+import type { Namespaces } from "../domain/device-facts";
+import type { AmmNamespace } from "../domain/amm-types";
+import { runUpdateTask } from "../update/update-task";
 
 class Scheduler {
 
   private timers: Map<string, NodeJS.Timeout> = new Map();
   private ctx: AgentContext | null = null;
   private inventoryRunning: boolean = false;
+  private updateRunning: boolean = false;
 
   async start(ctx: AgentContext) {
     this.ctx = ctx;
@@ -50,11 +54,27 @@ class Scheduler {
 
       const timer = setInterval(() => {
         this.runInventory(ctx).catch(err =>
-          logger.error("Inventory error:", err)
+          logger.error("Inventory error", { err })
         );
       }, intervalSeconds * 1000 + jitter);
 
       this.timers.set("inventory", timer);
+    }
+
+    // update pipeline
+    if (ctx.policyRuntime.pluginEnabled("update")) {
+
+      const intervalSeconds = 6 * 60 * 60; // 6h default
+
+      logger.info("Update pipeline enabled", { intervalSeconds });
+
+      const timer = setInterval(() => {
+        this.runUpdate(ctx).catch(err =>
+          logger.error("Update pipeline error", { err })
+        );
+      }, intervalSeconds * 1000);
+
+      this.timers.set("update", timer);
     }
 
     // compliance pipeline (future)
@@ -125,23 +145,46 @@ class Scheduler {
         policyVersion: (ctx.policyRuntime as any).getPolicyVersion?.()
       });
 
-      let ammNamespace;
+      const namespaces = {} as Namespaces;
 
-      try {
-        ammNamespace = await ctx.plugins.run("amm.collect");
-      } catch (err) {
-        logger.error("AMM plugin execution failed", err);
+      // AMM (Asset Management)
+      if (ctx.policyRuntime.pluginEnabled("amm")) {
+        try {
+          namespaces.amm = await ctx.plugins.run("amm.collect") as AmmNamespace;
+        } catch (err) {
+          logger.error("AMM plugin execution failed", { err });
+        }
+      }
+
+      // SCM (future: Security / Compliance)
+      if (ctx.policyRuntime.pluginEnabled("scm")) {
+        try {
+          namespaces.scm = await ctx.plugins.run("scm.collect");
+        } catch (err) {
+          logger.error("SCM plugin execution failed", { err });
+        }
+      }
+
+      // No namespaces collected
+      if (Object.keys(namespaces).length === 0) {
+        logger.warn("No plugin namespaces returned, skipping snapshot");
         return;
       }
 
-      if (!ammNamespace) {
-        logger.warn("AMM plugin returned no data, skipping snapshot");
-        return;
-      }
-
-      const facts = await buildDeviceFacts(ctx, {
-        amm: ammNamespace
+      // Determine if ANY module has changes
+      const hasAnyChanges = Object.values(namespaces).some((ns: any) => {
+        if (!ns) return false;
+        return ns?.software?.hasChanges === true || ns?.hasChanges === true;
       });
+
+      if (!hasAnyChanges) {
+        logger.info("Skipping FACTS enqueue — no changes detected (all modules)", {
+          deviceId: ctx.enrollment.deviceId
+        });
+        return;
+      }
+
+      const facts = await buildDeviceFacts(ctx, namespaces);
 
       outbox.enqueue({
         type: "FACTS_SNAPSHOT",
@@ -150,19 +193,55 @@ class Scheduler {
 
       logger.info("FACTS_SNAPSHOT enqueued", {
         deviceId: ctx.enrollment.deviceId,
-        softwareHasItems: !!ammNamespace.software?.items,
-        softwareItemsLength: Array.isArray(ammNamespace.software?.items)
-        ? ammNamespace.software.items.length
-        : undefined
+        modules: Object.keys(namespaces),
+        hasAnyChanges,
+        ammSoftwareItems: Array.isArray(namespaces.amm?.software?.items)
+          ? namespaces.amm.software.items.length
+          : 0
       });
 
     } catch (err) {
 
-      logger.error("Inventory pipeline failed", err);
+      logger.error("Inventory pipeline failed", { err });
 
     } finally {
 
       this.inventoryRunning = false;
+
+    }
+  }
+
+  private async runUpdate(ctx: AgentContext) {
+
+    if (!ctx.policyRuntime.pluginEnabled("update")) {
+      logger.info("Update plugin disabled by policy, skipping update check");
+      return;
+    }
+
+    if (this.updateRunning) {
+      logger.warn("Update already running, skipping overlapping execution");
+      return;
+    }
+
+    this.updateRunning = true;
+
+    try {
+
+      logger.info("Running update check...", {
+        deviceId: ctx.enrollment.deviceId
+      });
+
+      await runUpdateTask(ctx, {
+        logger
+      });
+
+    } catch (err) {
+
+      logger.error("Update task failed", { err });
+
+    } finally {
+
+      this.updateRunning = false;
 
     }
   }

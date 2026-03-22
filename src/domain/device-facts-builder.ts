@@ -2,22 +2,35 @@
 import os from "os";
 import si from "systeminformation";
 import type { AgentContext } from "../core/agent-context";
-import type { DeviceFacts } from "./device-facts";
+import type { DeviceFacts, Namespaces, AgentCapability } from "./device-facts";
 import crypto from "crypto";
+import type {
+  AmmNamespace,
+  HardwareStatic,
+  HardwareRuntime,
+  SecurityInfo,
+  SoftwareInventory
+} from "./amm-types";
 
 function buildDeviceIdentity(ctx: AgentContext) {
-  const platform = os.platform() as "win32" | "darwin" | "linux";
+  const nodePlatform = os.platform();
+  const platform: "windows" | "macos" | "linux" =
+    nodePlatform === "win32"
+      ? "windows"
+      : nodePlatform === "darwin"
+      ? "macos"
+      : "linux";
   return {
     deviceId: ctx.enrollment.deviceId,
     tenantId: ctx.enrollment.tenantId,
     hostname: os.hostname(),
     fqdn: os.hostname(),
-    domain: platform === "win32" ? process.env.USERDOMAIN || undefined : undefined,
+    domain: platform === "windows" ? process.env.USERDOMAIN || undefined : undefined,
     platform
   };
 }
 
-async function buildHardwareNamespace() {
+async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runtime: HardwareRuntime }> {
   const [
     osInfo,
     system,
@@ -73,8 +86,7 @@ async function buildHardwareNamespace() {
     (typeof system.virtual === "string" &&
       String(system.virtual).toLowerCase().includes("virtual"));
 
-  const staticPart = {
-    version: {},
+  const staticPart: HardwareStatic = {
     system: {
       manufacturer: system.manufacturer,
       model: system.model,
@@ -88,17 +100,15 @@ async function buildHardwareNamespace() {
     chassis,
     bios: [bios],
     os: {
-      platform: os.platform(),
+      platform: ((): "windows" | "macos" | "linux" => {
+        const p = os.platform();
+        return p === "win32" ? "windows" : p === "darwin" ? "macos" : "linux";
+      })(),
       distro: osInfo.distro,
       release: osInfo.release,
-      kernel: osInfo.kernel,
-      arch: os.arch(),
-      hostname: os.hostname()
+      kernel: osInfo.kernel
     },
-    uuid: {
-      os: (osInfo as any).uuid ?? undefined,
-      hardware: system.uuid
-    },
+    uuid: system.uuid,
     versions: {
       kernel: osInfo.kernel,
       node: process.version,
@@ -110,21 +120,28 @@ async function buildHardwareNamespace() {
     diskLayout
   };
 
-  const runtimePart = {
-    networkInterfaces: net,
-    audio,
-    bluetooth,
-    usb,
-    printer,
-    time,
-    cpuCurrentSpeed,
-    users,
-    battery,
-    mem,
-    fsSize,
-    inetLatency,
-    wifiNetworks,
-    networkStats
+  const runtimePart: HardwareRuntime = {
+    memoryBytes: mem?.total,
+
+    disks: Array.isArray(diskLayout)
+      ? diskLayout.map(d => ({
+          name: d.name,
+          type: d.type,
+          sizeBytes: d.size
+        }))
+      : undefined,
+
+    filesystems: Array.isArray(fsSize)
+      ? fsSize.map(f => ({
+          fs: f.fs,
+          type: f.type,
+          sizeBytes: f.size,
+          usedBytes: f.used,
+          mount: f.mount
+        }))
+      : undefined,
+
+    isVirtualMachine: isVirtual
   };
 
   return {
@@ -134,20 +151,19 @@ async function buildHardwareNamespace() {
 }
 
 function buildAgentInfo(ctx: AgentContext) {
-  const platform = os.platform() as "win32" | "darwin" | "linux";
-
-  const osProvider: "windows" | "macos" | "linux" =
-    platform === "win32"
+  const nodePlatform = os.platform();
+  const platform: "windows" | "macos" | "linux" =
+    nodePlatform === "win32"
       ? "windows"
-      : platform === "darwin"
+      : nodePlatform === "darwin"
       ? "macos"
       : "linux";
 
   return {
     agentVersion: ctx.config.agentVersion,
     coreVersion: ctx.config.coreVersion,
-    osProvider,
-    capabilities: ctx.enrollment.bootstrap.capabilities,
+    osProvider: platform,
+    capabilities: ctx.enrollment.bootstrap.capabilities as AgentCapability[],
     install: {
       // Nota v1: installId podría ser distinto a deviceId; lo dejamos así por ahora.
       installId: ctx.enrollment.deviceId,
@@ -157,14 +173,14 @@ function buildAgentInfo(ctx: AgentContext) {
   };
 }
 
-function stableStringify(obj: any): string {
+function stableStringify(obj: unknown): string {
   if (obj === null || typeof obj !== "object") return JSON.stringify(obj);
   if (Array.isArray(obj)) return `[${obj.map(stableStringify).join(",")}]`;
   const keys = Object.keys(obj).sort();
-  return `{${keys.map(k => `"${k}":${stableStringify(obj[k])}`).join(",")}}`;
+  return `{${keys.map(k => `"${k}":${stableStringify((obj as any)[k])}`).join(",")}}`;
 }
 
-function hashObject(obj: any): string {
+function hashObject(obj: unknown): string {
   const json = stableStringify(obj);
   return "sha256:" + crypto.createHash("sha256").update(json).digest("hex");
 }
@@ -190,7 +206,7 @@ export function buildDeviceBaseline(
 
 export async function buildDeviceDelta(
   ctx: AgentContext,
-  namespaces: Record<string, any>
+  namespaces: Namespaces
 ) {
   return {
     namespaces,
@@ -200,28 +216,10 @@ export async function buildDeviceDelta(
 
 export async function buildDeviceFacts(
   ctx: AgentContext,
-  namespaces: Record<string, any>
+  namespaces: Namespaces
 ): Promise<DeviceFacts> {
   const hardware = await buildHardwareNamespace();
   const { baseline, baselineHash } = buildDeviceBaseline(ctx, hardware);
-
-  try {
-    const sw = (namespaces as any)?.amm?.software;
-    console.log("[FACTS BUILDER] incoming software", {
-      hasSoftware: !!sw,
-      count: sw?.count,
-      hasItems: !!sw?.items,
-      itemsLength: Array.isArray(sw?.items) ? sw.items.length : undefined
-    });
-  } catch {}
-
-  try {
-    const swOut = (namespaces as any)?.amm?.software;
-    console.log("[FACTS BUILDER] outgoing software (post-clone)", {
-      hasItems: !!swOut?.items,
-      itemsLength: Array.isArray(swOut?.items) ? swOut.items.length : undefined
-    });
-  } catch {}
 
   return {
     schemaVersion: "1.0",
@@ -238,30 +236,39 @@ export async function buildDeviceFacts(
     namespaces: {
       ...namespaces,
       amm: (() => {
-        const ammIn: any = (namespaces as any)?.amm || {};
-        const swIn: any = ammIn.software;
+        const ammIn: AmmNamespace | undefined = namespaces?.amm;
+        const swIn = ammIn?.software;
 
-        const software =
-          swIn
-            ? {
-                count: swIn.count ?? 0,
-                delta: swIn.delta ?? null,
-                items: Array.isArray(swIn.items) ? [...swIn.items] : undefined
-              }
-            : undefined;
+        const software: SoftwareInventory = swIn
+          ? {
+              count: swIn.count ?? 0,
+              delta: swIn.delta ?? null,
+              items: Array.isArray(swIn.items) ? [...swIn.items] : undefined,
+              hasChanges: swIn.hasChanges ?? false
+            }
+          : {
+              count: 0,
+              delta: null,
+              items: undefined,
+              hasChanges: false
+            };
 
-        return {
-          ...ammIn,
-          ...(software ? { software } : {}),
+        const security: SecurityInfo = (ammIn?.security ?? {}) as SecurityInfo;
+
+        const ammOut: AmmNamespace = {
           hardware: {
-            ...hardware.static,
-            ...hardware.runtime
-          }
+            static: hardware.static,
+            runtime: hardware.runtime
+          },
+          security,
+          software
         };
+
+        return ammOut;
       })()
     },
     _meta: {
       baselineHash
     }
-  } as any;
+  };
 }

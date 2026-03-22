@@ -162,7 +162,15 @@ export class SqliteOutbox {
 
   enqueue(input: EnqueueInput): number {
     const rawJson = JSON.stringify(input.payload);
-    const hash = require("crypto")
+    const baselineHash =
+      input &&
+      typeof input.payload === "object" &&
+      input.payload !== null &&
+      typeof (input.payload as any)?._meta?.baselineHash === "string"
+        ? String((input.payload as any)._meta.baselineHash)
+        : null;
+
+    const hash = baselineHash || require("crypto")
       .createHash("sha256")
       .update(rawJson)
       .digest("hex");
@@ -178,10 +186,11 @@ export class SqliteOutbox {
       .prepare(`
         SELECT id FROM outbox_events
         WHERE payload_hash = ?
+          AND type = ?
           AND status IN ('PENDING','IN_FLIGHT')
         LIMIT 1
       `)
-      .get(hash) as { id: number } | undefined;
+      .get(hash, input.type) as { id: number } | undefined;
 
     if (existing && typeof existing.id === "number") {
       return existing.id;
@@ -340,8 +349,24 @@ export class SqliteOutbox {
       WHERE id=?
     `);
 
+    const fail = this.db.prepare(`
+      UPDATE outbox_events
+      SET status='FAILED',
+          attempts=?,
+          locked_at_utc=NULL,
+          lock_owner=NULL,
+          last_error=?
+      WHERE id=?
+    `);
+
     for (const r of rows) {
       const nextAttempts = (r.attempts ?? 0) + 1;
+
+      if (nextAttempts >= MAX_ATTEMPTS) {
+        fail.run(nextAttempts, "stale inflight exceeded max attempts", r.id);
+        continue;
+      }
+
       const next = addSecondsIso(utcNow(), computeBackoffSeconds(nextAttempts));
       upd.run(nextAttempts, next, r.id);
     }
