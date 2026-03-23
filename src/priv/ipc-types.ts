@@ -19,6 +19,13 @@ export type PrivSvcMethod =
   | "grpc.facts.chunk"
   | "grpc.close";
 
+export type GrpcAckParams = {
+  eventId: string;
+  status: number;
+  message?: string;
+  receivedAtUtc?: string;
+};
+
 /**
  * Methods that PrivSvc can PUSH to Node (unsolicited events).
  * Node must subscribe to these via a push sink / session.
@@ -61,15 +68,28 @@ export type PrivSvcResponse =
  * Examples:
  *  - { v:1, id:"...", method:"grpc.ack", params:{eventId,status,message,receivedAtUtc}, meta:{...} }
  */
-export type PrivSvcPush = {
-  v: 1;
-  id?: string;
-  method: PrivSvcPushMethod;
-  params?: Record<string, any>;
-  meta?: {
-    tenantId?: string;
-    deviceId?: string;
-    traceId?: string;
-    connectionId?: string;
-  };
-};
+export type PrivSvcPush =
+  | {
+      v: 1;
+      id?: string;
+      method: "grpc.ack";
+      params: GrpcAckParams;
+      meta?: {
+        tenantId?: string;
+        deviceId?: string;
+        traceId?: string;
+        connectionId?: string;
+      };
+    }
+  | {
+      v: 1;
+      id?: string;
+      method: Exclude<PrivSvcPushMethod, "grpc.ack">;
+      params?: Record<string, any>;
+      meta?: {
+        tenantId?: string;
+        deviceId?: string;
+        traceId?: string;
+        connectionId?: string;
+      };
+    };

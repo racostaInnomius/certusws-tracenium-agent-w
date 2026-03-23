@@ -39,7 +39,6 @@ export class PrivSvcClient extends EventEmitter {
 
   onPush(cb: (msg: PrivSvcPush) => void) {
     this.pushListenerAttached = true;
-    this.removeAllListeners("push");
     this.on("push", cb);
 
     // Flush any early buffered pushes
@@ -101,8 +100,7 @@ export class PrivSvcClient extends EventEmitter {
 
   private onData(data: Buffer | string) {
     const chunk = typeof data === "string" ? data : data.toString("utf8");
-    //this.emit("debug", { stage: "raw_chunk", chunk });
-    this.emit("debug", { stage: "raw_chunk" });
+    this.emit("debug", { stage: "raw_chunk", chunk });
     this.buffer += chunk;
     // Safety: prevent unbounded memory growth on malformed streams
     if (this.buffer.length > MAX_BUFFER_CHARS) {
@@ -122,14 +120,12 @@ export class PrivSvcClient extends EventEmitter {
       let msg: any;
       try {
         msg = JSON.parse(txt);
-        //this.emit("debug", { stage: "parsed", msg });
-        this.emit("debug", { stage: "parsed" });
+        this.emit("debug", { stage: "parsed", msg });
       } catch {
         this.emit("debug", { stage: "parse_error", raw: txt });
         continue;
       }
 
-      //this.emit("debug", { stage: "dispatch", msg });
       this.emit("debug", {
         stage: "dispatch",
         id: msg?.id,

@@ -223,6 +223,16 @@ class Scheduler {
 
       const facts = await buildDeviceFacts(ctx, namespaces);
 
+      // prevent duplicate FACTS flooding (do not enqueue if one is already pending)
+      const hasPending = (outbox as any).hasPendingOfType?.("FACTS_SNAPSHOT");
+
+      if (hasPending) {
+        logger.info("Skipping FACTS enqueue — pending event exists", {
+          deviceId: ctx.enrollment.deviceId
+        });
+        return;
+      }
+
       outbox.enqueue({
         type: "FACTS_SNAPSHOT",
         payload: facts

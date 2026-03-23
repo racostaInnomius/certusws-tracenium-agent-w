@@ -3,6 +3,7 @@ import { EventEmitter } from "events";
 import { AgentContext } from "../core/agent-context";
 import { logger } from "../bootstrap/logger";
 import { runUpdateTask } from "../update/update-task";
+import { outbox } from "../queue/sqlite-outbox";
 
 function normalizeTarget(url: string): string {
   return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
@@ -33,17 +34,24 @@ type GrpcBridgeClient = {
 function attachPrivPushHandler(ctx: AgentContext, onPush: (msg: any) => void) {
   const priv: any = ctx.priv as any;
 
+  ctx.logger?.info?.("[grpc-client] attaching PrivSvc push handler", {
+    hasOnPush: typeof priv.onPush === "function",
+    hasOn: typeof priv.on === "function"
+  });
+
   if (typeof priv.onPush === "function") {
+    ctx.logger?.info?.("[grpc-client] subscribing via priv.onPush()");
     priv.onPush(onPush);
     return;
   }
 
   if (typeof priv.on === "function") {
+    ctx.logger?.info?.("[grpc-client] subscribing via priv.on('push')");
     priv.on("push", onPush);
     return;
   }
 
-  logger.warn(
+  ctx.logger?.warn(
     "[grpc-client] PrivSvcClient has no push subscription method. " +
       "Implement ctx.priv.onPush(cb) OR make it an EventEmitter emitting 'push'."
   );
@@ -51,7 +59,7 @@ function attachPrivPushHandler(ctx: AgentContext, onPush: (msg: any) => void) {
 
 export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
   const target = normalizeTarget(ctx.config.grpcEndpoint);
-  logger.info(`[grpc-client] Using PrivSvc gRPC bridge → ${target}`);
+  ctx.logger?.info(`[grpc-client] Using PrivSvc gRPC bridge → ${target}`);
 
   const stream = new EventEmitter() as StreamLike;
 
@@ -63,6 +71,9 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
   // serialize IPC writes to PrivSvc to avoid concurrent pipe writes
   let writeChain: Promise<void> = Promise.resolve();
 
+  // track in-flight events to avoid duplicate sends before ACK
+  const inFlightEvents = new Set<string>();
+
   // Push from PrivSvc → re-emit as "data"
   attachPrivPushHandler(ctx, (pushMsg: any) => {
     try {
@@ -70,13 +81,50 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       if (!method) return;
 
       const params = pushMsg?.params ?? {};
-      logger.info("[grpc-client] push message", { method, params });
+      ctx.logger?.info("[grpc-client] push message", { method, params });
 
       if (method === "grpc.ack") {
+        ctx.logger?.info?.("[grpc-client] ACK push received", {
+          rawEventId: params?.eventId,
+          status: params?.status,
+          message: params?.message
+        });
+
         const normalized = {
           ...params,
           eventId: String(params?.eventId ?? "").trim()
         };
+
+        // clear in-flight tracking
+        try {
+          if (normalized.eventId) {
+            inFlightEvents.delete(normalized.eventId);
+          }
+        } catch {}
+
+        // --- remote ACK (telemetry only; outbox already closed on IPC acceptance) ---
+        try {
+          const eventId = normalized.eventId;
+          if (eventId) {
+            const parts = eventId.split(":");
+            const outboxId = Number(parts[parts.length - 1]);
+
+            if (!isNaN(outboxId)) {
+              const status = Number(normalized.status ?? 0);
+              const message = String(normalized.message || "");
+
+              if (status === 0) {
+                outbox.markSent(outboxId);
+                ctx.logger?.info?.("[grpc-client] ACK → markSent", { eventId, outboxId });
+              } else {
+                outbox.markFailed(outboxId, message || `ACK status ${status}`);
+                ctx.logger?.warn?.("[grpc-client] ACK → markFailed", { eventId, outboxId, status });
+              }
+            }
+          }
+        } catch (err: any) {
+          ctx.logger?.error?.("[grpc-client] ACK handling failed", err?.message || err);
+        }
 
         stream.emit("data", { ack: normalized });
         return;
@@ -84,7 +132,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
       if (method === "grpc.connected") {
         connected = true;
-        logger.info("[grpc-client] PrivSvc confirmed gRPC connected (READY)");
+        ctx.logger?.info("[grpc-client] PrivSvc confirmed gRPC connected (READY)");
         stream.emit("data", { connected: true });
         return;
       }
@@ -121,9 +169,9 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         setImmediate(() => {
           runUpdateTask(ctx, {
             force: true,
-            logger
+            logger: ctx.logger || logger
           }).catch((err: any) => {
-            logger.error("[grpc-client] agentUpdate execution failed", {
+            ctx.logger?.error("[grpc-client] agentUpdate execution failed", {
               err: err?.message || err
             });
           });
@@ -133,7 +181,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       }
 
       if (method === "grpc.control.streamClosed" || method === "grpc.disconnected") {
-        logger.warn("[grpc-client] gRPC bridge reported disconnect");
+        ctx.logger?.warn("[grpc-client] gRPC bridge reported disconnect");
         connected = false;
         connectPromise = null;
         ended = false;
@@ -147,7 +195,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       // debug passthrough si quieres
       // stream.emit("data", { debug: { method, params } });
     } catch (e: any) {
-      logger.error("[grpc-client] push handler error:", e?.message || e);
+      ctx.logger?.error("[grpc-client] push handler error:", e?.message || e);
     }
   });
 
@@ -173,7 +221,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         if (!clientCertThumbprint) throw new Error("Missing mtls.clientCertThumbprint in enrollment");
         if (!issuingCaThumbprint) throw new Error("Missing mtls.issuingCaThumbprint in enrollment");
 
-        logger.info("[grpc-client] requesting PrivSvc gRPC connect");
+        ctx.logger?.info("[grpc-client] requesting PrivSvc gRPC connect");
 
         const resp = await (ctx.priv as any).call({
           v: 1,
@@ -198,7 +246,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
         if (result.connected === true && result.ready === true) {
         connected = true;
-        logger.info("[grpc-client] PrivSvc bridge READY (from connect response)");
+        ctx.logger?.info("[grpc-client] PrivSvc bridge READY (from connect response)");
 
         stream.emit("data", {
           connected: true,
@@ -210,16 +258,16 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
       if (result.connected === true) {
         connected = false;
-        logger.info("[grpc-client] bridge accepted connect request, waiting for grpc.connected");
+        ctx.logger?.info("[grpc-client] bridge accepted connect request, waiting for grpc.connected");
         return;
       }
 
         // Otherwise wait for the push notification from the bridge.
         connected = false;
-        logger.info("[grpc-client] connect request accepted, waiting for grpc.connected confirmation");
+        ctx.logger?.info("[grpc-client] connect request accepted, waiting for grpc.connected confirmation");
       } catch (e: any) {
         connected = false;
-        logger.error("[grpc-client] connect failed", e?.message || e);
+        ctx.logger?.error("[grpc-client] connect failed", e?.message || e);
         stream.emit("error", e);
         throw e;
       } finally {
@@ -236,12 +284,12 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         await ensureConnected();
 
         if (ended && localClose) {
-          logger.warn("[grpc-client] write skipped: stream already ended locally");
+          ctx.logger?.warn("[grpc-client] write skipped: stream already ended locally");
           return;
         }
 
         if (!connected) {
-          logger.warn("[grpc-client] write skipped: bridge not fully ready yet");
+          ctx.logger?.warn("[grpc-client] write skipped: bridge not fully ready yet");
           return;
         }
 
@@ -250,18 +298,22 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
         if (msg?.facts) {
           const eventId = String(msg.facts.eventId || "");
-          const payloadJsonBytes = msg.facts.payloadJson;
+          if (inFlightEvents.has(eventId)) {
+            ctx.logger?.warn("[grpc-client] duplicate send prevented (in-flight)", { eventId });
+            return;
+          }
+          inFlightEvents.add(eventId);
 
           if (!eventId) throw new Error("facts.eventId required");
-          logger.info("[grpc-client] sending FACTS event", eventId);
+          ctx.logger?.info("[grpc-client] sending FACTS event", eventId);
 
           let payloadJsonStr: string;
-          if (Buffer.isBuffer(payloadJsonBytes)) payloadJsonStr = payloadJsonBytes.toString("utf8");
-          else if (typeof payloadJsonBytes === "string") payloadJsonStr = payloadJsonBytes;
+          if (Buffer.isBuffer(msg.facts.payloadJson)) payloadJsonStr = msg.facts.payloadJson.toString("utf8");
+          else if (typeof msg.facts.payloadJson === "string") payloadJsonStr = msg.facts.payloadJson;
           else throw new Error("facts.payloadJson must be Buffer or string");
 
           const payloadSizeBytes = Buffer.byteLength(payloadJsonStr, "utf8");
-          logger.info("[grpc-client] FACTS payload size", payloadSizeBytes);
+          ctx.logger?.info("[grpc-client] FACTS payload size", payloadSizeBytes);
 
           // If payload fits, send normally
           if (payloadSizeBytes <= MAX_FACTS_IPC_BYTES) {
@@ -278,18 +330,32 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               const errorMessage = String(resp?.error?.message || resp?.error || "facts.send failed");
 
               if (errorCode === "request_too_large") {
-                logger.warn("[grpc-client] switching to chunked FACTS send", { eventId, payloadSizeBytes });
+                ctx.logger?.warn("[grpc-client] switching to chunked FACTS send", { eventId, payloadSizeBytes });
               } else {
                 throw new Error(errorMessage);
               }
             } else {
+              // Close local outbox lifecycle on successful PrivSvc acceptance
+              try {
+                const parts = eventId.split(":");
+                const outboxId = Number(parts[parts.length - 1]);
+                if (!isNaN(outboxId)) {
+                  outbox.markSent(outboxId);
+                  ctx.logger?.info?.("[grpc-client] IPC accepted → markSent", { eventId, outboxId });
+                }
+              } catch (e: any) {
+                ctx.logger?.error?.("[grpc-client] markSent after IPC failed", e?.message || e);
+              }
+
+              // release in-flight tracking
+              inFlightEvents.delete(eventId);
               return;
             }
           }
 
           // Chunked send fallback or large payload
           const chunks = chunkString(payloadJsonStr, FACTS_CHUNK_SIZE);
-          logger.info("[grpc-client] sending FACTS in chunks", {
+          ctx.logger?.info("[grpc-client] sending FACTS in chunks", {
             eventId,
             totalChunks: chunks.length
           });
@@ -316,7 +382,23 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
             }
           }
 
-          logger.info("[grpc-client] FACTS chunked send completed", { eventId });
+          ctx.logger?.info("[grpc-client] FACTS chunked send completed", { eventId });
+
+          // Close local outbox lifecycle after successful chunked IPC send
+          try {
+            const parts = eventId.split(":");
+            const outboxId = Number(parts[parts.length - 1]);
+            if (!isNaN(outboxId)) {
+              outbox.markSent(outboxId);
+              ctx.logger?.info?.("[grpc-client] IPC chunked accepted → markSent", { eventId, outboxId });
+            }
+          } catch (e: any) {
+            ctx.logger?.error?.("[grpc-client] markSent after chunked IPC failed", e?.message || e);
+          }
+
+          // release in-flight tracking
+          inFlightEvents.delete(eventId);
+
           return;
         }
 
@@ -331,12 +413,12 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
           const policyVersion = String(msg.heartbeat.policyVersion || "");
 
           if (!deviceId) {
-            logger.warn("[grpc-client] heartbeat ignored: deviceId missing");
+            ctx.logger?.warn("[grpc-client] heartbeat ignored: deviceId missing");
             return;
           }
 
           // Heartbeat is handled internally by PrivSvc on the gRPC stream.
-          logger.info("[grpc-client] heartbeat (handled by PrivSvc stream)", {
+          ctx.logger?.info("[grpc-client] heartbeat (handled by PrivSvc stream)", {
             //deviceId,
             //uptimeSeconds,
             //agentVersion,
@@ -346,7 +428,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
           return;
         }
 
-        logger.warn("[grpc-client] stream.write ignored unknown message type", {
+        ctx.logger?.warn("[grpc-client] stream.write ignored unknown message type", {
           keys: Object.keys(msg || {})
         });
       })
@@ -354,12 +436,16 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         const errCode = String(err?.code || "");
         const errMessage = String(err?.message || err || "");
         if (errCode === "EPIPE" || /EPIPE/i.test(errMessage)) {
-          logger.warn("[grpc-client] EPIPE detected, marking connection as broken", {
+          ctx.logger?.warn("[grpc-client] EPIPE detected, marking connection as broken", {
             errCode,
             errMessage
           });
           connected = false;
           connectPromise = null;
+        }
+        // release in-flight on failure
+        if (msg?.facts?.eventId) {
+          inFlightEvents.delete(String(msg.facts.eventId));
         }
         stream.emit("error", err);
       });

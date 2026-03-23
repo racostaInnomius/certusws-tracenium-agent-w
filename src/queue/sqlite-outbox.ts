@@ -84,6 +84,7 @@ function defaultDbPath(): string {
 export class SqliteOutbox {
   private db: Database.Database;
   private lockOwner: string;
+  private listeners = new Set<() => void>();
 
   constructor(private dbPath = defaultDbPath()) {
     this.lockOwner = `agentcore:${os.hostname()}:${process.pid}`;
@@ -92,6 +93,7 @@ export class SqliteOutbox {
     fs.mkdirSync(dir, { recursive: true });
 
     this.db = new Database(dbPath);
+    console.log("[outbox] initialized", { dbPath: this.dbPath, lockOwner: this.lockOwner });
     this.initialize();
   }
 
@@ -133,6 +135,9 @@ export class SqliteOutbox {
         value TEXT NOT NULL,
         updated_at_utc TEXT NOT NULL
       );
+
+      CREATE INDEX IF NOT EXISTS idx_outbox_lock_owner
+        ON outbox_events(lock_owner);
     `);
 
     // ensure payload_hash column exists (for older DBs)
@@ -212,11 +217,34 @@ export class SqliteOutbox {
       now
     );
 
+    console.log("[outbox] enqueue inserted", {
+      id: Number(result.lastInsertRowid),
+      type: input.type,
+      hash
+    });
+
+    this.notifyChanged();
     return Number(result.lastInsertRowid);
   }
 
   leaseReady(limit = 25): Array<Record<string, any>> {
     const now = utcNow();
+
+    // Fast-path: skip DB work if no pending events exist
+    const hasPending = this.db
+      .prepare(`
+        SELECT 1
+        FROM outbox_events
+        WHERE status='PENDING'
+          AND attempts < ?
+          AND next_attempt_at_utc <= ?
+        LIMIT 1
+      `)
+      .get(MAX_ATTEMPTS, now);
+
+    if (!hasPending) {
+      return [];
+    }
 
     const tx = this.db.transaction(() => {
       const candidates = this.db
@@ -224,11 +252,12 @@ export class SqliteOutbox {
           SELECT id
           FROM outbox_events
           WHERE status='PENDING'
+            AND attempts < ?
             AND next_attempt_at_utc <= ?
           ORDER BY id ASC
           LIMIT ?
         `)
-        .all(now, limit) as Array<{ id: number }>;
+        .all(MAX_ATTEMPTS, now, limit) as Array<{ id: number }>;
 
       if (candidates.length === 0) return [];
 
@@ -236,15 +265,19 @@ export class SqliteOutbox {
 
       const placeholders = ids.map(() => "?").join(",");
 
-      this.db.prepare(`
+      const updRes = this.db.prepare(`
         UPDATE outbox_events
         SET status='IN_FLIGHT',
             locked_at_utc=?,
             lock_owner=?
         WHERE id IN (${placeholders})
           AND status='PENDING'
-          AND (lock_owner IS NULL OR lock_owner=?)
-      `).run(now, this.lockOwner, ...ids, this.lockOwner);
+          AND lock_owner IS NULL
+      `).run(now, this.lockOwner, ...ids);
+
+      if ((updRes as any)?.changes === 0) {
+        return [];
+      }
 
       const rows = this.db.prepare(`
         SELECT *
@@ -279,6 +312,9 @@ export class SqliteOutbox {
 
   markSent(id: number) {
     const now = utcNow();
+
+    console.log("[outbox] markSent called", { id, dbPath: this.dbPath });
+
     const res = this.db.prepare(`
       UPDATE outbox_events
       SET status='SENT',
@@ -289,16 +325,30 @@ export class SqliteOutbox {
       WHERE id=? AND status='IN_FLIGHT'
     `).run(now, id);
 
+    console.log("[outbox] markSent result", { id, changes: (res as any)?.changes });
+
+    const row = this.db
+      .prepare(`SELECT id, status, lock_owner, sent_at_utc FROM outbox_events WHERE id=?`)
+      .get(id);
+
+    console.log("[outbox] row after markSent", row);
+
     if ((res as any)?.changes === 0) {
-      // eslint-disable-next-line no-console
       console.warn("markSent: no rows updated (unexpected state)", { id });
+      return;
     }
+
+    this.notifyChanged();
   }
 
   markFailed(id: number, error: string) {
     const row = this.db
-      .prepare("SELECT attempts FROM outbox_events WHERE id=?")
+      .prepare("SELECT attempts FROM outbox_events WHERE id=? AND status='IN_FLIGHT'")
       .get(id) as OutboxAttemptsRow | undefined;
+
+    if (!row) {
+      return;
+    }
 
     const attempts = (row?.attempts ?? 0) + 1;
 
@@ -312,6 +362,7 @@ export class SqliteOutbox {
             last_error=?
         WHERE id=?
       `).run(attempts, error.slice(0, 2000), id);
+      this.notifyChanged();
       return;
     }
 
@@ -327,6 +378,7 @@ export class SqliteOutbox {
           last_error=?
       WHERE id=?
     `).run(attempts, next, error.slice(0, 2000), id);
+    this.notifyChanged();
   }
 
   recoverStaleInflight(ttlSeconds: number) {
@@ -337,6 +389,7 @@ export class SqliteOutbox {
       FROM outbox_events
       WHERE status='IN_FLIGHT'
         AND locked_at_utc < ?
+        AND lock_owner IS NOT NULL
     `).all(cutoff) as Array<{ id: number; attempts: number }>;
 
     const upd = this.db.prepare(`
@@ -359,17 +412,38 @@ export class SqliteOutbox {
       WHERE id=?
     `);
 
+    let changed = false;
     for (const r of rows) {
       const nextAttempts = (r.attempts ?? 0) + 1;
 
       if (nextAttempts >= MAX_ATTEMPTS) {
         fail.run(nextAttempts, "stale inflight exceeded max attempts", r.id);
+        changed = true;
         continue;
       }
 
       const next = addSecondsIso(utcNow(), computeBackoffSeconds(nextAttempts));
       upd.run(nextAttempts, next, r.id);
+      changed = true;
     }
+    if (changed) {
+      this.notifyChanged();
+    }
+  }
+
+  hasPendingOfType(type: OutboxEventType): boolean {
+    const row = this.db
+      .prepare(`
+        SELECT id
+        FROM outbox_events
+        WHERE type = ?
+          AND status IN ('PENDING', 'IN_FLIGHT')
+        ORDER BY id ASC
+        LIMIT 1
+      `)
+      .get(type) as { id: number } | undefined;
+
+    return !!row;
   }
 
   cleanup(retentionDays = 14) {
@@ -403,6 +477,41 @@ export class SqliteOutbox {
         value=excluded.value,
         updated_at_utc=excluded.updated_at_utc
     `).run(key, value, now);
+  }
+
+  onChanged(cb: () => void): () => void {
+    this.listeners.add(cb);
+    return () => {
+      this.listeners.delete(cb);
+    };
+  }
+
+  private notifyChanged() {
+    for (const cb of Array.from(this.listeners)) {
+      try {
+        cb();
+      } catch {}
+    }
+  }
+
+  getNextReadyDelayMs(): number | null {
+    const row = this.db
+      .prepare(`
+        SELECT next_attempt_at_utc
+        FROM outbox_events
+        WHERE status='PENDING'
+          AND attempts < ?
+        ORDER BY next_attempt_at_utc ASC
+        LIMIT 1
+      `)
+      .get(MAX_ATTEMPTS) as { next_attempt_at_utc: string } | undefined;
+
+    if (!row?.next_attempt_at_utc) {
+      return null;
+    }
+
+    const delay = new Date(row.next_attempt_at_utc).getTime() - Date.now();
+    return Math.max(0, delay);
   }
 }
 

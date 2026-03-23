@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Tracenium.PrivSvc.Windows")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+336d3e294c20d61a909dbc35bf7fff994a59eca8")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e86c607a1bd98f1024c73e796ff472f32ffca9c8")]
 [assembly: System.Reflection.AssemblyProductAttribute("Tracenium.PrivSvc.Windows")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Tracenium.PrivSvc.Windows")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -205,6 +205,9 @@ private BridgeState _state = BridgeState.Disconnected;
 
     // Sender queue (facts)
     private BlockingCollection<ControlMessage> _sendQueue = new(1024);
+    // Deduplication guard to avoid sending the same event repeatedly
+    private readonly ConcurrentDictionary<string, DateTime> _recentEventIds = new();
+    private static readonly TimeSpan _dedupWindow = TimeSpan.FromMinutes(2);
     // gRPC write lock: ensures only one WriteAsync happens at a time
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
@@ -585,6 +588,16 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
         if (!IsConnected || _call is null)
             throw new InvalidOperationException("gRPC not connected");
 
+        // Deduplicate same eventId within short window
+        if (_recentEventIds.TryGetValue(eventId, out var lastSent))
+        {
+            if (DateTime.UtcNow - lastSent < _dedupWindow)
+            {
+                Log($"Duplicate FACTS suppressed eventId={eventId}");
+                return;
+            }
+        }
+
         if (!_helloAcked)
         {
             Log($"FACTS queued before HELLO ACK (will wait in sender) eventId={eventId}");
@@ -621,6 +634,7 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
             });
             return;
         }
+        _recentEventIds[eventId] = DateTime.UtcNow;
     }
 
     public void Close()
@@ -759,6 +773,15 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                     _lastSendUtc = DateTime.UtcNow;
                     var factsEventId = msg.Facts?.EventId ?? "hello_or_unknown";
                     Log($"SenderLoop wrote message eventId={factsEventId} latencyMs={ElapsedMs(sendStart):F2}");
+
+                    // Cleanup old dedup entries
+                    foreach (var kv in _recentEventIds)
+                    {
+                        if (DateTime.UtcNow - kv.Value > _dedupWindow)
+                        {
+                            _recentEventIds.TryRemove(kv.Key, out _);
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
