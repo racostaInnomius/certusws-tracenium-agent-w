@@ -1,7 +1,6 @@
 // src/core/policy-runtime.ts
 import { EventEmitter } from "events";
 import { PolicyStore } from "./policy-store";
-import { logger } from "../bootstrap/logger";
 
 export type RuntimePolicy = {
   version?: string;
@@ -46,7 +45,7 @@ export class PolicyRuntime extends EventEmitter {
 
   private policy: RuntimePolicy = DEFAULT_POLICY;
 
-  constructor(private store: PolicyStore) {
+  constructor(private store: PolicyStore, private logger: any) {
     super();
   }
 
@@ -56,8 +55,8 @@ export class PolicyRuntime extends EventEmitter {
     const loaded = this.store.getPolicy();
 
     if (!loaded) {
-      logger.info("PolicyRuntime: no stored policy, using defaults");
-      this.policy = DEFAULT_POLICY;
+      this.logger?.info?.("PolicyRuntime: no stored policy, using defaults");
+      this.policy = JSON.parse(JSON.stringify(DEFAULT_POLICY));
       return;
     }
 
@@ -65,7 +64,7 @@ export class PolicyRuntime extends EventEmitter {
 
     this.policy = validated;
 
-    logger.info("PolicyRuntime initialized", {
+    this.logger?.info?.("PolicyRuntime initialized", {
       version: this.store.getVersion(),
       plugins: validated.plugins?.enabled
     });
@@ -99,7 +98,7 @@ export class PolicyRuntime extends EventEmitter {
     const newPolicy = this.store.getPolicy();
 
     if (!newPolicy) {
-      logger.warn("PolicyRuntime: update requested but no policy found in store");
+      this.logger?.warn?.("PolicyRuntime: update requested but no policy found in store");
       return;
     }
 
@@ -109,7 +108,7 @@ export class PolicyRuntime extends EventEmitter {
 
     this.policy = validated;
 
-    logger.info("PolicyRuntime updated", {
+    this.logger?.info?.("PolicyRuntime updated", {
       version: previousVersion,
       inventoryInterval: validated.inventory?.intervalSeconds,
       plugins: validated.plugins?.enabled
@@ -121,14 +120,36 @@ export class PolicyRuntime extends EventEmitter {
     // notify specialized listeners
     this.emit("inventoryIntervalChanged", this.getInventoryInterval());
     this.emit("pluginsChanged", this.getEnabledPlugins());
+    this.emit("modulesChanged", this.listEnabledModules());
+    this.emit("featuresChanged", this.policy.features);
   }
 
   // ---------- validation ----------
 
   private validatePolicy(policy: any): RuntimePolicy {
+    if (typeof policy !== "object" || policy === null) {
+      return JSON.parse(JSON.stringify(DEFAULT_POLICY));
+    }
+
     const validated: RuntimePolicy = {
       ...DEFAULT_POLICY,
-      ...policy
+      ...policy,
+      inventory: {
+        ...DEFAULT_POLICY.inventory,
+        ...policy.inventory
+      },
+      plugins: {
+        ...DEFAULT_POLICY.plugins,
+        ...policy.plugins
+      },
+      modules: {
+        ...DEFAULT_POLICY.modules,
+        ...policy.modules
+      },
+      features: {
+        ...DEFAULT_POLICY.features,
+        ...policy.features
+      }
     };
 
     // validate inventory
@@ -136,7 +157,7 @@ export class PolicyRuntime extends EventEmitter {
       validated.inventory?.intervalSeconds &&
       (validated.inventory.intervalSeconds < 60 || validated.inventory.intervalSeconds > 86400)
     ) {
-      logger.warn("Invalid inventory interval in policy, reverting to default");
+      this.logger?.warn?.("Invalid inventory interval in policy, reverting to default");
       validated.inventory!.intervalSeconds = DEFAULT_POLICY.inventory!.intervalSeconds;
     }
 

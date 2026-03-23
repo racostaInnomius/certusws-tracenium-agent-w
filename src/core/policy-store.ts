@@ -41,6 +41,15 @@ export class PolicyStore {
       const raw = await fs.promises.readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw);
 
+      if (
+        !parsed ||
+        typeof parsed !== "object" ||
+        !parsed.policyVersion ||
+        !parsed.policy
+      ) {
+        throw new Error("invalid_policy_structure");
+      }
+
       this.current = parsed;
     } catch (err) {
       console.warn("PolicyStore load failed, ignoring corrupted policy", err);
@@ -74,14 +83,26 @@ export class PolicyStore {
 
     const tmp = this.filePath + ".tmp";
 
-    await fs.promises.writeFile(tmp, JSON.stringify(record, null, 2), "utf8");
-    await fs.promises.rename(tmp, this.filePath);
+    try {
+      await fs.promises.writeFile(
+        tmp,
+        JSON.stringify(record, null, 2),
+        { encoding: "utf8", mode: 0o600 }
+      );
 
-    this.current = record;
+      await fs.promises.rename(tmp, this.filePath);
+
+      this.current = record;
+
+    } catch (err) {
+      try { await fs.promises.unlink(tmp); } catch {}
+      throw err;
+    }
   }
 
   static computeHash(policyJson: any): string {
-    const buf = Buffer.from(JSON.stringify(policyJson));
+    const stable = JSON.stringify(policyJson, Object.keys(policyJson).sort());
+    const buf = Buffer.from(stable);
 
     return crypto
       .createHash("sha256")

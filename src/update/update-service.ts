@@ -6,7 +6,7 @@ import crypto from "crypto";
 import http from "http";
 import https from "https";
 
-import type { AgentContext } from "../../core/agent-context";
+import type { AgentContext } from "../core/agent-context";
 import type {
   AgentMetadataResponse,
   AgentDownloadResponse,
@@ -322,7 +322,7 @@ export async function downloadWindowsMsi(
   latestVersion: string,
   expectedHash?: string
 ): Promise<DownloadedUpdateInfo> {
-  const dl = await fetchWindowsMsiDownloadUrl(ctx, "latest");
+  const dl = await fetchWindowsMsiDownloadUrl(ctx, latestVersion);
 
   if (!dl?.downloadUrl) {
     throw new Error("update_download_url_missing");

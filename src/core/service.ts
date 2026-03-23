@@ -4,9 +4,10 @@ import { scheduler } from "./scheduler";
 import { logger } from "../bootstrap/logger";
 import { startGrpcStream } from "../transport/grpc-stream";
 import { outbox } from "../queue/sqlite-outbox";
+import type { AgentContext } from "./agent-context";
 
 let shuttingDown = false;
-let currentCtx: any = null;
+let currentCtx: AgentContext | null = null;
 let cleanupTimer: NodeJS.Timeout | undefined;
 
 export async function startService() {
@@ -15,24 +16,25 @@ export async function startService() {
 
     const ctx = await bootstrapContext();
     currentCtx = ctx;
+    const log = ctx.logger;
     // DEBUG: observe raw IPC messages from PrivSvc
     try {
       if (ctx.priv?.on) {
         ctx.priv.on("debug", (d: any) => {
-          logger.info("[PrivSvc DEBUG]", d);
+          log.info("[PrivSvc DEBUG]", d);
         });
       }
     } catch (e: any) {
-      logger.warn("Failed to attach PrivSvc debug listener", e?.message || e);
+      log.warn("Failed to attach PrivSvc debug listener", e?.message || e);
     }
     // initialize persistent outbox (recover events from previous runs)
     try {
       outbox.recoverStaleInflight(600); // 10 minutes
-      logger.info("Outbox recovery completed");
+      log.info("Outbox recovery completed");
     } catch (e: any) {
-      logger.warn("Outbox recovery failed", e?.message || e);
+      log.warn("Outbox recovery failed", e?.message || e);
     }
-    logger.info("Enrolled", {
+    log.info("Enrolled", {
       tenantId: ctx.enrollment.tenantId,
       deviceId: ctx.enrollment.deviceId
     });
@@ -40,16 +42,16 @@ export async function startService() {
     try {
       const snapshot = ctx.policyRuntime?.snapshot?.();
       if (snapshot) {
-        logger.info("Active runtime policy", snapshot);
+        log.info("Active runtime policy", snapshot);
       }
     } catch (e: any) {
-      logger.warn("Failed to read policy runtime snapshot", e?.message || e);
+      log.warn("Failed to read policy runtime snapshot", e?.message || e);
     }
     
     // Ping PrivSvc (best-effort)
     if (ctx.priv) {
       try {
-        const resp: any = await Promise.race([
+        const resp = (await Promise.race([
           ctx.priv.call({
             v: 1,
             id: `ping_${Date.now()}`,
@@ -58,20 +60,22 @@ export async function startService() {
             meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
           }),
           new Promise((_, reject) => setTimeout(() => reject(new Error("PrivSvc ping timeout")), 3000))
-        ]);
+        ])) as any;
 
         if (resp.ok) {
-          logger.info("PrivSvc ping OK:", resp.result);
+          log.info("PrivSvc ping OK:", resp.result);
         } else {
-          logger.warn("PrivSvc ping FAIL:", resp.error);
+          log.warn("PrivSvc ping FAIL:", resp.error);
         }
       } catch (e: any) {
-        logger.warn("PrivSvc not reachable (expected if not installed yet):", e?.message || e);
+        log.warn("PrivSvc not reachable (expected if not installed yet):", e?.message || e);
       }
     }
 
     // start control-plane stream
-    startGrpcStream(ctx);
+    Promise.resolve(startGrpcStream(ctx)).catch((e: any) => {
+      log.error("gRPC stream failed to start", e?.message || e);
+    });
 
     // start task scheduler (policy-driven)
     await scheduler.start(ctx);
@@ -81,11 +85,11 @@ export async function startService() {
       try {
         outbox.cleanup(14);
       } catch (e: any) {
-        logger.warn("Outbox cleanup failed", e?.message || e);
+        log.warn("Outbox cleanup failed", e?.message || e);
       }
     }, 12 * 60 * 60 * 1000); // every 12h
 
-    logger.info("Agent Core started.");
+    log.info("Agent Core started.");
   } catch (err: any) {
     logger.error("Fatal startup error:", err?.message || err);
     process.exit(1);
@@ -97,14 +101,16 @@ process.on("SIGTERM", async () => {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  logger.warn("Shutdown signal received...");
+  const log = currentCtx?.logger || logger;
+
+  log.warn("Shutdown signal received...");
 
   try {
     if (cleanupTimer) {
       clearInterval(cleanupTimer);
     }
 
-    if (typeof (scheduler as any).stop === "function") {
+    if (currentCtx && typeof (scheduler as any).stop === "function") {
       await (scheduler as any).stop(currentCtx);
     }
 
@@ -112,7 +118,7 @@ process.on("SIGTERM", async () => {
       currentCtx.priv.close();
     }
   } catch (e: any) {
-    logger.error("Shutdown error", e?.message || e);
+    log.error("Shutdown error", e?.message || e);
   }
 
   process.exit(0);

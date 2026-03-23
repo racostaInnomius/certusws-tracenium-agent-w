@@ -42,7 +42,7 @@ export async function runUpdateTask(
   const force = opts?.force === true;
   const intervalMs = opts?.intervalMs ?? 6 * 60 * 60 * 1000;
 
-  if (process.platform !== "win32") {
+  if (ctx.agent?.platform !== "windows" && process.platform !== "win32") {
     logger?.info?.("[update] skipping auto-update: only windows supported currently");
     return;
   }
@@ -62,7 +62,7 @@ export async function runUpdateTask(
     lastCheckedAtUtc: new Date().toISOString()
   });
 
-  const currentVersion = String(ctx.config.agentVersion || "").trim();
+  const currentVersion = String(ctx.agent?.version || "").trim();
   if (!currentVersion) {
     logger?.warn?.("[update] missing current agentVersion");
     return;
@@ -83,7 +83,25 @@ export async function runUpdateTask(
       return;
     }
 
+    if (!result.available) {
+      logger?.info?.("[update] no update available", {
+        currentVersion,
+        latestVersion: result.latestVersion,
+        reason: result.reason
+      });
+      return;
+    }
+
     const expectedHash = result.metadata.files.msi.hash;
+
+    if (!expectedHash) {
+      logger?.warn?.("[update] missing expected hash, skipping update");
+      return;
+    }
+
+    updateUpdateState({
+      updateInProgress: true
+    });
 
     const run = await performWindowsMsiUpdate(
       ctx,

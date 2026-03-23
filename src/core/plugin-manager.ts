@@ -1,5 +1,4 @@
 // src/core/plugin-manager.ts
-import { logger } from "../bootstrap/logger";
 import type { AgentContext } from "./agent-context";
 
 export type PluginTask = (ctx: AgentContext, params?: any) => Promise<any>;
@@ -17,12 +16,12 @@ export class PluginManager {
   async init(ctx: AgentContext) {
     this.ctx = ctx;
 
-    logger.info("PluginManager initializing...");
+    ctx.logger?.info?.("PluginManager initializing...");
 
     // register built‑in plugins
     await this.registerBuiltinPlugins();
 
-    logger.info("PluginManager ready", {
+    ctx.logger?.info?.("PluginManager ready", {
       plugins: Array.from(this.plugins.keys())
     });
   }
@@ -34,12 +33,12 @@ export class PluginManager {
   register(plugin: PluginDefinition) {
 
     if (this.plugins.has(plugin.name)) {
-      logger.warn("Plugin already registered, overriding", { plugin: plugin.name });
+      this.ctx?.logger?.warn?.("Plugin already registered, overriding", { plugin: plugin.name });
     }
 
     this.plugins.set(plugin.name, plugin);
 
-    logger.info("Plugin registered", {
+    this.ctx?.logger?.info?.("Plugin registered", {
       plugin: plugin.name,
       tasks: Object.keys(plugin.tasks)
     });
@@ -58,7 +57,7 @@ export class PluginManager {
       });
 
     } catch (err: any) {
-      logger.error("Failed to register AMM plugin", err?.message || err);
+      this.ctx?.logger?.error?.("Failed to register AMM plugin", err?.message || err);
     }
   }
 
@@ -74,14 +73,22 @@ export class PluginManager {
 
     const [pluginName, taskName] = taskPath.split(".");
 
+    if (!pluginName || !taskName) {
+      throw new Error(`Invalid taskPath: ${taskPath}`);
+    }
+
     const plugin = this.plugins.get(pluginName);
 
     if (!plugin) {
       throw new Error(`Plugin not found: ${pluginName}`);
     }
 
+    if (!plugin.tasks || typeof plugin.tasks !== "object") {
+      throw new Error(`Invalid plugin definition: ${pluginName}`);
+    }
+
     if (!this.ctx.policyRuntime.pluginEnabled(pluginName)) {
-      logger.info("Plugin disabled by policy", { plugin: pluginName });
+      this.ctx?.logger?.info?.("Plugin disabled by policy", { plugin: pluginName });
       return null;
     }
 
@@ -93,7 +100,7 @@ export class PluginManager {
 
     try {
 
-      logger.info("Executing plugin task", {
+      this.ctx?.logger?.info?.("Executing plugin task", {
         plugin: pluginName,
         task: taskName
       });
@@ -102,7 +109,7 @@ export class PluginManager {
 
     } catch (err: any) {
 
-      logger.error("Plugin task failed", {
+      this.ctx?.logger?.error?.("Plugin task failed", {
         plugin: pluginName,
         task: taskName,
         error: err?.message || err
@@ -130,5 +137,3 @@ export class PluginManager {
   }
 
 }
-
-export const pluginManager = new PluginManager();

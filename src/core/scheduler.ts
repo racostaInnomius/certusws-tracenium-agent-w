@@ -25,15 +25,43 @@ class Scheduler {
 
     this.startPipelines(ctx);
 
-    // listen for policy changes
+    // --- dynamic policy bindings ---
     ctx.policyRuntime.on("inventoryIntervalChanged", (interval: number) => {
-      logger.info("Inventory interval changed by policy", { interval });
-      this.reload();
+      logger.info("[scheduler] inventory interval updated", { interval });
+
+      const existing = this.timers.get("inventory");
+      if (existing) {
+        clearInterval(existing);
+        this.timers.delete("inventory");
+      }
+
+      if (ctx.policyRuntime.pluginEnabled("amm")) {
+        const jitter = Math.floor(Math.random() * 30000);
+
+        const timer = setInterval(() => {
+          logger.info("[scheduler] inventory tick");
+          this.runInventory(ctx).catch(err =>
+            logger.error("Inventory error", { err })
+          );
+        }, interval * 1000 + jitter);
+
+        this.timers.set("inventory", timer);
+      }
     });
 
     ctx.policyRuntime.on("pluginsChanged", (plugins: string[]) => {
-      logger.info("Plugin configuration changed", { plugins });
-      this.reload();
+      logger.info("[scheduler] plugins updated", { plugins });
+
+      // rebuild pipelines safely
+      this.startPipelines(ctx);
+    });
+
+    ctx.policyRuntime.on("modulesChanged", (modules: string[]) => {
+      logger.info("[scheduler] modules updated", { modules });
+    });
+
+    ctx.policyRuntime.on("featuresChanged", (features: any) => {
+      logger.info("[scheduler] features updated", { features });
     });
   }
 
@@ -53,6 +81,7 @@ class Scheduler {
       });
 
       const timer = setInterval(() => {
+        logger.info("[scheduler] inventory tick");
         this.runInventory(ctx).catch(err =>
           logger.error("Inventory error", { err })
         );
@@ -65,14 +94,22 @@ class Scheduler {
     if (ctx.policyRuntime.pluginEnabled("update")) {
 
       const intervalSeconds = 6 * 60 * 60; // 6h default
+      const jitter = Math.floor(Math.random() * 30000);
 
       logger.info("Update pipeline enabled", { intervalSeconds });
 
       const timer = setInterval(() => {
+        logger.info("[scheduler] update tick");
         this.runUpdate(ctx).catch(err =>
           logger.error("Update pipeline error", { err })
         );
-      }, intervalSeconds * 1000);
+      }, intervalSeconds * 1000 + jitter);
+
+      setTimeout(() => {
+        this.runUpdate(ctx).catch(err =>
+          logger.error("Update pipeline initial run error", { err })
+        );
+      }, Math.floor(Math.random() * 30000));
 
       this.timers.set("update", timer);
     }
