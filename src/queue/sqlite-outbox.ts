@@ -93,7 +93,8 @@ export class SqliteOutbox {
     fs.mkdirSync(dir, { recursive: true });
 
     this.db = new Database(dbPath);
-    console.log("[outbox] initialized", { dbPath: this.dbPath, lockOwner: this.lockOwner });
+    console.log("[outbox] initialized");
+    //console.log("[outbox] initialized", { dbPath: this.dbPath, lockOwner: this.lockOwner });
     this.initialize();
   }
 

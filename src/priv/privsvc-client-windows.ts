@@ -100,7 +100,7 @@ export class PrivSvcClient extends EventEmitter {
 
   private onData(data: Buffer | string) {
     const chunk = typeof data === "string" ? data : data.toString("utf8");
-    this.emit("debug", { stage: "raw_chunk", chunk });
+    this.emit("debug", { stage: "raw_chunk" });
     this.buffer += chunk;
     // Safety: prevent unbounded memory growth on malformed streams
     if (this.buffer.length > MAX_BUFFER_CHARS) {
@@ -120,19 +120,21 @@ export class PrivSvcClient extends EventEmitter {
       let msg: any;
       try {
         msg = JSON.parse(txt);
-        this.emit("debug", { stage: "parsed", msg });
+        this.emit("debug", { stage: "parsed" });
+        //this.emit("debug", { stage: "parsed", msg });
       } catch {
         this.emit("debug", { stage: "parse_error", raw: txt });
         continue;
       }
 
       this.emit("debug", {
-        stage: "dispatch",
-        id: msg?.id,
-        method: msg?.method,
-        hasOk: Object.prototype.hasOwnProperty.call(msg, "ok"),
-        hasError: Object.prototype.hasOwnProperty.call(msg, "error"),
-        pendingSize: this.pending.size,
+        stage: "dispatch"
+
+        //id: msg?.id,
+        //method: msg?.method,
+        //hasOk: Object.prototype.hasOwnProperty.call(msg, "ok"),
+        //hasError: Object.prototype.hasOwnProperty.call(msg, "error"),
+        //pendingSize: this.pending.size,
       });
 
       // Response path: has id + ok/error shape

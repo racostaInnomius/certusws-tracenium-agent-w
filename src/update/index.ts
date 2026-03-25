@@ -1,4 +1,4 @@
-// src/modules/update/index.ts
+// src/update/index.ts
 
 export * from "./update-types";
 export * from "./update-state";

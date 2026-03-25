@@ -1,4 +1,3 @@
-// privsvc/windows/Tracenium.PrivSvc.Windows/Worker.cs
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Tracenium.PrivSvc.Windows.Ipc;
@@ -19,26 +18,30 @@ public sealed class Worker : BackgroundService
             logger: logger);
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("TraceniumPrivSvc starting...");
 
-        try
+        _ = Task.Run(async () =>
         {
-            await _pipeServer.RunAsync(stoppingToken);
-        }
-        catch (OperationCanceledException)
-        {
-            // normal on stop
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "PrivSvc crashed.");
-            throw;
-        }
-        finally
-        {
-            _logger.LogInformation("TraceniumPrivSvc stopped.");
-        }
+            try
+            {
+                await _pipeServer.RunAsync(stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                // normal on stop
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "PrivSvc crashed.");
+            }
+            finally
+            {
+                _logger.LogInformation("TraceniumPrivSvc stopped.");
+            }
+        }, stoppingToken);
+
+        return Task.CompletedTask;
     }
 }

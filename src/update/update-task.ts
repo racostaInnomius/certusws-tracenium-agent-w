@@ -1,4 +1,4 @@
-// src/modules/update/update-task.ts
+// src/update/update-task.ts
 
 import type { AgentContext } from "../core/agent-context";
 import { loadUpdateState, updateUpdateState } from "./update-state";
@@ -50,8 +50,13 @@ export async function runUpdateTask(
   const state = loadUpdateState();
 
   if (state.updateInProgress) {
-    logger?.warn?.("[update] update already in progress, skipping");
-    return;
+    const lastAttempt = parseUtcMs(state.lastAttemptedAtUtc);
+    if (nowMs() - lastAttempt < 10 * 60 * 1000) {
+      logger?.warn?.("[update] update already in progress, skipping");
+      return;
+    }
+
+    logger?.warn?.("[update] stale updateInProgress detected, recovering");
   }
 
   if (!force && !shouldCheckNow(intervalMs)) {
@@ -63,13 +68,20 @@ export async function runUpdateTask(
   });
 
   const currentVersion = String(ctx.agent?.version || "").trim();
-  if (!currentVersion) {
+  logger?.info?.("[update] current agent version", { currentVersion });
+  if (!currentVersion || currentVersion === "undefined" || currentVersion === "null") {
     logger?.warn?.("[update] missing current agentVersion");
     return;
   }
 
   try {
+    logger?.info?.("[update] starting metadata fetch", {
+      currentVersion,
+      platform: ctx.agent?.platform || process.platform,
+      force
+    });
     const metadata = await fetchAgentMetadata(ctx);
+    logger?.info?.("[update] metadata raw", metadata);
     const result = checkForAvailableUpdate(currentVersion, metadata);
 
     logger?.info?.("[update] metadata evaluated", {
@@ -79,16 +91,17 @@ export async function runUpdateTask(
       reason: result.reason
     });
 
-    if (!result.available || !result.metadata?.files?.msi) {
-      return;
-    }
-
     if (!result.available) {
       logger?.info?.("[update] no update available", {
         currentVersion,
         latestVersion: result.latestVersion,
         reason: result.reason
       });
+      return;
+    }
+
+    if (!result.metadata?.files?.msi) {
+      logger?.warn?.("[update] missing msi metadata");
       return;
     }
 
@@ -114,6 +127,11 @@ export async function runUpdateTask(
       command: run.command,
       args: run.args
     });
+
+    // clear updateInProgress after launching MSI (fire-and-forget installer)
+    updateUpdateState({
+      updateInProgress: false
+    });
   } catch (err: any) {
     updateUpdateState({
       updateInProgress: false,
@@ -121,7 +139,8 @@ export async function runUpdateTask(
     });
 
     logger?.error?.("[update] update task failed", {
-      error: err?.message || String(err)
+      error: err?.message || String(err),
+      stack: err?.stack
     });
   }
 }

@@ -1,4 +1,4 @@
-// src/modules/update/update-types.ts
+// src/update/update-types.ts
 
 export type AgentBinaryPlatform = "windows" | "macos" | "linux";
 export type AgentBinaryFormat = "msi" | "exe";

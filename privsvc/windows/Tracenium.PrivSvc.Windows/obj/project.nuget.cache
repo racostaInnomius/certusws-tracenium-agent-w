@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "sooT2mrQ7Ws=",
+  "dgSpecHash": "rBQfS3zLzxo=",
   "success": true,
   "projectFilePath": "/Users/javierpacheco/DevProjects/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj",
   "expectedPackageFiles": [
@@ -44,7 +44,9 @@
     "/Users/javierpacheco/.nuget/packages/system.text.encodings.web/8.0.0/system.text.encodings.web.8.0.0.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/system.text.json/8.0.0/system.text.json.8.0.0.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/microsoft.netcore.app.ref/8.0.24/microsoft.netcore.app.ref.8.0.24.nupkg.sha512",
+    "/Users/javierpacheco/.nuget/packages/microsoft.netcore.app.runtime.win-x64/8.0.24/microsoft.netcore.app.runtime.win-x64.8.0.24.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/microsoft.aspnetcore.app.ref/8.0.24/microsoft.aspnetcore.app.ref.8.0.24.nupkg.sha512",
+    "/Users/javierpacheco/.nuget/packages/microsoft.aspnetcore.app.runtime.win-x64/8.0.24/microsoft.aspnetcore.app.runtime.win-x64.8.0.24.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/microsoft.netcore.app.host.win-x64/8.0.24/microsoft.netcore.app.host.win-x64.8.0.24.nupkg.sha512"
   ],
   "logs": []

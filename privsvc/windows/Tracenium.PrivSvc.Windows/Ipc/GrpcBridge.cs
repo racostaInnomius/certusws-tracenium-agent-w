@@ -7,6 +7,7 @@ using System.Security.Authentication;
 using System.IO;
 using System.Diagnostics;
 using System.Text;
+using System.Linq;
 using Grpc.Net.Client;
 using Grpc.Core;
 using Tracenium.Control; // namespace generado por proto
@@ -53,26 +54,59 @@ public sealed class GrpcBridge : IDisposable
 
 private BridgeState _state = BridgeState.Disconnected;
 
-    private static readonly string _logPath =
+    private static readonly string _logDir =
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "Tracenium",
             "PrivSvc",
-            "logs",
-            "grpcbridge.log");
+            "logs");
+
+    private static string GetDailyLogPath()
+    {
+        var fileName = $"grpcbridge-{DateTime.UtcNow:yyyyMMdd}.log";
+        return Path.Combine(_logDir, fileName);
+    }
+
+    private static void CleanupOldLogs()
+    {
+        try
+        {
+            if (!Directory.Exists(_logDir))
+                return;
+
+            var files = Directory.GetFiles(_logDir, "grpcbridge-*.log")
+                .Select(f => new FileInfo(f))
+                .OrderByDescending(f => f.CreationTimeUtc)
+                .ToList();
+
+            // Keep only last 5 files
+            foreach (var file in files.Skip(5))
+            {
+                try { file.Delete(); } catch { }
+            }
+        }
+        catch
+        {
+            // never break logging
+        }
+    }
 
     private static void Log(string message)
     {
         try
         {
-            var dir = Path.GetDirectoryName(_logPath);
+            var dir = _logDir;
             if (!string.IsNullOrWhiteSpace(dir) && !Directory.Exists(dir))
             {
                 Directory.CreateDirectory(dir);
             }
 
+            CleanupOldLogs();
+
+            var logPath = GetDailyLogPath();
+
             var line = $"[{DateTime.UtcNow:O}] {message}{Environment.NewLine}";
-            File.AppendAllText(_logPath, line);
+            File.AppendAllText(logPath, line);
         }
         catch
         {

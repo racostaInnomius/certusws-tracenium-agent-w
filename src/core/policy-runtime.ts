@@ -11,7 +11,7 @@ export type RuntimePolicy = {
     enabled?: string[];
   };
   modules?: {
-    amm?: boolean;
+    update?: boolean;
     patch?: boolean;
     compliance?: boolean;
   };
@@ -30,14 +30,14 @@ const DEFAULT_POLICY: RuntimePolicy = {
     enabled: ["amm"]
   },
   modules: {
-    amm: true,
+    update: true,
     patch: false,
     compliance: false
   },
   features: {
     realtimeInventory: false,
     remoteShell: false,
-    selfUpdate: false
+    selfUpdate: true
   }
 };
 

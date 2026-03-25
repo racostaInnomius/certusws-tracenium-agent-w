@@ -1,3 +1,4 @@
+// privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/NamedPipeServer.cs
 using System.IO.Pipes;
 using System.Security.AccessControl;
 using System.Security.Principal;

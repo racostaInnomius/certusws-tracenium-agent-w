@@ -67,6 +67,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
   let connectPromise: Promise<void> | null = null;
   let ended = false;
   let localClose = false;
+  let agentUpdateInProgress = false;
 
   // serialize IPC writes to PrivSvc to avoid concurrent pipe writes
   let writeChain: Promise<void> = Promise.resolve();
@@ -165,16 +166,27 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       if (method === "grpc.control.agentUpdate") {
         stream.emit("data", { agentUpdate: params });
 
+        if (agentUpdateInProgress) {
+          ctx.logger?.warn("[grpc-client] agentUpdate ignored: update already in progress");
+          return;
+        }
+
+        agentUpdateInProgress = true;
+
         // trigger update task asynchronously (do not block push handler)
         setImmediate(() => {
           runUpdateTask(ctx, {
             force: true,
             logger: ctx.logger || logger
-          }).catch((err: any) => {
-            ctx.logger?.error("[grpc-client] agentUpdate execution failed", {
-              err: err?.message || err
+          })
+            .catch((err: any) => {
+              ctx.logger?.error("[grpc-client] agentUpdate execution failed", {
+                err: err?.message || err
+              });
+            })
+            .finally(() => {
+              agentUpdateInProgress = false;
             });
-          });
         });
 
         return;
@@ -458,6 +470,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
     localClose = true;
     connected = false;
     connectPromise = null;
+    agentUpdateInProgress = false;
 
     (ctx.priv as any)
       .call({

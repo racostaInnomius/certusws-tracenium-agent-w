@@ -91,13 +91,20 @@ class Scheduler {
     }
 
     // update pipeline
-    if (ctx.policyRuntime.pluginEnabled("update")) {
-
+    const featureEnabled = (ctx.policyRuntime as any)?.isFeatureEnabled?.("selfUpdate") ?? false;
+    const moduleEnabled = (ctx.policyRuntime as any)?.isModuleEnabled?.("update") ?? false;
+    if (featureEnabled || moduleEnabled) {
       const intervalSeconds = 6 * 60 * 60; // 6h default
       const jitter = Math.floor(Math.random() * 30000);
 
       logger.info("Update pipeline enabled", { intervalSeconds });
 
+      // immediate run (no jitter for first execution)
+      this.runUpdate(ctx).catch(err =>
+        logger.error("Update pipeline initial run error", { err })
+      );
+
+      // scheduled runs with jitter
       const timer = setInterval(() => {
         logger.info("[scheduler] update tick");
         this.runUpdate(ctx).catch(err =>
@@ -105,17 +112,11 @@ class Scheduler {
         );
       }, intervalSeconds * 1000 + jitter);
 
-      setTimeout(() => {
-        this.runUpdate(ctx).catch(err =>
-          logger.error("Update pipeline initial run error", { err })
-        );
-      }, Math.floor(Math.random() * 30000));
-
       this.timers.set("update", timer);
     }
 
     // compliance pipeline (future)
-    if (ctx.policyRuntime.pluginEnabled("compliance")) {
+    if (ctx.policyRuntime.pluginEnabled("scm")) {
 
       const intervalSeconds = 4 * 60 * 60; // 4h default
 
@@ -129,7 +130,7 @@ class Scheduler {
     }
 
     // patch pipeline (future)
-    if (ctx.policyRuntime.pluginEnabled("patch")) {
+    if (ctx.policyRuntime.pluginEnabled("pmm")) {
 
       const intervalSeconds = 24 * 60 * 60; // 24h default
 
@@ -177,10 +178,10 @@ class Scheduler {
 
     try {
 
-      logger.info("Collecting AMM facts...", {
-        deviceId: ctx.enrollment.deviceId,
-        policyVersion: (ctx.policyRuntime as any).getPolicyVersion?.()
-      });
+      logger.info("Collecting AMM facts...")
+        //deviceId: ctx.enrollment.deviceId,
+        //policyVersion: (ctx.policyRuntime as any).getPolicyVersion?.()
+      //});
 
       const namespaces = {} as Namespaces;
 
@@ -260,8 +261,12 @@ class Scheduler {
 
   private async runUpdate(ctx: AgentContext) {
 
-    if (!ctx.policyRuntime.pluginEnabled("update")) {
-      logger.info("Update plugin disabled by policy, skipping update check");
+    const featureEnabled = (ctx.policyRuntime as any)?.isFeatureEnabled?.("selfUpdate") ?? false;
+    const moduleEnabled = (ctx.policyRuntime as any)?.isModuleEnabled?.("update") ?? false;
+    const updateEnabled = featureEnabled || moduleEnabled;
+
+    if (!updateEnabled) {
+      logger.info("Update disabled by policy, skipping update check");
       return;
     }
 
@@ -279,7 +284,8 @@ class Scheduler {
       });
 
       await runUpdateTask(ctx, {
-        logger
+        logger,
+        force: true
       });
 
     } catch (err) {

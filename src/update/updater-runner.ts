@@ -1,4 +1,4 @@
-// src/modules/update/updater-runner.ts
+// src/update/updater-runner.ts
 
 import { spawn } from "child_process";
 import type { RunUpdateResult } from "./update-types";

@@ -1,4 +1,4 @@
-// src/modules/update/update-service.ts
+// src/update/update-service.ts
 
 import fs from "fs";
 import path from "path";
@@ -71,14 +71,22 @@ function looksLikeSemver(v: string): boolean {
 function getApiBaseUrl(ctx: AgentContext): string {
   const url =
     (ctx.config as any)?.apiBaseUrl ||
+    (ctx.config as any)?.serverBaseUrl ||
     process.env.TRACENIUM_API_BASE_URL ||
-    process.env.API_BASE_URL;
+    process.env.API_BASE_URL ||
+    process.env.SERVER_BASE_URL;
 
   if (!url) {
+    console.error("[update] api base url missing", {
+      configKeys: Object.keys(ctx.config || {})
+    });
     throw new Error("update_api_base_url_missing");
   }
 
-  return String(url).replace(/\/+$/, "");
+  const normalized = String(url).replace(/\/+$/, "");
+  console.log("[update] resolved api base url", { normalized });
+
+  return normalized;
 }
 
 function getAuthToken(ctx: AgentContext): string | undefined {
@@ -101,6 +109,7 @@ function buildHeaders(ctx: AgentContext): Record<string, string> {
   };
 
   const token = getAuthToken(ctx);
+  console.log("[update] auth token present:", !!token);
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
@@ -120,40 +129,53 @@ function httpJson<T>(
     const url = new URL(urlString);
     const lib = url.protocol === "https:" ? https : http;
 
-    const req = lib.request(
-      url,
-      {
-        method: opts?.method || "GET",
-        headers: opts?.headers || {},
-        timeout: opts?.timeoutMs ?? 15000
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
+    const req = lib.request(url, {
+      method: opts?.method || "GET",
+      headers: opts?.headers || {}
+    }, (res) => {
+      const chunks: Buffer[] = [];
 
-        res.on("data", (d) => chunks.push(Buffer.from(d)));
-        res.on("end", () => {
-          const raw = Buffer.concat(chunks).toString("utf8");
+      res.on("data", (d) => chunks.push(Buffer.from(d)));
 
-          if ((res.statusCode || 500) >= 400) {
-            reject(
-              new Error(`http_${res.statusCode || 500}: ${raw || "request_failed"}`)
-            );
-            return;
-          }
+      res.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
 
-          try {
-            resolve(JSON.parse(raw) as T);
-          } catch (err) {
-            reject(new Error(`invalid_json_response: ${String(err)}`));
-          }
-        });
-      }
-    );
+        if ((res.statusCode || 500) >= 400) {
+          reject(new Error(`http_${res.statusCode || 500}: ${raw || "request_failed"}`));
+          return;
+        }
 
-    req.on("error", reject);
-    req.on("timeout", () => {
-      req.destroy(new Error("http_timeout"));
+        try {
+          resolve(JSON.parse(raw) as T);
+        } catch (err) {
+          reject(new Error(`invalid_json_response: ${String(err)}`));
+        }
+      });
+
+      res.on("error", (err) => {
+        reject(err);
+      });
+
+      res.on("aborted", () => {
+        reject(new Error("http_aborted"));
+      });
     });
+
+    // hard timeout (guaranteed)
+    const timeoutMs = opts?.timeoutMs ?? 15000;
+    const timeout = setTimeout(() => {
+      req.destroy(new Error("http_timeout"));
+    }, timeoutMs);
+
+    req.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+
+    req.on("close", () => {
+      clearTimeout(timeout);
+    });
+
     req.end();
   });
 }
@@ -225,10 +247,23 @@ export async function fetchAgentMetadata(
     platform
   )}`;
 
-  return httpJson<AgentMetadataResponse>(url, {
-    headers: buildHeaders(ctx),
+  console.log("[update] fetching metadata", { url });
+
+  const headers = buildHeaders(ctx);
+
+  // metadata endpoint does not require auth; remove Authorization header if present
+  delete headers.Authorization;
+
+  console.log("[update] metadata request headers", headers);
+
+  const metadata = await httpJson<AgentMetadataResponse>(url, {
+    headers,
     timeoutMs: 15000
   });
+
+  console.log("[update] metadata response", metadata);
+
+  return metadata;
 }
 
 export function checkForAvailableUpdate(

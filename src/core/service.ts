@@ -63,7 +63,8 @@ export async function startService() {
         ])) as any;
 
         if (resp.ok) {
-          log.info("PrivSvc ping OK:", resp.result);
+          log.info("PrivSvc ping OK:");
+          //log.info("PrivSvc ping OK:", resp.result);
         } else {
           log.warn("PrivSvc ping FAIL:", resp.error);
         }

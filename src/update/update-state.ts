@@ -1,4 +1,4 @@
-// src/modules/update/update-state.ts
+// src/update/update-state.ts
 
 import fs from "fs";
 import path from "path";
