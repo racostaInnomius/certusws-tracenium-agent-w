@@ -2,6 +2,7 @@
 
 export type AgentBinaryPlatform = "windows" | "macos" | "linux";
 export type AgentBinaryFormat = "msi" | "exe";
+export type AgentBinaryArch = "x64" | "arm64";
 
 export interface AgentBinaryFileMetadata {
   size: number;
@@ -13,8 +14,8 @@ export interface AgentMetadataResponse {
   minSupportedVersion?: string;
   forceUpdate?: boolean;
   files: {
-    exe?: AgentBinaryFileMetadata;
-    msi?: AgentBinaryFileMetadata;
+    exe?: Record<AgentBinaryArch, AgentBinaryFileMetadata>;
+    msi?: Record<AgentBinaryArch, AgentBinaryFileMetadata>;
   };
 }
 

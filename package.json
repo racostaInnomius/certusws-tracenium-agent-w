@@ -1,6 +1,6 @@
 {
   "name": "certusws-tracenium-agent",
-  "version": "1.0.80",
+  "version": "1.0.82",
   "description": "Tracenium Agent - Hardware & Software inventory collector",
   "license": "MIT",
   "author": {

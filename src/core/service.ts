@@ -42,7 +42,7 @@ export async function startService() {
     try {
       const snapshot = ctx.policyRuntime?.snapshot?.();
       if (snapshot) {
-        log.info("Active runtime policy", snapshot);
+        log.info("Active runtime policy - In Snapshot", snapshot);
       }
     } catch (e: any) {
       log.warn("Failed to read policy runtime snapshot", e?.message || e);

@@ -21,9 +21,9 @@ export class PluginManager {
     // register built‑in plugins
     await this.registerBuiltinPlugins();
 
-    ctx.logger?.info?.("PluginManager ready", {
-      plugins: Array.from(this.plugins.keys())
-    });
+    //ctx.logger?.info?.("PluginManager ready", {
+    //  plugins: Array.from(this.plugins.keys())
+    //});
   }
 
   // -----------------------------

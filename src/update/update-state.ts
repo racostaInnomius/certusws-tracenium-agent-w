@@ -11,6 +11,7 @@ export interface UpdateState {
   lastDownloadedSha256?: string;
   updateInProgress?: boolean;
   lastError?: string;
+  arch?: "x64" | "arm64";
 }
 
 function ensureDir(dir: string) {

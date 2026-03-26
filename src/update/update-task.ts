@@ -69,7 +69,12 @@ export async function runUpdateTask(
 
   const currentVersion = String(ctx.agent?.version || "").trim();
   logger?.info?.("[update] current agent version", { currentVersion });
-  if (!currentVersion || currentVersion === "undefined" || currentVersion === "null") {
+  if (
+    !currentVersion ||
+    currentVersion === "undefined" ||
+    currentVersion === "null" ||
+    !/^\d+\.\d+\.\d+/.test(currentVersion)
+  ) {
     logger?.warn?.("[update] missing current agentVersion");
     return;
   }
@@ -81,7 +86,7 @@ export async function runUpdateTask(
       force
     });
     const metadata = await fetchAgentMetadata(ctx);
-    logger?.info?.("[update] metadata raw", metadata);
+    //logger?.info?.("[update] metadata raw", metadata);
     const result = checkForAvailableUpdate(currentVersion, metadata);
 
     logger?.info?.("[update] metadata evaluated", {
@@ -100,12 +105,15 @@ export async function runUpdateTask(
       return;
     }
 
-    if (!result.metadata?.files?.msi) {
-      logger?.warn?.("[update] missing msi metadata");
+    const arch = process.arch === "arm64" ? "arm64" : "x64";
+    const fileMeta = result.metadata?.files?.msi?.[arch];
+
+    if (!fileMeta) {
+      logger?.warn?.("[update] no compatible binary for this arch", { arch });
       return;
     }
 
-    const expectedHash = result.metadata.files.msi.hash;
+    const expectedHash = fileMeta.hash;
 
     if (!expectedHash) {
       logger?.warn?.("[update] missing expected hash, skipping update");
@@ -128,10 +136,6 @@ export async function runUpdateTask(
       args: run.args
     });
 
-    // clear updateInProgress after launching MSI (fire-and-forget installer)
-    updateUpdateState({
-      updateInProgress: false
-    });
   } catch (err: any) {
     updateUpdateState({
       updateInProgress: false,

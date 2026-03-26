@@ -84,7 +84,7 @@ function getApiBaseUrl(ctx: AgentContext): string {
   }
 
   const normalized = String(url).replace(/\/+$/, "");
-  console.log("[update] resolved api base url", { normalized });
+  //console.log("[update] resolved api base url", { normalized });
 
   return normalized;
 }
@@ -103,13 +103,18 @@ function getPlatform(): "windows" | "macos" | "linux" {
   return "linux";
 }
 
+function getArch(): "x64" | "arm64" {
+  if (process.arch === "arm64") return "arm64";
+  return "x64";
+}
+
 function buildHeaders(ctx: AgentContext): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "application/json"
   };
 
   const token = getAuthToken(ctx);
-  console.log("[update] auth token present:", !!token);
+  //console.log("[update] auth token present:", !!token);
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
@@ -242,10 +247,11 @@ export async function fetchAgentMetadata(
 ): Promise<AgentMetadataResponse> {
   const base = getApiBaseUrl(ctx);
   const platform = getPlatform();
+  const arch = getArch();
 
   const url = `${base}/api/v1/binaries/agent/metadata?platform=${encodeURIComponent(
     platform
-  )}`;
+  )}&arch=${encodeURIComponent(arch)}`;
 
   console.log("[update] fetching metadata", { url });
 
@@ -254,14 +260,14 @@ export async function fetchAgentMetadata(
   // metadata endpoint does not require auth; remove Authorization header if present
   delete headers.Authorization;
 
-  console.log("[update] metadata request headers", headers);
+  //console.log("[update] metadata request headers", headers);
 
   const metadata = await httpJson<AgentMetadataResponse>(url, {
     headers,
     timeoutMs: 15000
   });
 
-  console.log("[update] metadata response", metadata);
+  //console.log("[update] metadata response", metadata);
 
   return metadata;
 }
@@ -282,7 +288,10 @@ export function checkForAvailableUpdate(
     };
   }
 
-  if (!metadata.files?.msi) {
+  const arch = getArch();
+  const msiForArch = metadata.files?.msi?.[arch];
+
+  if (!metadata.files?.msi || !msiForArch) {
     return {
       available: false,
       currentVersion,
@@ -337,14 +346,29 @@ export function checkForAvailableUpdate(
   };
 }
 
+export function getExpectedHashForArch(
+  metadata: AgentMetadataResponse
+): string | undefined {
+  const arch = getArch();
+  return metadata.files?.msi?.[arch]?.hash;
+}
+
 export async function fetchWindowsMsiDownloadUrl(
   ctx: AgentContext,
   version = "latest"
 ): Promise<AgentDownloadResponse> {
   const base = getApiBaseUrl(ctx);
+  const arch = getArch();
+
   const url =
     `${base}/api/v1/binaries/agent` +
-    `?platform=windows&format=msi&version=${encodeURIComponent(version)}`;
+    `?platform=windows&arch=${encodeURIComponent(arch)}&format=msi&version=${encodeURIComponent(version)}`;
+
+  console.log("[update] requesting download url", {
+    version,
+    arch,
+    platform: "windows"
+  });
 
   return httpJson<AgentDownloadResponse>(url, {
     headers: buildHeaders(ctx),
@@ -366,12 +390,17 @@ export async function downloadWindowsMsi(
   const dir = path.join(resolveBaseDir(), "updates");
   ensureDir(dir);
 
-  const fileName = `Tracenium-Agent-${latestVersion}.msi`;
+  const arch = getArch();
+  const fileName = `Tracenium-Agent-${latestVersion}-${arch}.msi`;
   const filePath = path.join(dir, fileName);
 
   const { size } = await downloadToFile(dl.downloadUrl, filePath);
 
   const sha256 = await sha256File(filePath);
+
+  if (!expectedHash) {
+    console.warn("[update] expected hash missing for arch", { arch });
+  }
 
   if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
     fs.rmSync(filePath, { force: true });
@@ -380,7 +409,8 @@ export async function downloadWindowsMsi(
 
   updateUpdateState({
     lastDownloadedPath: filePath,
-    lastDownloadedSha256: sha256
+    lastDownloadedSha256: sha256,
+    arch: getArch()
   });
 
   return {
@@ -403,7 +433,14 @@ export async function performWindowsMsiUpdate(
     updateInProgress: true,
     lastAttemptedVersion: latestVersion,
     lastAttemptedAtUtc: new Date().toISOString(),
-    lastError: undefined
+    lastError: undefined,
+    arch: getArch()
+  });
+
+  console.log("[update] executing msi", {
+    path: downloaded.filePath,
+    version: latestVersion,
+    arch: getArch()
   });
 
   return runWindowsMsiUpdate(downloaded.filePath);

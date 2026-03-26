@@ -314,7 +314,7 @@ export class SqliteOutbox {
   markSent(id: number) {
     const now = utcNow();
 
-    console.log("[outbox] markSent called", { id, dbPath: this.dbPath });
+    //console.log("[outbox] markSent called", { id, dbPath: this.dbPath });
 
     const res = this.db.prepare(`
       UPDATE outbox_events
@@ -326,13 +326,13 @@ export class SqliteOutbox {
       WHERE id=? AND status='IN_FLIGHT'
     `).run(now, id);
 
-    console.log("[outbox] markSent result", { id, changes: (res as any)?.changes });
+    //console.log("[outbox] markSent result", { id, changes: (res as any)?.changes });
 
     const row = this.db
       .prepare(`SELECT id, status, lock_owner, sent_at_utc FROM outbox_events WHERE id=?`)
       .get(id);
 
-    console.log("[outbox] row after markSent", row);
+    //console.log("[outbox] row after markSent", row);
 
     if ((res as any)?.changes === 0) {
       console.warn("markSent: no rows updated (unexpected state)", { id });
