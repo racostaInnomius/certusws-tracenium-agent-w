@@ -44,11 +44,13 @@ function sha256File(filePath: string): Promise<string> {
 }
 
 function compareSemver(a: string, b: string): number {
-  const parse = (v: string) =>
-    v.split(".").map((x) => {
-      const n = Number(x);
-      return Number.isFinite(n) ? n : 0;
-    });
+  const parse = (v: string): number[] =>
+    v
+      .split(".")
+      .map((x) => {
+        const n = Number(x);
+        return Number.isFinite(n) ? n : 0;
+      });
 
   const av = parse(a);
   const bv = parse(b);
@@ -57,8 +59,10 @@ function compareSemver(a: string, b: string): number {
   for (let i = 0; i < len; i += 1) {
     const ai = av[i] ?? 0;
     const bi = bv[i] ?? 0;
-    if (ai > bi) return 1;
-    if (ai < bi) return -1;
+
+    if (ai !== bi) {
+      return ai > bi ? 1 : -1;
+    }
   }
 
   return 0;
@@ -104,8 +108,21 @@ function getPlatform(): "windows" | "macos" | "linux" {
 }
 
 function getArch(): "x64" | "arm64" {
-  if (process.arch === "arm64") return "arm64";
-  return "x64";
+  const envArch = process.env.TRACENIUM_ARCH;
+  if (envArch === "arm64" || envArch === "x64") {
+    return envArch;
+  }
+
+  if (process.platform === "win32") {
+    const arch = process.env.PROCESSOR_ARCHITECTURE;
+    const wow64 = process.env.PROCESSOR_ARCHITEW6432;
+
+    if (arch === "ARM64" || wow64 === "ARM64") {
+      return "arm64";
+    }
+  }
+
+  return process.arch === "arm64" ? "arm64" : "x64";
 }
 
 function buildHeaders(ctx: AgentContext): Record<string, string> {
@@ -181,6 +198,10 @@ function httpJson<T>(
       clearTimeout(timeout);
     });
 
+    req.on("finish", () => {
+      clearTimeout(timeout);
+    });
+
     req.end();
   });
 }
@@ -247,25 +268,43 @@ export async function fetchAgentMetadata(
 ): Promise<AgentMetadataResponse> {
   const base = getApiBaseUrl(ctx);
   const platform = getPlatform();
-  const arch = getArch();
 
   const url = `${base}/api/v1/binaries/agent/metadata?platform=${encodeURIComponent(
     platform
-  )}&arch=${encodeURIComponent(arch)}`;
+  )}`;
 
   console.log("[update] fetching metadata", { url });
 
-  const headers = buildHeaders(ctx);
-
-  // metadata endpoint does not require auth; remove Authorization header if present
-  delete headers.Authorization;
+  const headers = { Accept: "application/json" };
 
   //console.log("[update] metadata request headers", headers);
 
-  const metadata = await httpJson<AgentMetadataResponse>(url, {
-    headers,
-    timeoutMs: 15000
-  });
+  let metadata: AgentMetadataResponse | null = null;
+  let lastError: any;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      metadata = await httpJson<AgentMetadataResponse>(url, {
+        headers,
+        timeoutMs: 15000
+      });
+      break;
+    } catch (err) {
+      lastError = err;
+      console.warn("[update] metadata fetch failed", {
+        attempt,
+        error: String(err)
+      });
+
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
+      }
+    }
+  }
+
+  if (!metadata) {
+    throw lastError || new Error("metadata_fetch_failed");
+  }
 
   //console.log("[update] metadata response", metadata);
 
@@ -279,19 +318,41 @@ export function checkForAvailableUpdate(
   const latestVersion = String(metadata.latestVersion || "").trim();
 
   if (!latestVersion || !looksLikeSemver(latestVersion)) {
+    console.warn("[update] invalid latestVersion from metadata", {
+      latestVersion
+    });
+
     return {
       available: false,
       currentVersion,
       latestVersion,
-      reason: "invalid_remote_version",
+      reason: "invalid_latest_version" as any,
       metadata
     };
   }
 
   const arch = getArch();
+
+  console.log("[update] evaluating metadata", {
+    currentVersion,
+    latestVersion,
+    arch,
+    hasMsi: !!metadata.files?.msi,
+    hasArch: !!metadata.files?.msi?.[arch]
+  });
+
+  if (!metadata.files?.msi) {
+    console.warn("[update] metadata has no msi section");
+  }
+
   const msiForArch = metadata.files?.msi?.[arch];
 
   if (!metadata.files?.msi || !msiForArch) {
+    console.warn("[update] no compatible binary found in metadata", {
+      arch,
+      availableArchs: Object.keys(metadata.files?.msi || {})
+    });
+
     return {
       available: false,
       currentVersion,

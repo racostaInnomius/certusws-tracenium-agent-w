@@ -78,9 +78,9 @@ message Disconnect {
 }
 
 message AgentUpdate {
-  string version = 1;
-  string downloadUrl = 2;
-  string checksum = 3;
+  string jobId = 1;
+  string version = 2;
+  bool force = 3;
 }
 
 message RequestFacts {

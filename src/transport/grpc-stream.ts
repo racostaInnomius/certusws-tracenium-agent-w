@@ -228,7 +228,40 @@ stream = client.Connect();
     }
 
     if (msg.agentUpdate) {
-      ctx.logger?.warn?.("gRPC control message: agentUpdate received", msg.agentUpdate);
+      const params = msg.agentUpdate;
+
+      ctx.logger?.info?.("gRPC control message: agentUpdate received", {
+        version: params?.version,
+        force: params?.force
+      });
+
+      // avoid concurrent updates
+      if ((ctx as any)._agentUpdateInProgress) {
+        ctx.logger?.warn?.("agentUpdate ignored: update already in progress");
+        return;
+      }
+
+      (ctx as any)._agentUpdateInProgress = true;
+
+      // lazy import to avoid circular deps
+      const { runUpdateTask } = require("../update/update-task");
+
+      setImmediate(() => {
+        runUpdateTask(ctx, {
+          force: params?.force === true,
+          targetVersion: params?.version || undefined,
+          logger: ctx.logger
+        })
+          .catch((err: any) => {
+            ctx.logger?.error?.("agentUpdate execution failed", {
+              err: err?.message || err
+            });
+          })
+          .finally(() => {
+            (ctx as any)._agentUpdateInProgress = false;
+          });
+      });
+
       return;
     }
 

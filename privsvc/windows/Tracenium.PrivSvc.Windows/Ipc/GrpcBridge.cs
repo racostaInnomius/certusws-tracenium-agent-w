@@ -991,15 +991,24 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
 
                 if (msg.AgentUpdate is not null)
                 {
+                    var version = msg.AgentUpdate.Version ?? string.Empty;
+                    var force = msg.AgentUpdate.Force;
+
+                    Log($"AgentUpdate received version={version} force={force}");
+
+                    if (string.IsNullOrWhiteSpace(version))
+                    {
+                        Log("AgentUpdate received without version (agent will resolve latest)");
+                    }
+
                     PushToAll(new
                     {
                         v = 1,
                         method = "grpc.control.agentUpdate",
                         @params = new
                         {
-                            version = msg.AgentUpdate.Version ?? string.Empty,
-                            downloadUrl = msg.AgentUpdate.DownloadUrl ?? string.Empty,
-                            checksum = msg.AgentUpdate.Checksum ?? string.Empty,
+                            version,
+                            force,
                             receivedAtUtc = DateTime.UtcNow.ToString("o")
                         }
                     });

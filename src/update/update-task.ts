@@ -36,10 +36,12 @@ export async function runUpdateTask(
       warn?: (...args: any[]) => void;
       error?: (...args: any[]) => void;
     };
+    targetVersion?: string;
   }
 ) {
   const logger = opts?.logger;
   const force = opts?.force === true;
+  const targetVersion = opts?.targetVersion ? String(opts.targetVersion).trim() : undefined;
   const intervalMs = opts?.intervalMs ?? 6 * 60 * 60 * 1000;
 
   if (ctx.agent?.platform !== "windows" && process.platform !== "win32") {
@@ -57,15 +59,12 @@ export async function runUpdateTask(
     }
 
     logger?.warn?.("[update] stale updateInProgress detected, recovering");
+    updateUpdateState({ updateInProgress: false });
   }
 
   if (!force && !shouldCheckNow(intervalMs)) {
     return;
   }
-
-  updateUpdateState({
-    lastCheckedAtUtc: new Date().toISOString()
-  });
 
   const currentVersion = String(ctx.agent?.version || "").trim();
   logger?.info?.("[update] current agent version", { currentVersion });
@@ -79,6 +78,7 @@ export async function runUpdateTask(
     return;
   }
 
+
   try {
     logger?.info?.("[update] starting metadata fetch", {
       currentVersion,
@@ -88,13 +88,31 @@ export async function runUpdateTask(
     const metadata = await fetchAgentMetadata(ctx);
     //logger?.info?.("[update] metadata raw", metadata);
     const result = checkForAvailableUpdate(currentVersion, metadata);
+    const effectiveVersion = targetVersion || result.latestVersion;
 
-    logger?.info?.("[update] metadata evaluated", {
-      currentVersion,
-      latestVersion: result.latestVersion,
-      available: result.available,
-      reason: result.reason
-    });
+    const latestVersion = result.latestVersion;
+
+    // idempotency guard: skip ONLY if we already attempted the CURRENT LATEST version
+    if (
+      state.lastAttemptedVersion &&
+      latestVersion &&
+      state.lastAttemptedVersion === latestVersion
+    ) {
+      logger?.info?.("[update] already attempted latest version, skipping", {
+        currentVersion,
+        latestVersion,
+        lastAttemptedVersion: state.lastAttemptedVersion
+      });
+      return;
+    }
+
+    logger?.info?.("[update] metadata evaluated" )
+    //{
+      //currentVersion,
+      //latestVersion: result.latestVersion,
+      //available: result.available,
+      //reason: result.reason
+    //});
 
     if (!result.available) {
       logger?.info?.("[update] no update available", {
@@ -105,7 +123,25 @@ export async function runUpdateTask(
       return;
     }
 
-    const arch = process.arch === "arm64" ? "arm64" : "x64";
+    function resolveArch(): "x64" | "arm64" {
+      const envArch = process.env.TRACENIUM_ARCH;
+      if (envArch === "arm64" || envArch === "x64") {
+        return envArch;
+      }
+
+      if (process.platform === "win32") {
+        const arch = process.env.PROCESSOR_ARCHITECTURE;
+        const wow64 = process.env.PROCESSOR_ARCHITEW6432;
+
+        if (arch === "ARM64" || wow64 === "ARM64") {
+          return "arm64";
+        }
+      }
+
+      return process.arch === "arm64" ? "arm64" : "x64";
+    }
+
+    const arch = resolveArch();
     const fileMeta = result.metadata?.files?.msi?.[arch];
 
     if (!fileMeta) {
@@ -121,17 +157,19 @@ export async function runUpdateTask(
     }
 
     updateUpdateState({
-      updateInProgress: true
+      updateInProgress: true,
+      lastAttemptedVersion: effectiveVersion,
+      lastAttemptedAtUtc: new Date().toISOString()
     });
 
     const run = await performWindowsMsiUpdate(
       ctx,
-      result.latestVersion,
+      effectiveVersion,
       expectedHash
     );
 
     logger?.warn?.("[update] msi update started", {
-      latestVersion: result.latestVersion,
+      latestVersion: effectiveVersion,
       command: run.command,
       args: run.args
     });
