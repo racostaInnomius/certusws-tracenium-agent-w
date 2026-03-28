@@ -172,41 +172,60 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
         const jobId = String(params?.jobId || "").trim();
 
+        const version = String(params?.version || "").trim();
+        const downloadUrl = String(params?.downloadUrl || "").trim();
+        const checksum = String(params?.checksum || "").trim();
+
         ctx.logger?.info("[grpc-client] agentUpdate received", {
           jobId,
-          version: params?.version,
-          force: params?.force
+          version,
+          hasUrl: !!downloadUrl,
+          hasChecksum: !!checksum
         });
+
+        // Validate required fields before proceeding
+        if (!version || !downloadUrl || !checksum) {
+          ctx.logger?.error("[grpc-client] invalid agentUpdate payload", {
+            jobId,
+            version,
+            hasUrl: !!downloadUrl,
+            hasChecksum: !!checksum
+          });
+          return;
+        }
 
         stream.emit("data", { agentUpdate: params });
 
         agentUpdateInProgress = true;
 
         setImmediate(async () => {
+          // Use jobId or fallback eventId for ACK
+          const eventId = jobId || `agentUpdate-${Date.now()}`;
           try {
             await runUpdateTask(ctx, {
-              force: params?.force === true,
-              targetVersion: params?.version || undefined,
+              targetVersion: version,
+              downloadUrl,
+              checksum,
               logger: ctx.logger || logger
             });
 
             // ACK success
-            if (jobId) {
+            if (eventId) {
               try {
                 await (ctx.priv as any).call({
                   v: 1,
-                  id: `ack-${jobId}`,
+                  id: `ack-${eventId}`,
                   method: "grpc.ack",
                   params: {
-                    eventId: jobId,
+                    eventId,
                     status: 0,
                     message: "update_completed"
                   }
                 });
-                ctx.logger?.info("[grpc-client] agentUpdate ACK sent (success)", { jobId });
+                ctx.logger?.info("[grpc-client] agentUpdate ACK sent (success)", { eventId });
               } catch (ackErr: any) {
                 ctx.logger?.error("[grpc-client] failed to send ACK (success)", {
-                  jobId,
+                  eventId,
                   err: ackErr?.message || ackErr
                 });
               }
@@ -215,22 +234,22 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
           } catch (err: any) {
 
             // ACK failure
-            if (jobId) {
+            if (eventId) {
               try {
                 await (ctx.priv as any).call({
                   v: 1,
-                  id: `ack-${jobId}`,
+                  id: `ack-${eventId}`,
                   method: "grpc.ack",
                   params: {
-                    eventId: jobId,
+                    eventId,
                     status: 2,
                     message: err?.message || "update_failed"
                   }
                 });
-                ctx.logger?.warn("[grpc-client] agentUpdate ACK sent (failure)", { jobId });
+                ctx.logger?.warn("[grpc-client] agentUpdate ACK sent (failure)", { eventId });
               } catch (ackErr: any) {
                 ctx.logger?.error("[grpc-client] failed to send ACK (failure)", {
-                  jobId,
+                  eventId,
                   err: ackErr?.message || ackErr
                 });
               }

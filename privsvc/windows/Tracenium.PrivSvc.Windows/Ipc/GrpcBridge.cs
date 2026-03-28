@@ -295,8 +295,12 @@ private BridgeState _state = BridgeState.Disconnected;
 
     // Subscribers (pipe writers) para push -> Node
 private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new();
-    // Last connection notification so it can be replayed to late subscribers
-    private object? _lastConnectionPush;
+// Last connection notification so it can be replayed to late subscribers
+private object? _lastConnectionPush;
+
+// Buffer for push events when no sinks are available
+private readonly ConcurrentQueue<object> _pendingPushEvents = new();
+private const int MaxPendingPushEvents = 50;
 
     private volatile bool _isConnected;
     public bool IsConnected
@@ -353,6 +357,20 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                 Log($"Push sink replay error {ex}");
             }
 
+            // Replay buffered events (e.g., runJob that arrived before Node was ready)
+            while (_pendingPushEvents.TryDequeue(out var pending))
+            {
+                try
+                {
+                    Log($"Replaying buffered event to sink sinkId={sinkId}");
+                    push(pending);
+                }
+                catch (Exception ex)
+                {
+                    Log($"Buffered push replay error {ex}");
+                    break; // stop replay if sink is failing
+                }
+            }
             return;
         }
 
@@ -384,6 +402,21 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
                 Log($"Push sink replay error {ex}");
             }
         }
+
+        // Replay buffered events (e.g., runJob that arrived before Node was ready)
+        while (_pendingPushEvents.TryDequeue(out var pending))
+        {
+            try
+            {
+                Log($"Replaying buffered event to sink sinkId={sinkId}");
+                push(pending);
+            }
+            catch (Exception ex)
+            {
+                Log($"Buffered push replay error {ex}");
+                break; // stop replay if sink is failing
+            }
+        }
     }
 
     public void UnregisterPushSink(string sinkId)
@@ -400,13 +433,37 @@ private readonly ConcurrentDictionary<string, Action<object>> _pushSinks = new()
 
         Log($"PushToAll sinks count={_pushSinks.Count}");
 
+        if (_pushSinks.IsEmpty)
+        {
+            Log("No push sinks registered — buffering event");
+
+            _pendingPushEvents.Enqueue(msg);
+
+            while (_pendingPushEvents.Count > MaxPendingPushEvents && _pendingPushEvents.TryDequeue(out _))
+            {
+                // drop oldest
+            }
+
+            return;
+        }
+
         foreach (var kv in _pushSinks)
         {
             try
             {
                 Log($"PushToAll invoking sinkId={kv.Key}");
-                kv.Value(msg);
-                Log($"PushToAll delivered sinkId={kv.Key}");
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        kv.Value(msg);
+                        Log($"PushToAll delivered sinkId={kv.Key}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"Push sink error sinkId={kv.Key} {ex}");
+                    }
+                });
             }
             catch (Exception ex)
             {

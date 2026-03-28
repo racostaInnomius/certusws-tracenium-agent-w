@@ -37,11 +37,15 @@ export async function runUpdateTask(
       error?: (...args: any[]) => void;
     };
     targetVersion?: string;
+    downloadUrl?: string;
+    checksum?: string;
   }
 ) {
   const logger = opts?.logger;
   const force = opts?.force === true;
   const targetVersion = opts?.targetVersion ? String(opts.targetVersion).trim() : undefined;
+  const downloadUrl = opts?.downloadUrl ? String(opts.downloadUrl).trim() : undefined;
+  const checksum = opts?.checksum ? String(opts.checksum).trim() : undefined;
   const intervalMs = opts?.intervalMs ?? 6 * 60 * 60 * 1000;
 
   if (ctx.agent?.platform !== "windows" && process.platform !== "win32") {
@@ -78,6 +82,49 @@ export async function runUpdateTask(
     return;
   }
 
+  // Remote-controlled update (backend-driven)
+  if (targetVersion && downloadUrl && checksum) {
+    logger?.info?.("[update] remote-controlled update", {
+      targetVersion,
+      hasUrl: true,
+      hasChecksum: true
+    });
+
+    try {
+      updateUpdateState({
+        updateInProgress: true,
+        lastAttemptedVersion: targetVersion,
+        lastAttemptedAtUtc: new Date().toISOString()
+      });
+
+      const run = await performWindowsMsiUpdate(
+        ctx,
+        targetVersion,
+        checksum,
+        downloadUrl
+      );
+
+      logger?.warn?.("[update] remote msi update started", {
+        targetVersion,
+        command: run.command,
+        args: run.args
+      });
+
+      return;
+    } catch (err: any) {
+      updateUpdateState({
+        updateInProgress: false,
+        lastError: err?.message || String(err)
+      });
+
+      logger?.error?.("[update] remote update failed", {
+        error: err?.message || String(err),
+        stack: err?.stack
+      });
+
+      return;
+    }
+  }
 
   try {
     logger?.info?.("[update] starting metadata fetch", {

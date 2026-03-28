@@ -230,14 +230,29 @@ stream = client.Connect();
     if (msg.agentUpdate) {
       const params = msg.agentUpdate;
 
+      const version = String(params?.version || "").trim();
+      const downloadUrl = String(params?.downloadUrl || "").trim();
+      const checksum = String(params?.checksum || "").trim();
+
       ctx.logger?.info?.("gRPC control message: agentUpdate received", {
-        version: params?.version,
-        force: params?.force
+        version,
+        hasUrl: !!downloadUrl,
+        hasChecksum: !!checksum
       });
 
       // avoid concurrent updates
       if ((ctx as any)._agentUpdateInProgress) {
         ctx.logger?.warn?.("agentUpdate ignored: update already in progress");
+        return;
+      }
+
+      // validate payload
+      if (!version || !downloadUrl || !checksum) {
+        ctx.logger?.error?.("agentUpdate invalid payload", {
+          version,
+          hasUrl: !!downloadUrl,
+          hasChecksum: !!checksum
+        });
         return;
       }
 
@@ -248,8 +263,9 @@ stream = client.Connect();
 
       setImmediate(() => {
         runUpdateTask(ctx, {
-          force: params?.force === true,
-          targetVersion: params?.version || undefined,
+          targetVersion: version,
+          downloadUrl,
+          checksum,
           logger: ctx.logger
         })
           .catch((err: any) => {

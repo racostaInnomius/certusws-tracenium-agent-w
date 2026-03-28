@@ -1,5 +1,6 @@
 // privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/IpcGrpcHandlers.cs
 using System.Runtime.CompilerServices;
+using System.Collections.Concurrent;
 using Tracenium.PrivSvc.Windows.Grpc;
 
 namespace Tracenium.PrivSvc.Windows.Ipc;
@@ -17,6 +18,8 @@ public static class IpcGrpcHandlers
     private static readonly Dictionary<string, ChunkState> _chunkBuffer = new();
     private static readonly Dictionary<string, object> _chunkLocks = new();
     private static readonly Dictionary<int, string> _pushSinkByDelegateKey = new();
+    private const int MaxBufferedPushEventsPerSink = 32;
+    private static readonly ConcurrentDictionary<string, ConcurrentQueue<object>> _pendingPushBySink = new();
     public static async Task<PrivSvcResponse> HandleConnect(PrivSvcRequest req, Action<object> push)
     {
         // Session-mode: returns a connectionId that the caller must use for close/unregister.
@@ -125,29 +128,14 @@ public static class IpcGrpcHandlers
                 // Register this pipe as a push sink for this session AFTER connect succeeds
                 GrpcBridgeSingleton.Instance.RegisterPushSink(connectionId, msg =>
                 {
-                    try
-                    {
-                        var json = System.Text.Json.JsonSerializer.Serialize(msg);
-                        Console.WriteLine($"[IpcGrpcHandlers] PUSH sinkId={connectionId} payload={json}");
-                        if (push == null)
-                        {
-                            Console.WriteLine($"[IpcGrpcHandlers] PUSH skipped (null delegate) sinkId={connectionId}");
-                            return;
-                        }
-                        push(msg);
-                        Console.WriteLine($"[IpcGrpcHandlers] PUSH delivered sinkId={connectionId}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[IpcGrpcHandlers] PUSH failed sinkId={connectionId} error={ex}");
-                        // Do NOT rethrow — avoid breaking PushToAll loop or killing sink
-                    }
+                    DeliverOrBufferPush(connectionId, push, msg);
                 });
 
                 lock (_pushSinkByDelegateKey)
                 {
                     _pushSinkByDelegateKey[pushDelegateKey] = connectionId;
                 }
+                ReplayBufferedPushes(connectionId, push);
 
                 // Wait explicitly for bridge readiness (HELLO ACK) instead of relying only on push delivery
                 var ready = await GrpcBridgeSingleton.Instance.WaitForReadyAsync(TimeSpan.FromSeconds(35));
@@ -173,7 +161,7 @@ public static class IpcGrpcHandlers
                         var json = System.Text.Json.JsonSerializer.Serialize(evt);
                         Console.WriteLine($"[IpcGrpcHandlers] DIRECT PUSH grpc.connected payload={json}");
 
-                        push(evt);
+                        DeliverOrBufferPush(connectionId, push, evt);
 
                         Console.WriteLine($"[IpcGrpcHandlers] DIRECT PUSH delivered connectionId={connectionId}");
                     }
@@ -405,6 +393,7 @@ public static class IpcGrpcHandlers
                     foreach (var key in staleKeys)
                         _pushSinkByDelegateKey.Remove(key);
                 }
+                _pendingPushBySink.TryRemove(connectionId, out _);
             }
 
             // Close the underlying gRPC bridge
@@ -419,6 +408,90 @@ public static class IpcGrpcHandlers
         catch (Exception ex)
         {
             return Task.FromResult(PrivSvcResponse.Fail(req.Id, "grpc_close_error", ex.Message));
+        }
+    }
+
+    private static void DeliverOrBufferPush(string? connectionId, Action<object>? push, object msg)
+    {
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(msg);
+            Console.WriteLine($"[IpcGrpcHandlers] PUSH sinkId={connectionId} payload={json}");
+        }
+        catch
+        {
+            // best effort logging only
+        }
+
+        if (string.IsNullOrWhiteSpace(connectionId))
+        {
+            Console.WriteLine("[IpcGrpcHandlers] PUSH skipped (missing connectionId)");
+            return;
+        }
+
+        if (push == null)
+        {
+            Console.WriteLine($"[IpcGrpcHandlers] PUSH skipped (null delegate) sinkId={connectionId}");
+            BufferPush(connectionId, msg);
+            return;
+        }
+
+        try
+        {
+            push(msg);
+            Console.WriteLine($"[IpcGrpcHandlers] PUSH delivered sinkId={connectionId}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[IpcGrpcHandlers] PUSH failed sinkId={connectionId} error={ex}");
+            BufferPush(connectionId, msg);
+            // Do NOT rethrow — avoid breaking PushToAll loop or killing sink
+        }
+    }
+
+    private static void BufferPush(string connectionId, object msg)
+    {
+        var queue = _pendingPushBySink.GetOrAdd(connectionId, _ => new ConcurrentQueue<object>());
+        queue.Enqueue(msg);
+
+        while (queue.Count > MaxBufferedPushEventsPerSink && queue.TryDequeue(out _))
+        {
+            // drop oldest buffered event to keep memory bounded
+        }
+
+        Console.WriteLine($"[IpcGrpcHandlers] PUSH buffered sinkId={connectionId} bufferedCount={queue.Count}");
+    }
+
+    private static void ReplayBufferedPushes(string connectionId, Action<object>? push)
+    {
+        if (push == null) return;
+        if (!_pendingPushBySink.TryGetValue(connectionId, out var queue)) return;
+
+        var replayed = 0;
+
+        while (queue.TryDequeue(out var pending))
+        {
+            try
+            {
+                push(pending);
+                replayed++;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[IpcGrpcHandlers] PUSH replay failed sinkId={connectionId} error={ex}");
+                queue.Enqueue(pending);
+                break;
+            }
+        }
+
+        if (queue.IsEmpty)
+        {
+            _pendingPushBySink.TryRemove(connectionId, out _);
+        }
+
+        if (replayed > 0)
+        {
+            Console.WriteLine($"[IpcGrpcHandlers] PUSH replayed sinkId={connectionId} count={replayed}");
         }
     }
 

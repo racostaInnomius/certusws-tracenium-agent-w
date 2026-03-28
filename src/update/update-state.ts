@@ -7,9 +7,12 @@ export interface UpdateState {
   lastCheckedAtUtc?: string;
   lastAttemptedVersion?: string;
   lastAttemptedAtUtc?: string;
+  lastCompletedAtUtc?: string;
+  lastSuccessVersion?: string;
   lastDownloadedPath?: string;
   lastDownloadedSha256?: string;
   updateInProgress?: boolean;
+  status?: "idle" | "in_progress" | "success" | "failed";
   lastError?: string;
   arch?: "x64" | "arm64";
 }
@@ -45,7 +48,8 @@ export function loadUpdateState(): UpdateState {
 
   try {
     return JSON.parse(fs.readFileSync(file, "utf8")) as UpdateState;
-  } catch {
+  } catch (err) {
+    console.error("[update-state] corrupted state file", err);
     return {};
   }
 }
@@ -60,13 +64,37 @@ export function saveUpdateState(next: UpdateState) {
 
 export function updateUpdateState(patch: Partial<UpdateState>) {
   const current = loadUpdateState();
-  const next = { ...current, ...patch };
+
+  const next: UpdateState = {
+    ...current,
+    ...patch
+  };
+
+  // derive status automatically if not explicitly provided
+  if (patch.updateInProgress === true) {
+    next.status = "in_progress";
+  }
+
+  if (patch.updateInProgress === false && !patch.lastError) {
+    next.status = "success";
+    next.lastCompletedAtUtc = new Date().toISOString();
+    if (patch.lastAttemptedVersion) {
+      next.lastSuccessVersion = patch.lastAttemptedVersion;
+    }
+  }
+
+  if (patch.lastError) {
+    next.status = "failed";
+    next.lastCompletedAtUtc = new Date().toISOString();
+  }
+
   saveUpdateState(next);
   return next;
 }
 
 export function clearUpdateInProgress() {
   updateUpdateState({
-    updateInProgress: false
+    updateInProgress: false,
+    lastCompletedAtUtc: new Date().toISOString()
   });
 }

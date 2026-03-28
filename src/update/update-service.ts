@@ -268,14 +268,13 @@ export async function fetchAgentMetadata(
 ): Promise<AgentMetadataResponse> {
   const base = getApiBaseUrl(ctx);
   const platform = getPlatform();
+  const arch = getArch();
 
-  const url = `${base}/api/v1/binaries/agent/metadata?platform=${encodeURIComponent(
-    platform
-  )}`;
+  const url = `${base}/api/v1/binaries/agent/metadata?platform=${encodeURIComponent(platform)}&arch=${encodeURIComponent(arch)}`;
 
   console.log("[update] fetching metadata", { url });
 
-  const headers = { Accept: "application/json" };
+  const headers = buildHeaders(ctx);
 
   //console.log("[update] metadata request headers", headers);
 
@@ -303,6 +302,9 @@ export async function fetchAgentMetadata(
   }
 
   if (!metadata) {
+    console.error("[update] metadata unavailable after retries", {
+      lastError: String(lastError)
+    });
     throw lastError || new Error("metadata_fetch_failed");
   }
 
@@ -486,13 +488,52 @@ export async function downloadWindowsMsi(
 export async function performWindowsMsiUpdate(
   ctx: AgentContext,
   latestVersion: string,
-  expectedHash?: string
+  expectedHash?: string,
+  downloadUrlOverride?: string
 ) {
-  const downloaded = await downloadWindowsMsi(ctx, latestVersion, expectedHash);
+  let downloaded;
+
+  if (downloadUrlOverride) {
+    const dir = path.join(resolveBaseDir(), "updates");
+    ensureDir(dir);
+
+    const arch = getArch();
+    const fileName = `Tracenium-Agent-${latestVersion}-${arch}.msi`;
+    const filePath = path.join(dir, fileName);
+
+    console.log("[update] downloading from override url", {
+      url: downloadUrlOverride,
+      version: latestVersion
+    });
+
+    const { size } = await downloadToFile(downloadUrlOverride, filePath);
+    const sha256 = await sha256File(filePath);
+
+    if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
+      fs.rmSync(filePath, { force: true });
+      throw new Error("update_hash_mismatch");
+    }
+
+    downloaded = {
+      filePath,
+      fileName,
+      sha256,
+      size,
+      latestVersion
+    };
+
+    updateUpdateState({
+      lastDownloadedPath: filePath,
+      lastDownloadedSha256: sha256,
+      arch: getArch()
+    });
+
+  } else {
+    downloaded = await downloadWindowsMsi(ctx, latestVersion, expectedHash);
+  }
 
   updateUpdateState({
     updateInProgress: true,
-    lastAttemptedVersion: latestVersion,
     lastAttemptedAtUtc: new Date().toISOString(),
     lastError: undefined,
     arch: getArch()
