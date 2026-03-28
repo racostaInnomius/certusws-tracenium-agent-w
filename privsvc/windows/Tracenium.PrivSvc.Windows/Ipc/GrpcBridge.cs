@@ -1049,9 +1049,9 @@ private const int MaxPendingPushEvents = 50;
                 if (msg.AgentUpdate is not null)
                 {
                     var version = msg.AgentUpdate.Version ?? string.Empty;
-                    var force = msg.AgentUpdate.Force;
+                    var jobId = msg.AgentUpdate.JobId ?? string.Empty;
 
-                    Log($"AgentUpdate received version={version} force={force}");
+                    Log($"AgentUpdate received version={version} jobId={jobId}");
 
                     if (string.IsNullOrWhiteSpace(version))
                     {
@@ -1064,8 +1064,8 @@ private const int MaxPendingPushEvents = 50;
                         method = "grpc.control.agentUpdate",
                         @params = new
                         {
+                            jobId,
                             version,
-                            force,
                             receivedAtUtc = DateTime.UtcNow.ToString("o")
                         }
                     });

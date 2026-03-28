@@ -231,13 +231,11 @@ stream = client.Connect();
       const params = msg.agentUpdate;
 
       const version = String(params?.version || "").trim();
-      const downloadUrl = String(params?.downloadUrl || "").trim();
-      const checksum = String(params?.checksum || "").trim();
+      const jobId = String(params?.jobId || "").trim();
 
       ctx.logger?.info?.("gRPC control message: agentUpdate received", {
-        version,
-        hasUrl: !!downloadUrl,
-        hasChecksum: !!checksum
+        jobId,
+        version
       });
 
       // avoid concurrent updates
@@ -247,11 +245,10 @@ stream = client.Connect();
       }
 
       // validate payload
-      if (!version || !downloadUrl || !checksum) {
+      if (!version) {
         ctx.logger?.error?.("agentUpdate invalid payload", {
-          version,
-          hasUrl: !!downloadUrl,
-          hasChecksum: !!checksum
+          jobId,
+          version
         });
         return;
       }
@@ -264,8 +261,6 @@ stream = client.Connect();
       setImmediate(() => {
         runUpdateTask(ctx, {
           targetVersion: version,
-          downloadUrl,
-          checksum,
           logger: ctx.logger
         })
           .catch((err: any) => {

@@ -80,7 +80,6 @@ message Disconnect {
 message AgentUpdate {
   string jobId = 1;
   string version = 2;
-  bool force = 3;
 }
 
 message RequestFacts {

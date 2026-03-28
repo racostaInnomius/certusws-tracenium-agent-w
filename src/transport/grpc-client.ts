@@ -171,25 +171,18 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         }
 
         const jobId = String(params?.jobId || "").trim();
-
         const version = String(params?.version || "").trim();
-        const downloadUrl = String(params?.downloadUrl || "").trim();
-        const checksum = String(params?.checksum || "").trim();
 
         ctx.logger?.info("[grpc-client] agentUpdate received", {
           jobId,
-          version,
-          hasUrl: !!downloadUrl,
-          hasChecksum: !!checksum
+          version
         });
 
         // Validate required fields before proceeding
-        if (!version || !downloadUrl || !checksum) {
+        if (!version) {
           ctx.logger?.error("[grpc-client] invalid agentUpdate payload", {
             jobId,
-            version,
-            hasUrl: !!downloadUrl,
-            hasChecksum: !!checksum
+            version
           });
           return;
         }
@@ -204,8 +197,6 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
           try {
             await runUpdateTask(ctx, {
               targetVersion: version,
-              downloadUrl,
-              checksum,
               logger: ctx.logger || logger
             });
 

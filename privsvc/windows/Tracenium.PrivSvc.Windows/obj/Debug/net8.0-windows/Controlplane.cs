@@ -71,7 +71,7 @@ namespace Tracenium.Control {
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RotateCert), global::Tracenium.Control.RotateCert.Parser, new[]{ "Reason" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.PolicyUpdate), global::Tracenium.Control.PolicyUpdate.Parser, new[]{ "PolicyVersion", "PolicyJson" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Disconnect), global::Tracenium.Control.Disconnect.Parser, new[]{ "Reason" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.AgentUpdate), global::Tracenium.Control.AgentUpdate.Parser, new[]{ "Version", "DownloadUrl", "Checksum" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.AgentUpdate), global::Tracenium.Control.AgentUpdate.Parser, new[]{ "Version" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RequestFacts), global::Tracenium.Control.RequestFacts.Parser, new[]{ "FactType" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.ControlMessage), global::Tracenium.Control.ControlMessage.Parser, new[]{ "TraceId", "Hello", "Facts", "Heartbeat", "RunJob", "RotateCert", "PolicyUpdate", "Disconnect", "AgentUpdate", "RequestFacts", "Ack", "Error" }, new[]{ "Msg" }, null, null, null)
           }));
