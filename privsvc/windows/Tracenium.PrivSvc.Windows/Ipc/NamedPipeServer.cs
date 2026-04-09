@@ -1,9 +1,9 @@
-// privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/NamedPipeServer.cs
 using System.IO.Pipes;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using Microsoft.Extensions.Logging;
 
 namespace Tracenium.PrivSvc.Windows.Ipc;
@@ -104,6 +104,64 @@ public sealed class NamedPipeServer
                 AutoFlush = true
             };
 
+            var writeLock = new SemaphoreSlim(1, 1);
+
+            async Task<bool> WriteJsonLineAsync(object payload)
+            {
+                string json;
+                try
+                {
+                    json = JsonSerializer.Serialize(payload, JsonOpts);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to serialize IPC payload.");
+                    return false;
+                }
+
+                try
+                {
+                    await writeLock.WaitAsync(ct);
+                    try
+                    {
+                        await writer.WriteLineAsync(json);
+                        await writer.FlushAsync();
+                        _logger.LogDebug("IPC write completed. bytes={Bytes}", json.Length);
+                        return true;
+                    }
+                    finally
+                    {
+                        writeLock.Release();
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    return false;
+                }
+                catch (IOException ex)
+                {
+                    _logger.LogDebug(ex, "IPC write failed: pipe closed.");
+                    return false;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Unexpected IPC write failure.");
+                    return false;
+                }
+            }
+
+            Action<object> push = msg =>
+            {
+                _ = Task.Run(async () =>
+                {
+                    var ok = await WriteJsonLineAsync(msg);
+                    if (!ok)
+                    {
+                        _logger.LogWarning("Async IPC push was not delivered.");
+                    }
+                }, CancellationToken.None);
+            };
+
             // Protocol: 1 JSON object per line (request), respond with 1 JSON per line
             while (pipe.IsConnected && !ct.IsCancellationRequested)
             {
@@ -130,11 +188,9 @@ public sealed class NamedPipeServer
                 {
                     _logger.LogWarning("IPC request too large, rejecting. reqId={ReqId}", reqId);
                     var err = PrivSvcResponse.Fail(reqId ?? "", "request_too_large", "IPC request exceeds allowed size.");
-                    var errJson = JsonSerializer.Serialize(err, JsonOpts);
-
                     try
                     {
-                        await writer.WriteLineAsync(errJson);
+                        await WriteJsonLineAsync(err);
                     }
                     catch { }
 
@@ -152,7 +208,7 @@ public sealed class NamedPipeServer
                     }
                     else
                     {
-                        resp = await _router.HandleAsync(req, ct);
+                        resp = await _router.HandleAsync(req, push, ct);
                     }
                 }
                 catch (JsonException jex)
@@ -166,11 +222,15 @@ public sealed class NamedPipeServer
                     resp = PrivSvcResponse.Fail(req?.Id ?? reqId ?? "", "internal_error", "Unhandled server error.");
                 }
 
-                var respJson = JsonSerializer.Serialize(resp, JsonOpts);
-
                 try
                 {
-                    await writer.WriteLineAsync(respJson);
+                    var ok = await WriteJsonLineAsync(resp);
+                    if (!ok)
+                    {
+                        // client closed the pipe while we were responding
+                        _logger.LogDebug("Client disconnected while writing response.");
+                        break;
+                    }
                 }
                 catch (IOException)
                 {

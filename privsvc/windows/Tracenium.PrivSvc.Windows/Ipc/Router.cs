@@ -21,7 +21,7 @@ public sealed class Router
         return id != null && id.IsSystem;
     }
 
-    public Task<PrivSvcResponse> HandleAsync(PrivSvcRequest req, CancellationToken ct)
+    public Task<PrivSvcResponse> HandleAsync(PrivSvcRequest req, Action<object> push, CancellationToken ct)
     {
         // Basic validation
         if (req.Version != 1)
@@ -60,7 +60,7 @@ public sealed class Router
             "ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 service = "TraceniumPrivSvc",
-                version = "1.0.84",
+                version = "1.0.85",
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
@@ -81,10 +81,11 @@ public sealed class Router
 
             // gRPC bridge (session mode)
             // NOTE: These handlers should enforce LocalSystem if required.
-            "grpc.connect" => IpcGrpcHandlers.HandleConnect(req, _ => { }),
+            "grpc.connect" => IpcGrpcHandlers.HandleConnect(req, push),
             "grpc.facts.send" => IpcGrpcHandlers.HandleFactsSend(req),
             "grpc.facts.chunk" => IpcGrpcHandlers.HandleFactsChunk(req),
             "grpc.close" => IpcGrpcHandlers.HandleClose(req),
+            "grpc.ack" => IpcGrpcHandlers.HandleAck(req),
 
             _ => Task.FromResult(PrivSvcResponse.Fail(req.Id, "not_supported", $"Unsupported method: {req.Method}"))
         };

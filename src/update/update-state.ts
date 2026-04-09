@@ -75,9 +75,15 @@ export function updateUpdateState(patch: Partial<UpdateState>) {
     next.status = "in_progress";
   }
 
-  if (patch.updateInProgress === false && !patch.lastError) {
+  if (
+    patch.updateInProgress === false &&
+    !patch.lastError &&
+    patch.lastAttemptedVersion &&
+    current.lastSuccessVersion !== patch.lastAttemptedVersion
+  ) {
     next.status = "success";
     next.lastCompletedAtUtc = new Date().toISOString();
+
     if (patch.lastAttemptedVersion) {
       next.lastSuccessVersion = patch.lastAttemptedVersion;
     }
@@ -86,6 +92,11 @@ export function updateUpdateState(patch: Partial<UpdateState>) {
   if (patch.lastError) {
     next.status = "failed";
     next.lastCompletedAtUtc = new Date().toISOString();
+  }
+
+  // ensure failed attempts do not block future updates
+  if (patch.lastError) {
+    next.lastAttemptedVersion = undefined;
   }
 
   saveUpdateState(next);

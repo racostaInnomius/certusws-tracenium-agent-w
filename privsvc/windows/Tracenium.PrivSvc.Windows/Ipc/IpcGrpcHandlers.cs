@@ -131,6 +131,30 @@ public static class IpcGrpcHandlers
                     DeliverOrBufferPush(connectionId, push, msg);
                 });
 
+                // DEBUG: ensure push path is working end-to-end (can be removed after validation)
+                try
+                {
+                    var testEvt = new
+                    {
+                        v = 1,
+                        method = "grpc.debug.push_test",
+                        @params = new
+                        {
+                            connectionId = connectionId,
+                            atUtc = DateTime.UtcNow.ToString("o")
+                        }
+                    };
+
+                    Console.WriteLine($"[IpcGrpcHandlers] DEBUG PUSH TEST connectionId={connectionId}");
+                    DeliverOrBufferPush(connectionId, push, testEvt);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[IpcGrpcHandlers] DEBUG PUSH TEST failed connectionId={connectionId} error={ex}");
+                }
+
+                // NOTE: ReplayPendingEvents removed due to incompatibility with current bridge contract
+
                 lock (_pushSinkByDelegateKey)
                 {
                     _pushSinkByDelegateKey[pushDelegateKey] = connectionId;
@@ -439,7 +463,7 @@ public static class IpcGrpcHandlers
         try
         {
             push(msg);
-            Console.WriteLine($"[IpcGrpcHandlers] PUSH delivered sinkId={connectionId}");
+            Console.WriteLine($"[IpcGrpcHandlers] PUSH delivered sinkId={connectionId} type={msg?.GetType().Name}");
         }
         catch (Exception ex)
         {
@@ -533,5 +557,32 @@ public static class IpcGrpcHandlers
             System.Text.Json.JsonElement je => je.ValueKind == System.Text.Json.JsonValueKind.String ? je.GetString() : je.ToString(),
             _ => val.ToString()
         };
+    }
+
+    public static async Task<PrivSvcResponse> HandleAck(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+
+            var eventId = GetString(p, "eventId");
+            var statusStr = GetString(p, "status");
+
+            if (string.IsNullOrWhiteSpace(eventId))
+                throw new Exception("eventId required");
+
+            int status = 0;
+            if (!string.IsNullOrWhiteSpace(statusStr))
+                int.TryParse(statusStr, out status);
+
+            Console.WriteLine($"[IpcGrpcHandlers] ACK forwarding eventId={eventId} status={status}");
+
+            await GrpcBridgeSingleton.Instance.SendAck(eventId, status);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_ack_error", ex.Message);
+        }
     }
 }

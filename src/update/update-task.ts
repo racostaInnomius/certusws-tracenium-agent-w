@@ -50,6 +50,8 @@ export async function runUpdateTask(
   }
 
   const state = loadUpdateState();
+  // reload state dynamically before idempotency check to avoid stale decisions
+  let freshState = state;
 
   if (state.updateInProgress) {
     const lastAttempt = parseUtcMs(state.lastAttemptedAtUtc);
@@ -91,16 +93,20 @@ export async function runUpdateTask(
 
     const latestVersion = result.latestVersion;
 
-    // idempotency guard: skip ONLY if we already attempted the CURRENT LATEST version
+    // reload state dynamically before idempotency check to avoid stale decisions
+    freshState = loadUpdateState();
+    // idempotency guard: skip ONLY if we already attempted AND completed CURRENT LATEST version
     if (
-      state.lastAttemptedVersion &&
+      freshState.lastAttemptedVersion &&
       latestVersion &&
-      state.lastAttemptedVersion === latestVersion
+      freshState.lastAttemptedVersion === latestVersion &&
+      freshState.lastSuccessVersion === latestVersion
     ) {
-      logger?.info?.("[update] already attempted latest version, skipping", {
+      logger?.info?.("[update] already attempted AND completed latest version, skipping", {
         currentVersion,
         latestVersion,
-        lastAttemptedVersion: state.lastAttemptedVersion
+        lastAttemptedVersion: freshState.lastAttemptedVersion,
+        lastSuccessVersion: freshState.lastSuccessVersion
       });
       return;
     }

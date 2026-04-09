@@ -39,26 +39,25 @@ namespace Tracenium.Control {
             "aW9uGAUgASgJIhcKBlJ1bkpvYhINCgVqb2JJZBgBIAEoCSIcCgpSb3RhdGVD",
             "ZXJ0Eg4KBnJlYXNvbhgBIAEoCSI5CgxQb2xpY3lVcGRhdGUSFQoNcG9saWN5",
             "VmVyc2lvbhgBIAEoCRISCgpwb2xpY3lKc29uGAIgASgMIhwKCkRpc2Nvbm5l",
-            "Y3QSDgoGcmVhc29uGAEgASgJIkUKC0FnZW50VXBkYXRlEg8KB3ZlcnNpb24Y",
-            "ASABKAkSEwoLZG93bmxvYWRVcmwYAiABKAkSEAoIY2hlY2tzdW0YAyABKAki",
-            "IAoMUmVxdWVzdEZhY3RzEhAKCGZhY3RUeXBlGAEgASgJIsMECg5Db250cm9s",
-            "TWVzc2FnZRIPCgd0cmFjZUlkGAogASgJEikKBWhlbGxvGAEgASgLMhgudHJh",
-            "Y2VuaXVtLmNvbnRyb2wuSGVsbG9IABIpCgVmYWN0cxgCIAEoCzIYLnRyYWNl",
-            "bml1bS5jb250cm9sLkZhY3RzSAASMQoJaGVhcnRiZWF0GAMgASgLMhwudHJh",
-            "Y2VuaXVtLmNvbnRyb2wuSGVhcnRiZWF0SAASKwoGcnVuSm9iGAQgASgLMhku",
-            "dHJhY2VuaXVtLmNvbnRyb2wuUnVuSm9iSAASMwoKcm90YXRlQ2VydBgFIAEo",
-            "CzIdLnRyYWNlbml1bS5jb250cm9sLlJvdGF0ZUNlcnRIABI3Cgxwb2xpY3lV",
-            "cGRhdGUYBiABKAsyHy50cmFjZW5pdW0uY29udHJvbC5Qb2xpY3lVcGRhdGVI",
-            "ABIzCgpkaXNjb25uZWN0GAcgASgLMh0udHJhY2VuaXVtLmNvbnRyb2wuRGlz",
-            "Y29ubmVjdEgAEjUKC2FnZW50VXBkYXRlGAggASgLMh4udHJhY2VuaXVtLmNv",
-            "bnRyb2wuQWdlbnRVcGRhdGVIABI3CgxyZXF1ZXN0RmFjdHMYCSABKAsyHy50",
-            "cmFjZW5pdW0uY29udHJvbC5SZXF1ZXN0RmFjdHNIABIlCgNhY2sYCyABKAsy",
-            "Fi50cmFjZW5pdW0uY29udHJvbC5BY2tIABIpCgVlcnJvchgMIAEoCzIYLnRy",
-            "YWNlbml1bS5jb250cm9sLkVycm9ySABCBQoDbXNnKjgKCUFja1N0YXR1cxIK",
-            "CgZBQ0tfT0sQABINCglBQ0tfUkVUUlkQARIQCgxBQ0tfUkVKRUNURUQQAjJj",
-            "CgxDb250cm9sUGxhbmUSUwoHQ29ubmVjdBIhLnRyYWNlbml1bS5jb250cm9s",
-            "LkNvbnRyb2xNZXNzYWdlGiEudHJhY2VuaXVtLmNvbnRyb2wuQ29udHJvbE1l",
-            "c3NhZ2UoATABYgZwcm90bzM="));
+            "Y3QSDgoGcmVhc29uGAEgASgJIi0KC0FnZW50VXBkYXRlEg0KBWpvYklkGAEg",
+            "ASgJEg8KB3ZlcnNpb24YAiABKAkiIAoMUmVxdWVzdEZhY3RzEhAKCGZhY3RU",
+            "eXBlGAEgASgJIsMECg5Db250cm9sTWVzc2FnZRIPCgd0cmFjZUlkGAogASgJ",
+            "EikKBWhlbGxvGAEgASgLMhgudHJhY2VuaXVtLmNvbnRyb2wuSGVsbG9IABIp",
+            "CgVmYWN0cxgCIAEoCzIYLnRyYWNlbml1bS5jb250cm9sLkZhY3RzSAASMQoJ",
+            "aGVhcnRiZWF0GAMgASgLMhwudHJhY2VuaXVtLmNvbnRyb2wuSGVhcnRiZWF0",
+            "SAASKwoGcnVuSm9iGAQgASgLMhkudHJhY2VuaXVtLmNvbnRyb2wuUnVuSm9i",
+            "SAASMwoKcm90YXRlQ2VydBgFIAEoCzIdLnRyYWNlbml1bS5jb250cm9sLlJv",
+            "dGF0ZUNlcnRIABI3Cgxwb2xpY3lVcGRhdGUYBiABKAsyHy50cmFjZW5pdW0u",
+            "Y29udHJvbC5Qb2xpY3lVcGRhdGVIABIzCgpkaXNjb25uZWN0GAcgASgLMh0u",
+            "dHJhY2VuaXVtLmNvbnRyb2wuRGlzY29ubmVjdEgAEjUKC2FnZW50VXBkYXRl",
+            "GAggASgLMh4udHJhY2VuaXVtLmNvbnRyb2wuQWdlbnRVcGRhdGVIABI3Cgxy",
+            "ZXF1ZXN0RmFjdHMYCSABKAsyHy50cmFjZW5pdW0uY29udHJvbC5SZXF1ZXN0",
+            "RmFjdHNIABIlCgNhY2sYCyABKAsyFi50cmFjZW5pdW0uY29udHJvbC5BY2tI",
+            "ABIpCgVlcnJvchgMIAEoCzIYLnRyYWNlbml1bS5jb250cm9sLkVycm9ySABC",
+            "BQoDbXNnKjgKCUFja1N0YXR1cxIKCgZBQ0tfT0sQABINCglBQ0tfUkVUUlkQ",
+            "ARIQCgxBQ0tfUkVKRUNURUQQAjJjCgxDb250cm9sUGxhbmUSUwoHQ29ubmVj",
+            "dBIhLnRyYWNlbml1bS5jb250cm9sLkNvbnRyb2xNZXNzYWdlGiEudHJhY2Vu",
+            "aXVtLmNvbnRyb2wuQ29udHJvbE1lc3NhZ2UoATABYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::Tracenium.Control.AckStatus), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -71,7 +70,7 @@ namespace Tracenium.Control {
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RotateCert), global::Tracenium.Control.RotateCert.Parser, new[]{ "Reason" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.PolicyUpdate), global::Tracenium.Control.PolicyUpdate.Parser, new[]{ "PolicyVersion", "PolicyJson" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Disconnect), global::Tracenium.Control.Disconnect.Parser, new[]{ "Reason" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.AgentUpdate), global::Tracenium.Control.AgentUpdate.Parser, new[]{ "Version" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.AgentUpdate), global::Tracenium.Control.AgentUpdate.Parser, new[]{ "JobId", "Version" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RequestFacts), global::Tracenium.Control.RequestFacts.Parser, new[]{ "FactType" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.ControlMessage), global::Tracenium.Control.ControlMessage.Parser, new[]{ "TraceId", "Hello", "Facts", "Heartbeat", "RunJob", "RotateCert", "PolicyUpdate", "Disconnect", "AgentUpdate", "RequestFacts", "Ack", "Error" }, new[]{ "Msg" }, null, null, null)
           }));
@@ -2564,9 +2563,8 @@ namespace Tracenium.Control {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public AgentUpdate(AgentUpdate other) : this() {
+      jobId_ = other.jobId_;
       version_ = other.version_;
-      downloadUrl_ = other.downloadUrl_;
-      checksum_ = other.checksum_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -2576,8 +2574,20 @@ namespace Tracenium.Control {
       return new AgentUpdate(this);
     }
 
+    /// <summary>Field number for the "jobId" field.</summary>
+    public const int JobIdFieldNumber = 1;
+    private string jobId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string JobId {
+      get { return jobId_; }
+      set {
+        jobId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
     /// <summary>Field number for the "version" field.</summary>
-    public const int VersionFieldNumber = 1;
+    public const int VersionFieldNumber = 2;
     private string version_ = "";
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -2585,30 +2595,6 @@ namespace Tracenium.Control {
       get { return version_; }
       set {
         version_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
-      }
-    }
-
-    /// <summary>Field number for the "downloadUrl" field.</summary>
-    public const int DownloadUrlFieldNumber = 2;
-    private string downloadUrl_ = "";
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public string DownloadUrl {
-      get { return downloadUrl_; }
-      set {
-        downloadUrl_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
-      }
-    }
-
-    /// <summary>Field number for the "checksum" field.</summary>
-    public const int ChecksumFieldNumber = 3;
-    private string checksum_ = "";
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public string Checksum {
-      get { return checksum_; }
-      set {
-        checksum_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
       }
     }
 
@@ -2627,9 +2613,8 @@ namespace Tracenium.Control {
       if (ReferenceEquals(other, this)) {
         return true;
       }
+      if (JobId != other.JobId) return false;
       if (Version != other.Version) return false;
-      if (DownloadUrl != other.DownloadUrl) return false;
-      if (Checksum != other.Checksum) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -2637,9 +2622,8 @@ namespace Tracenium.Control {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override int GetHashCode() {
       int hash = 1;
+      if (JobId.Length != 0) hash ^= JobId.GetHashCode();
       if (Version.Length != 0) hash ^= Version.GetHashCode();
-      if (DownloadUrl.Length != 0) hash ^= DownloadUrl.GetHashCode();
-      if (Checksum.Length != 0) hash ^= Checksum.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -2658,17 +2642,13 @@ namespace Tracenium.Control {
     #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       output.WriteRawMessage(this);
     #else
-      if (Version.Length != 0) {
+      if (JobId.Length != 0) {
         output.WriteRawTag(10);
-        output.WriteString(Version);
+        output.WriteString(JobId);
       }
-      if (DownloadUrl.Length != 0) {
+      if (Version.Length != 0) {
         output.WriteRawTag(18);
-        output.WriteString(DownloadUrl);
-      }
-      if (Checksum.Length != 0) {
-        output.WriteRawTag(26);
-        output.WriteString(Checksum);
+        output.WriteString(Version);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
@@ -2680,17 +2660,13 @@ namespace Tracenium.Control {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
-      if (Version.Length != 0) {
+      if (JobId.Length != 0) {
         output.WriteRawTag(10);
-        output.WriteString(Version);
+        output.WriteString(JobId);
       }
-      if (DownloadUrl.Length != 0) {
+      if (Version.Length != 0) {
         output.WriteRawTag(18);
-        output.WriteString(DownloadUrl);
-      }
-      if (Checksum.Length != 0) {
-        output.WriteRawTag(26);
-        output.WriteString(Checksum);
+        output.WriteString(Version);
       }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
@@ -2702,14 +2678,11 @@ namespace Tracenium.Control {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public int CalculateSize() {
       int size = 0;
+      if (JobId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(JobId);
+      }
       if (Version.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(Version);
-      }
-      if (DownloadUrl.Length != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeStringSize(DownloadUrl);
-      }
-      if (Checksum.Length != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeStringSize(Checksum);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -2723,14 +2696,11 @@ namespace Tracenium.Control {
       if (other == null) {
         return;
       }
+      if (other.JobId.Length != 0) {
+        JobId = other.JobId;
+      }
       if (other.Version.Length != 0) {
         Version = other.Version;
-      }
-      if (other.DownloadUrl.Length != 0) {
-        DownloadUrl = other.DownloadUrl;
-      }
-      if (other.Checksum.Length != 0) {
-        Checksum = other.Checksum;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -2752,15 +2722,11 @@ namespace Tracenium.Control {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
             break;
           case 10: {
-            Version = input.ReadString();
+            JobId = input.ReadString();
             break;
           }
           case 18: {
-            DownloadUrl = input.ReadString();
-            break;
-          }
-          case 26: {
-            Checksum = input.ReadString();
+            Version = input.ReadString();
             break;
           }
         }
@@ -2783,15 +2749,11 @@ namespace Tracenium.Control {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
             break;
           case 10: {
-            Version = input.ReadString();
+            JobId = input.ReadString();
             break;
           }
           case 18: {
-            DownloadUrl = input.ReadString();
-            break;
-          }
-          case 26: {
-            Checksum = input.ReadString();
+            Version = input.ReadString();
             break;
           }
         }

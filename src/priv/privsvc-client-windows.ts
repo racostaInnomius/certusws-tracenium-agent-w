@@ -37,16 +37,30 @@ export class PrivSvcClient extends EventEmitter {
   private earlyPushQueue: PrivSvcPush[] = [];
   private pushListenerAttached = false;
 
-  onPush(cb: (msg: PrivSvcPush) => void) {
-    this.pushListenerAttached = true;
-    this.on("push", cb);
+  private hasPushListeners(): boolean {
+    return this.listenerCount("push") > 0 || this.pushListenerAttached;
+  }
 
-    // Flush any early buffered pushes
+  onPush(cb: (msg: PrivSvcPush) => void) {
+    this.on("push", cb);
+    this.pushListenerAttached = true;
+
+    this.emit("debug", {
+      stage: "push_listener_attached",
+      listenerCount: this.listenerCount("push"),
+      earlyQueue: this.earlyPushQueue.length
+    });
+
+    // Flush any early buffered pushes through the same EventEmitter path
     if (this.earlyPushQueue.length > 0) {
       for (const msg of this.earlyPushQueue) {
         try {
-          this.emit("debug", { stage: "push_flush", msg });
-          cb(msg);
+          this.emit("debug", {
+            stage: "push_flush",
+            method: (msg as any)?.method,
+            msg
+          });
+          this.emit("push", msg);
         } catch (e) {
           this.emit("error", e);
         }
@@ -100,44 +114,40 @@ export class PrivSvcClient extends EventEmitter {
 
   private onData(data: Buffer | string) {
     const chunk = typeof data === "string" ? data : data.toString("utf8");
-    //this.emit("debug", { stage: "raw_chunk" });
     this.buffer += chunk;
-    // Safety: prevent unbounded memory growth on malformed streams
-    if (this.buffer.length > MAX_BUFFER_CHARS) {
-      // Drop buffer and signal error; the caller can reconnect.
-      this.buffer = "";
-      this.onSocketError(new Error("PrivSvc buffer overflow"));
-      try { this.socket?.destroy(); } catch {}
-      return;
-    }
-    const lines = this.buffer.split("\n");
-    this.buffer = lines.pop() || "";
 
-    for (const line of lines) {
-      let txt = line.replace(/\r$/, "").trim();
+    this.emit("debug", {
+      stage: "raw_chunk_full",
+      chunk,
+      bufferLength: this.buffer.length
+    });
+
+    let newlineIndex: number;
+    while ((newlineIndex = this.buffer.indexOf("\n")) >= 0) {
+      const raw = this.buffer.slice(0, newlineIndex);
+      this.buffer = this.buffer.slice(newlineIndex + 1);
+
+      const txt = raw.replace(/\r$/, "").trim();
       if (!txt) continue;
 
       let msg: any;
       try {
         msg = JSON.parse(txt);
-        //this.emit("debug", { stage: "parsed" });
-        //this.emit("debug", { stage: "parsed", msg });
+        this.emit("debug", {
+          stage: "ipc_raw_message",
+          method: msg?.method,
+          id: msg?.id,
+          hasOk: Object.prototype.hasOwnProperty.call(msg ?? {}, "ok"),
+          hasError: Object.prototype.hasOwnProperty.call(msg ?? {}, "error"),
+          listenerCount: this.listenerCount("push"),
+          pushListenerAttached: this.pushListenerAttached,
+          raw: msg
+        });
       } catch {
         this.emit("debug", { stage: "parse_error", raw: txt });
         continue;
       }
 
-      //this.emit("debug", {
-       // stage: "dispatch"
-
-        //id: msg?.id,
-        //method: msg?.method,
-        //hasOk: Object.prototype.hasOwnProperty.call(msg, "ok"),
-        //hasError: Object.prototype.hasOwnProperty.call(msg, "error"),
-        //pendingSize: this.pending.size,
-      //});
-
-      // Response path: has id + ok/error shape
       const id = msg?.id;
       const isResponse =
         typeof id === "string" &&
@@ -166,23 +176,37 @@ export class PrivSvcClient extends EventEmitter {
         continue;
       }
 
-      // Push path: must have method
       const isPush = typeof msg?.method === "string";
 
       if (isPush) {
-        if (this.pushListenerAttached) {
-          this.emit("debug", { stage: "push_emit", msg });
+        if (this.hasPushListeners()) {
+          this.emit("debug", {
+            stage: "push_emit",
+            method: msg?.method,
+            listenerCount: this.listenerCount("push"),
+            msg
+          });
           this.emit("push", msg as PrivSvcPush);
         } else {
-          this.emit("debug", { stage: "push_buffered", msg });
+          this.emit("debug", {
+            stage: "push_buffered",
+            method: msg?.method,
+            listenerCount: this.listenerCount("push"),
+            msg
+          });
           if (this.earlyPushQueue.length < 1000) {
             this.earlyPushQueue.push(msg as PrivSvcPush);
+          } else {
+            this.emit("debug", {
+              stage: "push_buffer_overflow_drop",
+              method: msg?.method,
+              queued: this.earlyPushQueue.length
+            });
           }
         }
         continue;
       }
 
-      // Unknown message shape
       this.emit("debug", { stage: "unknown_message", msg });
     }
   }
@@ -225,11 +249,21 @@ export class PrivSvcClient extends EventEmitter {
       params: { manual: wasManual }
     };
 
-    if (this.pushListenerAttached) {
-      this.emit("debug", { stage: "push_emit", msg: disconnectMsg });
+    if (this.hasPushListeners()) {
+      this.emit("debug", {
+        stage: "push_emit",
+        method: disconnectMsg.method,
+        listenerCount: this.listenerCount("push"),
+        msg: disconnectMsg
+      });
       this.emit("push", disconnectMsg);
     } else {
-      this.emit("debug", { stage: "push_buffered", msg: disconnectMsg });
+      this.emit("debug", {
+        stage: "push_buffered",
+        method: disconnectMsg.method,
+        listenerCount: this.listenerCount("push"),
+        msg: disconnectMsg
+      });
       if (this.earlyPushQueue.length < 1000) {
         this.earlyPushQueue.push(disconnectMsg);
       }

@@ -535,6 +535,7 @@ export async function performWindowsMsiUpdate(
   updateUpdateState({
     updateInProgress: true,
     lastAttemptedAtUtc: new Date().toISOString(),
+    lastAttemptedVersion: latestVersion,
     lastError: undefined,
     arch: getArch()
   });
@@ -545,5 +546,11 @@ export async function performWindowsMsiUpdate(
     arch: getArch()
   });
 
-  return runWindowsMsiUpdate(downloaded.filePath);
+  const result = await runWindowsMsiUpdate(downloaded.filePath);
+
+  updateUpdateState({
+    updateInProgress: false
+  });
+
+  return result;
 }

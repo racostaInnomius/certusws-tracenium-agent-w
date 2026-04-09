@@ -34,34 +34,50 @@ type GrpcBridgeClient = {
 function attachPrivPushHandler(ctx: AgentContext, onPush: (msg: any) => void) {
   const priv: any = ctx.priv as any;
 
+  if (priv.__pushHandlerAttached) {
+    ctx.logger?.warn?.("[grpc-client] push handler already attached, skipping re-registration");
+    return;
+  }
+  priv.__pushHandlerAttached = true;
+
   ctx.logger?.info?.("[grpc-client] attaching PrivSvc push handler", {
     hasOnPush: typeof priv.onPush === "function",
     hasOn: typeof priv.on === "function"
   });
 
+  let attached = false;
+
   if (typeof priv.onPush === "function") {
     ctx.logger?.info?.("[grpc-client] subscribing via priv.onPush()");
     priv.onPush(onPush);
-    return;
+    attached = true;
   }
 
   if (typeof priv.on === "function") {
     ctx.logger?.info?.("[grpc-client] subscribing via priv.on('push')");
     priv.on("push", onPush);
-    return;
+    attached = true;
   }
 
-  ctx.logger?.warn(
-    "[grpc-client] PrivSvcClient has no push subscription method. " +
-      "Implement ctx.priv.onPush(cb) OR make it an EventEmitter emitting 'push'."
-  );
+  if (!attached) {
+    ctx.logger?.warn(
+      "[grpc-client] PrivSvcClient has no push subscription method"
+    );
+  }
 }
 
 export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
+  // Ensure singleton instance per AgentContext
+  if ((ctx as any).__grpcClientInstance) {
+    ctx.logger?.warn?.("[grpc-client] reusing existing grpc client instance");
+    return (ctx as any).__grpcClientInstance;
+  }
+
   const target = normalizeTarget(ctx.config.grpcEndpoint);
   ctx.logger?.info(`[grpc-client] Using PrivSvc gRPC bridge → ${target}`);
 
   const stream = new EventEmitter() as StreamLike;
+  let connectedEmitted = false;
 
   let connected = false;
   let connectPromise: Promise<void> | null = null;
@@ -132,6 +148,9 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       }
 
       if (method === "grpc.connected") {
+        if (connectedEmitted) return;
+        connectedEmitted = true;
+
         connected = true;
         ctx.logger?.info("[grpc-client] PrivSvc confirmed gRPC connected (READY)");
         stream.emit("data", { connected: true });
@@ -166,7 +185,10 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       if (method === "grpc.control.agentUpdate") {
 
         if (agentUpdateInProgress) {
-          ctx.logger?.warn("[grpc-client] agentUpdate ignored: update already in progress");
+          ctx.logger?.warn("[grpc-client] agentUpdate ignored: update already in progress", {
+            jobId: String(params?.jobId || "").trim(),
+            version: String(params?.version || "").trim()
+          });
           return;
         }
 
@@ -192,9 +214,17 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         agentUpdateInProgress = true;
 
         setImmediate(async () => {
+          ctx.logger?.info("[grpc-client] agentUpdate async handler started", {
+            jobId,
+            version
+          });
           // Use jobId or fallback eventId for ACK
           const eventId = jobId || `agentUpdate-${Date.now()}`;
           try {
+            ctx.logger?.info("[grpc-client] executing update task", {
+              jobId,
+              version
+            });
             await runUpdateTask(ctx, {
               targetVersion: version,
               logger: ctx.logger || logger
@@ -215,10 +245,15 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
                 });
                 ctx.logger?.info("[grpc-client] agentUpdate ACK sent (success)", { eventId });
               } catch (ackErr: any) {
-                ctx.logger?.error("[grpc-client] failed to send ACK (success)", {
-                  eventId,
-                  err: ackErr?.message || ackErr
-                });
+                const msg = String(ackErr?.message || ackErr);
+                if (msg.includes("not_supported")) {
+                  ctx.logger?.warn("[grpc-client] ACK not supported by PrivSvc yet, skipping");
+                } else {
+                  ctx.logger?.error("[grpc-client] failed to send ACK (success)", {
+                    eventId,
+                    err: msg
+                  });
+                }
               }
             }
 
@@ -239,15 +274,23 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
                 });
                 ctx.logger?.warn("[grpc-client] agentUpdate ACK sent (failure)", { eventId });
               } catch (ackErr: any) {
-                ctx.logger?.error("[grpc-client] failed to send ACK (failure)", {
-                  eventId,
-                  err: ackErr?.message || ackErr
-                });
+                const msg = String(ackErr?.message || ackErr);
+                if (msg.includes("not_supported")) {
+                  ctx.logger?.warn("[grpc-client] ACK not supported by PrivSvc yet, skipping");
+                } else {
+                  ctx.logger?.error("[grpc-client] failed to send ACK (failure)", {
+                    eventId,
+                    err: msg
+                  });
+                }
               }
             }
 
             ctx.logger?.error("[grpc-client] agentUpdate execution failed", {
-              err: err?.message || err
+              jobId,
+              version,
+              err: err?.message || err,
+              stack: err?.stack
             });
 
           } finally {
@@ -551,7 +594,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
     stream.emit("end");
   };
 
-  return {
+  const client = {
     Connect: () => {
       ended = false;
       localClose = false;
@@ -560,4 +603,8 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
     },
     isConnected: () => connected
   };
-}
+
+  (ctx as any).__grpcClientInstance = client;
+
+  return client;
+} 

@@ -258,11 +258,8 @@ private BridgeState _state = BridgeState.Disconnected;
             return;
         }
 
-        if (!IsConnected && !isHello)
-        {
-            Log("SafeWriteAsync skipped: not connected (non-HELLO message)");
-            return;
-        }
+        // Do not block writes based on IsConnected; rely on actual stream availability
+        // (HELLO/ACK/CONTROL messages must be allowed during transient state transitions)
 
         await _writeLock.WaitAsync(ct);
         try
@@ -421,6 +418,33 @@ private const int MaxPendingPushEvents = 50;
 
     public void UnregisterPushSink(string sinkId)
         => _pushSinks.TryRemove(sinkId, out _);
+
+    public void ReplayPendingEvents(string sinkId)
+    {
+        if (string.IsNullOrWhiteSpace(sinkId)) return;
+
+        if (!_pushSinks.TryGetValue(sinkId, out var push))
+        {
+            Log($"ReplayPendingEvents: sink not found sinkId={sinkId}");
+            return;
+        }
+
+        Log($"ReplayPendingEvents: starting replay sinkId={sinkId}");
+
+        while (_pendingPushEvents.TryDequeue(out var pending))
+        {
+            try
+            {
+                Log($"Replaying buffered event to sink sinkId={sinkId}");
+                push(pending);
+            }
+            catch (Exception ex)
+            {
+                Log($"Buffered push replay error {ex}");
+                break;
+            }
+        }
+    }
 
     private void PushToAll(object msg)
     {
@@ -1281,6 +1305,55 @@ private const int MaxPendingPushEvents = 50;
         Log($"CA certificate not found {normalized}");
 
         throw new InvalidOperationException($"Issuing/Root CA cert not found in LocalMachine\\CA or LocalMachine\\Root: {normalized}");
+    }
+
+    public async Task SendAck(string eventId, int status = 0, string? message = null, CancellationToken ct = default)
+    {
+        if (_call is null)
+        {
+            Log($"SendAck skipped: no active call eventId={eventId}");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(eventId))
+        {
+            Log("SendAck skipped: empty eventId");
+            return;
+        }
+
+        try
+        {
+            var ackMsg = new ControlMessage
+            {
+                Ack = new Ack
+                {
+                    EventId = eventId,
+                    Status = (AckStatus)status,
+                    Message = message ?? "OK",
+                    ReceivedAtUtc = DateTime.UtcNow.ToString("o")
+                }
+            };
+
+            // Use direct write to reduce chances of ACK being dropped by transient state checks
+            var call = _call;
+            if (call != null)
+            {
+                await call.RequestStream.WriteAsync(ackMsg);
+            }
+            else
+            {
+                Log($"SendAck aborted: call became null during send eventId={eventId}");
+                return;
+            }
+
+            _lastSendUtc = DateTime.UtcNow;
+
+            Log($"ACK sent to backend eventId={eventId} status={status}");
+        }
+        catch (Exception ex)
+        {
+            Log($"SendAck error eventId={eventId} {ex}");
+        }
     }
 
     public void Dispose() => Close();
