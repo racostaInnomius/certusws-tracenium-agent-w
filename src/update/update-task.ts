@@ -1,7 +1,12 @@
 // src/update/update-task.ts
 
 import type { AgentContext } from "../core/agent-context";
-import { loadUpdateState, updateUpdateState } from "./update-state";
+import {
+  loadUpdateState,
+  markUpdateFailed,
+  markUpdateSucceeded,
+  updateUpdateState
+} from "./update-state";
 import {
   fetchAgentMetadata,
   checkForAvailableUpdate,
@@ -24,6 +29,56 @@ function shouldCheckNow(intervalMs: number): boolean {
 
   if (!last) return true;
   return nowMs() - last >= intervalMs;
+}
+
+function compareSemver(a: string, b: string): number {
+  const parse = (v: string): number[] =>
+    v.split(".").map((x) => {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : 0;
+    });
+
+  const av = parse(a);
+  const bv = parse(b);
+  const len = Math.max(av.length, bv.length);
+
+  for (let i = 0; i < len; i += 1) {
+    const ai = av[i] ?? 0;
+    const bi = bv[i] ?? 0;
+
+    if (ai !== bi) {
+      return ai > bi ? 1 : -1;
+    }
+  }
+
+  return 0;
+}
+
+function looksLikeSemver(v: string): boolean {
+  return /^\d+\.\d+\.\d+([.-][A-Za-z0-9]+)?$/.test(v);
+}
+
+function reconcilePendingUpdate(currentVersion: string, logger?: {
+  info?: (...args: any[]) => void;
+  warn?: (...args: any[]) => void;
+}) {
+  const state = loadUpdateState();
+  const attemptedVersion = String(state.lastAttemptedVersion || "").trim();
+
+  if (!state.updateInProgress || !attemptedVersion || !looksLikeSemver(attemptedVersion)) {
+    return loadUpdateState();
+  }
+
+  if (compareSemver(currentVersion, attemptedVersion) >= 0) {
+    logger?.info?.("[update] reconciling pending update as success", {
+      currentVersion,
+      attemptedVersion
+    });
+    markUpdateSucceeded(attemptedVersion);
+    return loadUpdateState();
+  }
+
+  return state;
 }
 
 export async function runUpdateTask(
@@ -49,34 +104,34 @@ export async function runUpdateTask(
     return;
   }
 
-  const state = loadUpdateState();
-  // reload state dynamically before idempotency check to avoid stale decisions
-  let freshState = state;
-
-  if (state.updateInProgress) {
-    const lastAttempt = parseUtcMs(state.lastAttemptedAtUtc);
-    if (nowMs() - lastAttempt < 10 * 60 * 1000) {
-      logger?.warn?.("[update] update already in progress, skipping");
-      return;
-    }
-
-    logger?.warn?.("[update] stale updateInProgress detected, recovering");
-    updateUpdateState({ updateInProgress: false });
-  }
-
-  if (!force && !shouldCheckNow(intervalMs)) {
-    return;
-  }
-
   const currentVersion = String(ctx.agent?.version || "").trim();
   logger?.info?.("[update] current agent version", { currentVersion });
   if (
     !currentVersion ||
     currentVersion === "undefined" ||
     currentVersion === "null" ||
-    !/^\d+\.\d+\.\d+/.test(currentVersion)
+    !looksLikeSemver(currentVersion)
   ) {
     logger?.warn?.("[update] missing current agentVersion");
+    return;
+  }
+
+  const state = reconcilePendingUpdate(currentVersion, logger);
+  let freshState = state;
+
+  if (freshState.updateInProgress) {
+    const lastAttempt = parseUtcMs(freshState.installStartedAtUtc || freshState.lastAttemptedAtUtc);
+    if (nowMs() - lastAttempt < 10 * 60 * 1000) {
+      logger?.warn?.("[update] update already in progress, skipping");
+      return;
+    }
+
+    logger?.warn?.("[update] stale updateInProgress detected, marking failed");
+    markUpdateFailed("stale_update_in_progress");
+    freshState = loadUpdateState();
+  }
+
+  if (!force && !shouldCheckNow(intervalMs)) {
     return;
   }
 
@@ -180,10 +235,7 @@ export async function runUpdateTask(
     });
 
   } catch (err: any) {
-    updateUpdateState({
-      updateInProgress: false,
-      lastError: err?.message || String(err)
-    });
+    markUpdateFailed(err?.message || String(err));
 
     logger?.error?.("[update] update task failed", {
       error: err?.message || String(err),

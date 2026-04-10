@@ -323,7 +323,7 @@ export class SqliteOutbox {
           locked_at_utc=NULL,
           lock_owner=NULL,
           last_error=NULL
-      WHERE id=? AND status='IN_FLIGHT'
+      WHERE id=? AND status IN ('PENDING','IN_FLIGHT')
     `).run(now, id);
 
     //console.log("[outbox] markSent result", { id, changes: (res as any)?.changes });
@@ -344,7 +344,7 @@ export class SqliteOutbox {
 
   markFailed(id: number, error: string) {
     const row = this.db
-      .prepare("SELECT attempts FROM outbox_events WHERE id=? AND status='IN_FLIGHT'")
+      .prepare("SELECT attempts FROM outbox_events WHERE id=? AND status IN ('PENDING','IN_FLIGHT')")
       .get(id) as OutboxAttemptsRow | undefined;
 
     if (!row) {
@@ -379,6 +379,24 @@ export class SqliteOutbox {
           last_error=?
       WHERE id=?
     `).run(attempts, next, error.slice(0, 2000), id);
+    this.notifyChanged();
+  }
+
+  markRejected(id: number, error: string) {
+    const res = this.db.prepare(`
+      UPDATE outbox_events
+      SET status='FAILED',
+          locked_at_utc=NULL,
+          lock_owner=NULL,
+          last_error=?
+      WHERE id=? AND status IN ('PENDING','IN_FLIGHT')
+    `).run(error.slice(0, 2000), id);
+
+    if ((res as any)?.changes === 0) {
+      console.warn("markRejected: no rows updated (unexpected state)", { id });
+      return;
+    }
+
     this.notifyChanged();
   }
 

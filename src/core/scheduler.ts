@@ -5,7 +5,7 @@ import { logger } from "../bootstrap/logger";
 import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { AgentContext } from "./agent-context";
 import type { Namespaces } from "../domain/device-facts";
-import type { AmmNamespace } from "../domain/amm-types";
+import type { AmpNamespace } from "../domain/amp-types";
 import { runUpdateTask } from "../update/update-task";
 
 class Scheduler {
@@ -14,8 +14,13 @@ class Scheduler {
   private ctx: AgentContext | null = null;
   private inventoryRunning: boolean = false;
   private updateRunning: boolean = false;
+  private policyListeners: Array<{
+    event: string;
+    handler: (...args: any[]) => void;
+  }> = [];
 
   async start(ctx: AgentContext) {
+    this.clearPolicyListeners();
     this.ctx = ctx;
 
     logger.info("TaskScheduler starting...");
@@ -26,7 +31,7 @@ class Scheduler {
     this.startPipelines(ctx);
 
     // --- dynamic policy bindings ---
-    ctx.policyRuntime.on("inventoryIntervalChanged", (interval: number) => {
+    this.addPolicyListener(ctx, "inventoryIntervalChanged", (interval: number) => {
       logger.info("[scheduler] inventory interval updated", { interval });
 
       const existing = this.timers.get("inventory");
@@ -35,7 +40,7 @@ class Scheduler {
         this.timers.delete("inventory");
       }
 
-      if (ctx.policyRuntime.pluginEnabled("amm")) {
+      if (ctx.policyRuntime.isInventoryEnabled()) {
         const jitter = Math.floor(Math.random() * 30000);
 
         const timer = setInterval(() => {
@@ -49,20 +54,52 @@ class Scheduler {
       }
     });
 
-    ctx.policyRuntime.on("pluginsChanged", (plugins: string[]) => {
+    this.addPolicyListener(ctx, "pluginsChanged", (plugins: string[]) => {
       logger.info("[scheduler] plugins updated", { plugins });
 
       // rebuild pipelines safely
       this.startPipelines(ctx);
     });
 
-    ctx.policyRuntime.on("modulesChanged", (modules: string[]) => {
+    this.addPolicyListener(ctx, "modulesChanged", (modules: string[]) => {
       logger.info("[scheduler] modules updated", { modules });
     });
 
-    ctx.policyRuntime.on("featuresChanged", (features: any) => {
+    this.addPolicyListener(ctx, "featuresChanged", (features: any) => {
       logger.info("[scheduler] features updated", { features });
     });
+  }
+
+  async stop(_ctx?: AgentContext) {
+    logger.info("TaskScheduler stopping...");
+    this.stopAll();
+    this.clearPolicyListeners();
+    this.ctx = null;
+    logger.info("TaskScheduler stopped");
+  }
+
+  private addPolicyListener(
+    ctx: AgentContext,
+    event: string,
+    handler: (...args: any[]) => void
+  ) {
+    ctx.policyRuntime.on(event, handler);
+    this.policyListeners.push({ event, handler });
+  }
+
+  private clearPolicyListeners() {
+    if (!this.ctx) {
+      this.policyListeners = [];
+      return;
+    }
+
+    for (const { event, handler } of this.policyListeners) {
+      try {
+        this.ctx.policyRuntime.off(event, handler);
+      } catch {}
+    }
+
+    this.policyListeners = [];
   }
 
   private startPipelines(ctx: AgentContext) {
@@ -70,7 +107,7 @@ class Scheduler {
     this.stopAll();
 
     // inventory pipeline
-    if (ctx.policyRuntime.pluginEnabled("amm")) {
+    if (ctx.policyRuntime.isInventoryEnabled()) {
 
       const intervalSeconds = ctx.policyRuntime.getInventoryInterval();
       const jitter = Math.floor(Math.random() * 30000);
@@ -91,9 +128,7 @@ class Scheduler {
     }
 
     // update pipeline
-    const featureEnabled = (ctx.policyRuntime as any)?.isFeatureEnabled?.("selfUpdate") ?? false;
-    const moduleEnabled = (ctx.policyRuntime as any)?.isModuleEnabled?.("update") ?? false;
-    if (featureEnabled || moduleEnabled) {
+    if (ctx.policyRuntime.isUpdateEnabled()) {
       const intervalSeconds = 6 * 60 * 60; // 6h default
       const jitter = Math.floor(Math.random() * 30000);
 
@@ -116,7 +151,7 @@ class Scheduler {
     }
 
     // compliance pipeline (future)
-    if (ctx.policyRuntime.pluginEnabled("scm")) {
+    if (ctx.policyRuntime.isComplianceEnabled()) {
 
       const intervalSeconds = 4 * 60 * 60; // 4h default
 
@@ -130,7 +165,7 @@ class Scheduler {
     }
 
     // patch pipeline (future)
-    if (ctx.policyRuntime.pluginEnabled("pmm")) {
+    if (ctx.policyRuntime.isPatchEnabled()) {
 
       const intervalSeconds = 24 * 60 * 60; // 24h default
 
@@ -164,8 +199,13 @@ class Scheduler {
 
   private async runInventory(ctx: AgentContext) {
 
-    if (!ctx.policyRuntime.pluginEnabled("amm")) {
-      logger.info("AMM plugin disabled by policy, skipping inventory");
+    if (!ctx.policyRuntime.isInventoryEnabled()) {
+      logger.info("Inventory module disabled by policy, skipping inventory");
+      return;
+    }
+
+    if (!ctx.policyRuntime.pluginEnabled("amp")) {
+      logger.info("AMP plugin disabled by policy, skipping inventory");
       return;
     }
 
@@ -178,28 +218,28 @@ class Scheduler {
 
     try {
 
-      logger.info("Collecting AMM facts...")
+      logger.info("Collecting AMP facts...")
         //deviceId: ctx.enrollment.deviceId,
         //policyVersion: (ctx.policyRuntime as any).getPolicyVersion?.()
       //});
 
       const namespaces = {} as Namespaces;
 
-      // AMM (Asset Management)
-      if (ctx.policyRuntime.pluginEnabled("amm")) {
+      // AMP (Asset Management)
+      if (ctx.policyRuntime.pluginEnabled("amp")) {
         try {
-          namespaces.amm = await ctx.plugins.run("amm.collect") as AmmNamespace;
+          namespaces.amp = await ctx.plugins.run("amp.collect") as AmpNamespace;
         } catch (err) {
-          logger.error("AMM plugin execution failed", { err });
+          logger.error("AMP plugin execution failed", { err });
         }
       }
 
-      // SCM (future: Security / Compliance)
-      if (ctx.policyRuntime.pluginEnabled("scm")) {
+      // SCP (future: Security Compliance Plugin)
+      if (ctx.policyRuntime.isComplianceEnabled() && ctx.policyRuntime.pluginEnabled("scp")) {
         try {
-          namespaces.scm = await ctx.plugins.run("scm.collect");
+          namespaces.scp = await ctx.plugins.run("scp.collect");
         } catch (err) {
-          logger.error("SCM plugin execution failed", { err });
+          logger.error("SCP plugin execution failed", { err });
         }
       }
 
@@ -243,8 +283,8 @@ class Scheduler {
         deviceId: ctx.enrollment.deviceId,
         modules: Object.keys(namespaces),
         hasAnyChanges,
-        ammSoftwareItems: Array.isArray(namespaces.amm?.software?.items)
-          ? namespaces.amm.software.items.length
+        ampSoftwareItems: Array.isArray(namespaces.amp?.software?.items)
+          ? namespaces.amp.software.items.length
           : 0
       });
 
@@ -261,11 +301,7 @@ class Scheduler {
 
   private async runUpdate(ctx: AgentContext) {
 
-    const featureEnabled = (ctx.policyRuntime as any)?.isFeatureEnabled?.("selfUpdate") ?? false;
-    const moduleEnabled = (ctx.policyRuntime as any)?.isModuleEnabled?.("update") ?? false;
-    const updateEnabled = featureEnabled || moduleEnabled;
-
-    if (!updateEnabled) {
+    if (!ctx.policyRuntime.isUpdateEnabled()) {
       logger.info("Update disabled by policy, skipping update check");
       return;
     }

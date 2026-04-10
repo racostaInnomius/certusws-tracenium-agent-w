@@ -1,6 +1,6 @@
 // src/domain/device-facts.ts
 
-import type { AmmNamespace } from "./amm-types";
+import type { AmpNamespace } from "./amp-types";
 
 export type AgentCapability =
   | "realtime"
@@ -51,9 +51,9 @@ export interface DeviceIdentity {
 }
 
 export interface Namespaces {
-  // Plugins (modules)
-  amm: AmmNamespace;
-  scm?: unknown;
-  pmm?: unknown;
+  // Plugin namespaces
+  amp: AmpNamespace;
+  scp?: unknown;
+  pmp?: unknown;
   rcm?: unknown;
 }

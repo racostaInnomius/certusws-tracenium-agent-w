@@ -5,12 +5,12 @@ import type { AgentContext } from "../core/agent-context";
 import type { DeviceFacts, Namespaces, AgentCapability } from "./device-facts";
 import crypto from "crypto";
 import type {
-  AmmNamespace,
+  AmpNamespace,
   HardwareStatic,
   HardwareRuntime,
   SecurityInfo,
   SoftwareInventory
-} from "./amm-types";
+} from "./amp-types";
 
 function buildDeviceIdentity(ctx: AgentContext) {
   const nodePlatform = os.platform();
@@ -235,9 +235,9 @@ export async function buildDeviceFacts(
     },
     namespaces: {
       ...namespaces,
-      amm: (() => {
-        const ammIn: AmmNamespace | undefined = namespaces?.amm;
-        const swIn = ammIn?.software;
+      amp: (() => {
+        const ampIn: AmpNamespace | undefined = namespaces?.amp;
+        const swIn = ampIn?.software;
 
         const software: SoftwareInventory = swIn
           ? {
@@ -253,9 +253,9 @@ export async function buildDeviceFacts(
               hasChanges: false
             };
 
-        const security: SecurityInfo = (ammIn?.security ?? {}) as SecurityInfo;
+        const security: SecurityInfo = (ampIn?.security ?? {}) as SecurityInfo;
 
-        const ammOut: AmmNamespace = {
+        const ampOut: AmpNamespace = {
           hardware: {
             static: hardware.static,
             runtime: hardware.runtime
@@ -264,7 +264,7 @@ export async function buildDeviceFacts(
           software
         };
 
-        return ammOut;
+        return ampOut;
       })()
     },
     _meta: {

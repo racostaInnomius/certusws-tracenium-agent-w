@@ -276,7 +276,7 @@ function buildLocalEnrollmentState(store: EnrollmentStore): EnrollmentState {
     },
     bootstrap: {
       channel: "stable",
-      capabilities: ["amm"],
+      capabilities: ["amp"],
     }
   };
 
@@ -460,7 +460,7 @@ export async function ensureEnrolled(): Promise<EnrollmentState> {
         } as any,
         bootstrap: {
           channel: "stable",
-          capabilities: ["amm"],
+          capabilities: ["amp"],
         }
       };
 

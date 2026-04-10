@@ -36,28 +36,29 @@ namespace Tracenium.Control {
             "SnNvbhgCIAEoDBIQCghkZXZpY2VJZBgDIAEoCSJyCglIZWFydGJlYXQSDwoH",
             "ZXZlbnRJZBgBIAEoCRIQCghkZXZpY2VJZBgCIAEoCRIVCg11cHRpbWVTZWNv",
             "bmRzGAMgASgDEhQKDGFnZW50VmVyc2lvbhgEIAEoCRIVCg1wb2xpY3lWZXJz",
-            "aW9uGAUgASgJIhcKBlJ1bkpvYhINCgVqb2JJZBgBIAEoCSIcCgpSb3RhdGVD",
-            "ZXJ0Eg4KBnJlYXNvbhgBIAEoCSI5CgxQb2xpY3lVcGRhdGUSFQoNcG9saWN5",
-            "VmVyc2lvbhgBIAEoCRISCgpwb2xpY3lKc29uGAIgASgMIhwKCkRpc2Nvbm5l",
-            "Y3QSDgoGcmVhc29uGAEgASgJIi0KC0FnZW50VXBkYXRlEg0KBWpvYklkGAEg",
-            "ASgJEg8KB3ZlcnNpb24YAiABKAkiIAoMUmVxdWVzdEZhY3RzEhAKCGZhY3RU",
-            "eXBlGAEgASgJIsMECg5Db250cm9sTWVzc2FnZRIPCgd0cmFjZUlkGAogASgJ",
-            "EikKBWhlbGxvGAEgASgLMhgudHJhY2VuaXVtLmNvbnRyb2wuSGVsbG9IABIp",
-            "CgVmYWN0cxgCIAEoCzIYLnRyYWNlbml1bS5jb250cm9sLkZhY3RzSAASMQoJ",
-            "aGVhcnRiZWF0GAMgASgLMhwudHJhY2VuaXVtLmNvbnRyb2wuSGVhcnRiZWF0",
-            "SAASKwoGcnVuSm9iGAQgASgLMhkudHJhY2VuaXVtLmNvbnRyb2wuUnVuSm9i",
-            "SAASMwoKcm90YXRlQ2VydBgFIAEoCzIdLnRyYWNlbml1bS5jb250cm9sLlJv",
-            "dGF0ZUNlcnRIABI3Cgxwb2xpY3lVcGRhdGUYBiABKAsyHy50cmFjZW5pdW0u",
-            "Y29udHJvbC5Qb2xpY3lVcGRhdGVIABIzCgpkaXNjb25uZWN0GAcgASgLMh0u",
-            "dHJhY2VuaXVtLmNvbnRyb2wuRGlzY29ubmVjdEgAEjUKC2FnZW50VXBkYXRl",
-            "GAggASgLMh4udHJhY2VuaXVtLmNvbnRyb2wuQWdlbnRVcGRhdGVIABI3Cgxy",
-            "ZXF1ZXN0RmFjdHMYCSABKAsyHy50cmFjZW5pdW0uY29udHJvbC5SZXF1ZXN0",
-            "RmFjdHNIABIlCgNhY2sYCyABKAsyFi50cmFjZW5pdW0uY29udHJvbC5BY2tI",
-            "ABIpCgVlcnJvchgMIAEoCzIYLnRyYWNlbml1bS5jb250cm9sLkVycm9ySABC",
-            "BQoDbXNnKjgKCUFja1N0YXR1cxIKCgZBQ0tfT0sQABINCglBQ0tfUkVUUlkQ",
-            "ARIQCgxBQ0tfUkVKRUNURUQQAjJjCgxDb250cm9sUGxhbmUSUwoHQ29ubmVj",
-            "dBIhLnRyYWNlbml1bS5jb250cm9sLkNvbnRyb2xNZXNzYWdlGiEudHJhY2Vu",
-            "aXVtLmNvbnRyb2wuQ29udHJvbE1lc3NhZ2UoATABYgZwcm90bzM="));
+            "aW9uGAUgASgJIj0KBlJ1bkpvYhINCgVqb2JJZBgBIAEoCRIPCgdqb2JUeXBl",
+            "GAIgASgJEhMKC3BheWxvYWRKc29uGAMgASgMIhwKClJvdGF0ZUNlcnQSDgoG",
+            "cmVhc29uGAEgASgJIjkKDFBvbGljeVVwZGF0ZRIVCg1wb2xpY3lWZXJzaW9u",
+            "GAEgASgJEhIKCnBvbGljeUpzb24YAiABKAwiHAoKRGlzY29ubmVjdBIOCgZy",
+            "ZWFzb24YASABKAkiLQoLQWdlbnRVcGRhdGUSDQoFam9iSWQYASABKAkSDwoH",
+            "dmVyc2lvbhgCIAEoCSIgCgxSZXF1ZXN0RmFjdHMSEAoIZmFjdFR5cGUYASAB",
+            "KAkiwwQKDkNvbnRyb2xNZXNzYWdlEg8KB3RyYWNlSWQYCiABKAkSKQoFaGVs",
+            "bG8YASABKAsyGC50cmFjZW5pdW0uY29udHJvbC5IZWxsb0gAEikKBWZhY3Rz",
+            "GAIgASgLMhgudHJhY2VuaXVtLmNvbnRyb2wuRmFjdHNIABIxCgloZWFydGJl",
+            "YXQYAyABKAsyHC50cmFjZW5pdW0uY29udHJvbC5IZWFydGJlYXRIABIrCgZy",
+            "dW5Kb2IYBCABKAsyGS50cmFjZW5pdW0uY29udHJvbC5SdW5Kb2JIABIzCgpy",
+            "b3RhdGVDZXJ0GAUgASgLMh0udHJhY2VuaXVtLmNvbnRyb2wuUm90YXRlQ2Vy",
+            "dEgAEjcKDHBvbGljeVVwZGF0ZRgGIAEoCzIfLnRyYWNlbml1bS5jb250cm9s",
+            "LlBvbGljeVVwZGF0ZUgAEjMKCmRpc2Nvbm5lY3QYByABKAsyHS50cmFjZW5p",
+            "dW0uY29udHJvbC5EaXNjb25uZWN0SAASNQoLYWdlbnRVcGRhdGUYCCABKAsy",
+            "Hi50cmFjZW5pdW0uY29udHJvbC5BZ2VudFVwZGF0ZUgAEjcKDHJlcXVlc3RG",
+            "YWN0cxgJIAEoCzIfLnRyYWNlbml1bS5jb250cm9sLlJlcXVlc3RGYWN0c0gA",
+            "EiUKA2FjaxgLIAEoCzIWLnRyYWNlbml1bS5jb250cm9sLkFja0gAEikKBWVy",
+            "cm9yGAwgASgLMhgudHJhY2VuaXVtLmNvbnRyb2wuRXJyb3JIAEIFCgNtc2cq",
+            "OAoJQWNrU3RhdHVzEgoKBkFDS19PSxAAEg0KCUFDS19SRVRSWRABEhAKDEFD",
+            "S19SRUpFQ1RFRBACMmMKDENvbnRyb2xQbGFuZRJTCgdDb25uZWN0EiEudHJh",
+            "Y2VuaXVtLmNvbnRyb2wuQ29udHJvbE1lc3NhZ2UaIS50cmFjZW5pdW0uY29u",
+            "dHJvbC5Db250cm9sTWVzc2FnZSgBMAFiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::Tracenium.Control.AckStatus), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -66,7 +67,7 @@ namespace Tracenium.Control {
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Hello), global::Tracenium.Control.Hello.Parser, new[]{ "EventId", "DeviceId", "TenantId", "AgentVersion", "ProtocolVersion", "PolicyVersion", "Capabilities" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Facts), global::Tracenium.Control.Facts.Parser, new[]{ "EventId", "PayloadJson", "DeviceId" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Heartbeat), global::Tracenium.Control.Heartbeat.Parser, new[]{ "EventId", "DeviceId", "UptimeSeconds", "AgentVersion", "PolicyVersion" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RunJob), global::Tracenium.Control.RunJob.Parser, new[]{ "JobId" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RunJob), global::Tracenium.Control.RunJob.Parser, new[]{ "JobId", "JobType", "PayloadJson" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RotateCert), global::Tracenium.Control.RotateCert.Parser, new[]{ "Reason" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.PolicyUpdate), global::Tracenium.Control.PolicyUpdate.Parser, new[]{ "PolicyVersion", "PolicyJson" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Disconnect), global::Tracenium.Control.Disconnect.Parser, new[]{ "Reason" }, null, null, null, null),
@@ -1735,6 +1736,8 @@ namespace Tracenium.Control {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public RunJob(RunJob other) : this() {
       jobId_ = other.jobId_;
+      jobType_ = other.jobType_;
+      payloadJson_ = other.payloadJson_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -1756,6 +1759,30 @@ namespace Tracenium.Control {
       }
     }
 
+    /// <summary>Field number for the "jobType" field.</summary>
+    public const int JobTypeFieldNumber = 2;
+    private string jobType_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string JobType {
+      get { return jobType_; }
+      set {
+        jobType_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "payloadJson" field.</summary>
+    public const int PayloadJsonFieldNumber = 3;
+    private pb::ByteString payloadJson_ = pb::ByteString.Empty;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pb::ByteString PayloadJson {
+      get { return payloadJson_; }
+      set {
+        payloadJson_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -1772,6 +1799,8 @@ namespace Tracenium.Control {
         return true;
       }
       if (JobId != other.JobId) return false;
+      if (JobType != other.JobType) return false;
+      if (PayloadJson != other.PayloadJson) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -1780,6 +1809,8 @@ namespace Tracenium.Control {
     public override int GetHashCode() {
       int hash = 1;
       if (JobId.Length != 0) hash ^= JobId.GetHashCode();
+      if (JobType.Length != 0) hash ^= JobType.GetHashCode();
+      if (PayloadJson.Length != 0) hash ^= PayloadJson.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -1802,6 +1833,14 @@ namespace Tracenium.Control {
         output.WriteRawTag(10);
         output.WriteString(JobId);
       }
+      if (JobType.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(JobType);
+      }
+      if (PayloadJson.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteBytes(PayloadJson);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -1816,6 +1855,14 @@ namespace Tracenium.Control {
         output.WriteRawTag(10);
         output.WriteString(JobId);
       }
+      if (JobType.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(JobType);
+      }
+      if (PayloadJson.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteBytes(PayloadJson);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -1828,6 +1875,12 @@ namespace Tracenium.Control {
       int size = 0;
       if (JobId.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(JobId);
+      }
+      if (JobType.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(JobType);
+      }
+      if (PayloadJson.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeBytesSize(PayloadJson);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -1843,6 +1896,12 @@ namespace Tracenium.Control {
       }
       if (other.JobId.Length != 0) {
         JobId = other.JobId;
+      }
+      if (other.JobType.Length != 0) {
+        JobType = other.JobType;
+      }
+      if (other.PayloadJson.Length != 0) {
+        PayloadJson = other.PayloadJson;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -1867,6 +1926,14 @@ namespace Tracenium.Control {
             JobId = input.ReadString();
             break;
           }
+          case 18: {
+            JobType = input.ReadString();
+            break;
+          }
+          case 26: {
+            PayloadJson = input.ReadBytes();
+            break;
+          }
         }
       }
     #endif
@@ -1888,6 +1955,14 @@ namespace Tracenium.Control {
             break;
           case 10: {
             JobId = input.ReadString();
+            break;
+          }
+          case 18: {
+            JobType = input.ReadString();
+            break;
+          }
+          case 26: {
+            PayloadJson = input.ReadBytes();
             break;
           }
         }

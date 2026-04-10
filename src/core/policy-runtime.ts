@@ -11,6 +11,7 @@ export type RuntimePolicy = {
     enabled?: string[];
   };
   modules?: {
+    inventory?: boolean;
     update?: boolean;
     patch?: boolean;
     compliance?: boolean;
@@ -22,14 +23,18 @@ export type RuntimePolicy = {
   };
 };
 
+type RuntimeModuleName = keyof NonNullable<RuntimePolicy["modules"]>;
+type RuntimeFeatureName = keyof NonNullable<RuntimePolicy["features"]>;
+
 const DEFAULT_POLICY: RuntimePolicy = {
   inventory: {
     intervalSeconds: 21600 // 6h
   },
   plugins: {
-    enabled: ["amm"]
+    enabled: ["amp"]
   },
   modules: {
+    inventory: true,
     update: true,
     patch: false,
     compliance: false
@@ -84,11 +89,27 @@ export class PolicyRuntime extends EventEmitter {
     return this.policy.plugins?.enabled || DEFAULT_POLICY.plugins!.enabled!;
   }
 
-  isModuleEnabled(module: keyof RuntimePolicy["modules"]): boolean {
+  isModuleEnabled(module: RuntimeModuleName): boolean {
     return this.policy.modules?.[module] ?? false;
   }
 
-  isFeatureEnabled(feature: keyof RuntimePolicy["features"]): boolean {
+  isInventoryEnabled(): boolean {
+    return this.isModuleEnabled("inventory");
+  }
+
+  isUpdateEnabled(): boolean {
+    return this.isModuleEnabled("update") || this.isFeatureEnabled("selfUpdate");
+  }
+
+  isComplianceEnabled(): boolean {
+    return this.isModuleEnabled("compliance");
+  }
+
+  isPatchEnabled(): boolean {
+    return this.isModuleEnabled("patch");
+  }
+
+  isFeatureEnabled(feature: RuntimeFeatureName): boolean {
     return this.policy.features?.[feature] ?? false;
   }
 

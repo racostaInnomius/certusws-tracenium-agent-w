@@ -1,11 +1,11 @@
-// src/plugins/amm/providers/windows.ts
+// src/plugins/amp/providers/windows.ts
 import os from "os";
 import si from "systeminformation";
 import type { AgentContext } from "../../../core/agent-context";
 import { normalizeApp } from "../../../domain/normalize-app";
 import { computeSoftwareDelta, toBaselineOps } from "../../../domain/software-inventory-delta";
 import { loadSoftwareBaseline, upsertSoftwareBaseline, deleteSoftwareByIds } from "../../../domain/software-baseline-repo";
-import type { AmmNamespace } from "../../../domain/amm-types";
+import type { AmpNamespace } from "../../../domain/amp-types";
 import type { SoftwareApplication } from "../../../domain/normalize-app";
 
 type RawApp = {
@@ -21,7 +21,7 @@ type RawApp = {
  * L2: device + hardware (non-privileged reads via systeminformation)
  */
 async function collectWindowsDeviceAndHardware(): Promise<
-  Pick<AmmNamespace, "hardware">
+  Pick<AmpNamespace, "hardware">
 > {
   const [osInfo, system, cpu, mem, diskLayout, fsSize] = await Promise.all([
     si.osInfo(),
@@ -66,8 +66,8 @@ async function collectWindowsDeviceAndHardware(): Promise<
  * L2: security posture should come from PrivSvc (admin boundary).
  * For now we attempt a call if implemented; otherwise default to "unknown".
  */
-async function collectWindowsSecurity(ctx: AgentContext): Promise<AmmNamespace["security"]> {
-  const unknown: AmmNamespace["security"] = {
+async function collectWindowsSecurity(ctx: AgentContext): Promise<AmpNamespace["security"]> {
+  const unknown: AmpNamespace["security"] = {
     bitlocker: { status: "unknown" },
     defender: { status: "unknown" },
     firewall: { status: "unknown" }
@@ -146,7 +146,7 @@ export async function collectWindowsSoftwareInventory(ctx: AgentContext) {
 }
 
 export const windowsProvider = {
-  async collect(ctx: AgentContext): Promise<AmmNamespace> {
+  async collect(ctx: AgentContext): Promise<AmpNamespace> {
     if (os.platform() !== "win32") {
       throw new Error("windowsProvider.collect() called on non-Windows platform");
     }
@@ -155,13 +155,13 @@ export const windowsProvider = {
     const base = await collectWindowsDeviceAndHardware();
 
     // Security + software rely on PrivSvc; degrade gracefully.
-    let security: AmmNamespace["security"] = {
+    let security: AmpNamespace["security"] = {
       bitlocker: { status: "unknown" },
       defender: { status: "unknown" },
       firewall: { status: "unknown" }
     };
 
-    let software: AmmNamespace["software"] = {
+    let software: AmpNamespace["software"] = {
       count: 0,
       items: undefined,
       delta: null,

@@ -2,7 +2,6 @@
 import { EventEmitter } from "events";
 import { AgentContext } from "../core/agent-context";
 import { logger } from "../bootstrap/logger";
-import { runUpdateTask } from "../update/update-task";
 import { outbox } from "../queue/sqlite-outbox";
 
 function normalizeTarget(url: string): string {
@@ -83,7 +82,6 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
   let connectPromise: Promise<void> | null = null;
   let ended = false;
   let localClose = false;
-  let agentUpdateInProgress = false;
 
   // serialize IPC writes to PrivSvc to avoid concurrent pipe writes
   let writeChain: Promise<void> = Promise.resolve();
@@ -119,7 +117,8 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
           }
         } catch {}
 
-        // --- remote ACK (telemetry only; outbox already closed on IPC acceptance) ---
+        // Remote ACK is the delivery boundary. IPC acceptance only means PrivSvc queued
+        // the message locally; the outbox must remain retryable until backend ACK.
         try {
           const eventId = normalized.eventId;
           if (eventId) {
@@ -133,9 +132,12 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               if (status === 0) {
                 outbox.markSent(outboxId);
                 ctx.logger?.info?.("[grpc-client] ACK → markSent", { eventId, outboxId });
+              } else if (status === 1) {
+                outbox.markFailed(outboxId, message || "ACK requested retry");
+                ctx.logger?.warn?.("[grpc-client] ACK → retry", { eventId, outboxId, status });
               } else {
-                outbox.markFailed(outboxId, message || `ACK status ${status}`);
-                ctx.logger?.warn?.("[grpc-client] ACK → markFailed", { eventId, outboxId, status });
+                outbox.markRejected(outboxId, message || `ACK rejected with status ${status}`);
+                ctx.logger?.warn?.("[grpc-client] ACK → rejected", { eventId, outboxId, status });
               }
             }
           }
@@ -183,121 +185,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       }
 
       if (method === "grpc.control.agentUpdate") {
-
-        if (agentUpdateInProgress) {
-          ctx.logger?.warn("[grpc-client] agentUpdate ignored: update already in progress", {
-            jobId: String(params?.jobId || "").trim(),
-            version: String(params?.version || "").trim()
-          });
-          return;
-        }
-
-        const jobId = String(params?.jobId || "").trim();
-        const version = String(params?.version || "").trim();
-
-        ctx.logger?.info("[grpc-client] agentUpdate received", {
-          jobId,
-          version
-        });
-
-        // Validate required fields before proceeding
-        if (!version) {
-          ctx.logger?.error("[grpc-client] invalid agentUpdate payload", {
-            jobId,
-            version
-          });
-          return;
-        }
-
         stream.emit("data", { agentUpdate: params });
-
-        agentUpdateInProgress = true;
-
-        setImmediate(async () => {
-          ctx.logger?.info("[grpc-client] agentUpdate async handler started", {
-            jobId,
-            version
-          });
-          // Use jobId or fallback eventId for ACK
-          const eventId = jobId || `agentUpdate-${Date.now()}`;
-          try {
-            ctx.logger?.info("[grpc-client] executing update task", {
-              jobId,
-              version
-            });
-            await runUpdateTask(ctx, {
-              targetVersion: version,
-              logger: ctx.logger || logger
-            });
-
-            // ACK success
-            if (eventId) {
-              try {
-                await (ctx.priv as any).call({
-                  v: 1,
-                  id: `ack-${eventId}`,
-                  method: "grpc.ack",
-                  params: {
-                    eventId,
-                    status: 0,
-                    message: "update_completed"
-                  }
-                });
-                ctx.logger?.info("[grpc-client] agentUpdate ACK sent (success)", { eventId });
-              } catch (ackErr: any) {
-                const msg = String(ackErr?.message || ackErr);
-                if (msg.includes("not_supported")) {
-                  ctx.logger?.warn("[grpc-client] ACK not supported by PrivSvc yet, skipping");
-                } else {
-                  ctx.logger?.error("[grpc-client] failed to send ACK (success)", {
-                    eventId,
-                    err: msg
-                  });
-                }
-              }
-            }
-
-          } catch (err: any) {
-
-            // ACK failure
-            if (eventId) {
-              try {
-                await (ctx.priv as any).call({
-                  v: 1,
-                  id: `ack-${eventId}`,
-                  method: "grpc.ack",
-                  params: {
-                    eventId,
-                    status: 2,
-                    message: err?.message || "update_failed"
-                  }
-                });
-                ctx.logger?.warn("[grpc-client] agentUpdate ACK sent (failure)", { eventId });
-              } catch (ackErr: any) {
-                const msg = String(ackErr?.message || ackErr);
-                if (msg.includes("not_supported")) {
-                  ctx.logger?.warn("[grpc-client] ACK not supported by PrivSvc yet, skipping");
-                } else {
-                  ctx.logger?.error("[grpc-client] failed to send ACK (failure)", {
-                    eventId,
-                    err: msg
-                  });
-                }
-              }
-            }
-
-            ctx.logger?.error("[grpc-client] agentUpdate execution failed", {
-              jobId,
-              version,
-              err: err?.message || err,
-              stack: err?.stack
-            });
-
-          } finally {
-            agentUpdateInProgress = false;
-          }
-        });
-
         return;
       }
 
@@ -456,20 +344,11 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
                 throw new Error(errorMessage);
               }
             } else {
-              // Close local outbox lifecycle on successful PrivSvc acceptance
-              try {
-                const parts = eventId.split(":");
-                const outboxId = Number(parts[parts.length - 1]);
-                if (!isNaN(outboxId)) {
-                  outbox.markSent(outboxId);
-                  ctx.logger?.info?.("[grpc-client] IPC accepted → markSent", { eventId, outboxId });
-                }
-              } catch (e: any) {
-                ctx.logger?.error?.("[grpc-client] markSent after IPC failed", e?.message || e);
-              }
-
-              // release in-flight tracking
+              // Release in-memory dedupe after PrivSvc accepts the IPC write. The
+              // persisted outbox stays IN_FLIGHT until the backend ACK arrives, so a
+              // stale-flight TTL can retry if the bridge dies before remote ACK.
               inFlightEvents.delete(eventId);
+              ctx.logger?.info?.("[grpc-client] IPC accepted; awaiting remote ACK", { eventId });
               return;
             }
           }
@@ -505,20 +384,9 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
           ctx.logger?.info("[grpc-client] FACTS chunked send completed", { eventId });
 
-          // Close local outbox lifecycle after successful chunked IPC send
-          try {
-            const parts = eventId.split(":");
-            const outboxId = Number(parts[parts.length - 1]);
-            if (!isNaN(outboxId)) {
-              outbox.markSent(outboxId);
-              ctx.logger?.info?.("[grpc-client] IPC chunked accepted → markSent", { eventId, outboxId });
-            }
-          } catch (e: any) {
-            ctx.logger?.error?.("[grpc-client] markSent after chunked IPC failed", e?.message || e);
-          }
-
-          // release in-flight tracking
+          // Release local dedupe only; backend ACK remains responsible for SENT.
           inFlightEvents.delete(eventId);
+          ctx.logger?.info("[grpc-client] FACTS chunked IPC accepted; awaiting remote ACK", { eventId });
 
           return;
         }
@@ -579,7 +447,6 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
     localClose = true;
     connected = false;
     connectPromise = null;
-    agentUpdateInProgress = false;
 
     (ctx.priv as any)
       .call({

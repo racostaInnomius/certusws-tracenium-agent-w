@@ -5,23 +5,220 @@ import { outbox } from "../queue/sqlite-outbox";
 import { PolicyStore } from "../core/policy-store";
 import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { Namespaces, DeviceFacts } from "../domain/device-facts";
+import { runUpdateTask } from "../update/update-task";
 
 const ACK_TIMEOUT_MS = 60_000;
 const MAX_IN_FLIGHT = 3;
 const RECONNECT_DELAY_MS = 5_000;
 const HEARTBEAT_INTERVAL_MS = 60_000;
 
+let shutdownRequested = false;
+
 function buildEventId(deviceId: string, outboxId: number) {
   return `${deviceId}:${outboxId}`;
 }
 
+async function collectFactsSnapshot(
+  ctx: AgentContext,
+  source: string,
+  factType = "inventory"
+) {
+  const namespaces = {} as Namespaces;
+
+  if (ctx.policyRuntime.isInventoryEnabled() && ctx.policyRuntime.pluginEnabled("amp")) {
+    try {
+      namespaces.amp = await ctx.plugins.run("amp.collect");
+    } catch (err) {
+      ctx.logger?.error?.(`AMP collect failed (${source})`, { err });
+    }
+  }
+
+  if (ctx.policyRuntime.isComplianceEnabled() && ctx.policyRuntime.pluginEnabled("scp")) {
+    try {
+      namespaces.scp = await ctx.plugins.run("scp.collect");
+    } catch (err) {
+      ctx.logger?.error?.(`SCP collect failed (${source})`, { err });
+    }
+  }
+
+  if (Object.keys(namespaces).length === 0) {
+    throw new Error(`${source}: no plugin namespaces collected`);
+  }
+
+  const facts = await buildDeviceFacts(ctx, namespaces);
+  const outboxId = outbox.enqueue({
+    type: "FACTS_SNAPSHOT",
+    payload: facts
+  });
+
+  const softwareCount = Number(namespaces.amp?.software?.count ?? 0);
+
+  ctx.logger?.info?.("FACTS_SNAPSHOT enqueued from control message", {
+    source,
+    factType,
+    outboxId,
+    modules: Object.keys(namespaces),
+    softwareCount
+  });
+
+  return {
+    outboxId,
+    modules: Object.keys(namespaces),
+    softwareCount
+  };
+}
+
+async function sendControlAck(
+  ctx: AgentContext,
+  eventId: string,
+  status: number,
+  message: string
+) {
+  try {
+    await (ctx.priv as any).call({
+      v: 1,
+      id: `ack-${eventId}`,
+      method: "grpc.ack",
+      params: {
+        eventId,
+        status,
+        message
+      }
+    });
+
+    ctx.logger?.info?.("[grpc-stream] control ACK sent", {
+      eventId,
+      status,
+      message
+    });
+  } catch (ackErr: any) {
+    const errMessage = String(ackErr?.message || ackErr);
+
+    if (errMessage.includes("not_supported")) {
+      ctx.logger?.warn?.("[grpc-stream] ACK not supported by PrivSvc yet, skipping", {
+        eventId,
+        status
+      });
+      return;
+    }
+
+    ctx.logger?.error?.("[grpc-stream] failed to send control ACK", {
+      eventId,
+      status,
+      err: errMessage
+    });
+  }
+}
+
+function parseRunJobPayload(runJob: any): any {
+  const directPayload = runJob?.payload ?? runJob?.params;
+  if (directPayload && typeof directPayload === "object") return directPayload;
+
+  const rawPayload = runJob?.payloadJson;
+  if (!rawPayload) return {};
+
+  let payloadJson: string;
+  if (Buffer.isBuffer(rawPayload)) payloadJson = rawPayload.toString("utf8");
+  else if (rawPayload instanceof Uint8Array) payloadJson = Buffer.from(rawPayload).toString("utf8");
+  else if (typeof rawPayload === "string") payloadJson = rawPayload;
+  else return {};
+
+  try {
+    const parsed = JSON.parse(payloadJson);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function executeRunJob(ctx: AgentContext, runJob: any) {
+  const jobId = String(runJob?.jobId || "").trim();
+  const jobType = String(
+    runJob?.jobType ||
+    runJob?.type ||
+    runJob?.task ||
+    ""
+  ).trim();
+  const payload = parseRunJobPayload(runJob);
+
+  if (!jobId) {
+    return {
+      status: 2,
+      message: "runJob rejected: missing jobId"
+    };
+  }
+
+  if (!jobType) {
+    return {
+      status: 2,
+      message: "runJob rejected: missing jobType/payload in control message"
+    };
+  }
+
+  switch (jobType) {
+    case "request_facts":
+    case "requestFacts":
+    case "collect_facts":
+    case "facts_snapshot": {
+      const factType = String(payload?.factType || "inventory");
+      const result = await collectFactsSnapshot(ctx, `runJob:${jobId}`, factType);
+      return {
+        status: 0,
+        message: `facts_enqueued:${result.outboxId}`
+      };
+    }
+
+    case "agent_update": {
+      const version = String(payload?.version || runJob?.version || "").trim();
+      if (!version) {
+        return {
+          status: 2,
+          message: "agent_update rejected: missing version"
+        };
+      }
+
+      if ((ctx as any)._agentUpdateInProgress) {
+        return {
+          status: 1,
+          message: "agent_update retry: update already in progress"
+        };
+      }
+
+      (ctx as any)._agentUpdateInProgress = true;
+      try {
+        await runUpdateTask(ctx, {
+          targetVersion: version,
+          logger: ctx.logger
+        });
+
+        return {
+          status: 0,
+          message: "update_completed"
+        };
+      } finally {
+        (ctx as any)._agentUpdateInProgress = false;
+      }
+    }
+
+    default:
+      return {
+        status: 2,
+        message: `runJob rejected: unsupported jobType ${jobType}`
+      };
+  }
+}
+
 export function startGrpcStream(ctx: AgentContext) {
+  shutdownRequested = false;
+
   let startDelayTimer: NodeJS.Timeout | null = null;
   let retryTimer: NodeJS.Timeout | null = null;
+  let reconnectTimer: NodeJS.Timeout | null = null;
   let heartbeatInterval: NodeJS.Timeout | null = null;
   let unsubscribeOutbox: (() => void) | null = null;
   let draining = false;
   let drainScheduled = false;
+  const runningJobIds = new Set<string>();
   const client: any = createGrpcClient(ctx);
   ctx.logger?.info?.("gRPC stream: creating client");
 let stream: any;
@@ -37,8 +234,8 @@ stream = client.Connect();
   let lastBaselineHash: string | null = null;
   let baselineSent = false;
   try {
-    lastBaselineHash = outbox.getState("baselineHash:amm");
-    baselineSent = outbox.getState("baselineSent:amm") === "1";
+    lastBaselineHash = outbox.getState("baselineHash:amp");
+    baselineSent = outbox.getState("baselineSent:amp") === "1";
   } catch {
     lastBaselineHash = null;
     baselineSent = false;
@@ -51,6 +248,7 @@ stream = client.Connect();
     rotationInProgress = false;
     try { if (startDelayTimer) clearTimeout(startDelayTimer); } catch {}
     try { if (retryTimer) clearTimeout(retryTimer); } catch {}
+    try { if (reconnectTimer) clearTimeout(reconnectTimer); } catch {}
     try { if (heartbeatInterval) clearInterval(heartbeatInterval); } catch {}
     try { stream.removeAllListeners(); } catch {}
 
@@ -60,6 +258,22 @@ stream = client.Connect();
     if (opts?.localClose) {
       try { stream.end(); } catch {}
     }
+  };
+
+  const scheduleReconnect = (reason: string) => {
+    if (shutdownRequested) return;
+
+    ctx.logger?.warn?.("gRPC stream: scheduling reconnect", {
+      reason,
+      delayMs: RECONNECT_DELAY_MS
+    });
+
+    try { if (reconnectTimer) clearTimeout(reconnectTimer); } catch {}
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      if (shutdownRequested) return;
+      startGrpcStream(ctx);
+    }, RECONNECT_DELAY_MS);
   };
 
   // Accelerate recovery of IN_FLIGHT on restart
@@ -74,7 +288,7 @@ stream = client.Connect();
     tenantId: ctx.enrollment.tenantId,
     agentVersion: ctx.config.agentVersion,
     policyVersion: ctx.policy.getVersion(),
-    capabilities: ["amm"]
+    capabilities: ["amp"]
   });
 
   // NOTE:
@@ -110,8 +324,42 @@ stream = client.Connect();
     }
     // Jobs / rotate
     if (msg.runJob) {
-      ctx.logger?.info?.("gRPC control message: runJob received");
-      ctx.logger?.info?.("Received job:", msg.runJob?.jobId || msg.runJob);
+      const jobId = String(msg.runJob?.jobId || "").trim();
+      const eventId = jobId || `runJob-${Date.now()}`;
+
+      ctx.logger?.info?.("gRPC control message: runJob received", {
+        jobId,
+        jobType: msg.runJob?.jobType || msg.runJob?.type || msg.runJob?.task || null
+      });
+
+      if (jobId && runningJobIds.has(jobId)) {
+        ctx.logger?.warn?.("runJob ignored: job already in progress", { jobId });
+        sendControlAck(ctx, eventId, 1, "job_retry: already in progress").catch(() => {});
+        return;
+      }
+
+      if (jobId) {
+        runningJobIds.add(jobId);
+      }
+
+      setImmediate(() => {
+        executeRunJob(ctx, msg.runJob)
+          .then((result) => sendControlAck(ctx, eventId, result.status, result.message))
+          .catch((err: any) => {
+            ctx.logger?.error?.("runJob execution failed", {
+              jobId,
+              err: err?.message || err
+            });
+            return sendControlAck(ctx, eventId, 2, err?.message || "job_failed");
+          })
+          .finally(() => {
+            if (jobId) {
+              runningJobIds.delete(jobId);
+            }
+          });
+      });
+
+      return;
     }
     if (msg.rotateCert) {
       ctx.logger?.warn?.("gRPC control message: rotateCert received, pausing sender loop");
@@ -179,46 +427,11 @@ stream = client.Connect();
 
       (async () => {
         try {
-          const namespaces = {} as Namespaces;
-
-          // AMM
-          if (ctx.policyRuntime.pluginEnabled("amm")) {
-            try {
-              namespaces.amm = await ctx.plugins.run("amm.collect");
-            } catch (err) {
-              ctx.logger?.error?.("AMM collect failed (requestFacts)", { err });
-            }
-          }
-
-          // SCM (future-ready)
-          if (ctx.policyRuntime.pluginEnabled("scm")) {
-            try {
-              namespaces.scm = await ctx.plugins.run("scm.collect");
-            } catch (err) {
-              ctx.logger?.error?.("SCM collect failed (requestFacts)", { err });
-            }
-          }
-
-          if (Object.keys(namespaces).length === 0) {
-            ctx.logger?.warn?.("requestFacts: no namespaces collected, skipping");
-            return;
-          }
-
-          const facts = await buildDeviceFacts(ctx, namespaces);
-
-          // IMPORTANT: requestFacts ignores hasChanges (server explicitly requested)
-          outbox.enqueue({
-            type: "FACTS_SNAPSHOT",
-            payload: facts
-          });
-
-          const softwareCount = Number(namespaces.amm?.software?.count ?? 0);
-
-          ctx.logger?.info?.("Immediate FACTS_SNAPSHOT enqueued from requestFacts", {
-            factType: msg.requestFacts?.factType || "inventory",
-            modules: Object.keys(namespaces),
-            softwareCount
-          });
+          await collectFactsSnapshot(
+            ctx,
+            "requestFacts",
+            String(msg.requestFacts?.factType || "inventory")
+          );
         } catch (err: any) {
           ctx.logger?.error?.("requestFacts immediate collection failed", err?.message || err);
         }
@@ -232,6 +445,7 @@ stream = client.Connect();
 
       const version = String(params?.version || "").trim();
       const jobId = String(params?.jobId || "").trim();
+      const eventId = jobId || `agentUpdate-${Date.now()}`;
 
       ctx.logger?.info?.("gRPC control message: agentUpdate received", {
         jobId,
@@ -263,10 +477,19 @@ stream = client.Connect();
           targetVersion: version,
           logger: ctx.logger
         })
+          .then(async () => {
+            await sendControlAck(ctx, eventId, 0, "update_completed");
+          })
           .catch((err: any) => {
             ctx.logger?.error?.("agentUpdate execution failed", {
               err: err?.message || err
             });
+            return sendControlAck(
+              ctx,
+              eventId,
+              2,
+              err?.message || "update_failed"
+            );
           })
           .finally(() => {
             (ctx as any)._agentUpdateInProgress = false;
@@ -279,7 +502,7 @@ stream = client.Connect();
     if (msg.disconnect) {
       ctx.logger?.warn?.("gRPC control message: disconnect requested by server");
       stop();
-      setTimeout(() => startGrpcStream(ctx), RECONNECT_DELAY_MS);
+      scheduleReconnect("server_disconnect");
       return;
     }
   });
@@ -287,18 +510,16 @@ stream = client.Connect();
   stream.on("error", (err: any) => {
     if (stopped) return;
     ctx.logger?.error?.("gRPC bridge error:", err?.message || err);
-    ctx.logger?.warn?.("gRPC stream: scheduling reconnect in", RECONNECT_DELAY_MS, "ms");
     // Do not mark events SENT here. IN_FLIGHT will be recovered by TTL.
     stop();
-    setTimeout(() => startGrpcStream(ctx), RECONNECT_DELAY_MS);
+    scheduleReconnect("stream_error");
   });
 
   stream.on("end", () => {
     if (stopped) return;
     ctx.logger?.warn?.("gRPC bridge closed. Reconnecting soon...");
-    ctx.logger?.warn?.("gRPC stream: end event received, scheduling reconnect in", RECONNECT_DELAY_MS, "ms");
     stop();
-    setTimeout(() => startGrpcStream(ctx), RECONNECT_DELAY_MS);
+    scheduleReconnect("stream_end");
   });
 
 
@@ -362,7 +583,7 @@ stream = client.Connect();
             ctx.logger?.info?.("FACTS payload metadata", { eventId, baselineHash, baselineSent, forceBaseline });
 
             try {
-              const sw = parsedPayload?.namespaces?.amm?.software;
+              const sw = parsedPayload?.namespaces?.amp?.software;
               ctx.logger?.info?.("STREAM FINAL SOFTWARE CHECK", {
                 hasItems: !!sw?.items,
                 itemsLength: sw?.items?.length,
@@ -376,7 +597,7 @@ stream = client.Connect();
               facts: {
                 eventId,
                 deviceId: ctx.enrollment.deviceId,
-                namespace: parsedPayload?.namespaces ? Object.keys(parsedPayload.namespaces)[0] : "amm",
+                namespace: parsedPayload?.namespaces ? Object.keys(parsedPayload.namespaces)[0] : "amp",
                 payloadJson: Buffer.from(
                   typeof ev.payload_json === "string" ? ev.payload_json : JSON.stringify(ev.payload_json),
                   "utf8"
@@ -391,7 +612,7 @@ stream = client.Connect();
               facts: {
                 eventId,
                 deviceId: ctx.enrollment.deviceId,
-                namespace: "amm",
+                namespace: "amp",
                 payloadJson: Buffer.from(
                   typeof ev.payload_json === "string" ? ev.payload_json : JSON.stringify(ev.payload_json),
                   "utf8"
@@ -462,6 +683,7 @@ stream = client.Connect();
 
   // (Optional) return stop handle if you later want to cleanly shut down
   return () => {
-    stop();
+    shutdownRequested = true;
+    stop({ localClose: true });
   };
 }

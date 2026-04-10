@@ -1020,6 +1020,8 @@ private const int MaxPendingPushEvents = 50;
                         @params = new
                         {
                             jobId = msg.RunJob.JobId ?? "",
+                            jobType = msg.RunJob.JobType ?? "",
+                            payloadJson = msg.RunJob.PayloadJson.ToStringUtf8(),
                             receivedAtUtc = DateTime.UtcNow.ToString("o")
                         }
                     });

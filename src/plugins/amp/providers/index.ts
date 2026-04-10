@@ -1,16 +1,16 @@
-// src/plugins/amm/providers/index.ts
+// src/plugins/amp/providers/index.ts
 import { windowsProvider } from "./windows";
 import { macProvider } from "./macos";
 import { linuxProvider } from "./linux";
 
 import type { AgentContext } from "../../../core/agent-context";
-import type { AmmNamespace } from "../../../domain/amm-types";
+import type { AmpNamespace } from "../../../domain/amp-types";
 
-export interface AmmProvider {
-  collect(ctx: AgentContext): Promise<AmmNamespace>;
+export interface AmpProvider {
+  collect(ctx: AgentContext): Promise<AmpNamespace>;
 }
 
-export function getProvider(platform: NodeJS.Platform): AmmProvider {
+export function getProvider(platform: NodeJS.Platform): AmpProvider {
   switch (platform) {
     case "win32":
       return windowsProvider;

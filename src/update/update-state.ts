@@ -7,12 +7,13 @@ export interface UpdateState {
   lastCheckedAtUtc?: string;
   lastAttemptedVersion?: string;
   lastAttemptedAtUtc?: string;
+  installStartedAtUtc?: string;
   lastCompletedAtUtc?: string;
   lastSuccessVersion?: string;
   lastDownloadedPath?: string;
   lastDownloadedSha256?: string;
   updateInProgress?: boolean;
-  status?: "idle" | "in_progress" | "success" | "failed";
+  status?: "idle" | "in_progress" | "install_started" | "success" | "failed";
   lastError?: string;
   arch?: "x64" | "arm64";
 }
@@ -71,41 +72,55 @@ export function updateUpdateState(patch: Partial<UpdateState>) {
   };
 
   // derive status automatically if not explicitly provided
-  if (patch.updateInProgress === true) {
+  if (patch.status) {
+    next.status = patch.status;
+  } else if (patch.installStartedAtUtc) {
+    next.status = "install_started";
+  } else if (patch.updateInProgress === true) {
     next.status = "in_progress";
-  }
-
-  if (
-    patch.updateInProgress === false &&
-    !patch.lastError &&
-    patch.lastAttemptedVersion &&
-    current.lastSuccessVersion !== patch.lastAttemptedVersion
-  ) {
-    next.status = "success";
-    next.lastCompletedAtUtc = new Date().toISOString();
-
-    if (patch.lastAttemptedVersion) {
-      next.lastSuccessVersion = patch.lastAttemptedVersion;
-    }
   }
 
   if (patch.lastError) {
     next.status = "failed";
     next.lastCompletedAtUtc = new Date().toISOString();
+    next.updateInProgress = false;
   }
 
   // ensure failed attempts do not block future updates
   if (patch.lastError) {
-    next.lastAttemptedVersion = undefined;
+    next.installStartedAtUtc = undefined;
   }
 
   saveUpdateState(next);
   return next;
 }
 
+export function markUpdateSucceeded(version: string) {
+  const now = new Date().toISOString();
+
+  return updateUpdateState({
+    updateInProgress: false,
+    status: "success",
+    lastCompletedAtUtc: now,
+    lastSuccessVersion: version,
+    lastError: undefined,
+    installStartedAtUtc: undefined
+  });
+}
+
+export function markUpdateFailed(error: string) {
+  return updateUpdateState({
+    updateInProgress: false,
+    status: "failed",
+    lastError: error,
+    installStartedAtUtc: undefined
+  });
+}
+
 export function clearUpdateInProgress() {
   updateUpdateState({
     updateInProgress: false,
+    installStartedAtUtc: undefined,
     lastCompletedAtUtc: new Date().toISOString()
   });
 }

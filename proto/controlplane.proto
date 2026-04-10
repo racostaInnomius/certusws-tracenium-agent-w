@@ -62,6 +62,8 @@ message Heartbeat {
 
 message RunJob {
   string jobId = 1;
+  string jobType = 2;
+  bytes payloadJson = 3;
 }
 
 message RotateCert {

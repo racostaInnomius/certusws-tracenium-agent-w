@@ -1,4 +1,4 @@
-// src/domain/amm-types.ts
+// src/domain/amp-types.ts
 
 import type { SoftwareDelta } from "./software-inventory-delta";
 import type { SoftwareApplication } from "./normalize-app";
@@ -94,9 +94,9 @@ export type SoftwareInventory = {
 };
 
 /**
- * AMM namespace (Asset Management Module)
+ * AMP namespace (Asset Management Plugin)
  */
-export type AmmNamespace = {
+export type AmpNamespace = {
   hardware: {
     static: HardwareStatic;
     runtime: HardwareRuntime;

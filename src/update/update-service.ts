@@ -534,6 +534,8 @@ export async function performWindowsMsiUpdate(
 
   updateUpdateState({
     updateInProgress: true,
+    status: "install_started",
+    installStartedAtUtc: new Date().toISOString(),
     lastAttemptedAtUtc: new Date().toISOString(),
     lastAttemptedVersion: latestVersion,
     lastError: undefined,
@@ -547,10 +549,6 @@ export async function performWindowsMsiUpdate(
   });
 
   const result = await runWindowsMsiUpdate(downloaded.filePath);
-
-  updateUpdateState({
-    updateInProgress: false
-  });
 
   return result;
 }

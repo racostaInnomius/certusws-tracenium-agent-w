@@ -4,13 +4,37 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import { SoftwareApplication } from "./normalize-app";
+import {
+  ensureAgentDataDir,
+  getLegacySoftwareBaselineDbPath,
+  getSoftwareBaselineDbPath
+} from "../bootstrap/paths";
 
-const DB_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DB_DIR, "agent.db");
+const DB_PATH = getSoftwareBaselineDbPath();
+const LEGACY_DB_PATH = getLegacySoftwareBaselineDbPath();
+const DB_DIR = path.dirname(DB_PATH);
 
 function ensureDbDir() {
-  if (!fs.existsSync(DB_DIR)) {
-    fs.mkdirSync(DB_DIR, { recursive: true });
+  ensureAgentDataDir();
+}
+
+function migrateLegacyDbIfNeeded() {
+  if (fs.existsSync(DB_PATH) || !fs.existsSync(LEGACY_DB_PATH)) {
+    return;
+  }
+
+  try {
+    fs.copyFileSync(LEGACY_DB_PATH, DB_PATH);
+    console.log("[BASELINE] migrated legacy baseline db", {
+      from: LEGACY_DB_PATH,
+      to: DB_PATH
+    });
+  } catch (err) {
+    console.warn("[BASELINE] failed to migrate legacy baseline db", {
+      from: LEGACY_DB_PATH,
+      to: DB_PATH,
+      err
+    });
   }
 }
 
@@ -20,6 +44,7 @@ function getDb(): Database.Database {
   if (dbInstance) return dbInstance;
 
   ensureDbDir();
+  migrateLegacyDbIfNeeded();
   dbInstance = new Database(DB_PATH);
   dbInstance.pragma("journal_mode = WAL");
   dbInstance.pragma("synchronous = NORMAL");

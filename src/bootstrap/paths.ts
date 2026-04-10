@@ -27,3 +27,11 @@ export function ensureAgentDataDir(): string {
 export function getDataRoot(): string {
   return agentDataDir();
 }
+
+export function getSoftwareBaselineDbPath(): string {
+  return path.join(agentDataDir(), "agent.db");
+}
+
+export function getLegacySoftwareBaselineDbPath(): string {
+  return path.join(process.cwd(), "data", "agent.db");
+}

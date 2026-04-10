@@ -1,4 +1,4 @@
-// src/plugins/amm/providers/macos.ts
+// src/plugins/amp/providers/macos.ts
 import os from "os";
 import si from "systeminformation";
 import { exec } from "child_process";
@@ -6,7 +6,7 @@ import { promisify } from "util";
 import fs from "fs";
 
 import type { AgentContext } from "../../../core/agent-context";
-import type { AmmNamespace } from "../../../domain/amm-types";
+import type { AmpNamespace } from "../../../domain/amp-types";
 import type { SoftwareApplication } from "../../../domain/normalize-app";
 
 import { normalizeApp } from "../../../domain/normalize-app";
@@ -174,7 +174,7 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
 /**
  * Hardware collection (cross-platform via systeminformation)
  */
-async function collectMacHardware(): Promise<AmmNamespace["hardware"]> {
+async function collectMacHardware(): Promise<AmpNamespace["hardware"]> {
   const [system, cpu, mem, diskLayout, fsSize] = await Promise.all([
     si.system(),
     si.cpu(),
@@ -209,27 +209,60 @@ async function collectMacHardware(): Promise<AmmNamespace["hardware"]> {
   };
 }
 
-/**
- * macOS security (placeholder for now)
- */
-function collectMacSecurity(): AmmNamespace["security"] {
-  return {
-    bitlocker: { status: "unknown" }, // not applicable
+async function collectMacSecurity(ctx: AgentContext): Promise<AmpNamespace["security"]> {
+  const unknown: AmpNamespace["security"] = {
+    bitlocker: { status: "unknown" },
     defender: { status: "unknown" },
     firewall: { status: "unknown" }
   };
+
+  try {
+    const resp = await ctx.priv.call({
+      v: 1,
+      id: `security-posture-${Date.now()}`,
+      method: "security.posture",
+      params: {},
+      meta: {
+        tenantId: ctx.enrollment.tenantId,
+        deviceId: ctx.enrollment.deviceId
+      }
+    } as any);
+
+    if (!resp?.ok) return unknown;
+
+    const posture = resp.result || {};
+    return {
+      bitlocker: {
+        status: posture.filevault?.status ?? "unknown",
+        raw: posture.filevault
+      } as any,
+      defender: {
+        status: posture.gatekeeper?.status ?? "unknown",
+        raw: {
+          gatekeeper: posture.gatekeeper,
+          sip: posture.sip
+        }
+      } as any,
+      firewall: {
+        status: posture.firewall?.status ?? "unknown",
+        raw: posture.firewall
+      } as any
+    };
+  } catch {
+    return unknown;
+  }
 }
 
 export const macProvider = {
-  async collect(ctx: AgentContext): Promise<AmmNamespace> {
+  async collect(ctx: AgentContext): Promise<AmpNamespace> {
     if (os.platform() !== "darwin") {
       throw new Error("macosProvider called on non-macOS platform");
     }
 
     const hardware = await collectMacHardware();
-    const security = collectMacSecurity();
+    const security = await collectMacSecurity(ctx);
 
-    let software: AmmNamespace["software"] = {
+    let software: AmpNamespace["software"] = {
       count: 0,
       items: undefined,
       delta: null,

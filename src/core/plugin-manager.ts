@@ -47,17 +47,17 @@ export class PluginManager {
   private async registerBuiltinPlugins() {
 
     try {
-      const { collectAMM } = await import("../plugins/amm");
+      const { collectAMP } = await import("../plugins/amp");
 
       this.register({
-        name: "amm",
+        name: "amp",
         tasks: {
-          collect: async (ctx: AgentContext) => collectAMM(ctx)
+          collect: async (ctx: AgentContext) => collectAMP(ctx)
         }
       });
 
     } catch (err: any) {
-      this.ctx?.logger?.error?.("Failed to register AMM plugin", err?.message || err);
+      this.ctx?.logger?.error?.("Failed to register AMP plugin", err?.message || err);
     }
   }
 

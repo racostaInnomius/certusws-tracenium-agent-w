@@ -1,11 +1,11 @@
-// src/plugins/amm/providers/linux.ts
+// src/plugins/amp/providers/linux.ts
 import os from "os";
 import si from "systeminformation";
 import { exec } from "child_process";
 import { promisify } from "util";
 
 import type { AgentContext } from "../../../core/agent-context";
-import type { AmmNamespace } from "../../../domain/amm-types";
+import type { AmpNamespace } from "../../../domain/amp-types";
 import type { SoftwareApplication } from "../../../domain/normalize-app";
 
 import { normalizeApp } from "../../../domain/normalize-app";
@@ -26,7 +26,7 @@ let cachedPM: {
   hasFlatpak: boolean;
 } | null = null;
 
-async function collectLinuxHardware(): Promise<AmmNamespace["hardware"]> {
+async function collectLinuxHardware(): Promise<AmpNamespace["hardware"]> {
   const [system, cpu, mem, diskLayout, fsSize] = await Promise.all([
     si.system(),
     si.cpu(),
@@ -61,7 +61,7 @@ async function collectLinuxHardware(): Promise<AmmNamespace["hardware"]> {
   };
 }
 
-function collectLinuxSecurity(): AmmNamespace["security"] {
+function collectLinuxSecurity(): AmpNamespace["security"] {
   return {
     bitlocker: { status: "unknown" },
     defender: { status: "unknown" },
@@ -237,7 +237,7 @@ async function collectLinuxSoftware(): Promise<SoftwareApplication[]> {
 }
 
 export const linuxProvider = {
-  async collect(ctx: AgentContext): Promise<AmmNamespace> {
+  async collect(ctx: AgentContext): Promise<AmpNamespace> {
     if (os.platform() !== "linux") {
       throw new Error("linuxProvider called on non-Linux platform");
     }
@@ -245,7 +245,7 @@ export const linuxProvider = {
     const hardware = await collectLinuxHardware();
     const security = collectLinuxSecurity();
 
-    let software: AmmNamespace["software"] = {
+    let software: AmpNamespace["software"] = {
       count: 0,
       items: undefined,
       delta: null,

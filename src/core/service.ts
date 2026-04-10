@@ -9,6 +9,7 @@ import type { AgentContext } from "./agent-context";
 let shuttingDown = false;
 let currentCtx: AgentContext | null = null;
 let cleanupTimer: NodeJS.Timeout | undefined;
+let stopGrpcStream: (() => void) | null = null;
 
 export async function startService() {
   try {
@@ -74,9 +75,7 @@ export async function startService() {
     }
 
     // start control-plane stream
-    Promise.resolve(startGrpcStream(ctx)).catch((e: any) => {
-      log.error("gRPC stream failed to start", e?.message || e);
-    });
+    stopGrpcStream = startGrpcStream(ctx);
 
     // start task scheduler (policy-driven)
     await scheduler.start(ctx);
@@ -109,10 +108,16 @@ process.on("SIGTERM", async () => {
   try {
     if (cleanupTimer) {
       clearInterval(cleanupTimer);
+      cleanupTimer = undefined;
     }
 
-    if (currentCtx && typeof (scheduler as any).stop === "function") {
-      await (scheduler as any).stop(currentCtx);
+    if (stopGrpcStream) {
+      stopGrpcStream();
+      stopGrpcStream = null;
+    }
+
+    if (currentCtx) {
+      await scheduler.stop(currentCtx);
     }
 
     if (currentCtx?.priv?.close) {

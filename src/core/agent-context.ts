@@ -2,7 +2,6 @@
 import { EnrollmentState } from "../bootstrap/enrollment-state";
 import { config } from "../bootstrap/config";
 import { EnrollmentStore } from "../bootstrap/enrollment-store";
-import { PrivSvcClient } from "../priv/privsvc-client-windows";
 import { PolicyStore } from "./policy-store";
 import { PolicyRuntime } from "./policy-runtime";
 import { PluginManager } from "./plugin-manager";
