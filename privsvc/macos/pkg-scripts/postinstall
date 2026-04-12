@@ -1,0 +1,102 @@
+#!/bin/sh
+set -eu
+
+BASE="/Library/Application Support/Tracenium"
+AGENT_DIR="$BASE/Agent"
+PRIVSVC_DIR="$BASE/PrivSvc"
+LOG_DIR="$BASE/Logs"
+TOKEN_FILE="$AGENT_DIR/enrollment.token"
+ENV_FILE="$AGENT_DIR/.env"
+TMP_TOKEN_FILE="/private/tmp/tracenium-enrollment.token"
+ENROLLMENT_FILE="$AGENT_DIR/enrollment.json"
+
+SERVER_BASE_URL="${TRACENIUM_SERVER_BASE_URL:-https://api.tracenium.com}"
+GRPC_ENDPOINT="${TRACENIUM_GRPC_ENDPOINT:-grpc.tracenium.com:50051}"
+AGENT_VERSION="${TRACENIUM_AGENT_VERSION:-1.0.87}"
+CORE_VERSION="${TRACENIUM_CORE_VERSION:-1.0.87}"
+CHANNEL="${TRACENIUM_CHANNEL:-stable}"
+
+mkdir -p "$BASE/Runtime"
+mkdir -p "$AGENT_DIR"
+mkdir -p "$PRIVSVC_DIR/macos"
+mkdir -p "$PRIVSVC_DIR/certs"
+mkdir -p "$LOG_DIR"
+mkdir -p "/var/run/tracenium"
+
+chown -R root:wheel "$BASE"
+chmod 755 "$BASE"
+chmod 755 "$BASE/Runtime/node"
+chmod 755 "$AGENT_DIR"
+chmod 700 "$PRIVSVC_DIR"
+chmod 700 "$PRIVSVC_DIR/certs"
+chmod 755 "$LOG_DIR"
+
+cat > "$ENV_FILE" <<EOF
+SERVER_BASE_URL=$SERVER_BASE_URL
+GRPC_ENDPOINT=$GRPC_ENDPOINT
+AGENT_VERSION=$AGENT_VERSION
+CORE_VERSION=$CORE_VERSION
+CHANNEL=$CHANNEL
+EOF
+
+chown root:wheel "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+
+prompt_token() {
+  CONSOLE_USER="$(/usr/bin/stat -f %Su /dev/console 2>/dev/null || true)"
+  if [ -z "$CONSOLE_USER" ] || [ "$CONSOLE_USER" = "root" ]; then
+    return 1
+  fi
+
+  CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER" 2>/dev/null || true)"
+  if [ -z "$CONSOLE_UID" ]; then
+    return 1
+  fi
+
+  /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/osascript <<'APPLESCRIPT'
+set dialogResult to display dialog "Ingresa el Enrollment Token de Tracenium para registrar este equipo." default answer "" with hidden answer buttons {"Cancelar", "Continuar"} default button "Continuar" cancel button "Cancelar" with title "Tracenium Agent Enrollment"
+return text returned of dialogResult
+APPLESCRIPT
+}
+
+if [ ! -f "$ENROLLMENT_FILE" ]; then
+  TOKEN="${TRACENIUM_ENROLLMENT_TOKEN:-}"
+
+  if [ -z "$TOKEN" ] && [ -f "$TMP_TOKEN_FILE" ]; then
+    TOKEN="$(/bin/cat "$TMP_TOKEN_FILE" | /usr/bin/sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  fi
+
+  if [ -z "$TOKEN" ]; then
+    TOKEN="$(prompt_token || true)"
+  fi
+
+  TOKEN="$(/bin/printf "%s" "$TOKEN" | /usr/bin/sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+  if [ -z "$TOKEN" ]; then
+    echo "Tracenium enrollment token is required for first install." >&2
+    exit 1
+  fi
+
+  /bin/printf "%s\n" "$TOKEN" > "$TOKEN_FILE"
+  chown root:wheel "$TOKEN_FILE"
+  chmod 600 "$TOKEN_FILE"
+  /bin/rm -f "$TMP_TOKEN_FILE"
+fi
+
+chown root:wheel /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
+chown root:wheel /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
+chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
+chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
+
+/bin/launchctl bootout system/com.certusws.tracenium.agent >/dev/null 2>&1 || true
+/bin/launchctl bootout system/com.certusws.tracenium.privsvc >/dev/null 2>&1 || true
+
+/bin/launchctl bootstrap system /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
+/bin/launchctl enable system/com.certusws.tracenium.privsvc
+/bin/launchctl kickstart -k system/com.certusws.tracenium.privsvc
+
+/bin/launchctl bootstrap system /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
+/bin/launchctl enable system/com.certusws.tracenium.agent
+/bin/launchctl kickstart -k system/com.certusws.tracenium.agent
+
+exit 0

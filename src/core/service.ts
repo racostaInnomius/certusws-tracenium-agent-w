@@ -5,10 +5,12 @@ import { logger } from "../bootstrap/logger";
 import { startGrpcStream } from "../transport/grpc-stream";
 import { outbox } from "../queue/sqlite-outbox";
 import type { AgentContext } from "./agent-context";
+import { maybeRenewClientCertificate } from "../bootstrap/cert-renewal";
 
 let shuttingDown = false;
 let currentCtx: AgentContext | null = null;
 let cleanupTimer: NodeJS.Timeout | undefined;
+let certRenewalTimer: NodeJS.Timeout | undefined;
 let stopGrpcStream: (() => void) | null = null;
 
 export async function startService() {
@@ -89,6 +91,30 @@ export async function startService() {
       }
     }, 12 * 60 * 60 * 1000); // every 12h
 
+    certRenewalTimer = setInterval(async () => {
+      if (!currentCtx || shuttingDown) return;
+
+      try {
+        const previousThumbprint = currentCtx.enrollment.mtls.clientCertThumbprint;
+        const renewed = await maybeRenewClientCertificate({
+          enrollment: currentCtx.enrollment,
+          store: currentCtx.store,
+          priv: currentCtx.priv,
+          logger: currentCtx.logger
+        });
+
+        currentCtx.enrollment = renewed;
+
+        if (renewed.mtls.clientCertThumbprint && renewed.mtls.clientCertThumbprint !== previousThumbprint) {
+          log.info("[cert-renewal] restarting gRPC bridge after certificate renewal");
+          if (stopGrpcStream) stopGrpcStream();
+          stopGrpcStream = startGrpcStream(currentCtx);
+        }
+      } catch (e: any) {
+        log.warn("[cert-renewal] periodic renewal failed", e?.message || e);
+      }
+    }, Number(process.env.CERT_RENEWAL_CHECK_INTERVAL_MS || 24 * 60 * 60 * 1000));
+
     log.info("Agent Core started.");
   } catch (err: any) {
     logger.error("Fatal startup error:", err?.message || err);
@@ -109,6 +135,11 @@ process.on("SIGTERM", async () => {
     if (cleanupTimer) {
       clearInterval(cleanupTimer);
       cleanupTimer = undefined;
+    }
+
+    if (certRenewalTimer) {
+      clearInterval(certRenewalTimer);
+      certRenewalTimer = undefined;
     }
 
     if (stopGrpcStream) {

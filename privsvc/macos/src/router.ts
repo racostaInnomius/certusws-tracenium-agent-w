@@ -1,7 +1,7 @@
 import os from "os";
 import type { PrivSvcRequest, PrivSvcResponse, PushSink } from "./protocol";
 import { fail, success } from "./protocol";
-import { handleGenerateCsr, handleInstallCert } from "./crypto-store";
+import { handleGenerateCsr, handleInstallCert, handleRenewCert } from "./crypto-store";
 import {
   handleAck,
   handleClose,
@@ -59,6 +59,9 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "crypto.cert.install":
       return handleInstallCert(req);
+
+    case "crypto.cert.renew":
+      return handleRenewCert(req);
 
     case "grpc.connect":
       return handleGrpcConnect(req, push);

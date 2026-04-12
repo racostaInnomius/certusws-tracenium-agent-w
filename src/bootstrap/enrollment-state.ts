@@ -9,6 +9,9 @@ export interface EnrollmentState {
   mtls: {
     clientCertPath: string;
     caBundlePath: string;
+    clientCertThumbprint?: string;
+    issuingCaThumbprint?: string;
+    clientCertNotAfter?: string;
   };
 
   bootstrap: {

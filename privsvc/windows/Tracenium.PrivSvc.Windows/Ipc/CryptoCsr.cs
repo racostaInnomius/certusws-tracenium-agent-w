@@ -19,6 +19,7 @@ public static class CryptoCsr
             string tenantId = GetString(p, "tenantId") ?? req.Meta?.TenantId ?? "";
             string deviceId = GetString(p, "deviceId") ?? req.Meta?.DeviceId ?? "";
             string? dnsName = GetString(p, "dnsName");
+            string? requestedKeyName = GetString(p, "keyName");
             bool reuse = GetBool(p, "reuseExistingKey", true);
 
             if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(deviceId))
@@ -27,7 +28,9 @@ public static class CryptoCsr
             dnsName ??= Environment.MachineName;
 
             // 1) Abrir/crear key persistente (CNG) - one key per device
-            string keyName = $"tracenium-{deviceId}";
+            string keyName = string.IsNullOrWhiteSpace(requestedKeyName)
+                ? $"tracenium-{deviceId}"
+                : requestedKeyName;
             bool created;
             using var ecdsa = OpenOrCreateMachineKey(keyName, reuse, out created);
 

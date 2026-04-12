@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+
+BASE="/Library/Application Support/Tracenium"
+
+mkdir -p "$BASE/Runtime"
+mkdir -p "$BASE/Agent"
+mkdir -p "$BASE/PrivSvc/macos"
+mkdir -p "$BASE/PrivSvc/certs"
+mkdir -p "$BASE/Logs"
+mkdir -p "/var/run/tracenium"
+
+chown -R root:wheel "$BASE"
+chmod 755 "$BASE"
+chmod 755 "$BASE/Runtime/node"
+chmod 755 "$BASE/Agent"
+chmod 700 "$BASE/PrivSvc"
+chmod 700 "$BASE/PrivSvc/certs"
+chmod 755 "$BASE/Logs"
+
+chown root:wheel /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
+chown root:wheel /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
+chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
+chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
+
+launchctl bootout system/com.certusws.tracenium.agent >/dev/null 2>&1 || true
+launchctl bootout system/com.certusws.tracenium.privsvc >/dev/null 2>&1 || true
+
+launchctl bootstrap system /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
+launchctl enable system/com.certusws.tracenium.privsvc
+launchctl kickstart -k system/com.certusws.tracenium.privsvc
+
+# Agent starts only if .env exists. This lets installer/operator inject token first.
+if [ -f "$BASE/Agent/.env" ]; then
+  launchctl bootstrap system /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
+  launchctl enable system/com.certusws.tracenium.agent
+  launchctl kickstart -k system/com.certusws.tracenium.agent
+fi
+
+exit 0

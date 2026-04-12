@@ -4,6 +4,7 @@ import { EnrollmentStore } from "../bootstrap/enrollment-store";
 import { AgentContext } from "./agent-context";
 import { config } from "../bootstrap/config";
 import { createPrivSvcClient } from "../priv";
+import { maybeRenewClientCertificate } from "../bootstrap/cert-renewal";
 import { PolicyStore } from "./policy-store";
 import { PolicyRuntime } from "./policy-runtime";
 import { PluginManager } from "./plugin-manager";
@@ -12,8 +13,19 @@ import { logger } from "../bootstrap/logger";
 export async function bootstrapContext(): Promise<AgentContext> {
 
   const store = new EnrollmentStore();
-  const enrollment = await ensureEnrolled();
+  let enrollment = await ensureEnrolled();
   const priv = createPrivSvcClient();
+
+  try {
+    enrollment = await maybeRenewClientCertificate({
+      enrollment,
+      store,
+      priv,
+      logger
+    });
+  } catch (err: any) {
+    logger.warn("[cert-renewal] renewal failed; continuing with existing certificate", err?.message || err);
+  }
 
   const policy = new PolicyStore();
   await policy.load();

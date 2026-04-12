@@ -36,7 +36,7 @@ public static class CryptoCertInstall
                 return Task.FromResult(
                     PrivSvcResponse.Fail(req.Id, "bad_request", "deviceId required"));
 
-            string keyName = $"tracenium-{deviceId}";
+            string keyName = GetString(p, "keyName") ?? $"tracenium-{deviceId}";
 
             if (string.IsNullOrWhiteSpace(certPem))
                 return Task.FromResult(

@@ -78,6 +78,7 @@ public sealed class Router
             // Crypto
             "crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),
             "crypto.cert.install" => CryptoCertInstall.HandleInstallCert(req),
+            "crypto.cert.renew" => CryptoCertRenew.HandleRenewCert(req),
 
             // gRPC bridge (session mode)
             // NOTE: These handlers should enforce LocalSystem if required.

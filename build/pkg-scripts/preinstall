@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+launchctl bootout system/com.certusws.tracenium.agent >/dev/null 2>&1 || true
+launchctl bootout system/com.certusws.tracenium.privsvc >/dev/null 2>&1 || true
+
+exit 0
