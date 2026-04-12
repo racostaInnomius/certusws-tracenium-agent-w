@@ -30,6 +30,7 @@ export type ScpNamespace = {
   checks: ScpFinding[];
   patches?: {
     status: ScpStatus;
+    installedCount?: number;
     missingCount?: number;
     lastScanUtc?: string;
     items?: unknown[];
@@ -38,6 +39,14 @@ export type ScpNamespace = {
     status: ScpStatus;
     tls10Enabled?: boolean;
     tls11Enabled?: boolean;
+    tls12Enabled?: boolean;
+    tls13Enabled?: boolean;
     weakCiphers?: string[];
+    ciphers?: unknown[];
+    protocols?: unknown[];
   };
+  smb?: unknown;
+  shares?: unknown;
+  antivirus?: unknown;
+  domain?: unknown;
 };

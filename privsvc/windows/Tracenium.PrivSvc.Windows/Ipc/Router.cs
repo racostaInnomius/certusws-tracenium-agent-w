@@ -71,9 +71,9 @@ public sealed class Router
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
-            // Inventory / posture
+            // Inventory / compliance
             "software.inventory" => SoftwareInventory.Handle(req),
-            "security.posture" => SecurityPosture.Handle(req),
+            "security.compliance" => SecurityCompliance.Handle(req),
 
             // Crypto
             "crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),

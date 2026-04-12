@@ -220,7 +220,7 @@ async function collectMacSecurity(ctx: AgentContext): Promise<AmpNamespace["secu
     const resp = await ctx.priv.call({
       v: 1,
       id: `security-posture-${Date.now()}`,
-      method: "security.posture",
+      method: "security.compliance",
       params: {},
       meta: {
         tenantId: ctx.enrollment.tenantId,

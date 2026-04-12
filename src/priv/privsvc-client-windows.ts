@@ -18,7 +18,7 @@ function getTimeoutForMethod(method: string): number {
       return 30000;
     case "software.inventory":
       return 60000; // inventory can be heavy (WMI/registry)
-    case "security.posture":
+    case "security.compliance":
       return 30000;
     default:
       return DEFAULT_TIMEOUT_MS;

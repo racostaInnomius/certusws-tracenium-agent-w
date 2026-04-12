@@ -78,7 +78,7 @@ async function collectWindowsSecurity(ctx: AgentContext): Promise<AmpNamespace["
     const resp = await ctx.priv.call({
       v: 1,
       id: `sec_${Date.now()}`,
-      method: "security.posture",
+      method: "security.compliance",
       params: { includeBitlocker: true, includeDefender: true, includeFirewall: true },
       meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
     });
