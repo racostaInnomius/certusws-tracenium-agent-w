@@ -81,6 +81,7 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     case "software.inventory":
       return fail(req.id, "not_supported", "software.inventory is collected by Agent Core on macOS");
 
+    case "security.compliance":
     case "security.posture":
       return handleSecurityPosture(req);
 

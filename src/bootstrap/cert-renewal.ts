@@ -66,7 +66,7 @@ export async function maybeRenewClientCertificate(input: {
     id: `cert_renew_${Date.now()}`,
     method: "crypto.cert.renew",
     params: {
-      serverBaseUrl: config.serverBaseUrl,
+      serverBaseUrl: config.certRenewalBaseUrl || config.serverBaseUrl,
       tenantId: enrollment.tenantId,
       deviceId: enrollment.deviceId,
       clientCertThumbprint

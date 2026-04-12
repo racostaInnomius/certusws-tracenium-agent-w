@@ -52,6 +52,37 @@ export const config = {
   console.warn(`[Config] SERVER_BASE_URL not set (env/registry), using default: ${fallback}`);
   return fallback;
 })(),
+  certRenewalBaseUrl: (() => {
+    const raw = process.env.CERT_RENEWAL_BASE_URL;
+    if (typeof raw === "string" && raw.trim().length > 0) {
+      const url = raw.trim();
+      console.log(`[Config] CERT_RENEWAL_BASE_URL=${url} (env)`);
+      return url;
+    }
+
+    try {
+      if (process.platform === "win32") {
+        const { execSync } = require("child_process");
+        const output = execSync(
+          'reg query "HKLM\\Software\\CertusWS\\Tracenium" /v CertRenewalBaseUrl',
+          { encoding: "utf8" }
+        );
+
+        const match = output.match(/CertRenewalBaseUrl\s+REG_\w+\s+(.+)/i);
+        if (match && match[1]) {
+          const url = match[1].trim();
+          if (url.length > 0) {
+            console.log(`[Config] CERT_RENEWAL_BASE_URL=${url} (registry)`);
+            return url;
+          }
+        }
+      }
+    } catch {
+      // ignore registry errors
+    }
+
+    return undefined;
+  })(),
   agentId: process.env.AGENT_ID || "auto", 
   enrollmentToken: process.env.ENROLLMENT_TOKEN || "",
   agentVersion: process.env.AGENT_VERSION || "1.0.87",
