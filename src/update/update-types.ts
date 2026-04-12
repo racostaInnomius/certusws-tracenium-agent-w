@@ -13,6 +13,7 @@ export interface AgentMetadataResponse {
   latestVersion: string;
   minSupportedVersion?: string;
   forceUpdate?: boolean;
+  allowDowngrade?: boolean;
   files: {
     exe?: Record<AgentBinaryArch, AgentBinaryFileMetadata>;
     msi?: Record<AgentBinaryArch, AgentBinaryFileMetadata>;
@@ -33,6 +34,7 @@ export interface UpdateCheckResult {
     | "invalid_remote_version"
     | "missing_msi_metadata"
     | "same_version"
+    | "downgrade_blocked"
     | "new_version_available"
     | "forced_update"
     | "min_supported_breach";

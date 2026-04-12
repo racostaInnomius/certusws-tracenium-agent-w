@@ -5,7 +5,7 @@ import { EnrollmentStore } from "./enrollment-store";
 import { EnrollmentState } from "./enrollment-state";
 import { buildEnrollmentPayload } from "./enroll-payload";
 import { config } from "./config";
-import { readEnrollmentToken } from "./token-source";
+import { clearEnrollmentTokenFile, readEnrollmentToken } from "./token-source";
 import { execSync } from "child_process";
 import { getDeviceId } from "../platform/device-id";
 import { writeEnrollmentMetadata } from "../platform/enrollment-meta";
@@ -313,8 +313,8 @@ export async function ensureEnrolled(): Promise<EnrollmentState> {
   const enrollmentToken = readEnrollmentToken();
 
   if (!enrollmentToken) {
-    console.error("[Enroll] ENROLLMENT_TOKEN not found in env/registry.");
-    throw new Error("Missing ENROLLMENT_TOKEN. Agent is not enrolled.");
+    console.error("[Enroll] enrollment token not found in env/file/registry.");
+    throw new Error("Missing enrollment token. Agent is not enrolled.");
   }
 
   console.log("[Enroll] Enrollment token detected.");
@@ -480,6 +480,8 @@ export async function ensureEnrolled(): Promise<EnrollmentState> {
       } catch (err) {
         console.warn("[Enroll] Failed to persist enrollment metadata:", err);
       }
+
+      clearEnrollmentTokenFile();
 
       return state;
 

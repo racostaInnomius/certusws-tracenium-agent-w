@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/Users/javierpacheco/DevProjects/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj": {}
+    "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj": {}
   },
   "projects": {
-    "/Users/javierpacheco/DevProjects/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj": {
+    "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/javierpacheco/DevProjects/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj",
+        "projectUniqueName": "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj",
         "projectName": "Tracenium.PrivSvc.Windows",
-        "projectPath": "/Users/javierpacheco/DevProjects/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj",
+        "projectPath": "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj",
         "packagesPath": "/Users/javierpacheco/.nuget/packages/",
-        "outputPath": "/Users/javierpacheco/DevProjects/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/obj/",
+        "outputPath": "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/Users/javierpacheco/.nuget/NuGet/NuGet.Config"

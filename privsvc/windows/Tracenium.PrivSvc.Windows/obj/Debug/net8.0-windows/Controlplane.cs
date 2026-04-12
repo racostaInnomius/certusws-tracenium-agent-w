@@ -32,40 +32,41 @@ namespace Tracenium.Control {
             "CgdldmVudElkGAEgASgJEhAKCGRldmljZUlkGAIgASgJEhAKCHRlbmFudElk",
             "GAMgASgJEhQKDGFnZW50VmVyc2lvbhgEIAEoCRIXCg9wcm90b2NvbFZlcnNp",
             "b24YBSABKAkSFQoNcG9saWN5VmVyc2lvbhgGIAEoCRIUCgxjYXBhYmlsaXRp",
-            "ZXMYByADKAkiPwoFRmFjdHMSDwoHZXZlbnRJZBgBIAEoCRITCgtwYXlsb2Fk",
-            "SnNvbhgCIAEoDBIQCghkZXZpY2VJZBgDIAEoCSJyCglIZWFydGJlYXQSDwoH",
-            "ZXZlbnRJZBgBIAEoCRIQCghkZXZpY2VJZBgCIAEoCRIVCg11cHRpbWVTZWNv",
-            "bmRzGAMgASgDEhQKDGFnZW50VmVyc2lvbhgEIAEoCRIVCg1wb2xpY3lWZXJz",
-            "aW9uGAUgASgJIj0KBlJ1bkpvYhINCgVqb2JJZBgBIAEoCRIPCgdqb2JUeXBl",
-            "GAIgASgJEhMKC3BheWxvYWRKc29uGAMgASgMIhwKClJvdGF0ZUNlcnQSDgoG",
-            "cmVhc29uGAEgASgJIjkKDFBvbGljeVVwZGF0ZRIVCg1wb2xpY3lWZXJzaW9u",
-            "GAEgASgJEhIKCnBvbGljeUpzb24YAiABKAwiHAoKRGlzY29ubmVjdBIOCgZy",
-            "ZWFzb24YASABKAkiLQoLQWdlbnRVcGRhdGUSDQoFam9iSWQYASABKAkSDwoH",
-            "dmVyc2lvbhgCIAEoCSIgCgxSZXF1ZXN0RmFjdHMSEAoIZmFjdFR5cGUYASAB",
-            "KAkiwwQKDkNvbnRyb2xNZXNzYWdlEg8KB3RyYWNlSWQYCiABKAkSKQoFaGVs",
-            "bG8YASABKAsyGC50cmFjZW5pdW0uY29udHJvbC5IZWxsb0gAEikKBWZhY3Rz",
-            "GAIgASgLMhgudHJhY2VuaXVtLmNvbnRyb2wuRmFjdHNIABIxCgloZWFydGJl",
-            "YXQYAyABKAsyHC50cmFjZW5pdW0uY29udHJvbC5IZWFydGJlYXRIABIrCgZy",
-            "dW5Kb2IYBCABKAsyGS50cmFjZW5pdW0uY29udHJvbC5SdW5Kb2JIABIzCgpy",
-            "b3RhdGVDZXJ0GAUgASgLMh0udHJhY2VuaXVtLmNvbnRyb2wuUm90YXRlQ2Vy",
-            "dEgAEjcKDHBvbGljeVVwZGF0ZRgGIAEoCzIfLnRyYWNlbml1bS5jb250cm9s",
-            "LlBvbGljeVVwZGF0ZUgAEjMKCmRpc2Nvbm5lY3QYByABKAsyHS50cmFjZW5p",
-            "dW0uY29udHJvbC5EaXNjb25uZWN0SAASNQoLYWdlbnRVcGRhdGUYCCABKAsy",
-            "Hi50cmFjZW5pdW0uY29udHJvbC5BZ2VudFVwZGF0ZUgAEjcKDHJlcXVlc3RG",
-            "YWN0cxgJIAEoCzIfLnRyYWNlbml1bS5jb250cm9sLlJlcXVlc3RGYWN0c0gA",
-            "EiUKA2FjaxgLIAEoCzIWLnRyYWNlbml1bS5jb250cm9sLkFja0gAEikKBWVy",
-            "cm9yGAwgASgLMhgudHJhY2VuaXVtLmNvbnRyb2wuRXJyb3JIAEIFCgNtc2cq",
-            "OAoJQWNrU3RhdHVzEgoKBkFDS19PSxAAEg0KCUFDS19SRVRSWRABEhAKDEFD",
-            "S19SRUpFQ1RFRBACMmMKDENvbnRyb2xQbGFuZRJTCgdDb25uZWN0EiEudHJh",
-            "Y2VuaXVtLmNvbnRyb2wuQ29udHJvbE1lc3NhZ2UaIS50cmFjZW5pdW0uY29u",
-            "dHJvbC5Db250cm9sTWVzc2FnZSgBMAFiBnByb3RvMw=="));
+            "ZXMYByADKAkiZgoFRmFjdHMSDwoHZXZlbnRJZBgBIAEoCRITCgtwYXlsb2Fk",
+            "SnNvbhgCIAEoDBIQCghkZXZpY2VJZBgDIAEoCRIRCgluYW1lc3BhY2UYBCAB",
+            "KAkSEgoKbmFtZXNwYWNlcxgFIAMoCSJyCglIZWFydGJlYXQSDwoHZXZlbnRJ",
+            "ZBgBIAEoCRIQCghkZXZpY2VJZBgCIAEoCRIVCg11cHRpbWVTZWNvbmRzGAMg",
+            "ASgDEhQKDGFnZW50VmVyc2lvbhgEIAEoCRIVCg1wb2xpY3lWZXJzaW9uGAUg",
+            "ASgJIj0KBlJ1bkpvYhINCgVqb2JJZBgBIAEoCRIPCgdqb2JUeXBlGAIgASgJ",
+            "EhMKC3BheWxvYWRKc29uGAMgASgMIhwKClJvdGF0ZUNlcnQSDgoGcmVhc29u",
+            "GAEgASgJIjkKDFBvbGljeVVwZGF0ZRIVCg1wb2xpY3lWZXJzaW9uGAEgASgJ",
+            "EhIKCnBvbGljeUpzb24YAiABKAwiHAoKRGlzY29ubmVjdBIOCgZyZWFzb24Y",
+            "ASABKAkiLQoLQWdlbnRVcGRhdGUSDQoFam9iSWQYASABKAkSDwoHdmVyc2lv",
+            "bhgCIAEoCSIgCgxSZXF1ZXN0RmFjdHMSEAoIZmFjdFR5cGUYASABKAkiwwQK",
+            "DkNvbnRyb2xNZXNzYWdlEg8KB3RyYWNlSWQYCiABKAkSKQoFaGVsbG8YASAB",
+            "KAsyGC50cmFjZW5pdW0uY29udHJvbC5IZWxsb0gAEikKBWZhY3RzGAIgASgL",
+            "MhgudHJhY2VuaXVtLmNvbnRyb2wuRmFjdHNIABIxCgloZWFydGJlYXQYAyAB",
+            "KAsyHC50cmFjZW5pdW0uY29udHJvbC5IZWFydGJlYXRIABIrCgZydW5Kb2IY",
+            "BCABKAsyGS50cmFjZW5pdW0uY29udHJvbC5SdW5Kb2JIABIzCgpyb3RhdGVD",
+            "ZXJ0GAUgASgLMh0udHJhY2VuaXVtLmNvbnRyb2wuUm90YXRlQ2VydEgAEjcK",
+            "DHBvbGljeVVwZGF0ZRgGIAEoCzIfLnRyYWNlbml1bS5jb250cm9sLlBvbGlj",
+            "eVVwZGF0ZUgAEjMKCmRpc2Nvbm5lY3QYByABKAsyHS50cmFjZW5pdW0uY29u",
+            "dHJvbC5EaXNjb25uZWN0SAASNQoLYWdlbnRVcGRhdGUYCCABKAsyHi50cmFj",
+            "ZW5pdW0uY29udHJvbC5BZ2VudFVwZGF0ZUgAEjcKDHJlcXVlc3RGYWN0cxgJ",
+            "IAEoCzIfLnRyYWNlbml1bS5jb250cm9sLlJlcXVlc3RGYWN0c0gAEiUKA2Fj",
+            "axgLIAEoCzIWLnRyYWNlbml1bS5jb250cm9sLkFja0gAEikKBWVycm9yGAwg",
+            "ASgLMhgudHJhY2VuaXVtLmNvbnRyb2wuRXJyb3JIAEIFCgNtc2cqOAoJQWNr",
+            "U3RhdHVzEgoKBkFDS19PSxAAEg0KCUFDS19SRVRSWRABEhAKDEFDS19SRUpF",
+            "Q1RFRBACMmMKDENvbnRyb2xQbGFuZRJTCgdDb25uZWN0EiEudHJhY2VuaXVt",
+            "LmNvbnRyb2wuQ29udHJvbE1lc3NhZ2UaIS50cmFjZW5pdW0uY29udHJvbC5D",
+            "b250cm9sTWVzc2FnZSgBMAFiBnByb3RvMw=="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::Tracenium.Control.AckStatus), }, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Ack), global::Tracenium.Control.Ack.Parser, new[]{ "EventId", "Status", "Message", "ReceivedAtUtc", "ServerTimeUtc" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Error), global::Tracenium.Control.Error.Parser, new[]{ "Code", "Message" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Hello), global::Tracenium.Control.Hello.Parser, new[]{ "EventId", "DeviceId", "TenantId", "AgentVersion", "ProtocolVersion", "PolicyVersion", "Capabilities" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Facts), global::Tracenium.Control.Facts.Parser, new[]{ "EventId", "PayloadJson", "DeviceId" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Facts), global::Tracenium.Control.Facts.Parser, new[]{ "EventId", "PayloadJson", "DeviceId", "Namespace", "Namespaces" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Heartbeat), global::Tracenium.Control.Heartbeat.Parser, new[]{ "EventId", "DeviceId", "UptimeSeconds", "AgentVersion", "PolicyVersion" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RunJob), global::Tracenium.Control.RunJob.Parser, new[]{ "JobId", "JobType", "PayloadJson" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RotateCert), global::Tracenium.Control.RotateCert.Parser, new[]{ "Reason" }, null, null, null, null),
@@ -1117,6 +1118,8 @@ namespace Tracenium.Control {
       eventId_ = other.eventId_;
       payloadJson_ = other.payloadJson_;
       deviceId_ = other.deviceId_;
+      namespace_ = other.namespace_;
+      namespaces_ = other.namespaces_.Clone();
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -1162,6 +1165,29 @@ namespace Tracenium.Control {
       }
     }
 
+    /// <summary>Field number for the "namespace" field.</summary>
+    public const int NamespaceFieldNumber = 4;
+    private string namespace_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Namespace {
+      get { return namespace_; }
+      set {
+        namespace_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "namespaces" field.</summary>
+    public const int NamespacesFieldNumber = 5;
+    private static readonly pb::FieldCodec<string> _repeated_namespaces_codec
+        = pb::FieldCodec.ForString(42);
+    private readonly pbc::RepeatedField<string> namespaces_ = new pbc::RepeatedField<string>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<string> Namespaces {
+      get { return namespaces_; }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -1180,6 +1206,8 @@ namespace Tracenium.Control {
       if (EventId != other.EventId) return false;
       if (PayloadJson != other.PayloadJson) return false;
       if (DeviceId != other.DeviceId) return false;
+      if (Namespace != other.Namespace) return false;
+      if(!namespaces_.Equals(other.namespaces_)) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -1190,6 +1218,8 @@ namespace Tracenium.Control {
       if (EventId.Length != 0) hash ^= EventId.GetHashCode();
       if (PayloadJson.Length != 0) hash ^= PayloadJson.GetHashCode();
       if (DeviceId.Length != 0) hash ^= DeviceId.GetHashCode();
+      if (Namespace.Length != 0) hash ^= Namespace.GetHashCode();
+      hash ^= namespaces_.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -1220,6 +1250,11 @@ namespace Tracenium.Control {
         output.WriteRawTag(26);
         output.WriteString(DeviceId);
       }
+      if (Namespace.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(Namespace);
+      }
+      namespaces_.WriteTo(output, _repeated_namespaces_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -1242,6 +1277,11 @@ namespace Tracenium.Control {
         output.WriteRawTag(26);
         output.WriteString(DeviceId);
       }
+      if (Namespace.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(Namespace);
+      }
+      namespaces_.WriteTo(ref output, _repeated_namespaces_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -1261,6 +1301,10 @@ namespace Tracenium.Control {
       if (DeviceId.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(DeviceId);
       }
+      if (Namespace.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Namespace);
+      }
+      size += namespaces_.CalculateSize(_repeated_namespaces_codec);
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
       }
@@ -1282,6 +1326,10 @@ namespace Tracenium.Control {
       if (other.DeviceId.Length != 0) {
         DeviceId = other.DeviceId;
       }
+      if (other.Namespace.Length != 0) {
+        Namespace = other.Namespace;
+      }
+      namespaces_.Add(other.namespaces_);
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
 
@@ -1313,6 +1361,14 @@ namespace Tracenium.Control {
             DeviceId = input.ReadString();
             break;
           }
+          case 34: {
+            Namespace = input.ReadString();
+            break;
+          }
+          case 42: {
+            namespaces_.AddEntriesFrom(input, _repeated_namespaces_codec);
+            break;
+          }
         }
       }
     #endif
@@ -1342,6 +1398,14 @@ namespace Tracenium.Control {
           }
           case 26: {
             DeviceId = input.ReadString();
+            break;
+          }
+          case 34: {
+            Namespace = input.ReadString();
+            break;
+          }
+          case 42: {
+            namespaces_.AddEntriesFrom(ref input, _repeated_namespaces_codec);
             break;
           }
         }

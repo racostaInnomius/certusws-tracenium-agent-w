@@ -641,7 +641,7 @@ private const int MaxPendingPushEvents = 50;
                         {
                             _helloStartTicks = Stopwatch.GetTimestamp();
                             _helloEventId = Guid.NewGuid().ToString("N");
-                            await SafeWriteAsync(new ControlMessage
+                            var helloMsg = new ControlMessage
                             {
                                 Hello = new Hello
                                 {
@@ -652,7 +652,16 @@ private const int MaxPendingPushEvents = 50;
                                     ProtocolVersion = opt.ProtocolVersion ?? string.Empty,
                                     PolicyVersion = opt.PolicyVersion ?? string.Empty
                                 }
-                            }, _cts.Token);
+                            };
+
+                            helloMsg.Hello.Capabilities.AddRange(
+                                (opt.Capabilities ?? Enumerable.Empty<string>())
+                                    .Where(capability => !string.IsNullOrWhiteSpace(capability))
+                                    .Select(capability => capability.Trim())
+                                    .Distinct()
+                            );
+
+                            await SafeWriteAsync(helloMsg, _cts.Token);
                             _lastSendUtc = DateTime.UtcNow;
                             Log("HELLO message sent");
                         }
@@ -698,7 +707,7 @@ private const int MaxPendingPushEvents = 50;
         }
     }
 
-    public void SendFacts(string eventId, string payloadJson)
+    public void SendFacts(string eventId, string payloadJson, string? factNamespace = null, IEnumerable<string>? namespaces = null)
     {
         if (!IsConnected || _call is null)
             throw new InvalidOperationException("gRPC not connected");
@@ -727,9 +736,20 @@ private const int MaxPendingPushEvents = 50;
             Facts = new Facts
             {
                 EventId = eventId,
-                PayloadJson = Google.Protobuf.ByteString.CopyFromUtf8(payloadJson ?? "{}")
+                PayloadJson = Google.Protobuf.ByteString.CopyFromUtf8(payloadJson ?? "{}"),
+                Namespace = factNamespace ?? string.Empty
             }
         };
+
+        if (namespaces != null)
+        {
+            msg.Facts.Namespaces.AddRange(
+                namespaces
+                    .Where(ns => !string.IsNullOrWhiteSpace(ns))
+                    .Select(ns => ns.Trim())
+                    .Distinct()
+            );
+        }
 
         if (_sendQueue.IsAddingCompleted)
             throw new InvalidOperationException("send queue closed");
@@ -1371,4 +1391,5 @@ public sealed class GrpcBridgeConnectOptions
     public string? AgentVersion { get; init; }
     public string? ProtocolVersion { get; init; }
     public string? PolicyVersion { get; init; }
+    public IEnumerable<string>? Capabilities { get; init; }
 }

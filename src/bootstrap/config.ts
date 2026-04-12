@@ -54,7 +54,7 @@ export const config = {
 })(),
   agentId: process.env.AGENT_ID || "auto", 
   enrollmentToken: process.env.ENROLLMENT_TOKEN || "",
-  agentVersion: process.env.AGENT_VERSION || "1.0.86",
-  coreVersion: process.env.CORE_VERSION || "1.0.86",
+  agentVersion: process.env.AGENT_VERSION || "1.0.87",
+  coreVersion: process.env.CORE_VERSION || "1.0.87",
   channel: (process.env.CHANNEL as "stable" | "beta" | "pilot") || "stable",
 };

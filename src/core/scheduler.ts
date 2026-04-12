@@ -6,6 +6,7 @@ import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { AgentContext } from "./agent-context";
 import type { Namespaces } from "../domain/device-facts";
 import type { AmpNamespace } from "../domain/amp-types";
+import type { ScpNamespace } from "../domain/scp-types";
 import { runUpdateTask } from "../update/update-task";
 
 class Scheduler {
@@ -13,6 +14,7 @@ class Scheduler {
   private timers: Map<string, NodeJS.Timeout> = new Map();
   private ctx: AgentContext | null = null;
   private inventoryRunning: boolean = false;
+  private complianceRunning: boolean = false;
   private updateRunning: boolean = false;
   private policyListeners: Array<{
     event: string;
@@ -150,15 +152,21 @@ class Scheduler {
       this.timers.set("update", timer);
     }
 
-    // compliance pipeline (future)
     if (ctx.policyRuntime.isComplianceEnabled()) {
 
       const intervalSeconds = 4 * 60 * 60; // 4h default
 
       logger.info("Compliance pipeline enabled", { intervalSeconds });
 
+      this.runCompliance(ctx).catch(err =>
+        logger.error("Compliance pipeline initial run error", { err })
+      );
+
       const timer = setInterval(() => {
-        logger.info("Compliance pipeline tick (not implemented yet)");
+        logger.info("[scheduler] compliance tick");
+        this.runCompliance(ctx).catch(err =>
+          logger.error("Compliance pipeline error", { err })
+        );
       }, intervalSeconds * 1000);
 
       this.timers.set("compliance", timer);
@@ -234,15 +242,6 @@ class Scheduler {
         }
       }
 
-      // SCP (future: Security Compliance Plugin)
-      if (ctx.policyRuntime.isComplianceEnabled() && ctx.policyRuntime.pluginEnabled("scp")) {
-        try {
-          namespaces.scp = await ctx.plugins.run("scp.collect");
-        } catch (err) {
-          logger.error("SCP plugin execution failed", { err });
-        }
-      }
-
       // No namespaces collected
       if (Object.keys(namespaces).length === 0) {
         logger.warn("No plugin namespaces returned, skipping snapshot");
@@ -263,16 +262,6 @@ class Scheduler {
       }
 
       const facts = await buildDeviceFacts(ctx, namespaces);
-
-      // prevent duplicate FACTS flooding (do not enqueue if one is already pending)
-      const hasPending = (outbox as any).hasPendingOfType?.("FACTS_SNAPSHOT");
-
-      if (hasPending) {
-        logger.info("Skipping FACTS enqueue — pending event exists", {
-          deviceId: ctx.enrollment.deviceId
-        });
-        return;
-      }
 
       outbox.enqueue({
         type: "FACTS_SNAPSHOT",
@@ -295,6 +284,75 @@ class Scheduler {
     } finally {
 
       this.inventoryRunning = false;
+
+    }
+  }
+
+  private async runCompliance(ctx: AgentContext) {
+
+    if (!ctx.policyRuntime.isComplianceEnabled()) {
+      logger.info("Compliance module disabled by policy, skipping compliance");
+      return;
+    }
+
+    if (!ctx.policyRuntime.pluginEnabled("scp")) {
+      logger.info("SCP plugin disabled by policy, skipping compliance");
+      return;
+    }
+
+    if (this.complianceRunning) {
+      logger.warn("Compliance already running, skipping overlapping execution");
+      return;
+    }
+
+    this.complianceRunning = true;
+
+    try {
+      logger.info("Collecting SCP facts...");
+
+      const namespaces = {} as Namespaces;
+
+      try {
+        namespaces.scp = await ctx.plugins.run("scp.collect") as ScpNamespace;
+      } catch (err) {
+        logger.error("SCP plugin execution failed", { err });
+      }
+
+      if (!namespaces.scp) {
+        logger.warn("No SCP namespace returned, skipping compliance snapshot");
+        return;
+      }
+
+      if (namespaces.scp.hasChanges !== true) {
+        logger.info("Skipping SCP FACTS enqueue — no changes detected", {
+          deviceId: ctx.enrollment.deviceId
+        });
+        return;
+      }
+
+      const facts = await buildDeviceFacts(ctx, namespaces);
+
+      outbox.enqueue({
+        type: "FACTS_SNAPSHOT",
+        payload: facts
+      });
+
+      logger.info("FACTS_SNAPSHOT enqueued", {
+        deviceId: ctx.enrollment.deviceId,
+        modules: Object.keys(namespaces),
+        hasAnyChanges: true,
+        scpChecks: Array.isArray(namespaces.scp.checks)
+          ? namespaces.scp.checks.length
+          : 0
+      });
+
+    } catch (err) {
+
+      logger.error("Compliance pipeline failed", { err });
+
+    } finally {
+
+      this.complianceRunning = false;
 
     }
   }

@@ -8,8 +8,8 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/bin/node</string>
-    <string>/Library/Application Support/Tracenium/PrivSvc/macos/dist/index.js</string>
+    <string>/Library/Application Support/Tracenium/Runtime/node</string>
+    <string>/Library/Application Support/Tracenium/PrivSvc/macos/privsvc.js</string>
   </array>
 
   <key>RunAtLoad</key>
@@ -19,10 +19,10 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/Library/Logs/Tracenium/privsvc-macos.stdout.log</string>
+  <string>/Library/Application Support/Tracenium/Logs/privsvc.stdout.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Library/Logs/Tracenium/privsvc-macos.stderr.log</string>
+  <string>/Library/Application Support/Tracenium/Logs/privsvc.stderr.log</string>
 
   <key>WorkingDirectory</key>
   <string>/Library/Application Support/Tracenium/PrivSvc/macos</string>

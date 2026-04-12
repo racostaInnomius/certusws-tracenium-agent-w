@@ -9,10 +9,17 @@ const DEFAULT_TIMEOUT_MS = 8000;
 
 function getTimeoutForMethod(method: string): number {
   switch (method) {
+    case "grpc.connect":
+      return 60000;
+    case "grpc.facts.send":
+    case "grpc.facts.chunk":
+    case "grpc.ack":
+    case "grpc.close":
+      return 30000;
     case "software.inventory":
-      return 30000; // inventory can be heavy (WMI/registry)
+      return 60000; // inventory can be heavy (WMI/registry)
     case "security.posture":
-      return 15000;
+      return 30000;
     default:
       return DEFAULT_TIMEOUT_MS;
   }

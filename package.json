@@ -1,6 +1,6 @@
 {
   "name": "certusws-tracenium-agent",
-  "version": "1.0.86",
+  "version": "1.0.87",
   "description": "Tracenium Agent - Hardware & Software inventory collector",
   "license": "MIT",
   "author": {
@@ -16,7 +16,6 @@
     "child_process": "^1.0.2",
     "crypto": "^1.0.1",
     "dotenv": "^16.4.5",
-    "esbuild": "^0.27.3",
     "node-wmi": "^0.0.5",
     "os": "^0.1.2",
     "path": "^0.12.7",
@@ -28,6 +27,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.0",
     "copyfiles": "^2.4.1",
+    "esbuild": "^0.28.0",
     "typescript": "^5.9.3"
   },
   "scripts": {

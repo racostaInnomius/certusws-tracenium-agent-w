@@ -168,15 +168,7 @@ export class SqliteOutbox {
 
   enqueue(input: EnqueueInput): number {
     const rawJson = JSON.stringify(input.payload);
-    const baselineHash =
-      input &&
-      typeof input.payload === "object" &&
-      input.payload !== null &&
-      typeof (input.payload as any)?._meta?.baselineHash === "string"
-        ? String((input.payload as any)._meta.baselineHash)
-        : null;
-
-    const hash = baselineHash || require("crypto")
+    const hash = require("crypto")
       .createHash("sha256")
       .update(rawJson)
       .digest("hex");

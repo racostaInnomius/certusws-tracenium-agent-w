@@ -1,6 +1,7 @@
 // src/domain/device-facts.ts
 
 import type { AmpNamespace } from "./amp-types";
+import type { ScpNamespace } from "./scp-types";
 
 export type AgentCapability =
   | "realtime"
@@ -52,8 +53,8 @@ export interface DeviceIdentity {
 
 export interface Namespaces {
   // Plugin namespaces
-  amp: AmpNamespace;
-  scp?: unknown;
+  amp?: AmpNamespace;
+  scp?: ScpNamespace;
   pmp?: unknown;
   rcm?: unknown;
 }

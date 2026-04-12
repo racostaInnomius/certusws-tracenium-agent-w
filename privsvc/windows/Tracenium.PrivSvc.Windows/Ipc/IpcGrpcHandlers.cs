@@ -13,6 +13,8 @@ public static class IpcGrpcHandlers
         public int TotalChunks { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public SortedDictionary<int, string> Chunks { get; set; } = new();
+        public string? Namespace { get; set; }
+        public List<string> Namespaces { get; set; } = new();
     }
 
     private static readonly Dictionary<string, ChunkState> _chunkBuffer = new();
@@ -60,6 +62,7 @@ public static class IpcGrpcHandlers
             var tenantId = GetString(p, "tenantId") ?? req.Meta?.TenantId ?? "";
             var deviceId = GetString(p, "deviceId") ?? req.Meta?.DeviceId ?? "";
             var agentVersion = GetString(p, "agentVersion");
+            var capabilities = GetStringList(p, "capabilities");
 
             var protocolVersion = GetString(p, "protocolVersion") ?? "1";
             var policyVersion = GetString(p, "policyVersion");
@@ -87,7 +90,8 @@ public static class IpcGrpcHandlers
                         DeviceId = deviceId,
                         AgentVersion = agentVersion,
                         ProtocolVersion = protocolVersion,
-                        PolicyVersion = policyVersion
+                        PolicyVersion = policyVersion,
+                        Capabilities = capabilities
                     });
                 }
 
@@ -245,12 +249,17 @@ public static class IpcGrpcHandlers
             // Accept either { eventId, payloadJson } OR { facts: { eventId, payloadJson } }
             string? eventId = GetString(p, "eventId");
             string? payloadJson = GetString(p, "payloadJson");
+            string? factNamespace = GetString(p, "namespace");
+            var namespaces = GetStringList(p, "namespaces");
 
             if (p.TryGetValue("facts", out var factsObj) && factsObj != null)
             {
                 var factsDict = ToDict(factsObj);
                 eventId ??= GetString(factsDict, "eventId");
                 payloadJson ??= GetString(factsDict, "payloadJson");
+                factNamespace ??= GetString(factsDict, "namespace");
+                if (namespaces.Count == 0)
+                    namespaces = GetStringList(factsDict, "namespaces");
             }
 
             if (string.IsNullOrWhiteSpace(eventId))
@@ -258,8 +267,8 @@ public static class IpcGrpcHandlers
             payloadJson ??= "{}";
             var safePayload = payloadJson!;
             var payloadSize = safePayload.Length;
-            Console.WriteLine($"[IpcGrpcHandlers] SendFacts eventId={eventId} connected={GrpcBridgeSingleton.Instance.IsConnected} payloadSize={payloadSize}");
-            GrpcBridgeSingleton.Instance.SendFacts(eventId, safePayload);
+            Console.WriteLine($"[IpcGrpcHandlers] SendFacts eventId={eventId} namespace={factNamespace} namespaces={string.Join(",", namespaces)} connected={GrpcBridgeSingleton.Instance.IsConnected} payloadSize={payloadSize}");
+            GrpcBridgeSingleton.Instance.SendFacts(eventId, safePayload, factNamespace, namespaces);
 
             return Task.FromResult(PrivSvcResponse.Success(req.Id, new { queued = true, connected = GrpcBridgeSingleton.Instance.IsConnected }));
         }
@@ -279,6 +288,8 @@ public static class IpcGrpcHandlers
             var chunkIndexStr = GetString(p, "chunkIndex");
             var totalChunksStr = GetString(p, "totalChunks");
             var payloadChunk = GetString(p, "payloadChunk") ?? "";
+            var factNamespace = GetString(p, "namespace");
+            var namespaces = GetStringList(p, "namespaces");
 
             if (string.IsNullOrWhiteSpace(eventId))
                 throw new Exception("eventId required");
@@ -313,6 +324,8 @@ public static class IpcGrpcHandlers
 
             bool isComplete = false;
             string? fullPayload = null;
+            string? completeNamespace = null;
+            List<string> completeNamespaces = new();
             object lockObj;
 
             lock (_chunkLocks)
@@ -330,7 +343,9 @@ public static class IpcGrpcHandlers
                 {
                     _chunkBuffer[eventId] = new ChunkState
                     {
-                        TotalChunks = totalChunks
+                        TotalChunks = totalChunks,
+                        Namespace = factNamespace,
+                        Namespaces = namespaces
                     };
                 }
                 else
@@ -354,6 +369,8 @@ public static class IpcGrpcHandlers
                 if (state.Chunks.Count == state.TotalChunks)
                 {
                     fullPayload = string.Concat(state.Chunks.Values);
+                    completeNamespace = state.Namespace;
+                    completeNamespaces = state.Namespaces;
                     _chunkBuffer.Remove(eventId);
                     isComplete = true;
                 }
@@ -367,7 +384,7 @@ public static class IpcGrpcHandlers
                 if (fullPayload.Length > MAX_FACTS_SIZE)
                     throw new Exception("payload too large");
 
-                GrpcBridgeSingleton.Instance.SendFacts(eventId, fullPayload);
+                GrpcBridgeSingleton.Instance.SendFacts(eventId, fullPayload, completeNamespace, completeNamespaces);
 
                 lock (_chunkLocks)
                 {
@@ -557,6 +574,46 @@ public static class IpcGrpcHandlers
             System.Text.Json.JsonElement je => je.ValueKind == System.Text.Json.JsonValueKind.String ? je.GetString() : je.ToString(),
             _ => val.ToString()
         };
+    }
+
+    private static List<string> GetStringList(Dictionary<string, object> p, string key)
+    {
+        if (!p.TryGetValue(key, out var val) || val == null) return new List<string>();
+
+        if (val is IEnumerable<string> strings)
+        {
+            return strings
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s.Trim())
+                .Distinct()
+                .ToList();
+        }
+
+        if (val is System.Text.Json.JsonElement je)
+        {
+            if (je.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                return je.EnumerateArray()
+                    .Select(item => item.ValueKind == System.Text.Json.JsonValueKind.String ? item.GetString() : item.ToString())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Select(s => s!.Trim())
+                    .Distinct()
+                    .ToList();
+            }
+
+            if (je.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                return (je.GetString() ?? "")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Distinct()
+                    .ToList();
+            }
+        }
+
+        return val.ToString()?
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct()
+            .ToList() ?? new List<string>();
     }
 
     public static async Task<PrivSvcResponse> HandleAck(PrivSvcRequest req)

@@ -339,6 +339,8 @@ export function checkForAvailableUpdate(
     currentVersion,
     latestVersion,
     arch,
+    forceUpdate: metadata.forceUpdate === true,
+    allowDowngrade: metadata.allowDowngrade === true,
     hasMsi: !!metadata.files?.msi,
     hasArch: !!metadata.files?.msi?.[arch]
   });
@@ -364,7 +366,28 @@ export function checkForAvailableUpdate(
     };
   }
 
-  if (metadata.forceUpdate) {
+  const cmp = compareSemver(currentVersion, latestVersion);
+  const forceUpdate = metadata.forceUpdate === true;
+  const allowDowngrade = Boolean(metadata.allowDowngrade);
+
+  if (cmp > 0 && !allowDowngrade) {
+    console.warn("[update] remote version is older than current; downgrade blocked", {
+      currentVersion,
+      latestVersion,
+      forceUpdate,
+      allowDowngrade
+    });
+
+    return {
+      available: false,
+      currentVersion,
+      latestVersion,
+      reason: "downgrade_blocked",
+      metadata
+    };
+  }
+
+  if (forceUpdate) {
     return {
       available: true,
       currentVersion,
@@ -387,8 +410,6 @@ export function checkForAvailableUpdate(
       metadata
     };
   }
-
-  const cmp = compareSemver(currentVersion, latestVersion);
 
   if (cmp >= 0) {
     return {

@@ -50,9 +50,7 @@ function attachPrivPushHandler(ctx: AgentContext, onPush: (msg: any) => void) {
     ctx.logger?.info?.("[grpc-client] subscribing via priv.onPush()");
     priv.onPush(onPush);
     attached = true;
-  }
-
-  if (typeof priv.on === "function") {
+  } else if (typeof priv.on === "function") {
     ctx.logger?.info?.("[grpc-client] subscribing via priv.on('push')");
     priv.on("push", onPush);
     attached = true;
@@ -222,6 +220,10 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         const tenantId = String(ctx.enrollment.tenantId || "");
         const deviceId = String(ctx.enrollment.deviceId || "");
         const agentVersion = String(ctx.config.agentVersion || "");
+        const capabilities = Array.from(new Set([
+          ...(ctx.enrollment.bootstrap.capabilities || []),
+          ...ctx.policyRuntime.getEnabledPlugins()
+        ]));
 
         const clientCertThumbprint = String((ctx.enrollment as any)?.mtls?.clientCertThumbprint || "");
         const issuingCaThumbprint = String((ctx.enrollment as any)?.mtls?.issuingCaThumbprint || "");
@@ -242,7 +244,8 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
             issuingCaThumbprint,
             tenantId,
             deviceId,
-            agentVersion
+            agentVersion,
+            capabilities
           },
           meta: { tenantId, deviceId }
         });
@@ -314,7 +317,15 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
           inFlightEvents.add(eventId);
 
           if (!eventId) throw new Error("facts.eventId required");
-          ctx.logger?.info("[grpc-client] sending FACTS event", eventId);
+          const factNamespace = String(msg.facts.namespace || "");
+          const factNamespaces = Array.isArray(msg.facts.namespaces)
+            ? msg.facts.namespaces.filter((ns: unknown) => typeof ns === "string" && ns.length > 0)
+            : [];
+          ctx.logger?.info("[grpc-client] sending FACTS event", {
+            eventId,
+            namespace: factNamespace,
+            namespaces: factNamespaces
+          });
 
           let payloadJsonStr: string;
           if (Buffer.isBuffer(msg.facts.payloadJson)) payloadJsonStr = msg.facts.payloadJson.toString("utf8");
@@ -330,7 +341,12 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               v: 1,
               id: `facts-${eventId}`,
               method: "grpc.facts.send",
-              params: { eventId, payloadJson: payloadJsonStr },
+              params: {
+                eventId,
+                namespace: factNamespace,
+                namespaces: factNamespaces,
+                payloadJson: payloadJsonStr
+              },
               meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
             });
 
@@ -369,6 +385,8 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               method: "grpc.facts.chunk",
               params: {
                 eventId,
+                namespace: factNamespace,
+                namespaces: factNamespaces,
                 chunkIndex: i,
                 totalChunks: chunks.length,
                 payloadChunk: chunk

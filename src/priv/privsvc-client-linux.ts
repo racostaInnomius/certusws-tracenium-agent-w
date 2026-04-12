@@ -9,10 +9,17 @@ const DEFAULT_TIMEOUT_MS = 8000;
 
 function getTimeoutForMethod(method: string): number {
   switch (method) {
-    case "software.inventory":
+    case "grpc.connect":
+      return 60000;
+    case "grpc.facts.send":
+    case "grpc.facts.chunk":
+    case "grpc.ack":
+    case "grpc.close":
       return 30000;
+    case "software.inventory":
+      return 60000;
     case "security.posture":
-      return 15000;
+      return 30000;
     default:
       return DEFAULT_TIMEOUT_MS;
   }

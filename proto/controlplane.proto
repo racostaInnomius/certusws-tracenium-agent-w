@@ -46,6 +46,8 @@ message Facts {
   string eventId = 1;
   bytes payloadJson = 2;
   string deviceId = 3;
+  string namespace = 4;
+  repeated string namespaces = 5;
 }
 
 message Heartbeat {

@@ -288,7 +288,10 @@ stream = client.Connect();
     tenantId: ctx.enrollment.tenantId,
     agentVersion: ctx.config.agentVersion,
     policyVersion: ctx.policy.getVersion(),
-    capabilities: ["amp"]
+    capabilities: Array.from(new Set([
+      ...(ctx.enrollment.bootstrap.capabilities || []),
+      ...ctx.policyRuntime.getEnabledPlugins()
+    ]))
   });
 
   // NOTE:
@@ -570,17 +573,19 @@ stream = client.Connect();
 
             const baselineHash = parsedPayload?._meta?.baselineHash;
             const forceBaseline = parsedPayload?._meta?.forceBaseline === true;
-
-            if (baselineHash && baselineHash === lastBaselineHash && baselineSent && !forceBaseline) {
-              if (typeof (ctx.logger as any)?.debug === "function") {
-                (ctx.logger as any).debug("Skipping FACTS (baseline unchanged)", { eventId });
-              }
-              try { outbox.markSent(outboxId); } catch {}
-              continue;
-            }
+            const namespaceKeys = parsedPayload?.namespaces
+              ? Object.keys(parsedPayload.namespaces).filter(k => Boolean((parsedPayload.namespaces as any)[k]))
+              : [];
+            const wireNamespace = namespaceKeys.length === 1 ? namespaceKeys[0] : "multi";
 
             ctx.logger?.info?.("Sending FACTS event", { outboxId, eventId, type: ev.type });
-            ctx.logger?.info?.("FACTS payload metadata", { eventId, baselineHash, baselineSent, forceBaseline });
+            ctx.logger?.info?.("FACTS payload metadata", {
+              eventId,
+              baselineHash,
+              baselineSent,
+              forceBaseline,
+              namespaces: namespaceKeys
+            });
 
             try {
               const sw = parsedPayload?.namespaces?.amp?.software;
@@ -597,7 +602,8 @@ stream = client.Connect();
               facts: {
                 eventId,
                 deviceId: ctx.enrollment.deviceId,
-                namespace: parsedPayload?.namespaces ? Object.keys(parsedPayload.namespaces)[0] : "amp",
+                namespace: wireNamespace,
+                namespaces: namespaceKeys,
                 payloadJson: Buffer.from(
                   typeof ev.payload_json === "string" ? ev.payload_json : JSON.stringify(ev.payload_json),
                   "utf8"
@@ -613,6 +619,7 @@ stream = client.Connect();
                 eventId,
                 deviceId: ctx.enrollment.deviceId,
                 namespace: "amp",
+                namespaces: ["amp"],
                 payloadJson: Buffer.from(
                   typeof ev.payload_json === "string" ? ev.payload_json : JSON.stringify(ev.payload_json),
                   "utf8"

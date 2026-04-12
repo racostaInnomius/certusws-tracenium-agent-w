@@ -220,6 +220,37 @@ export async function buildDeviceFacts(
 ): Promise<DeviceFacts> {
   const hardware = await buildHardwareNamespace();
   const { baseline, baselineHash } = buildDeviceBaseline(ctx, hardware);
+  const outNamespaces: Namespaces = { ...namespaces };
+
+  if (namespaces.amp) {
+    const ampIn: AmpNamespace = namespaces.amp;
+    const swIn = ampIn.software;
+
+    const software: SoftwareInventory = swIn
+      ? {
+          count: swIn.count ?? 0,
+          delta: swIn.delta ?? null,
+          items: Array.isArray(swIn.items) ? [...swIn.items] : undefined,
+          hasChanges: swIn.hasChanges ?? false
+        }
+      : {
+          count: 0,
+          delta: null,
+          items: undefined,
+          hasChanges: false
+        };
+
+    const security: SecurityInfo = (ampIn.security ?? {}) as SecurityInfo;
+
+    outNamespaces.amp = {
+      hardware: {
+        static: hardware.static,
+        runtime: hardware.runtime
+      },
+      security,
+      software
+    };
+  }
 
   return {
     schemaVersion: "1.0",
@@ -233,40 +264,7 @@ export async function buildDeviceFacts(
       domain: baseline.device.domain,
       platform: baseline.device.platform
     },
-    namespaces: {
-      ...namespaces,
-      amp: (() => {
-        const ampIn: AmpNamespace | undefined = namespaces?.amp;
-        const swIn = ampIn?.software;
-
-        const software: SoftwareInventory = swIn
-          ? {
-              count: swIn.count ?? 0,
-              delta: swIn.delta ?? null,
-              items: Array.isArray(swIn.items) ? [...swIn.items] : undefined,
-              hasChanges: swIn.hasChanges ?? false
-            }
-          : {
-              count: 0,
-              delta: null,
-              items: undefined,
-              hasChanges: false
-            };
-
-        const security: SecurityInfo = (ampIn?.security ?? {}) as SecurityInfo;
-
-        const ampOut: AmpNamespace = {
-          hardware: {
-            static: hardware.static,
-            runtime: hardware.runtime
-          },
-          security,
-          software
-        };
-
-        return ampOut;
-      })()
-    },
+    namespaces: outNamespaces,
     _meta: {
       baselineHash
     }

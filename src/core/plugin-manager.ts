@@ -59,6 +59,20 @@ export class PluginManager {
     } catch (err: any) {
       this.ctx?.logger?.error?.("Failed to register AMP plugin", err?.message || err);
     }
+
+    try {
+      const { collectSCP } = await import("../plugins/scp");
+
+      this.register({
+        name: "scp",
+        tasks: {
+          collect: async (ctx: AgentContext) => collectSCP(ctx)
+        }
+      });
+
+    } catch (err: any) {
+      this.ctx?.logger?.error?.("Failed to register SCP plugin", err?.message || err);
+    }
   }
 
   // -----------------------------
