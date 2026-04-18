@@ -1,6 +1,17 @@
 #!/bin/sh
 set -eu
 
+LOG_DIR="/Library/Application Support/Tracenium/Logs"
+LOG_FILE="$LOG_DIR/installer.pkg.log"
+/bin/mkdir -p "$LOG_DIR"
+/usr/bin/touch "$LOG_FILE"
+/bin/chmod 644 "$LOG_FILE" || true
+exec >> "$LOG_FILE" 2>&1
+
+echo "==== $(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ') preinstall start ===="
+set -x
+trap 'rc=$?; set +x; echo "==== $(/bin/date -u "+%Y-%m-%dT%H:%M:%SZ") preinstall exit rc=$rc ===="; exit $rc' EXIT
+
 /bin/launchctl bootout system/com.certusws.tracenium.agent >/dev/null 2>&1 || true
 /bin/launchctl bootout system/com.certusws.tracenium.privsvc >/dev/null 2>&1 || true
 

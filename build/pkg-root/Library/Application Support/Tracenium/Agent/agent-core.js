@@ -37,9 +37,18 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 function resolveProgramData() {
   return process.env.PROGRAMDATA || process.env.ProgramData || "C:\\ProgramData";
 }
+function getLegacyAgentDataDir() {
+  if (import_os.default.platform() === "darwin") {
+    return import_path.default.join(import_os.default.homedir(), ".tracenium", "agent");
+  }
+  return null;
+}
 function agentDataDir() {
   if (import_os.default.platform() === "win32") {
     return import_path.default.join(resolveProgramData(), "Tracenium", "Agent");
+  }
+  if (import_os.default.platform() === "darwin") {
+    return process.env.TRACENIUM_AGENT_DATA_DIR || MACOS_AGENT_DATA_DIR;
   }
   return import_path.default.join(import_os.default.homedir(), ".tracenium", "agent");
 }
@@ -54,13 +63,14 @@ function getSoftwareBaselineDbPath() {
 function getLegacySoftwareBaselineDbPath() {
   return import_path.default.join(process.cwd(), "data", "agent.db");
 }
-var import_os, import_path, import_fs;
+var import_os, import_path, import_fs, MACOS_AGENT_DATA_DIR;
 var init_paths = __esm({
   "src/bootstrap/paths.ts"() {
     "use strict";
     import_os = __toESM(require("os"));
     import_path = __toESM(require("path"));
     import_fs = __toESM(require("fs"));
+    MACOS_AGENT_DATA_DIR = "/Library/Application Support/Tracenium/Agent";
   }
 });
 
@@ -135,10 +145,10 @@ var require_package = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs13 = require("fs");
+    var fs15 = require("fs");
     var path10 = require("path");
-    var os12 = require("os");
-    var crypto7 = require("crypto");
+    var os15 = require("os");
+    var crypto8 = require("crypto");
     var packageJson = require_package();
     var version = packageJson.version;
     var LINE = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg;
@@ -244,7 +254,7 @@ var require_main = __commonJS({
       if (options && options.path && options.path.length > 0) {
         if (Array.isArray(options.path)) {
           for (const filepath of options.path) {
-            if (fs13.existsSync(filepath)) {
+            if (fs15.existsSync(filepath)) {
               possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
             }
           }
@@ -254,13 +264,13 @@ var require_main = __commonJS({
       } else {
         possibleVaultPath = path10.resolve(process.cwd(), ".env.vault");
       }
-      if (fs13.existsSync(possibleVaultPath)) {
+      if (fs15.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
       }
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path10.join(os12.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path10.join(os15.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = Boolean(options && options.debug);
@@ -303,7 +313,7 @@ var require_main = __commonJS({
       const parsedAll = {};
       for (const path11 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs13.readFileSync(path11, { encoding }));
+          const parsed = DotenvModule.parse(fs15.readFileSync(path11, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e) {
           if (debug) {
@@ -357,7 +367,7 @@ var require_main = __commonJS({
       const authTag = ciphertext.subarray(-16);
       ciphertext = ciphertext.subarray(12, -16);
       try {
-        const aesgcm = crypto7.createDecipheriv("aes-256-gcm", key, nonce);
+        const aesgcm = crypto8.createDecipheriv("aes-256-gcm", key, nonce);
         aesgcm.setAuthTag(authTag);
         return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
       } catch (error) {
@@ -439,7 +449,7 @@ function getTimeoutForMethod(method) {
     case "software.inventory":
       return 6e4;
     // inventory can be heavy (WMI/registry)
-    case "security.posture":
+    case "security.compliance":
       return 3e4;
     default:
       return DEFAULT_TIMEOUT_MS;
@@ -751,7 +761,7 @@ function getTimeoutForMethod2(method) {
       return 3e4;
     case "software.inventory":
       return 6e4;
-    case "security.posture":
+    case "security.compliance":
       return 3e4;
     default:
       return DEFAULT_TIMEOUT_MS2;
@@ -1029,7 +1039,7 @@ function getTimeoutForMethod3(method) {
       return 3e4;
     case "software.inventory":
       return 6e4;
-    case "security.posture":
+    case "security.compliance":
       return 3e4;
     default:
       return DEFAULT_TIMEOUT_MS3;
@@ -1402,8 +1412,8 @@ var require_package2 = __commonJS({
 var require_util = __commonJS({
   "node_modules/systeminformation/lib/util.js"(exports2) {
     "use strict";
-    var os12 = require("os");
-    var fs13 = require("fs");
+    var os15 = require("os");
+    var fs15 = require("fs");
     var path10 = require("path");
     var spawn2 = require("child_process").spawn;
     var exec3 = require("child_process").exec;
@@ -1509,7 +1519,7 @@ var require_util = __commonJS({
     }
     function cores() {
       if (_cores === 0) {
-        _cores = os12.cpus().length;
+        _cores = os15.cpus().length;
       }
       return _cores;
     }
@@ -1700,7 +1710,7 @@ var require_util = __commonJS({
       _powerShell = "powershell.exe";
       if (_windows) {
         const defaultPath = `${WINDIR}\\system32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-        if (fs13.existsSync(defaultPath)) {
+        if (fs15.existsSync(defaultPath)) {
           _powerShell = defaultPath;
         }
       }
@@ -1770,7 +1780,7 @@ var require_util = __commonJS({
     function powerShellRelease() {
       try {
         if (_psChild) {
-          _psChild.stdin.write("exit" + os12.EOL);
+          _psChild.stdin.write("exit" + os15.EOL);
           _psChild.stdin.end();
         }
       } catch {
@@ -1797,7 +1807,7 @@ var require_util = __commonJS({
             });
             try {
               if (_psChild && _psChild.pid) {
-                _psChild.stdin.write(_psToUTF8 + "echo " + _psCmdStart + id + _psIdSeperator + "; " + os12.EOL + cmd + os12.EOL + "echo " + _psCmdSeperator + os12.EOL);
+                _psChild.stdin.write(_psToUTF8 + "echo " + _psCmdStart + id + _psIdSeperator + "; " + os15.EOL + cmd + os15.EOL + "echo " + _psCmdSeperator + os15.EOL);
               }
             } catch {
               resolve("");
@@ -1809,7 +1819,7 @@ var require_util = __commonJS({
         return new Promise((resolve) => {
           process.nextTick(() => {
             try {
-              const osVersion = os12.release().split(".").map(Number);
+              const osVersion = os15.release().split(".").map(Number);
               const spanOptions = osVersion[0] < 10 ? ["-NoProfile", "-NoLogo", "-InputFormat", "Text", "-NoExit", "-ExecutionPolicy", "Unrestricted", "-Command", "-"] : ["-NoProfile", "-NoLogo", "-InputFormat", "Text", "-ExecutionPolicy", "Unrestricted", "-Command", _psToUTF8 + cmd];
               const child = spawn2(_powerShell, spanOptions, {
                 stdio: "pipe",
@@ -1841,8 +1851,8 @@ var require_util = __commonJS({
                 });
                 if (osVersion[0] < 10) {
                   try {
-                    child.stdin.write(_psToUTF8 + cmd + os12.EOL);
-                    child.stdin.write("exit" + os12.EOL);
+                    child.stdin.write(_psToUTF8 + cmd + os15.EOL);
+                    child.stdin.write("exit" + os15.EOL);
                     child.stdin.end();
                   } catch {
                     child.kill();
@@ -1956,7 +1966,7 @@ var require_util = __commonJS({
         cpuinfo = _rpi_cpuinfo;
       } else if (cpuinfo === void 0) {
         try {
-          cpuinfo = fs13.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
+          cpuinfo = fs15.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
           _rpi_cpuinfo = cpuinfo;
         } catch {
           return false;
@@ -1969,7 +1979,7 @@ var require_util = __commonJS({
     function isRaspbian() {
       let osrelease = [];
       try {
-        osrelease = fs13.readFileSync("/etc/os-release", { encoding: "utf8" }).toString().split("\n");
+        osrelease = fs15.readFileSync("/etc/os-release", { encoding: "utf8" }).toString().split("\n");
       } catch {
         return false;
       }
@@ -1987,9 +1997,9 @@ var require_util = __commonJS({
       });
     }
     function darwinXcodeExists() {
-      const cmdLineToolsExists = fs13.existsSync("/Library/Developer/CommandLineTools/usr/bin/");
-      const xcodeAppExists = fs13.existsSync("/Applications/Xcode.app/Contents/Developer/Tools");
-      const xcodeExists = fs13.existsSync("/Library/Developer/Xcode/");
+      const cmdLineToolsExists = fs15.existsSync("/Library/Developer/CommandLineTools/usr/bin/");
+      const xcodeAppExists = fs15.existsSync("/Applications/Xcode.app/Contents/Developer/Tools");
+      const xcodeExists = fs15.existsSync("/Library/Developer/Xcode/");
       return cmdLineToolsExists || xcodeExists || xcodeAppExists;
     }
     function nanoSeconds() {
@@ -2107,8 +2117,8 @@ var require_util = __commonJS({
       return ("00000000" + parseInt(hex, 16).toString(2)).substr(-8);
     }
     function getFilesInPath(source) {
-      const lstatSync = fs13.lstatSync;
-      const readdirSync = fs13.readdirSync;
+      const lstatSync = fs15.lstatSync;
+      const readdirSync = fs15.readdirSync;
       const join = path10.join;
       function isDirectory(source2) {
         return lstatSync(source2).isDirectory();
@@ -2139,7 +2149,7 @@ var require_util = __commonJS({
           return [];
         }
       }
-      if (fs13.existsSync(source)) {
+      if (fs15.existsSync(source)) {
         return getFilesRecursively(source);
       } else {
         return [];
@@ -2342,7 +2352,7 @@ var require_util = __commonJS({
         cpuinfo = _rpi_cpuinfo;
       } else {
         try {
-          cpuinfo = fs13.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
+          cpuinfo = fs15.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
           _rpi_cpuinfo = cpuinfo;
         } catch {
           return false;
@@ -3910,8 +3920,8 @@ var require_util = __commonJS({
 var require_osinfo = __commonJS({
   "node_modules/systeminformation/lib/osinfo.js"(exports2) {
     "use strict";
-    var os12 = require("os");
-    var fs13 = require("fs");
+    var os15 = require("os");
+    var fs15 = require("fs");
     var util = require_util();
     var exec3 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
@@ -3933,14 +3943,14 @@ var require_osinfo = __commonJS({
       }
       const result2 = {
         current: Date.now(),
-        uptime: os12.uptime(),
+        uptime: os15.uptime(),
         timezone: t.length >= 7 ? t[5] : "",
         timezoneName
       };
       if (_darwin || _linux) {
         try {
           const stdout = execSync3("date +%Z && date +%z && ls -l /etc/localtime 2>/dev/null", util.execOptsLinux);
-          const lines = stdout.toString().split(os12.EOL);
+          const lines = stdout.toString().split(os15.EOL);
           if (lines.length > 3 && !lines[0]) {
             lines.shift();
           }
@@ -3950,7 +3960,7 @@ var require_osinfo = __commonJS({
           }
           return {
             current: Date.now(),
-            uptime: os12.uptime(),
+            uptime: os15.uptime(),
             timezone: lines[1] ? timezone + lines[1] : timezone,
             timezoneName: lines[2] && lines[2].indexOf("/zoneinfo/") > 0 ? lines[2].split("/zoneinfo/")[1] || "" : ""
           };
@@ -4069,11 +4079,11 @@ var require_osinfo = __commonJS({
       return "";
     }
     function getFQDN() {
-      let fqdn = os12.hostname;
+      let fqdn = os15.hostname;
       if (_linux || _darwin) {
         try {
           const stdout = execSync3("hostname -f 2>/dev/null", util.execOptsLinux);
-          fqdn = stdout.toString().split(os12.EOL)[0];
+          fqdn = stdout.toString().split(os15.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4081,7 +4091,7 @@ var require_osinfo = __commonJS({
       if (_freebsd || _openbsd || _netbsd) {
         try {
           const stdout = execSync3("hostname 2>/dev/null");
-          fqdn = stdout.toString().split(os12.EOL)[0];
+          fqdn = stdout.toString().split(os15.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4089,7 +4099,7 @@ var require_osinfo = __commonJS({
       if (_windows) {
         try {
           const stdout = execSync3("echo %COMPUTERNAME%.%USERDNSDOMAIN%", util.execOptsWin);
-          fqdn = stdout.toString().replace(".%USERDNSDOMAIN%", "").split(os12.EOL)[0];
+          fqdn = stdout.toString().replace(".%USERDNSDOMAIN%", "").split(os15.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4104,9 +4114,9 @@ var require_osinfo = __commonJS({
             distro: "unknown",
             release: "unknown",
             codename: "",
-            kernel: os12.release(),
-            arch: os12.arch(),
-            hostname: os12.hostname(),
+            kernel: os15.release(),
+            arch: os15.arch(),
+            hostname: os15.hostname(),
             fqdn: getFQDN(),
             codepage: "",
             logofile: "",
@@ -4272,7 +4282,7 @@ var require_osinfo = __commonJS({
     function isUefiLinux() {
       return new Promise((resolve) => {
         process.nextTick(() => {
-          fs13.stat("/sys/firmware/efi", (err) => {
+          fs15.stat("/sys/firmware/efi", (err) => {
             if (!err) {
               return resolve(true);
             } else {
@@ -4315,7 +4325,7 @@ var require_osinfo = __commonJS({
     }
     function versions(apps, callback) {
       let versionObject = {
-        kernel: os12.release(),
+        kernel: os15.release(),
         apache: "",
         bash: "",
         bun: "",
@@ -4512,7 +4522,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "git")) {
               if (_darwin) {
-                const gitHomebrewExists = fs13.existsSync("/usr/local/Cellar/git") || fs13.existsSync("/opt/homebrew/bin/git");
+                const gitHomebrewExists = fs15.existsSync("/usr/local/Cellar/git") || fs15.existsSync("/opt/homebrew/bin/git");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
                   exec3("git --version", (error, stdout) => {
                     if (!error) {
@@ -4708,8 +4718,8 @@ var require_osinfo = __commonJS({
                   const stdout = execSync3("sw_vers");
                   const lines = stdout.toString().split("\n");
                   const osVersion = util.getValue(lines, "ProductVersion", ":");
-                  const gitHomebrewExists1 = fs13.existsSync("/usr/local/Cellar/python");
-                  const gitHomebrewExists2 = fs13.existsSync("/opt/homebrew/bin/python");
+                  const gitHomebrewExists1 = fs15.existsSync("/usr/local/Cellar/python");
+                  const gitHomebrewExists2 = fs15.existsSync("/opt/homebrew/bin/python");
                   if (util.darwinXcodeExists() && util.semverCompare("12.0.1", osVersion) < 0 || gitHomebrewExists1 || gitHomebrewExists2) {
                     const cmd2 = gitHomebrewExists1 ? "/usr/local/Cellar/python -V 2>&1" : gitHomebrewExists2 ? "/opt/homebrew/bin/python -V 2>&1" : "python -V 2>&1";
                     exec3(cmd2, (error, stdout2) => {
@@ -4737,7 +4747,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "python3")) {
               if (_darwin) {
-                const gitHomebrewExists = fs13.existsSync("/usr/local/Cellar/python3") || fs13.existsSync("/opt/homebrew/bin/python3");
+                const gitHomebrewExists = fs15.existsSync("/usr/local/Cellar/python3") || fs15.existsSync("/opt/homebrew/bin/python3");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
                   exec3("python3 -V 2>&1", (error, stdout) => {
                     if (!error) {
@@ -4761,7 +4771,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "pip")) {
               if (_darwin) {
-                const gitHomebrewExists = fs13.existsSync("/usr/local/Cellar/pip") || fs13.existsSync("/opt/homebrew/bin/pip");
+                const gitHomebrewExists = fs15.existsSync("/usr/local/Cellar/pip") || fs15.existsSync("/opt/homebrew/bin/pip");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
                   exec3("pip -V 2>&1", (error, stdout) => {
                     if (!error) {
@@ -4787,7 +4797,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "pip3")) {
               if (_darwin) {
-                const gitHomebrewExists = fs13.existsSync("/usr/local/Cellar/pip3") || fs13.existsSync("/opt/homebrew/bin/pip3");
+                const gitHomebrewExists = fs15.existsSync("/usr/local/Cellar/pip3") || fs15.existsSync("/opt/homebrew/bin/pip3");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
                   exec3("pip3 -V 2>&1", (error, stdout) => {
                     if (!error) {
@@ -5025,7 +5035,7 @@ var require_osinfo = __commonJS({
     function getUniqueMacAdresses() {
       let macs = [];
       try {
-        const ifaces = os12.networkInterfaces();
+        const ifaces = os15.networkInterfaces();
         for (let dev in ifaces) {
           if ({}.hasOwnProperty.call(ifaces, dev)) {
             ifaces[dev].forEach((details) => {
@@ -5090,7 +5100,7 @@ echo -n "hardware: "; cat /sys/class/dmi/id/product_uuid 2> /dev/null; echo;`;
               result2.os = util.getValue(lines, "os").toLowerCase();
               result2.hardware = util.getValue(lines, "hardware").toLowerCase();
               if (!result2.hardware) {
-                const lines2 = fs13.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
+                const lines2 = fs15.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
                 const serial = util.getValue(lines2, "serial");
                 result2.hardware = serial || "";
               }
@@ -5146,8 +5156,8 @@ echo -n "hardware: "; cat /sys/class/dmi/id/product_uuid 2> /dev/null; echo;`;
 var require_system = __commonJS({
   "node_modules/systeminformation/lib/system.js"(exports2) {
     "use strict";
-    var fs13 = require("fs");
-    var os12 = require("os");
+    var fs15 = require("fs");
+    var os15 = require("os");
     var util = require_util();
     var { uuid } = require_osinfo();
     var exec3 = require("child_process").exec;
@@ -5271,8 +5281,8 @@ var require_system = __commonJS({
                   util.noop();
                 }
               }
-              if (!result2.virtual && (os12.release().toLowerCase().indexOf("microsoft") >= 0 || os12.release().toLowerCase().endsWith("wsl2"))) {
-                const kernelVersion = parseFloat(os12.release().toLowerCase());
+              if (!result2.virtual && (os15.release().toLowerCase().indexOf("microsoft") >= 0 || os15.release().toLowerCase().endsWith("wsl2"))) {
+                const kernelVersion = parseFloat(os15.release().toLowerCase());
                 result2.virtual = true;
                 result2.manufacturer = "Microsoft";
                 result2.model = "WSL";
@@ -5301,7 +5311,7 @@ var require_system = __commonJS({
                   util.noop();
                 }
               }
-              if (fs13.existsSync("/.dockerenv") || fs13.existsSync("/.dockerinit")) {
+              if (fs15.existsSync("/.dockerenv") || fs15.existsSync("/.dockerinit")) {
                 result2.model = "Docker Container";
               }
               try {
@@ -5329,7 +5339,7 @@ var require_system = __commonJS({
                 util.noop();
               }
               if (result2.manufacturer === "" && result2.model === "Computer" && result2.version === "") {
-                fs13.readFile("/proc/cpuinfo", (error2, stdout2) => {
+                fs15.readFile("/proc/cpuinfo", (error2, stdout2) => {
                   if (!error2) {
                     let lines2 = stdout2.toString().split("\n");
                     result2.model = util.getValue(lines2, "hardware", ":", true).toUpperCase();
@@ -5682,7 +5692,7 @@ var require_system = __commonJS({
                 result2.model = "Raspberry Pi";
                 result2.serial = rpi.serial;
                 result2.version = rpi.type + " - " + rpi.revision;
-                result2.memMax = os12.totalmem();
+                result2.memMax = os15.totalmem();
                 result2.memSlots = 0;
               }
               if (callback) {
@@ -5708,9 +5718,9 @@ var require_system = __commonJS({
               }
               devices.shift();
               result2.memSlots = devices.length;
-              if (os12.arch() === "arm64") {
+              if (os15.arch() === "arm64") {
                 result2.memSlots = 0;
-                result2.memMax = os12.totalmem();
+                result2.memMax = os15.totalmem();
               }
               if (callback) {
                 callback(result2);
@@ -5727,7 +5737,7 @@ var require_system = __commonJS({
           if (_windows) {
             try {
               const workload = [];
-              const win10plus = parseInt(os12.release()) >= 10;
+              const win10plus = parseInt(os15.release()) >= 10;
               const maxCapacityAttribute = win10plus ? "MaxCapacityEx" : "MaxCapacity";
               workload.push(util.powerShell("Get-CimInstance Win32_baseboard | select Model,Manufacturer,Product,Version,SerialNumber,PartNumber,SKU | fl"));
               workload.push(util.powerShell(`Get-CimInstance Win32_physicalmemoryarray | select ${maxCapacityAttribute}, MemoryDevices | fl`));
@@ -5923,10 +5933,10 @@ var require_system = __commonJS({
 var require_cpu = __commonJS({
   "node_modules/systeminformation/lib/cpu.js"(exports2) {
     "use strict";
-    var os12 = require("os");
+    var os15 = require("os");
     var exec3 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
-    var fs13 = require("fs");
+    var fs15 = require("fs");
     var util = require_util();
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
@@ -6786,7 +6796,7 @@ var require_cpu = __commonJS({
                 const countProcessors = util.getValue(lines, "hw.packages");
                 const countCores = util.getValue(lines, "hw.physicalcpu_max");
                 const countThreads = util.getValue(lines, "hw.ncpu");
-                if (os12.arch() === "arm64") {
+                if (os15.arch() === "arm64") {
                   result2.socket = "SOC";
                   try {
                     const clusters = execSync3("ioreg -c IOPlatformDevice -d 3 -r | grep cluster-type").toString().split("\n");
@@ -6814,8 +6824,8 @@ var require_cpu = __commonJS({
             if (_linux) {
               let modelline = "";
               let lines = [];
-              if (os12.cpus()[0] && os12.cpus()[0].model) {
-                modelline = os12.cpus()[0].model;
+              if (os15.cpus()[0] && os15.cpus()[0].model) {
+                modelline = os15.cpus()[0].model;
               }
               exec3('export LC_ALL=C; lscpu; echo -n "Governor: "; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null; echo; unset LC_ALL', (error, stdout) => {
                 if (!error) {
@@ -6883,7 +6893,7 @@ var require_cpu = __commonJS({
                   result2.socket = "SOC";
                 }
                 if (util.getValue(lines, "architecture") === "riscv64") {
-                  const linesRiscV = fs13.readFileSync("/proc/cpuinfo").toString().split("\n");
+                  const linesRiscV = fs15.readFileSync("/proc/cpuinfo").toString().split("\n");
                   const uarch = util.getValue(linesRiscV, "uarch") || "";
                   if (uarch.indexOf(",") > -1) {
                     const split = uarch.split(",");
@@ -6904,8 +6914,8 @@ var require_cpu = __commonJS({
             if (_freebsd || _openbsd || _netbsd) {
               let modelline = "";
               let lines = [];
-              if (os12.cpus()[0] && os12.cpus()[0].model) {
-                modelline = os12.cpus()[0].model;
+              if (os15.cpus()[0] && os15.cpus()[0].model) {
+                modelline = os15.cpus()[0].model;
               }
               exec3("export LC_ALL=C; dmidecode -t 4; dmidecode -t 7 unset LC_ALL", (error, stdout) => {
                 let cache = [];
@@ -7065,7 +7075,7 @@ var require_cpu = __commonJS({
     }
     exports2.cpu = cpu;
     function getCpuCurrentSpeedSync() {
-      const cpus = os12.cpus();
+      const cpus = os15.cpus();
       let minFreq = 999999999;
       let maxFreq = 0;
       let avgFreq = 0;
@@ -7282,9 +7292,9 @@ var require_cpu = __commonJS({
                       return;
                     }
                   }
-                  fs13.stat("/sys/class/thermal/thermal_zone0/temp", (err) => {
+                  fs15.stat("/sys/class/thermal/thermal_zone0/temp", (err) => {
                     if (err === null) {
-                      fs13.readFile("/sys/class/thermal/thermal_zone0/temp", (error3, stdout3) => {
+                      fs15.readFile("/sys/class/thermal/thermal_zone0/temp", (error3, stdout3) => {
                         if (!error3) {
                           const lines2 = stdout3.toString().split("\n");
                           if (lines2.length > 0) {
@@ -7507,7 +7517,7 @@ var require_cpu = __commonJS({
                   });
                 }
                 if (!result2) {
-                  fs13.readFile("/proc/cpuinfo", (error2, stdout2) => {
+                  fs15.readFile("/proc/cpuinfo", (error2, stdout2) => {
                     if (!error2) {
                       let lines = stdout2.toString().split("\n");
                       result2 = util.getValue(lines, "features", ":", true).toLowerCase();
@@ -7760,7 +7770,7 @@ var require_cpu = __commonJS({
     function getLoad() {
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const loads = os12.loadavg().map((x) => {
+          const loads = os15.loadavg().map((x) => {
             return x / util.cores();
           });
           const avgLoad = parseFloat(Math.max.apply(Math, loads).toFixed(2));
@@ -7768,7 +7778,7 @@ var require_cpu = __commonJS({
           const now = Date.now() - _current_cpu.ms;
           if (now >= 200) {
             _current_cpu.ms = Date.now();
-            const cpus = os12.cpus().map((cpu2) => {
+            const cpus = os15.cpus().map((cpu2) => {
               cpu2.times.steal = 0;
               cpu2.times.guest = 0;
               return cpu2;
@@ -7962,7 +7972,7 @@ var require_cpu = __commonJS({
     function getFullLoad() {
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const cpus = os12.cpus();
+          const cpus = os15.cpus();
           let totalUser = 0;
           let totalSystem = 0;
           let totalNice = 0;
@@ -8005,11 +8015,11 @@ var require_cpu = __commonJS({
 var require_memory = __commonJS({
   "node_modules/systeminformation/lib/memory.js"(exports2) {
     "use strict";
-    var os12 = require("os");
+    var os15 = require("os");
     var exec3 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
-    var fs13 = require("fs");
+    var fs15 = require("fs");
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
     var _darwin = _platform === "darwin";
@@ -8051,12 +8061,12 @@ var require_memory = __commonJS({
       return new Promise((resolve) => {
         process.nextTick(() => {
           let result2 = {
-            total: os12.totalmem(),
-            free: os12.freemem(),
-            used: os12.totalmem() - os12.freemem(),
-            active: os12.totalmem() - os12.freemem(),
+            total: os15.totalmem(),
+            free: os15.freemem(),
+            used: os15.totalmem() - os15.freemem(),
+            active: os15.totalmem() - os15.freemem(),
             // temporarily (fallback)
-            available: os12.freemem(),
+            available: os15.freemem(),
             // temporarily (fallback)
             buffers: 0,
             cached: 0,
@@ -8071,13 +8081,13 @@ var require_memory = __commonJS({
           };
           if (_linux) {
             try {
-              fs13.readFile("/proc/meminfo", (error, stdout) => {
+              fs15.readFile("/proc/meminfo", (error, stdout) => {
                 if (!error) {
                   const lines = stdout.toString().split("\n");
                   result2.total = parseInt(util.getValue(lines, "memtotal"), 10);
-                  result2.total = result2.total ? result2.total * 1024 : os12.totalmem();
+                  result2.total = result2.total ? result2.total * 1024 : os15.totalmem();
                   result2.free = parseInt(util.getValue(lines, "memfree"), 10);
-                  result2.free = result2.free ? result2.free * 1024 : os12.freemem();
+                  result2.free = result2.free ? result2.free * 1024 : os15.freemem();
                   result2.used = result2.total - result2.free;
                   result2.buffers = parseInt(util.getValue(lines, "buffers"), 10);
                   result2.buffers = result2.buffers ? result2.buffers * 1024 : 0;
@@ -8299,7 +8309,7 @@ var require_memory = __commonJS({
                 }
                 if (!result2.length) {
                   result2.push({
-                    size: os12.totalmem(),
+                    size: os15.totalmem(),
                     bank: "",
                     type: "",
                     ecc: null,
@@ -8501,7 +8511,7 @@ var require_battery = __commonJS({
   "node_modules/systeminformation/lib/battery.js"(exports2, module2) {
     "use strict";
     var exec3 = require("child_process").exec;
-    var fs13 = require("fs");
+    var fs15 = require("fs");
     var util = require_util();
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
@@ -8553,24 +8563,24 @@ var require_battery = __commonJS({
         };
         if (_linux) {
           let battery_path = "";
-          if (fs13.existsSync("/sys/class/power_supply/BAT1/uevent")) {
+          if (fs15.existsSync("/sys/class/power_supply/BAT1/uevent")) {
             battery_path = "/sys/class/power_supply/BAT1/";
-          } else if (fs13.existsSync("/sys/class/power_supply/BAT0/uevent")) {
+          } else if (fs15.existsSync("/sys/class/power_supply/BAT0/uevent")) {
             battery_path = "/sys/class/power_supply/BAT0/";
           }
           let acConnected = false;
           let acPath = "";
-          if (fs13.existsSync("/sys/class/power_supply/AC/online")) {
+          if (fs15.existsSync("/sys/class/power_supply/AC/online")) {
             acPath = "/sys/class/power_supply/AC/online";
-          } else if (fs13.existsSync("/sys/class/power_supply/AC0/online")) {
+          } else if (fs15.existsSync("/sys/class/power_supply/AC0/online")) {
             acPath = "/sys/class/power_supply/AC0/online";
           }
           if (acPath) {
-            const file = fs13.readFileSync(acPath);
+            const file = fs15.readFileSync(acPath);
             acConnected = file.toString().trim() === "1";
           }
           if (battery_path) {
-            fs13.readFile(battery_path + "uevent", (error, stdout) => {
+            fs15.readFile(battery_path + "uevent", (error, stdout) => {
               if (!error) {
                 let lines = stdout.toString().split("\n");
                 result2.isCharging = util.getValue(lines, "POWER_SUPPLY_STATUS", "=").toLowerCase() === "charging";
@@ -8792,7 +8802,7 @@ var require_battery = __commonJS({
 var require_graphics = __commonJS({
   "node_modules/systeminformation/lib/graphics.js"(exports2) {
     "use strict";
-    var fs13 = require("fs");
+    var fs15 = require("fs");
     var path10 = require("path");
     var exec3 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
@@ -9155,10 +9165,10 @@ var require_graphics = __commonJS({
         if (_windows) {
           try {
             const basePath = path10.join(util.WINDIR, "System32", "DriverStore", "FileRepository");
-            const candidates = fs13.readdirSync(basePath, { withFileTypes: true }).filter((dir) => dir.isDirectory()).map((dir) => {
+            const candidates = fs15.readdirSync(basePath, { withFileTypes: true }).filter((dir) => dir.isDirectory()).map((dir) => {
               const nvidiaSmiPath = path10.join(basePath, dir.name, "nvidia-smi.exe");
               try {
-                const stats = fs13.statSync(nvidiaSmiPath);
+                const stats = fs15.statSync(nvidiaSmiPath);
                 return { path: nvidiaSmiPath, ctime: stats.ctimeMs };
               } catch {
                 return null;
@@ -9873,7 +9883,7 @@ var require_filesystem = __commonJS({
   "node_modules/systeminformation/lib/filesystem.js"(exports2) {
     "use strict";
     var util = require_util();
-    var fs13 = require("fs");
+    var fs15 = require("fs");
     var exec3 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var execPromiseSave = util.promisifySave(require("child_process").exec);
@@ -9894,11 +9904,11 @@ var require_filesystem = __commonJS({
       }
       let macOsDisks = [];
       let osMounts = [];
-      function getmacOsFsType(fs14) {
-        if (!fs14.startsWith("/")) {
+      function getmacOsFsType(fs16) {
+        if (!fs16.startsWith("/")) {
           return "NFS";
         }
-        const parts = fs14.split("/");
+        const parts = fs16.split("/");
         const fsShort = parts[parts.length - 1];
         const macOsDisksSingle = macOsDisks.filter((item) => item.indexOf(fsShort) >= 0);
         if (macOsDisksSingle.length === 1 && macOsDisksSingle[0].indexOf("APFS") >= 0) {
@@ -9906,11 +9916,11 @@ var require_filesystem = __commonJS({
         }
         return "HFS";
       }
-      function isLinuxTmpFs(fs14) {
+      function isLinuxTmpFs(fs16) {
         const linuxTmpFileSystems = ["rootfs", "unionfs", "squashfs", "cramfs", "initrd", "initramfs", "devtmpfs", "tmpfs", "udev", "devfs", "specfs", "type", "appimaged"];
         let result2 = false;
         linuxTmpFileSystems.forEach((linuxFs) => {
-          if (fs14.toLowerCase().indexOf(linuxFs) >= 0) {
+          if (fs16.toLowerCase().indexOf(linuxFs) >= 0) {
             result2 = true;
           }
         });
@@ -9938,18 +9948,18 @@ var require_filesystem = __commonJS({
           if (line !== "") {
             line = line.replace(/ +/g, " ").split(" ");
             if (line && (line[0].startsWith("/") || line[6] && line[6] === "/" || line[0].indexOf("/") > 0 || line[0].indexOf(":") === 1 || !_darwin && !isLinuxTmpFs(line[1]))) {
-              const fs14 = line[0];
+              const fs16 = line[0];
               const fsType = _linux || _freebsd || _openbsd || _netbsd ? line[1] : getmacOsFsType(line[0]);
               const size = parseInt(_linux || _freebsd || _openbsd || _netbsd ? line[2] : line[1], 10) * 1024;
               const used = parseInt(_linux || _freebsd || _openbsd || _netbsd ? line[3] : line[2], 10) * 1024;
               const available = parseInt(_linux || _freebsd || _openbsd || _netbsd ? line[4] : line[3], 10) * 1024;
               const use = parseFloat((100 * (used / (used + available))).toFixed(2));
-              const rw = osMounts && Object.keys(osMounts).length > 0 ? osMounts[fs14] || false : null;
+              const rw = osMounts && Object.keys(osMounts).length > 0 ? osMounts[fs16] || false : null;
               line.splice(0, _linux || _freebsd || _openbsd || _netbsd ? 6 : 5);
               const mount = line.join(" ");
-              if (!data.find((el) => el.fs === fs14 && el.type === fsType && el.mount === mount)) {
+              if (!data.find((el) => el.fs === fs16 && el.type === fsType && el.mount === mount)) {
                 data.push({
-                  fs: fs14,
+                  fs: fs16,
                   type: fsType,
                   size,
                   used,
@@ -10110,7 +10120,7 @@ var require_filesystem = __commonJS({
             });
           }
           if (_linux) {
-            fs13.readFile("/proc/sys/fs/file-nr", (error, stdout) => {
+            fs15.readFile("/proc/sys/fs/file-nr", (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().split("\n");
                 if (lines[0]) {
@@ -10129,7 +10139,7 @@ var require_filesystem = __commonJS({
                 }
                 resolve(result2);
               } else {
-                fs13.readFile("/proc/sys/fs/file-max", (error2, stdout2) => {
+                fs15.readFile("/proc/sys/fs/file-max", (error2, stdout2) => {
                   if (!error2) {
                     const lines = stdout2.toString().split("\n");
                     if (lines[0]) {
@@ -11447,10 +11457,10 @@ ${BSDName}|"; diskutil info /dev/${BSDName} | grep SMART;`;
 var require_network = __commonJS({
   "node_modules/systeminformation/lib/network.js"(exports2) {
     "use strict";
-    var os12 = require("os");
+    var os15 = require("os");
     var exec3 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
-    var fs13 = require("fs");
+    var fs15 = require("fs");
     var util = require_util();
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
@@ -11471,7 +11481,7 @@ var require_network = __commonJS({
       let ifacename = "";
       let ifacenameFirst = "";
       try {
-        const ifaces = os12.networkInterfaces();
+        const ifaces = os15.networkInterfaces();
         let scopeid = 9999;
         for (let dev in ifaces) {
           if ({}.hasOwnProperty.call(ifaces, dev)) {
@@ -11491,7 +11501,7 @@ var require_network = __commonJS({
           let defaultIp = "";
           const cmd = "netstat -r";
           const result2 = execSync3(cmd, util.execOptsWin);
-          const lines = result2.toString().split(os12.EOL);
+          const lines = result2.toString().split(os15.EOL);
           lines.forEach((line) => {
             line = line.replace(/\s+/g, " ").trim();
             if (line.indexOf("0.0.0.0 0.0.0.0") > -1 && !/[a-zA-Z]/.test(line)) {
@@ -12124,7 +12134,7 @@ var require_network = __commonJS({
       defaultString = "" + defaultString;
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const ifaces = os12.networkInterfaces();
+          const ifaces = os15.networkInterfaces();
           let result2 = [];
           let nics = [];
           let dnsSuffixes = [];
@@ -12701,7 +12711,7 @@ var require_network = __commonJS({
           let cmd, lines, stats;
           if (!_network[ifaceSanitized] || _network[ifaceSanitized] && !_network[ifaceSanitized].ms || _network[ifaceSanitized] && _network[ifaceSanitized].ms && Date.now() - _network[ifaceSanitized].ms >= 500) {
             if (_linux) {
-              if (fs13.existsSync("/sys/class/net/" + ifaceSanitized)) {
+              if (fs15.existsSync("/sys/class/net/" + ifaceSanitized)) {
                 cmd = "cat /sys/class/net/" + ifaceSanitized + "/operstate; cat /sys/class/net/" + ifaceSanitized + "/statistics/rx_bytes; cat /sys/class/net/" + ifaceSanitized + "/statistics/tx_bytes; cat /sys/class/net/" + ifaceSanitized + "/statistics/rx_dropped; cat /sys/class/net/" + ifaceSanitized + "/statistics/rx_errors; cat /sys/class/net/" + ifaceSanitized + "/statistics/tx_dropped; cat /sys/class/net/" + ifaceSanitized + "/statistics/tx_errors; ";
                 exec3(cmd, (error, stdout) => {
                   if (!error) {
@@ -13194,7 +13204,7 @@ var require_network = __commonJS({
           if (_windows) {
             try {
               exec3("netstat -r", util.execOptsWin, (error, stdout) => {
-                const lines = stdout.toString().split(os12.EOL);
+                const lines = stdout.toString().split(os15.EOL);
                 lines.forEach((line) => {
                   line = line.replace(/\s+/g, " ").trim();
                   if (line.indexOf("0.0.0.0 0.0.0.0") > -1 && !/[a-zA-Z]/.test(line)) {
@@ -13240,7 +13250,7 @@ var require_network = __commonJS({
 var require_wifi = __commonJS({
   "node_modules/systeminformation/lib/wifi.js"(exports2) {
     "use strict";
-    var os12 = require("os");
+    var os15 = require("os");
     var exec3 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
@@ -13462,7 +13472,7 @@ var require_wifi = __commonJS({
         parts.shift();
         parts.forEach((part) => {
           part = "ACTIVE:" + part;
-          const lines = part.split(os12.EOL);
+          const lines = part.split(os15.EOL);
           const channel = util.getValue(lines, "CHAN");
           const frequency = util.getValue(lines, "FREQ").toLowerCase().replace("mhz", "").trim();
           const security = util.getValue(lines, "SECURITY").replace("(", "").replace(")", "");
@@ -13686,15 +13696,15 @@ var require_wifi = __commonJS({
           } else if (_windows) {
             const cmd = "netsh wlan show networks mode=Bssid";
             util.powerShell(cmd).then((stdout) => {
-              const ssidParts = stdout.toString("utf8").split(os12.EOL + os12.EOL + "SSID ");
+              const ssidParts = stdout.toString("utf8").split(os15.EOL + os15.EOL + "SSID ");
               ssidParts.shift();
               ssidParts.forEach((ssidPart) => {
-                const ssidLines = ssidPart.split(os12.EOL);
+                const ssidLines = ssidPart.split(os15.EOL);
                 if (ssidLines && ssidLines.length >= 8 && ssidLines[0].indexOf(":") >= 0) {
                   const bssidsParts = ssidPart.split(" BSSID");
                   bssidsParts.shift();
                   bssidsParts.forEach((bssidPart) => {
-                    const bssidLines = bssidPart.split(os12.EOL);
+                    const bssidLines = bssidPart.split(os15.EOL);
                     const bssidLine = bssidLines[0].split(":");
                     bssidLine.shift();
                     const bssid = bssidLine.join(":").trim().toLowerCase();
@@ -14018,8 +14028,8 @@ var require_wifi = __commonJS({
 var require_processes = __commonJS({
   "node_modules/systeminformation/lib/processes.js"(exports2) {
     "use strict";
-    var os12 = require("os");
-    var fs13 = require("fs");
+    var os15 = require("os");
+    var fs15 = require("fs");
     var path10 = require("path");
     var exec3 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
@@ -14590,7 +14600,7 @@ var require_processes = __commonJS({
               }
               if (firstPos === 1e4 && tmpCommand.indexOf(" ") > -1) {
                 const parts = tmpCommand.split(" ");
-                if (fs13.existsSync(path10.join(cmdPath, parts[0]))) {
+                if (fs15.existsSync(path10.join(cmdPath, parts[0]))) {
                   command = parts.shift();
                   params = (parts.join(" ") + " " + tmpParams).trim();
                 } else {
@@ -14669,7 +14679,7 @@ var require_processes = __commonJS({
             line = line.trim().replace(/ +/g, " ").replace(/,+/g, ".");
             const parts = line.split(" ");
             const command = parts.slice(9).join(" ");
-            const pmem = parseFloat((1 * parseInt(parts[3]) * 1024 / os12.totalmem()).toFixed(1));
+            const pmem = parseFloat((1 * parseInt(parts[3]) * 1024 / os15.totalmem()).toFixed(1));
             const started = parseElapsed(parts[5]);
             result2.push({
               pid: parseInt(parts[0]),
@@ -14872,7 +14882,7 @@ var require_processes = __commonJS({
                         cpu: 0,
                         cpuu: 0,
                         cpus: 0,
-                        mem: memw / os12.totalmem() * 100,
+                        mem: memw / os15.totalmem() * 100,
                         priority: element.Priority | null,
                         memVsz: element.PageFileUsage || null,
                         memRss: Math.floor((element.WorkingSetSize || 0) / 1024),
@@ -15026,7 +15036,7 @@ var require_processes = __commonJS({
                         result2.forEach((item) => {
                           if (item.proc.toLowerCase() === pname.toLowerCase()) {
                             item.pids.push(pid);
-                            item.mem += mem / os12.totalmem() * 100;
+                            item.mem += mem / os15.totalmem() * 100;
                             processFound = true;
                           }
                         });
@@ -15036,7 +15046,7 @@ var require_processes = __commonJS({
                             pid,
                             pids: [pid],
                             cpu: 0,
-                            mem: mem / os12.totalmem() * 100
+                            mem: mem / os15.totalmem() * 100
                           });
                         }
                       }
@@ -16777,7 +16787,7 @@ var require_docker = __commonJS({
 var require_virtualbox = __commonJS({
   "node_modules/systeminformation/lib/virtualbox.js"(exports2) {
     "use strict";
-    var os12 = require("os");
+    var os15 = require("os");
     var exec3 = require("child_process").exec;
     var util = require_util();
     function vboxInfo(callback) {
@@ -16786,10 +16796,10 @@ var require_virtualbox = __commonJS({
         process.nextTick(() => {
           try {
             exec3(util.getVboxmanage() + " list vms --long", (error, stdout) => {
-              let parts = (os12.EOL + stdout.toString()).split(os12.EOL + "Name:");
+              let parts = (os15.EOL + stdout.toString()).split(os15.EOL + "Name:");
               parts.shift();
               parts.forEach((part) => {
-                const lines = ("Name:" + part).split(os12.EOL);
+                const lines = ("Name:" + part).split(os15.EOL);
                 const state = util.getValue(lines, "State");
                 const running = state.startsWith("running");
                 const runningSinceString = running ? state.replace("running (since ", "").replace(")", "").trim() : "";
@@ -18729,7 +18739,7 @@ var require_bluetooth = __commonJS({
     var path10 = require("path");
     var util = require_util();
     var bluetoothVendors = require_bluetoothVendors();
-    var fs13 = require("fs");
+    var fs15 = require("fs");
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
     var _darwin = _platform === "darwin";
@@ -18863,7 +18873,7 @@ var require_bluetooth = __commonJS({
               const macAddr1 = pathParts.length >= 6 ? pathParts[pathParts.length - 2] : null;
               const macAddr2 = pathParts.length >= 7 ? pathParts[pathParts.length - 3] : null;
               if (filename === "info") {
-                const infoFile = fs13.readFileSync(element, { encoding: "utf8" }).split("\n");
+                const infoFile = fs15.readFileSync(element, { encoding: "utf8" }).split("\n");
                 result2.push(parseLinuxBluetoothInfo(infoFile, macAddr1, macAddr2));
               }
             });
@@ -19389,7 +19399,7 @@ function generateInstallId(data) {
     data.packageFamilyName || "",
     (data.source || "").toLowerCase()
   ].join("|");
-  const hash = import_crypto7.default.createHash("sha256").update(base).digest("hex");
+  const hash = import_crypto8.default.createHash("sha256").update(base).digest("hex");
   return `sha256:${hash}`;
 }
 function normalizeApp(input) {
@@ -19418,11 +19428,11 @@ function normalizeApp(input) {
     detectedAtUtc
   };
 }
-var import_crypto7;
+var import_crypto8;
 var init_normalize_app = __esm({
   "src/domain/normalize-app.ts"() {
     "use strict";
-    import_crypto7 = __toESM(require("crypto"));
+    import_crypto8 = __toESM(require("crypto"));
   }
 });
 
@@ -19519,11 +19529,11 @@ function ensureDbDir() {
   ensureAgentDataDir();
 }
 function migrateLegacyDbIfNeeded() {
-  if (import_fs7.default.existsSync(DB_PATH) || !import_fs7.default.existsSync(LEGACY_DB_PATH)) {
+  if (import_fs9.default.existsSync(DB_PATH) || !import_fs9.default.existsSync(LEGACY_DB_PATH)) {
     return;
   }
   try {
-    import_fs7.default.copyFileSync(LEGACY_DB_PATH, DB_PATH);
+    import_fs9.default.copyFileSync(LEGACY_DB_PATH, DB_PATH);
     console.log("[BASELINE] migrated legacy baseline db", {
       from: LEGACY_DB_PATH,
       to: DB_PATH
@@ -19650,13 +19660,13 @@ function deleteSoftwareByIds(installIds) {
   `);
   stmt.run(...installIds);
 }
-var import_better_sqlite3, import_path6, import_fs7, DB_PATH, LEGACY_DB_PATH, DB_DIR, dbInstance;
+var import_better_sqlite3, import_path6, import_fs9, DB_PATH, LEGACY_DB_PATH, DB_DIR, dbInstance;
 var init_software_baseline_repo = __esm({
   "src/domain/software-baseline-repo.ts"() {
     "use strict";
     import_better_sqlite3 = __toESM(require("better-sqlite3"));
     import_path6 = __toESM(require("path"));
-    import_fs7 = __toESM(require("fs"));
+    import_fs9 = __toESM(require("fs"));
     init_paths();
     DB_PATH = getSoftwareBaselineDbPath();
     LEGACY_DB_PATH = getLegacySoftwareBaselineDbPath();
@@ -19675,7 +19685,7 @@ async function collectWindowsDeviceAndHardware() {
     import_systeminformation.default.diskLayout().catch(() => []),
     import_systeminformation.default.fsSize().catch(() => [])
   ]);
-  const arch = import_os6.default.arch();
+  const arch = import_os8.default.arch();
   return {
     hardware: {
       static: {
@@ -19713,7 +19723,7 @@ async function collectWindowsSecurity(ctx) {
     const resp = await ctx.priv.call({
       v: 1,
       id: `sec_${Date.now()}`,
-      method: "security.posture",
+      method: "security.compliance",
       params: { includeBitlocker: true, includeDefender: true, includeFirewall: true },
       meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
     });
@@ -19767,18 +19777,18 @@ async function collectWindowsSoftwareInventory(ctx) {
     apps: normalized
   };
 }
-var import_os6, import_systeminformation, windowsProvider;
+var import_os8, import_systeminformation, windowsProvider;
 var init_windows = __esm({
   "src/plugins/amp/providers/windows.ts"() {
     "use strict";
-    import_os6 = __toESM(require("os"));
+    import_os8 = __toESM(require("os"));
     import_systeminformation = __toESM(require_lib());
     init_normalize_app();
     init_software_inventory_delta();
     init_software_baseline_repo();
     windowsProvider = {
       async collect(ctx) {
-        if (import_os6.default.platform() !== "win32") {
+        if (import_os8.default.platform() !== "win32") {
           throw new Error("windowsProvider.collect() called on non-Windows platform");
         }
         const base = await collectWindowsDeviceAndHardware();
@@ -19901,13 +19911,13 @@ async function collectMacSoftware() {
     const appDirs = [
       "/Applications",
       "/Applications/Utilities",
-      `${import_os7.default.homedir()}/Applications`
+      `${import_os9.default.homedir()}/Applications`
     ];
     const appPaths = [];
     for (const dir of appDirs) {
       try {
-        if (!import_fs8.default.existsSync(dir)) continue;
-        const entries = import_fs8.default.readdirSync(dir);
+        if (!import_fs10.default.existsSync(dir)) continue;
+        const entries = import_fs10.default.readdirSync(dir);
         for (const entry of entries) {
           if (entry.endsWith(".app")) {
             appPaths.push(`${dir}/${entry}`);
@@ -20050,7 +20060,7 @@ async function collectMacSecurity(ctx) {
     const resp = await ctx.priv.call({
       v: 1,
       id: `security-posture-${Date.now()}`,
-      method: "security.posture",
+      method: "security.compliance",
       params: {},
       meta: {
         tenantId: ctx.enrollment.tenantId,
@@ -20080,22 +20090,22 @@ async function collectMacSecurity(ctx) {
     return unknown;
   }
 }
-var import_os7, import_systeminformation2, import_child_process4, import_util, import_fs8, execAsync, macProvider;
+var import_os9, import_systeminformation2, import_child_process4, import_util, import_fs10, execAsync, macProvider;
 var init_macos = __esm({
   "src/plugins/amp/providers/macos.ts"() {
     "use strict";
-    import_os7 = __toESM(require("os"));
+    import_os9 = __toESM(require("os"));
     import_systeminformation2 = __toESM(require_lib());
     import_child_process4 = require("child_process");
     import_util = require("util");
-    import_fs8 = __toESM(require("fs"));
+    import_fs10 = __toESM(require("fs"));
     init_normalize_app();
     init_software_inventory_delta();
     init_software_baseline_repo();
     execAsync = (0, import_util.promisify)(import_child_process4.exec);
     macProvider = {
       async collect(ctx) {
-        if (import_os7.default.platform() !== "darwin") {
+        if (import_os9.default.platform() !== "darwin") {
           throw new Error("macosProvider called on non-macOS platform");
         }
         const hardware = await collectMacHardware();
@@ -20351,11 +20361,11 @@ async function collectLinuxSoftware() {
   }
   return Array.from(map.values());
 }
-var import_os8, import_systeminformation3, import_child_process5, import_util2, execAsync2, cachedPM, linuxProvider;
+var import_os10, import_systeminformation3, import_child_process5, import_util2, execAsync2, cachedPM, linuxProvider;
 var init_linux = __esm({
   "src/plugins/amp/providers/linux.ts"() {
     "use strict";
-    import_os8 = __toESM(require("os"));
+    import_os10 = __toESM(require("os"));
     import_systeminformation3 = __toESM(require_lib());
     import_child_process5 = require("child_process");
     import_util2 = require("util");
@@ -20366,7 +20376,7 @@ var init_linux = __esm({
     cachedPM = null;
     linuxProvider = {
       async collect(ctx) {
-        if (import_os8.default.platform() !== "linux") {
+        if (import_os10.default.platform() !== "linux") {
           throw new Error("linuxProvider called on non-Linux platform");
         }
         const hardware = await collectLinuxHardware();
@@ -20473,7 +20483,7 @@ __export(amp_exports, {
   collectAMP: () => collectAMP
 });
 async function collectAMP(ctx) {
-  const platform = import_os9.default.platform();
+  const platform = import_os11.default.platform();
   const provider = getProvider(platform);
   const result2 = await provider.collect(ctx);
   if (!result2 || typeof result2 !== "object") {
@@ -20481,18 +20491,327 @@ async function collectAMP(ctx) {
   }
   return result2;
 }
-var import_os9;
+var import_os11;
 var init_amp = __esm({
   "src/plugins/amp/index.ts"() {
     "use strict";
-    import_os9 = __toESM(require("os"));
+    import_os11 = __toESM(require("os"));
     init_providers();
+  }
+});
+
+// src/plugins/scp/providers/windows.ts
+function statusFromEnabled(value) {
+  if (value === true || value === "enabled") return "pass";
+  if (value === false || value === "disabled") return "fail";
+  return "unknown";
+}
+function normalizeArray(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") return [value];
+  return [];
+}
+function boolValue(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    if (value.toLowerCase() === "true") return true;
+    if (value.toLowerCase() === "false") return false;
+  }
+  return void 0;
+}
+function scoreFromFindings(findings) {
+  if (findings.length === 0) return 100;
+  const weights = {
+    critical: 35,
+    high: 25,
+    medium: 15,
+    low: 5,
+    info: 0
+  };
+  const penalty = findings.reduce((sum, finding) => {
+    if (finding.status !== "fail") return sum;
+    return sum + (weights[finding.severity] ?? 0);
+  }, 0);
+  return Math.max(0, 100 - penalty);
+}
+async function readSecurityCompliance(ctx) {
+  const resp = await ctx.priv.call({
+    v: 1,
+    id: `scp_${Date.now()}`,
+    method: "security.compliance",
+    params: {
+      includeBitlocker: true,
+      includeDefender: true,
+      includeFirewall: true,
+      includeSmb: true,
+      includeShares: true,
+      includeAntivirus: true,
+      includeGpo: true,
+      includeCiphers: true,
+      includeProtocols: true,
+      includePatches: true
+    },
+    meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+  });
+  if (!resp?.ok) {
+    throw new Error(resp?.error?.message || "security.compliance failed");
+  }
+  return resp.result || {};
+}
+async function collectWindowsScp(ctx) {
+  let posture = {};
+  const findings = [];
+  try {
+    posture = await readSecurityCompliance(ctx);
+  } catch (err) {
+    findings.push({
+      checkId: "windows.security.compliance.available",
+      category: "collector",
+      severity: "high",
+      status: "fail",
+      title: "Windows security compliance could not be collected",
+      evidence: { error: err?.message || String(err) },
+      remediation: {
+        type: "manual",
+        summary: "Verify Tracenium PrivSvc is running and can execute security compliance checks."
+      }
+    });
+  }
+  const firewallStatus = statusFromEnabled(posture?.firewall?.status);
+  findings.push({
+    checkId: "windows.firewall.enabled",
+    category: "firewall",
+    severity: "high",
+    status: firewallStatus,
+    title: "Windows Firewall should be enabled",
+    evidence: posture?.firewall ?? {},
+    remediation: {
+      type: firewallStatus === "pass" ? "none" : "manual",
+      summary: firewallStatus === "pass" ? "No remediation required." : "Enable Windows Firewall for all applicable profiles."
+    }
+  });
+  const defenderStatus = statusFromEnabled(posture?.defender?.status);
+  findings.push({
+    checkId: "windows.defender.enabled",
+    category: "antimalware",
+    severity: "high",
+    status: defenderStatus,
+    title: "Microsoft Defender should be enabled",
+    evidence: posture?.defender ?? {},
+    remediation: {
+      type: defenderStatus === "pass" ? "none" : "manual",
+      summary: defenderStatus === "pass" ? "No remediation required." : "Enable Microsoft Defender or verify an approved AV provider is active."
+    }
+  });
+  const bitlockerStatus = statusFromEnabled(posture?.bitlocker?.status);
+  findings.push({
+    checkId: "windows.bitlocker.enabled",
+    category: "disk_encryption",
+    severity: "medium",
+    status: bitlockerStatus,
+    title: "BitLocker should be enabled on fixed drives",
+    evidence: posture?.bitlocker ?? {},
+    remediation: {
+      type: bitlockerStatus === "pass" ? "none" : "manual",
+      summary: bitlockerStatus === "pass" ? "No remediation required." : "Enable BitLocker according to the organization's encryption policy."
+    }
+  });
+  const smb1Status = posture?.smb?.smb1?.status === "disabled" ? "pass" : posture?.smb?.smb1?.status === "enabled" ? "fail" : "unknown";
+  findings.push({
+    checkId: "windows.smbv1.disabled",
+    category: "network_sharing",
+    severity: "high",
+    status: smb1Status,
+    title: "SMBv1 should be disabled",
+    evidence: posture?.smb ?? {},
+    remediation: {
+      type: smb1Status === "pass" ? "none" : "manual",
+      summary: smb1Status === "pass" ? "No remediation required." : "Disable SMBv1 through Windows Features or security baseline policy."
+    }
+  });
+  const riskyShareCount = Number(posture?.shares?.riskyCount ?? 0);
+  findings.push({
+    checkId: "windows.shares.everyone_full_control_absent",
+    category: "network_sharing",
+    severity: "critical",
+    status: riskyShareCount > 0 ? "fail" : "pass",
+    title: "Shares should not grant Everyone full control",
+    evidence: posture?.shares ?? {},
+    remediation: {
+      type: riskyShareCount > 0 ? "manual" : "none",
+      summary: riskyShareCount > 0 ? "Review share ACLs and remove Everyone full-control grants." : "No remediation required."
+    }
+  });
+  const antivirusEvidence = posture?.antivirus ?? posture?.defender ?? {};
+  const avEnabled = boolValue(posture?.defender?.antivirusEnabled) ?? posture?.defender?.status === "enabled";
+  const hasSignature = Boolean(posture?.defender?.signatureVersion || posture?.defender?.engineVersion);
+  findings.push({
+    checkId: "windows.antivirus.current",
+    category: "antimalware",
+    severity: "high",
+    status: avEnabled && hasSignature ? "pass" : avEnabled ? "warning" : "fail",
+    title: "Antivirus should be enabled and report engine/signature versions",
+    evidence: antivirusEvidence,
+    remediation: {
+      type: avEnabled && hasSignature ? "none" : "manual",
+      summary: avEnabled && hasSignature ? "No remediation required." : "Verify AV health, engine version, signatures, and scan telemetry."
+    }
+  });
+  const computerGpos = normalizeArray(posture?.domain?.appliedComputerGpos);
+  const userGpos = normalizeArray(posture?.domain?.appliedUserGpos);
+  const isDomainJoined = posture?.domain?.partOfDomain === true;
+  findings.push({
+    checkId: "windows.domain.gpo_inventory_available",
+    category: "identity_policy",
+    severity: "medium",
+    status: isDomainJoined && computerGpos.length === 0 && userGpos.length === 0 ? "warning" : "pass",
+    title: "Applied GPO inventory should be available for domain-joined devices",
+    evidence: posture?.domain ?? {},
+    remediation: {
+      type: isDomainJoined && computerGpos.length === 0 && userGpos.length === 0 ? "manual" : "none",
+      summary: isDomainJoined && computerGpos.length === 0 && userGpos.length === 0 ? "Run gpresult under an account/session that can read applied GPOs." : "No remediation required."
+    }
+  });
+  const cipherItems = normalizeArray(posture?.ciphers?.items);
+  const weakCiphers = cipherItems.filter((cipher) => cipher?.enabled === true && WEAK_CIPHER_PATTERNS.some((pattern) => pattern.test(String(cipher?.name || "")))).map((cipher) => String(cipher.name));
+  findings.push({
+    checkId: "windows.crypto.weak_ciphers_disabled",
+    category: "cryptography",
+    severity: "high",
+    status: weakCiphers.length > 0 ? "fail" : "pass",
+    title: "Weak SCHANNEL ciphers should be disabled",
+    evidence: { weakCiphers, ciphers: cipherItems },
+    remediation: {
+      type: weakCiphers.length > 0 ? "manual" : "none",
+      summary: weakCiphers.length > 0 ? "Disable weak ciphers such as RC4, DES, 3DES, NULL, MD5, and EXPORT suites." : "No remediation required."
+    }
+  });
+  const protocolItems = normalizeArray(posture?.protocols?.items);
+  const protocolEnabled = (protocol) => protocolItems.some((item) => item?.protocol === protocol && item?.enabled === true);
+  const tls10Enabled = protocolEnabled("TLS 1.0");
+  const tls11Enabled = protocolEnabled("TLS 1.1");
+  const tls12Enabled = protocolEnabled("TLS 1.2");
+  const tls13Enabled = protocolEnabled("TLS 1.3");
+  findings.push({
+    checkId: "windows.crypto.legacy_tls_disabled",
+    category: "cryptography",
+    severity: "high",
+    status: tls10Enabled || tls11Enabled ? "fail" : "pass",
+    title: "TLS 1.0 and TLS 1.1 should be disabled",
+    evidence: { tls10Enabled, tls11Enabled, tls12Enabled, tls13Enabled, protocols: protocolItems },
+    remediation: {
+      type: tls10Enabled || tls11Enabled ? "manual" : "none",
+      summary: tls10Enabled || tls11Enabled ? "Disable TLS 1.0 and TLS 1.1 in SCHANNEL client and server protocol keys." : "No remediation required."
+    }
+  });
+  const patchItems = normalizeArray(posture?.patches?.items);
+  findings.push({
+    checkId: "windows.security_patches.inventory_available",
+    category: "patching",
+    severity: "medium",
+    status: patchItems.length > 0 ? "pass" : "unknown",
+    title: "Installed security patches should be reported",
+    evidence: posture?.patches ?? {},
+    remediation: {
+      type: patchItems.length > 0 ? "none" : "manual",
+      summary: patchItems.length > 0 ? "No remediation required." : "Verify Windows Update / Get-HotFix access from PrivSvc."
+    }
+  });
+  const score = scoreFromFindings(findings);
+  const hasFailures = findings.some((f) => f.status === "fail");
+  const hasUnknown = findings.some((f) => f.status === "unknown");
+  const hasWarnings = findings.some((f) => f.status === "warning");
+  return {
+    schemaVersion: "1.0",
+    collector: {
+      plugin: "scp",
+      version: ctx.config.agentVersion
+    },
+    hasChanges: true,
+    overall: {
+      status: hasFailures ? "fail" : hasUnknown ? "unknown" : hasWarnings ? "warning" : "pass",
+      score
+    },
+    checks: findings,
+    patches: {
+      status: patchItems.length > 0 ? "pass" : "unknown",
+      installedCount: Number(posture?.patches?.count ?? patchItems.length),
+      missingCount: void 0,
+      lastScanUtc: void 0,
+      items: patchItems
+    },
+    crypto: {
+      status: weakCiphers.length > 0 || tls10Enabled || tls11Enabled ? "fail" : hasWarnings ? "warning" : "pass",
+      tls10Enabled,
+      tls11Enabled,
+      tls12Enabled,
+      tls13Enabled,
+      weakCiphers,
+      ciphers: cipherItems,
+      protocols: protocolItems
+    },
+    smb: posture?.smb,
+    shares: posture?.shares,
+    antivirus: posture?.antivirus ?? posture?.defender,
+    domain: posture?.domain
+  };
+}
+var WEAK_CIPHER_PATTERNS;
+var init_windows2 = __esm({
+  "src/plugins/scp/providers/windows.ts"() {
+    "use strict";
+    WEAK_CIPHER_PATTERNS = [/RC4/i, /\bDES\b/i, /3DES/i, /Triple DES/i, /NULL/i, /MD5/i, /EXPORT/i];
+  }
+});
+
+// src/plugins/scp/index.ts
+var scp_exports = {};
+__export(scp_exports, {
+  collectSCP: () => collectSCP
+});
+async function collectSCP(ctx) {
+  const platform = import_os12.default.platform();
+  if (platform === "win32") {
+    return collectWindowsScp(ctx);
+  }
+  return {
+    schemaVersion: "1.0",
+    collector: {
+      plugin: "scp",
+      version: ctx.config.agentVersion
+    },
+    hasChanges: true,
+    overall: {
+      status: "unknown",
+      score: 0
+    },
+    checks: [
+      {
+        checkId: "scp.platform.unsupported",
+        category: "collector",
+        severity: "info",
+        status: "unknown",
+        title: `SCP collector is not implemented for platform ${platform}`,
+        remediation: {
+          type: "none",
+          summary: "No remediation available until the platform collector is implemented."
+        }
+      }
+    ]
+  };
+}
+var import_os12;
+var init_scp = __esm({
+  "src/plugins/scp/index.ts"() {
+    "use strict";
+    import_os12 = __toESM(require("os"));
+    init_windows2();
   }
 });
 
 // src/update/update-state.ts
 function ensureDir(dir) {
-  import_fs10.default.mkdirSync(dir, { recursive: true });
+  import_fs12.default.mkdirSync(dir, { recursive: true });
 }
 function resolveBaseDir() {
   if (process.platform === "win32") {
@@ -20510,11 +20829,11 @@ function getStatePath() {
 }
 function loadUpdateState() {
   const file = getStatePath();
-  if (!import_fs10.default.existsSync(file)) {
+  if (!import_fs12.default.existsSync(file)) {
     return {};
   }
   try {
-    return JSON.parse(import_fs10.default.readFileSync(file, "utf8"));
+    return JSON.parse(import_fs12.default.readFileSync(file, "utf8"));
   } catch (err) {
     console.error("[update-state] corrupted state file", err);
     return {};
@@ -20523,8 +20842,8 @@ function loadUpdateState() {
 function saveUpdateState(next) {
   const file = getStatePath();
   const tmp = `${file}.tmp`;
-  import_fs10.default.writeFileSync(tmp, JSON.stringify(next, null, 2), "utf8");
-  import_fs10.default.renameSync(tmp, file);
+  import_fs12.default.writeFileSync(tmp, JSON.stringify(next, null, 2), "utf8");
+  import_fs12.default.renameSync(tmp, file);
 }
 function updateUpdateState(patch) {
   const current = loadUpdateState();
@@ -20569,18 +20888,18 @@ function markUpdateFailed(error) {
     installStartedAtUtc: void 0
   });
 }
-var import_fs10, import_path8;
+var import_fs12, import_path8;
 var init_update_state = __esm({
   "src/update/update-state.ts"() {
     "use strict";
-    import_fs10 = __toESM(require("fs"));
+    import_fs12 = __toESM(require("fs"));
     import_path8 = __toESM(require("path"));
   }
 });
 
 // src/update/updater-runner.ts
 function runWindowsMsiUpdate(msiPath) {
-  if (!import_fs11.default.existsSync(msiPath)) {
+  if (!import_fs13.default.existsSync(msiPath)) {
     throw new Error(`msi_not_found: ${msiPath}`);
   }
   const args = ["/i", msiPath, "/qn", "/norestart"];
@@ -20614,12 +20933,12 @@ function runWindowsMsiUpdate(msiPath) {
     throw err;
   }
 }
-var import_child_process6, import_fs11;
+var import_child_process6, import_fs13;
 var init_updater_runner = __esm({
   "src/update/updater-runner.ts"() {
     "use strict";
     import_child_process6 = require("child_process");
-    import_fs11 = __toESM(require("fs"));
+    import_fs13 = __toESM(require("fs"));
   }
 });
 
@@ -20634,12 +20953,12 @@ function resolveBaseDir2() {
   return "/var/lib/tracenium";
 }
 function ensureDir2(dir) {
-  import_fs12.default.mkdirSync(dir, { recursive: true });
+  import_fs14.default.mkdirSync(dir, { recursive: true });
 }
 function sha256File(filePath) {
   return new Promise((resolve, reject) => {
-    const hash = import_crypto9.default.createHash("sha256");
-    const stream = import_fs12.default.createReadStream(filePath);
+    const hash = import_crypto10.default.createHash("sha256");
+    const stream = import_fs14.default.createReadStream(filePath);
     stream.on("data", (chunk) => hash.update(chunk));
     stream.on("error", reject);
     stream.on("end", () => resolve(hash.digest("hex")));
@@ -20760,11 +21079,11 @@ function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3) {
     const lib = url.protocol === "https:" ? import_https.default : import_http.default;
     ensureDir2(import_path9.default.dirname(filePath));
     const tmpPath = `${filePath}.tmp`;
-    const file = import_fs12.default.createWriteStream(tmpPath);
+    const file = import_fs14.default.createWriteStream(tmpPath);
     const req = lib.get(url, { timeout: timeoutMs }, (res) => {
       if ((res.statusCode || 500) >= 400) {
         file.close();
-        import_fs12.default.rmSync(tmpPath, { force: true });
+        import_fs14.default.rmSync(tmpPath, { force: true });
         reject(new Error(`download_http_${res.statusCode || 500}`));
         return;
       }
@@ -20776,10 +21095,10 @@ function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3) {
       file.on("finish", () => {
         file.close();
         try {
-          import_fs12.default.renameSync(tmpPath, filePath);
+          import_fs14.default.renameSync(tmpPath, filePath);
           resolve({ size: bytes });
         } catch (err) {
-          import_fs12.default.rmSync(tmpPath, { force: true });
+          import_fs14.default.rmSync(tmpPath, { force: true });
           reject(err);
         }
       });
@@ -20789,7 +21108,7 @@ function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3) {
         file.close();
       } catch {
       }
-      import_fs12.default.rmSync(tmpPath, { force: true });
+      import_fs14.default.rmSync(tmpPath, { force: true });
       reject(err);
     });
     req.on("timeout", () => {
@@ -20956,7 +21275,7 @@ async function downloadWindowsMsi(ctx, latestVersion, expectedHash) {
     console.warn("[update] expected hash missing for arch", { arch });
   }
   if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
-    import_fs12.default.rmSync(filePath, { force: true });
+    import_fs14.default.rmSync(filePath, { force: true });
     throw new Error("update_hash_mismatch");
   }
   updateUpdateState({
@@ -20987,7 +21306,7 @@ async function performWindowsMsiUpdate(ctx, latestVersion, expectedHash, downloa
     const { size } = await downloadToFile(downloadUrlOverride, filePath);
     const sha256 = await sha256File(filePath);
     if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
-      import_fs12.default.rmSync(filePath, { force: true });
+      import_fs14.default.rmSync(filePath, { force: true });
       throw new Error("update_hash_mismatch");
     }
     downloaded = {
@@ -21022,13 +21341,13 @@ async function performWindowsMsiUpdate(ctx, latestVersion, expectedHash, downloa
   const result2 = await runWindowsMsiUpdate(downloaded.filePath);
   return result2;
 }
-var import_fs12, import_path9, import_crypto9, import_http, import_https;
+var import_fs14, import_path9, import_crypto10, import_http, import_https;
 var init_update_service = __esm({
   "src/update/update-service.ts"() {
     "use strict";
-    import_fs12 = __toESM(require("fs"));
+    import_fs14 = __toESM(require("fs"));
     import_path9 = __toESM(require("path"));
-    import_crypto9 = __toESM(require("crypto"));
+    import_crypto10 = __toESM(require("crypto"));
     import_http = __toESM(require("http"));
     import_https = __toESM(require("https"));
     init_update_state();
@@ -21208,16 +21527,65 @@ var init_update_task = __esm({
 });
 
 // src/bootstrap/enroll.ts
-var import_fs5 = __toESM(require("fs"));
+var import_fs6 = __toESM(require("fs"));
 var import_crypto2 = __toESM(require("crypto"));
 
 // src/bootstrap/enrollment-store.ts
 var import_fs2 = __toESM(require("fs"));
 var import_path2 = __toESM(require("path"));
+var import_os2 = __toESM(require("os"));
 init_paths();
 var EnrollmentStore = class {
   dir = ensureAgentDataDir();
   statePath = import_path2.default.join(this.dir, "enrollment.json");
+  constructor() {
+    this.migrateLegacyMacosState();
+  }
+  writeSecureFile(filePath, content) {
+    import_fs2.default.writeFileSync(filePath, content, { encoding: "utf8", mode: 384 });
+    try {
+      import_fs2.default.chmodSync(filePath, 384);
+    } catch {
+    }
+  }
+  migrateLegacyMacosState() {
+    if (import_os2.default.platform() !== "darwin") {
+      return;
+    }
+    const legacyDir = getLegacyAgentDataDir();
+    if (!legacyDir || legacyDir === this.dir || !import_fs2.default.existsSync(legacyDir)) {
+      return;
+    }
+    const files = [
+      "enrollment.json",
+      "mtls-client.crt.pem",
+      "mtls-client.key.pem",
+      "mtls-ca.pem",
+      "agent.db"
+    ];
+    let migrated = false;
+    for (const name of files) {
+      const source = import_path2.default.join(legacyDir, name);
+      const target = import_path2.default.join(this.dir, name);
+      if (!import_fs2.default.existsSync(source) || import_fs2.default.existsSync(target)) {
+        continue;
+      }
+      import_fs2.default.copyFileSync(source, target);
+      if (name !== "agent.db") {
+        try {
+          import_fs2.default.chmodSync(target, 384);
+        } catch {
+        }
+      }
+      migrated = true;
+    }
+    if (migrated) {
+      console.log("[Enroll] migrated legacy macOS agent state", {
+        from: legacyDir,
+        to: this.dir
+      });
+    }
+  }
   normalizeCapabilities(state) {
     const capabilities = Array.isArray(state.bootstrap?.capabilities) ? state.bootstrap.capabilities : [];
     const renamed = {
@@ -21266,13 +21634,13 @@ var EnrollmentStore = class {
     }
   }
   save(state) {
-    import_fs2.default.writeFileSync(this.statePath, JSON.stringify(state, null, 2), { encoding: "utf8" });
+    this.writeSecureFile(this.statePath, JSON.stringify(state, null, 2));
   }
   clear() {
     if (import_fs2.default.existsSync(this.statePath)) import_fs2.default.unlinkSync(this.statePath);
   }
   getPaths() {
-    const dir = this.dir;
+    const dir = agentDataDir();
     return {
       dir,
       enrollmentJson: this.statePath,
@@ -21328,6 +21696,33 @@ var config = {
     console.warn(`[Config] SERVER_BASE_URL not set (env/registry), using default: ${fallback}`);
     return fallback;
   })(),
+  certRenewalBaseUrl: (() => {
+    const raw = process.env.CERT_RENEWAL_BASE_URL;
+    if (typeof raw === "string" && raw.trim().length > 0) {
+      const url = raw.trim();
+      console.log(`[Config] CERT_RENEWAL_BASE_URL=${url} (env)`);
+      return url;
+    }
+    try {
+      if (process.platform === "win32") {
+        const { execSync: execSync3 } = require("child_process");
+        const output = execSync3(
+          'reg query "HKLM\\Software\\CertusWS\\Tracenium" /v CertRenewalBaseUrl',
+          { encoding: "utf8" }
+        );
+        const match = output.match(/CertRenewalBaseUrl\s+REG_\w+\s+(.+)/i);
+        if (match && match[1]) {
+          const url = match[1].trim();
+          if (url.length > 0) {
+            console.log(`[Config] CERT_RENEWAL_BASE_URL=${url} (registry)`);
+            return url;
+          }
+        }
+      }
+    } catch {
+    }
+    return void 0;
+  })(),
   agentId: process.env.AGENT_ID || "auto",
   enrollmentToken: process.env.ENROLLMENT_TOKEN || "",
   agentVersion: process.env.AGENT_VERSION || "1.0.87",
@@ -21337,27 +21732,68 @@ var config = {
 
 // src/bootstrap/token-source.ts
 var import_child_process = require("child_process");
+var import_fs3 = __toESM(require("fs"));
+var import_os3 = __toESM(require("os"));
+function enrollmentTokenFilePath() {
+  if (process.env.TRACENIUM_ENROLLMENT_TOKEN_FILE) {
+    return process.env.TRACENIUM_ENROLLMENT_TOKEN_FILE;
+  }
+  if (import_os3.default.platform() === "darwin") {
+    return "/Library/Application Support/Tracenium/Agent/enrollment.token";
+  }
+  if (import_os3.default.platform() === "linux") {
+    return "/var/lib/tracenium/enrollment.token";
+  }
+  return null;
+}
+function readTokenFile() {
+  const file = enrollmentTokenFilePath();
+  if (!file) return null;
+  try {
+    if (!import_fs3.default.existsSync(file)) return null;
+    const token = import_fs3.default.readFileSync(file, "utf8").trim();
+    return token.length > 0 ? token : null;
+  } catch {
+    return null;
+  }
+}
 function readEnrollmentToken() {
   if (process.env.ENROLLMENT_TOKEN) {
     return process.env.ENROLLMENT_TOKEN;
   }
-  try {
-    const out = (0, import_child_process.execSync)(
-      'reg query "HKLM\\Software\\CertusWS\\Tracenium" /v ENROLLMENT_TOKEN',
-      { stdio: ["pipe", "pipe", "ignore"] }
-    ).toString();
-    const parts = out.split("REG_SZ");
-    if (parts.length > 1) {
-      return parts[1].trim();
+  const tokenFromFile = readTokenFile();
+  if (tokenFromFile) {
+    return tokenFromFile;
+  }
+  if (import_os3.default.platform() === "win32") {
+    try {
+      const out = (0, import_child_process.execSync)(
+        'reg query "HKLM\\Software\\CertusWS\\Tracenium" /v ENROLLMENT_TOKEN',
+        { stdio: ["pipe", "pipe", "ignore"] }
+      ).toString();
+      const parts = out.split("REG_SZ");
+      if (parts.length > 1) {
+        return parts[1].trim();
+      }
+    } catch {
     }
-  } catch {
   }
   return null;
 }
+function clearEnrollmentTokenFile() {
+  const file = enrollmentTokenFilePath();
+  if (!file) return;
+  try {
+    if (import_fs3.default.existsSync(file)) {
+      import_fs3.default.rmSync(file, { force: true });
+    }
+  } catch {
+  }
+}
 
 // src/platform/device-id.ts
-var import_os2 = __toESM(require("os"));
-var import_fs3 = __toESM(require("fs"));
+var import_os4 = __toESM(require("os"));
+var import_fs4 = __toESM(require("fs"));
 var import_path3 = __toESM(require("path"));
 var import_crypto = __toESM(require("crypto"));
 var import_child_process2 = require("child_process");
@@ -21383,21 +21819,21 @@ function getUnixDeviceId() {
   const baseDir = "/var/lib/tracenium";
   const file = import_path3.default.join(baseDir, "device-id");
   try {
-    if (import_fs3.default.existsSync(file)) {
-      return import_fs3.default.readFileSync(file, "utf8").trim();
+    if (import_fs4.default.existsSync(file)) {
+      return import_fs4.default.readFileSync(file, "utf8").trim();
     }
   } catch {
   }
   const id = import_crypto.default.randomUUID();
   try {
-    import_fs3.default.mkdirSync(baseDir, { recursive: true });
-    import_fs3.default.writeFileSync(file, id, "utf8");
+    import_fs4.default.mkdirSync(baseDir, { recursive: true });
+    import_fs4.default.writeFileSync(file, id, "utf8");
   } catch {
   }
   return id;
 }
 function getDeviceId() {
-  const platform = import_os2.default.platform();
+  const platform = import_os4.default.platform();
   if (platform === "win32") {
     return getWindowsDeviceId();
   }
@@ -21408,8 +21844,8 @@ function getDeviceId() {
 }
 
 // src/platform/enrollment-meta.ts
-var import_os3 = __toESM(require("os"));
-var import_fs4 = __toESM(require("fs"));
+var import_os5 = __toESM(require("os"));
+var import_fs5 = __toESM(require("fs"));
 var import_path4 = __toESM(require("path"));
 var import_child_process3 = require("child_process");
 var WINDOWS_REG_PATH = "HKLM\\Software\\CertusWS\\Tracenium";
@@ -21430,17 +21866,17 @@ async function writeWindowsMetadata(meta) {
 async function writeUnixMetadata(meta) {
   const baseDir = UNIX_BASE_DIR;
   const file = import_path4.default.join(baseDir, "enrollment-meta.json");
-  import_fs4.default.mkdirSync(baseDir, { recursive: true });
+  import_fs5.default.mkdirSync(baseDir, { recursive: true });
   const tmpFile = file + ".tmp";
-  import_fs4.default.writeFileSync(
+  import_fs5.default.writeFileSync(
     tmpFile,
     JSON.stringify(meta, null, 2),
     "utf8"
   );
-  import_fs4.default.renameSync(tmpFile, file);
+  import_fs5.default.renameSync(tmpFile, file);
 }
 async function writeEnrollmentMetadata(meta) {
-  const platform = import_os3.default.platform();
+  const platform = import_os5.default.platform();
   console.log("[Platform] Persisting enrollment metadata for platform:", platform);
   if (platform === "win32") {
     return writeWindowsMetadata(meta);
@@ -21452,9 +21888,9 @@ async function writeEnrollmentMetadata(meta) {
 }
 
 // src/platform/privsvc-path.ts
-var import_os4 = __toESM(require("os"));
+var import_os6 = __toESM(require("os"));
 function getPrivSvcPipePath() {
-  const platform = import_os4.default.platform();
+  const platform = import_os6.default.platform();
   if (platform === "win32") {
     return "\\\\.\\pipe\\tracenium.privsvc.v1";
   }
@@ -21646,9 +22082,9 @@ function buildLocalEnrollmentState(store) {
   const paths = store.getPaths();
   const tenantId = process.env.TENANT_ID || "local-tenant";
   const deviceId = process.env.DEVICE_ID || import_crypto2.default.randomUUID();
-  if (!import_fs5.default.existsSync(paths.clientCert)) import_fs5.default.writeFileSync(paths.clientCert, "", "utf8");
-  if (!import_fs5.default.existsSync(paths.clientKey)) import_fs5.default.writeFileSync(paths.clientKey, "", "utf8");
-  if (!import_fs5.default.existsSync(paths.caBundle)) import_fs5.default.writeFileSync(paths.caBundle, "", "utf8");
+  if (!import_fs6.default.existsSync(paths.clientCert)) import_fs6.default.writeFileSync(paths.clientCert, "", "utf8");
+  if (!import_fs6.default.existsSync(paths.clientKey)) import_fs6.default.writeFileSync(paths.clientKey, "", "utf8");
+  if (!import_fs6.default.existsSync(paths.caBundle)) import_fs6.default.writeFileSync(paths.caBundle, "", "utf8");
   const state = {
     tenantId,
     deviceId,
@@ -21672,7 +22108,7 @@ async function ensureEnrolled() {
     console.warn("[Enroll] Corrupted enrollment state detected. Clearing store.");
     store.clear();
   }
-  if (existing?.tenantId && existing?.deviceId && existing?.mtls?.clientCertThumbprint && import_fs5.default.existsSync(store.getPaths().clientCert) && import_fs5.default.existsSync(store.getPaths().caBundle)) {
+  if (existing?.tenantId && existing?.deviceId && existing?.mtls?.clientCertThumbprint && import_fs6.default.existsSync(store.getPaths().clientCert) && import_fs6.default.existsSync(store.getPaths().caBundle)) {
     console.log("[Enroll] Agent already enrolled:", existing.deviceId);
     return existing;
   }
@@ -21682,8 +22118,8 @@ async function ensureEnrolled() {
   }
   const enrollmentToken = readEnrollmentToken();
   if (!enrollmentToken) {
-    console.error("[Enroll] ENROLLMENT_TOKEN not found in env/registry.");
-    throw new Error("Missing ENROLLMENT_TOKEN. Agent is not enrolled.");
+    console.error("[Enroll] enrollment token not found in env/file/registry.");
+    throw new Error("Missing enrollment token. Agent is not enrolled.");
   }
   console.log("[Enroll] Enrollment token detected.");
   if (isLocalEnrollEnabled()) {
@@ -21704,13 +22140,13 @@ async function ensureEnrolled() {
   console.log("[Enroll] CSR generated.");
   const lockPath = store.getPaths().clientCert + ".enroll.lock";
   try {
-    const fd = import_fs5.default.openSync(lockPath, "wx");
-    import_fs5.default.closeSync(fd);
+    const fd = import_fs6.default.openSync(lockPath, "wx");
+    import_fs6.default.closeSync(fd);
     console.log("[Enroll] Enroll lock acquired.");
   } catch {
     console.warn("[Enroll] Another enrollment process is already running. Waiting for lock release...");
     const start = Date.now();
-    while (import_fs5.default.existsSync(lockPath)) {
+    while (import_fs6.default.existsSync(lockPath)) {
       await sleep(2e3);
       if (Date.now() - start > 12e4) {
         console.warn("[Enroll] Enroll lock timeout. Continuing anyway.");
@@ -21779,8 +22215,8 @@ async function ensureEnrolled() {
       );
       console.log("[Enroll] Certificate installation completed.");
       console.log("[Enroll] Installed client cert thumbprint:", certInstall.clientCertThumbprint);
-      import_fs5.default.writeFileSync(paths.clientCert, data.mTls.clientCertPem, "utf8");
-      import_fs5.default.writeFileSync(paths.caBundle, data.mTls.caBundlePem, "utf8");
+      import_fs6.default.writeFileSync(paths.clientCert, data.mTls.clientCertPem, "utf8");
+      import_fs6.default.writeFileSync(paths.caBundle, data.mTls.caBundlePem, "utf8");
       const state = {
         tenantId: data.tenantId,
         deviceId: data.deviceId,
@@ -21799,7 +22235,7 @@ async function ensureEnrolled() {
       store.save(state);
       console.log("[Enroll] Enrollment state saved:", state);
       try {
-        import_fs5.default.unlinkSync(lockPath);
+        import_fs6.default.unlinkSync(lockPath);
         console.log("[Enroll] Enroll lock released.");
       } catch {
       }
@@ -21812,12 +22248,13 @@ async function ensureEnrolled() {
       } catch (err) {
         console.warn("[Enroll] Failed to persist enrollment metadata:", err);
       }
+      clearEnrollmentTokenFile();
       return state;
     } catch (err) {
       if (err instanceof Error && err.message.includes("ENROLL_FATAL")) {
         console.error("[Enroll] Fatal enrollment error:", err.message);
         try {
-          import_fs5.default.unlinkSync(lockPath);
+          import_fs6.default.unlinkSync(lockPath);
         } catch {
         }
         throw err;
@@ -21848,17 +22285,109 @@ function createPrivSvcClient() {
   }
 }
 
-// src/core/policy-store.ts
-var import_fs6 = __toESM(require("fs"));
-var import_path5 = __toESM(require("path"));
-var import_os5 = __toESM(require("os"));
+// src/bootstrap/cert-renewal.ts
 var import_crypto6 = __toESM(require("crypto"));
+var import_fs7 = __toESM(require("fs"));
+var DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
+function getRenewalThresholdDays() {
+  const value = Number(process.env.CERT_RENEWAL_THRESHOLD_DAYS || DEFAULT_RENEWAL_THRESHOLD_DAYS);
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_RENEWAL_THRESHOLD_DAYS;
+}
+function readClientCertNotAfter(state) {
+  try {
+    if (!state.mtls?.clientCertPath || !import_fs7.default.existsSync(state.mtls.clientCertPath)) {
+      return null;
+    }
+    const pem = import_fs7.default.readFileSync(state.mtls.clientCertPath, "utf8");
+    const cert = new import_crypto6.default.X509Certificate(pem);
+    return cert.validTo ? new Date(cert.validTo) : null;
+  } catch {
+    return null;
+  }
+}
+function shouldRenew(notAfter) {
+  if (!notAfter) return false;
+  const thresholdMs = getRenewalThresholdDays() * 24 * 60 * 60 * 1e3;
+  return notAfter.getTime() - Date.now() <= thresholdMs;
+}
+async function maybeRenewClientCertificate(input) {
+  const { enrollment, store, priv, logger: logger2 } = input;
+  const notAfter = readClientCertNotAfter(enrollment);
+  if (!shouldRenew(notAfter)) {
+    logger2?.info?.("[cert-renewal] certificate renewal not needed", {
+      notAfter: notAfter?.toISOString?.() ?? null,
+      thresholdDays: getRenewalThresholdDays()
+    });
+    return enrollment;
+  }
+  const clientCertThumbprint = enrollment.mtls?.clientCertThumbprint;
+  if (!clientCertThumbprint) {
+    logger2?.warn?.("[cert-renewal] skipping renewal: missing client cert thumbprint");
+    return enrollment;
+  }
+  logger2?.info?.("[cert-renewal] starting certificate renewal", {
+    deviceId: enrollment.deviceId,
+    notAfter: notAfter?.toISOString?.() ?? null
+  });
+  const response = await priv.call({
+    v: 1,
+    id: `cert_renew_${Date.now()}`,
+    method: "crypto.cert.renew",
+    params: {
+      serverBaseUrl: config.certRenewalBaseUrl || config.serverBaseUrl,
+      tenantId: enrollment.tenantId,
+      deviceId: enrollment.deviceId,
+      clientCertThumbprint
+    },
+    meta: {
+      tenantId: enrollment.tenantId,
+      deviceId: enrollment.deviceId
+    }
+  });
+  if (!response?.ok) {
+    throw new Error(response?.error?.message || response?.error || "Certificate renewal failed");
+  }
+  const result2 = response.result || {};
+  const nextThumbprint = String(result2.clientCertThumbprint || "");
+  if (!nextThumbprint) {
+    throw new Error("Certificate renewal response missing clientCertThumbprint");
+  }
+  const nextState = {
+    ...enrollment,
+    lastRenewedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+    mtls: {
+      ...enrollment.mtls,
+      clientCertThumbprint: nextThumbprint,
+      issuingCaThumbprint: result2.issuingCaThumbprint ? String(result2.issuingCaThumbprint) : enrollment.mtls.issuingCaThumbprint,
+      clientCertNotAfter: result2.notAfter ? String(result2.notAfter) : void 0
+    }
+  };
+  if (typeof result2.clientCertPem === "string" && result2.clientCertPem.includes("BEGIN CERTIFICATE")) {
+    import_fs7.default.writeFileSync(enrollment.mtls.clientCertPath, result2.clientCertPem, "utf8");
+  }
+  if (typeof result2.caBundlePem === "string" && result2.caBundlePem.includes("BEGIN CERTIFICATE")) {
+    import_fs7.default.writeFileSync(enrollment.mtls.caBundlePath, result2.caBundlePem, "utf8");
+  }
+  store.save(nextState);
+  logger2?.info?.("[cert-renewal] certificate renewal completed", {
+    deviceId: nextState.deviceId,
+    clientCertThumbprint: nextThumbprint,
+    status: result2.status || "pending"
+  });
+  return nextState;
+}
+
+// src/core/policy-store.ts
+var import_fs8 = __toESM(require("fs"));
+var import_path5 = __toESM(require("path"));
+var import_os7 = __toESM(require("os"));
+var import_crypto7 = __toESM(require("crypto"));
 function resolvePolicyPath() {
   if (process.platform === "win32") {
     const programData = process.env.ProgramData || "C:\\ProgramData";
     return import_path5.default.join(programData, "Tracenium", "policy.json");
   }
-  return import_path5.default.join(import_os5.default.homedir(), ".tracenium", "policy.json");
+  return import_path5.default.join(import_os7.default.homedir(), ".tracenium", "policy.json");
 }
 var PolicyStore = class {
   filePath;
@@ -21868,11 +22397,11 @@ var PolicyStore = class {
   }
   async load() {
     try {
-      if (!import_fs6.default.existsSync(this.filePath)) {
+      if (!import_fs8.default.existsSync(this.filePath)) {
         this.current = null;
         return;
       }
-      const raw = await import_fs6.default.promises.readFile(this.filePath, "utf8");
+      const raw = await import_fs8.default.promises.readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object" || !parsed.policyVersion || !parsed.policy) {
         throw new Error("invalid_policy_structure");
@@ -21894,7 +22423,7 @@ var PolicyStore = class {
   }
   async save(policyVersion, policyHash, policyJson) {
     const dir = import_path5.default.dirname(this.filePath);
-    await import_fs6.default.promises.mkdir(dir, { recursive: true });
+    await import_fs8.default.promises.mkdir(dir, { recursive: true });
     const record = {
       policyVersion,
       policyHash,
@@ -21903,16 +22432,16 @@ var PolicyStore = class {
     };
     const tmp = this.filePath + ".tmp";
     try {
-      await import_fs6.default.promises.writeFile(
+      await import_fs8.default.promises.writeFile(
         tmp,
         JSON.stringify(record, null, 2),
         { encoding: "utf8", mode: 384 }
       );
-      await import_fs6.default.promises.rename(tmp, this.filePath);
+      await import_fs8.default.promises.rename(tmp, this.filePath);
       this.current = record;
     } catch (err) {
       try {
-        await import_fs6.default.promises.unlink(tmp);
+        await import_fs8.default.promises.unlink(tmp);
       } catch {
       }
       throw err;
@@ -21921,7 +22450,7 @@ var PolicyStore = class {
   static computeHash(policyJson) {
     const stable = JSON.stringify(policyJson, Object.keys(policyJson).sort());
     const buf = Buffer.from(stable);
-    return import_crypto6.default.createHash("sha256").update(buf).digest("hex");
+    return import_crypto7.default.createHash("sha256").update(buf).digest("hex");
   }
 };
 
@@ -22111,6 +22640,17 @@ var PluginManager = class {
     } catch (err) {
       this.ctx?.logger?.error?.("Failed to register AMP plugin", err?.message || err);
     }
+    try {
+      const { collectSCP: collectSCP2 } = await Promise.resolve().then(() => (init_scp(), scp_exports));
+      this.register({
+        name: "scp",
+        tasks: {
+          collect: async (ctx) => collectSCP2(ctx)
+        }
+      });
+    } catch (err) {
+      this.ctx?.logger?.error?.("Failed to register SCP plugin", err?.message || err);
+    }
   }
   // -----------------------------
   // execution
@@ -22176,8 +22716,18 @@ var logger = {
 // src/core/bootstrap.ts
 async function bootstrapContext() {
   const store = new EnrollmentStore();
-  const enrollment = await ensureEnrolled();
+  let enrollment = await ensureEnrolled();
   const priv = createPrivSvcClient();
+  try {
+    enrollment = await maybeRenewClientCertificate({
+      enrollment,
+      store,
+      priv,
+      logger
+    });
+  } catch (err) {
+    logger.warn("[cert-renewal] renewal failed; continuing with existing certificate", err?.message || err);
+  }
   const policy = new PolicyStore();
   await policy.load();
   const policyRuntime = new PolicyRuntime(policy, logger);
@@ -22203,9 +22753,9 @@ async function bootstrapContext() {
 }
 
 // src/queue/sqlite-outbox.ts
-var import_os10 = __toESM(require("os"));
+var import_os13 = __toESM(require("os"));
 var import_path7 = __toESM(require("path"));
-var import_fs9 = __toESM(require("fs"));
+var import_fs11 = __toESM(require("fs"));
 var import_better_sqlite32 = __toESM(require("better-sqlite3"));
 var import_zlib = __toESM(require("zlib"));
 var MAX_ATTEMPTS = 20;
@@ -22246,18 +22796,18 @@ function maybeDecompressPayload(value) {
   }
 }
 function defaultDbPath() {
-  if (import_os10.default.platform() === "win32") {
+  if (import_os13.default.platform() === "win32") {
     const programData = process.env.PROGRAMDATA || process.env.ProgramData || "C:\\ProgramData";
     return import_path7.default.join(programData, "Tracenium", "Agent", "outbox.db");
   }
-  return import_path7.default.join(import_os10.default.homedir(), ".tracenium", "agent", "outbox.db");
+  return import_path7.default.join(import_os13.default.homedir(), ".tracenium", "agent", "outbox.db");
 }
 var SqliteOutbox = class {
   constructor(dbPath = defaultDbPath()) {
     this.dbPath = dbPath;
-    this.lockOwner = `agentcore:${import_os10.default.hostname()}:${process.pid}`;
+    this.lockOwner = `agentcore:${import_os13.default.hostname()}:${process.pid}`;
     const dir = import_path7.default.dirname(dbPath);
-    import_fs9.default.mkdirSync(dir, { recursive: true });
+    import_fs11.default.mkdirSync(dir, { recursive: true });
     this.db = new import_better_sqlite32.default(dbPath);
     console.log("[outbox] initialized");
     this.initialize();
@@ -22329,8 +22879,7 @@ var SqliteOutbox = class {
   }
   enqueue(input) {
     const rawJson = JSON.stringify(input.payload);
-    const baselineHash = input && typeof input.payload === "object" && input.payload !== null && typeof input.payload?._meta?.baselineHash === "string" ? String(input.payload._meta.baselineHash) : null;
-    const hash = baselineHash || require("crypto").createHash("sha256").update(rawJson).digest("hex");
+    const hash = require("crypto").createHash("sha256").update(rawJson).digest("hex");
     const payloadJson = maybeCompressPayload(rawJson);
     const maxBytes = 2 * 1024 * 1024;
     if (Buffer.byteLength(payloadJson, "utf8") > maxBytes) {
@@ -22608,17 +23157,17 @@ var SqliteOutbox = class {
 var outbox = new SqliteOutbox();
 
 // src/domain/device-facts-builder.ts
-var import_os11 = __toESM(require("os"));
+var import_os14 = __toESM(require("os"));
 var import_systeminformation4 = __toESM(require_lib());
-var import_crypto8 = __toESM(require("crypto"));
+var import_crypto9 = __toESM(require("crypto"));
 function buildDeviceIdentity(ctx) {
-  const nodePlatform = import_os11.default.platform();
+  const nodePlatform = import_os14.default.platform();
   const platform = nodePlatform === "win32" ? "windows" : nodePlatform === "darwin" ? "macos" : "linux";
   return {
     deviceId: ctx.enrollment.deviceId,
     tenantId: ctx.enrollment.tenantId,
-    hostname: import_os11.default.hostname(),
-    fqdn: import_os11.default.hostname(),
+    hostname: import_os14.default.hostname(),
+    fqdn: import_os14.default.hostname(),
     domain: platform === "windows" ? process.env.USERDOMAIN || void 0 : void 0,
     platform
   };
@@ -22689,7 +23238,7 @@ async function buildHardwareNamespace() {
     bios: [bios],
     os: {
       platform: (() => {
-        const p = import_os11.default.platform();
+        const p = import_os14.default.platform();
         return p === "win32" ? "windows" : p === "darwin" ? "macos" : "linux";
       })(),
       distro: osInfo.distro,
@@ -22729,7 +23278,7 @@ async function buildHardwareNamespace() {
   };
 }
 function buildAgentInfo(ctx) {
-  const nodePlatform = import_os11.default.platform();
+  const nodePlatform = import_os14.default.platform();
   const platform = nodePlatform === "win32" ? "windows" : nodePlatform === "darwin" ? "macos" : "linux";
   return {
     agentVersion: ctx.config.agentVersion,
@@ -22752,7 +23301,7 @@ function stableStringify(obj) {
 }
 function hashObject(obj) {
   const json = stableStringify(obj);
-  return "sha256:" + import_crypto8.default.createHash("sha256").update(json).digest("hex");
+  return "sha256:" + import_crypto9.default.createHash("sha256").update(json).digest("hex");
 }
 function buildDeviceBaseline(ctx, hardware) {
   const device = buildDeviceIdentity(ctx);
@@ -22771,6 +23320,31 @@ function buildDeviceBaseline(ctx, hardware) {
 async function buildDeviceFacts(ctx, namespaces) {
   const hardware = await buildHardwareNamespace();
   const { baseline, baselineHash } = buildDeviceBaseline(ctx, hardware);
+  const outNamespaces = { ...namespaces };
+  if (namespaces.amp) {
+    const ampIn = namespaces.amp;
+    const swIn = ampIn.software;
+    const software = swIn ? {
+      count: swIn.count ?? 0,
+      delta: swIn.delta ?? null,
+      items: Array.isArray(swIn.items) ? [...swIn.items] : void 0,
+      hasChanges: swIn.hasChanges ?? false
+    } : {
+      count: 0,
+      delta: null,
+      items: void 0,
+      hasChanges: false
+    };
+    const security = ampIn.security ?? {};
+    outNamespaces.amp = {
+      hardware: {
+        static: hardware.static,
+        runtime: hardware.runtime
+      },
+      security,
+      software
+    };
+  }
   return {
     schemaVersion: "1.0",
     collectedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
@@ -22783,34 +23357,7 @@ async function buildDeviceFacts(ctx, namespaces) {
       domain: baseline.device.domain,
       platform: baseline.device.platform
     },
-    namespaces: {
-      ...namespaces,
-      amp: (() => {
-        const ampIn = namespaces?.amp;
-        const swIn = ampIn?.software;
-        const software = swIn ? {
-          count: swIn.count ?? 0,
-          delta: swIn.delta ?? null,
-          items: Array.isArray(swIn.items) ? [...swIn.items] : void 0,
-          hasChanges: swIn.hasChanges ?? false
-        } : {
-          count: 0,
-          delta: null,
-          items: void 0,
-          hasChanges: false
-        };
-        const security = ampIn?.security ?? {};
-        const ampOut = {
-          hardware: {
-            static: hardware.static,
-            runtime: hardware.runtime
-          },
-          security,
-          software
-        };
-        return ampOut;
-      })()
-    },
+    namespaces: outNamespaces,
     _meta: {
       baselineHash
     }
@@ -22823,6 +23370,7 @@ var Scheduler = class {
   timers = /* @__PURE__ */ new Map();
   ctx = null;
   inventoryRunning = false;
+  complianceRunning = false;
   updateRunning = false;
   policyListeners = [];
   async start(ctx) {
@@ -22919,8 +23467,14 @@ var Scheduler = class {
     if (ctx.policyRuntime.isComplianceEnabled()) {
       const intervalSeconds = 4 * 60 * 60;
       logger.info("Compliance pipeline enabled", { intervalSeconds });
+      this.runCompliance(ctx).catch(
+        (err) => logger.error("Compliance pipeline initial run error", { err })
+      );
       const timer = setInterval(() => {
-        logger.info("Compliance pipeline tick (not implemented yet)");
+        logger.info("[scheduler] compliance tick");
+        this.runCompliance(ctx).catch(
+          (err) => logger.error("Compliance pipeline error", { err })
+        );
       }, intervalSeconds * 1e3);
       this.timers.set("compliance", timer);
     }
@@ -22968,13 +23522,6 @@ var Scheduler = class {
           logger.error("AMP plugin execution failed", { err });
         }
       }
-      if (ctx.policyRuntime.isComplianceEnabled() && ctx.policyRuntime.pluginEnabled("scp")) {
-        try {
-          namespaces.scp = await ctx.plugins.run("scp.collect");
-        } catch (err) {
-          logger.error("SCP plugin execution failed", { err });
-        }
-      }
       if (Object.keys(namespaces).length === 0) {
         logger.warn("No plugin namespaces returned, skipping snapshot");
         return;
@@ -22990,13 +23537,6 @@ var Scheduler = class {
         return;
       }
       const facts = await buildDeviceFacts(ctx, namespaces);
-      const hasPending = outbox.hasPendingOfType?.("FACTS_SNAPSHOT");
-      if (hasPending) {
-        logger.info("Skipping FACTS enqueue \u2014 pending event exists", {
-          deviceId: ctx.enrollment.deviceId
-        });
-        return;
-      }
       outbox.enqueue({
         type: "FACTS_SNAPSHOT",
         payload: facts
@@ -23011,6 +23551,55 @@ var Scheduler = class {
       logger.error("Inventory pipeline failed", { err });
     } finally {
       this.inventoryRunning = false;
+    }
+  }
+  async runCompliance(ctx) {
+    if (!ctx.policyRuntime.isComplianceEnabled()) {
+      logger.info("Compliance module disabled by policy, skipping compliance");
+      return;
+    }
+    if (!ctx.policyRuntime.pluginEnabled("scp")) {
+      logger.info("SCP plugin disabled by policy, skipping compliance");
+      return;
+    }
+    if (this.complianceRunning) {
+      logger.warn("Compliance already running, skipping overlapping execution");
+      return;
+    }
+    this.complianceRunning = true;
+    try {
+      logger.info("Collecting SCP facts...");
+      const namespaces = {};
+      try {
+        namespaces.scp = await ctx.plugins.run("scp.collect");
+      } catch (err) {
+        logger.error("SCP plugin execution failed", { err });
+      }
+      if (!namespaces.scp) {
+        logger.warn("No SCP namespace returned, skipping compliance snapshot");
+        return;
+      }
+      if (namespaces.scp.hasChanges !== true) {
+        logger.info("Skipping SCP FACTS enqueue \u2014 no changes detected", {
+          deviceId: ctx.enrollment.deviceId
+        });
+        return;
+      }
+      const facts = await buildDeviceFacts(ctx, namespaces);
+      outbox.enqueue({
+        type: "FACTS_SNAPSHOT",
+        payload: facts
+      });
+      logger.info("FACTS_SNAPSHOT enqueued", {
+        deviceId: ctx.enrollment.deviceId,
+        modules: Object.keys(namespaces),
+        hasAnyChanges: true,
+        scpChecks: Array.isArray(namespaces.scp.checks) ? namespaces.scp.checks.length : 0
+      });
+    } catch (err) {
+      logger.error("Compliance pipeline failed", { err });
+    } finally {
+      this.complianceRunning = false;
     }
   }
   async runUpdate(ctx) {
@@ -23200,6 +23789,10 @@ function createGrpcClient(ctx) {
         const tenantId = String(ctx.enrollment.tenantId || "");
         const deviceId = String(ctx.enrollment.deviceId || "");
         const agentVersion = String(ctx.config.agentVersion || "");
+        const capabilities = Array.from(/* @__PURE__ */ new Set([
+          ...ctx.enrollment.bootstrap.capabilities || [],
+          ...ctx.policyRuntime.getEnabledPlugins()
+        ]));
         const clientCertThumbprint = String(ctx.enrollment?.mtls?.clientCertThumbprint || "");
         const issuingCaThumbprint = String(ctx.enrollment?.mtls?.issuingCaThumbprint || "");
         if (!tenantId || !deviceId) throw new Error("Missing enrollment tenantId/deviceId");
@@ -23216,7 +23809,8 @@ function createGrpcClient(ctx) {
             issuingCaThumbprint,
             tenantId,
             deviceId,
-            agentVersion
+            agentVersion,
+            capabilities
           },
           meta: { tenantId, deviceId }
         });
@@ -23271,7 +23865,13 @@ function createGrpcClient(ctx) {
         }
         inFlightEvents.add(eventId);
         if (!eventId) throw new Error("facts.eventId required");
-        ctx.logger?.info("[grpc-client] sending FACTS event", eventId);
+        const factNamespace = String(msg.facts.namespace || "");
+        const factNamespaces = Array.isArray(msg.facts.namespaces) ? msg.facts.namespaces.filter((ns) => typeof ns === "string" && ns.length > 0) : [];
+        ctx.logger?.info("[grpc-client] sending FACTS event", {
+          eventId,
+          namespace: factNamespace,
+          namespaces: factNamespaces
+        });
         let payloadJsonStr;
         if (Buffer.isBuffer(msg.facts.payloadJson)) payloadJsonStr = msg.facts.payloadJson.toString("utf8");
         else if (typeof msg.facts.payloadJson === "string") payloadJsonStr = msg.facts.payloadJson;
@@ -23283,7 +23883,12 @@ function createGrpcClient(ctx) {
             v: 1,
             id: `facts-${eventId}`,
             method: "grpc.facts.send",
-            params: { eventId, payloadJson: payloadJsonStr },
+            params: {
+              eventId,
+              namespace: factNamespace,
+              namespaces: factNamespaces,
+              payloadJson: payloadJsonStr
+            },
             meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
           });
           if (!resp?.ok) {
@@ -23313,6 +23918,8 @@ function createGrpcClient(ctx) {
             method: "grpc.facts.chunk",
             params: {
               eventId,
+              namespace: factNamespace,
+              namespaces: factNamespaces,
               chunkIndex: i,
               totalChunks: chunks.length,
               payloadChunk: chunk
@@ -23649,7 +24256,10 @@ function startGrpcStream(ctx) {
     tenantId: ctx.enrollment.tenantId,
     agentVersion: ctx.config.agentVersion,
     policyVersion: ctx.policy.getVersion(),
-    capabilities: ["amp"]
+    capabilities: Array.from(/* @__PURE__ */ new Set([
+      ...ctx.enrollment.bootstrap.capabilities || [],
+      ...ctx.policyRuntime.getEnabledPlugins()
+    ]))
   });
   stream.on("data", (msg) => {
     if (msg?.connected === true) {
@@ -23871,18 +24481,16 @@ function startGrpcStream(ctx) {
             const parsedPayload = typeof ev.payload_json === "string" ? JSON.parse(ev.payload_json) : ev.payload_json;
             const baselineHash = parsedPayload?._meta?.baselineHash;
             const forceBaseline = parsedPayload?._meta?.forceBaseline === true;
-            if (baselineHash && baselineHash === lastBaselineHash && baselineSent && !forceBaseline) {
-              if (typeof ctx.logger?.debug === "function") {
-                ctx.logger.debug("Skipping FACTS (baseline unchanged)", { eventId });
-              }
-              try {
-                outbox.markSent(outboxId);
-              } catch {
-              }
-              continue;
-            }
+            const namespaceKeys = parsedPayload?.namespaces ? Object.keys(parsedPayload.namespaces).filter((k) => Boolean(parsedPayload.namespaces[k])) : [];
+            const wireNamespace = namespaceKeys.length === 1 ? namespaceKeys[0] : "multi";
             ctx.logger?.info?.("Sending FACTS event", { outboxId, eventId, type: ev.type });
-            ctx.logger?.info?.("FACTS payload metadata", { eventId, baselineHash, baselineSent, forceBaseline });
+            ctx.logger?.info?.("FACTS payload metadata", {
+              eventId,
+              baselineHash,
+              baselineSent,
+              forceBaseline,
+              namespaces: namespaceKeys
+            });
             try {
               const sw = parsedPayload?.namespaces?.amp?.software;
               ctx.logger?.info?.("STREAM FINAL SOFTWARE CHECK", {
@@ -23897,7 +24505,8 @@ function startGrpcStream(ctx) {
               facts: {
                 eventId,
                 deviceId: ctx.enrollment.deviceId,
-                namespace: parsedPayload?.namespaces ? Object.keys(parsedPayload.namespaces)[0] : "amp",
+                namespace: wireNamespace,
+                namespaces: namespaceKeys,
                 payloadJson: Buffer.from(
                   typeof ev.payload_json === "string" ? ev.payload_json : JSON.stringify(ev.payload_json),
                   "utf8"
@@ -23911,6 +24520,7 @@ function startGrpcStream(ctx) {
                 eventId,
                 deviceId: ctx.enrollment.deviceId,
                 namespace: "amp",
+                namespaces: ["amp"],
                 payloadJson: Buffer.from(
                   typeof ev.payload_json === "string" ? ev.payload_json : JSON.stringify(ev.payload_json),
                   "utf8"
@@ -23982,6 +24592,7 @@ function startGrpcStream(ctx) {
 var shuttingDown = false;
 var currentCtx = null;
 var cleanupTimer;
+var certRenewalTimer;
 var stopGrpcStream = null;
 async function startService() {
   try {
@@ -24046,6 +24657,26 @@ async function startService() {
         log.warn("Outbox cleanup failed", e?.message || e);
       }
     }, 12 * 60 * 60 * 1e3);
+    certRenewalTimer = setInterval(async () => {
+      if (!currentCtx || shuttingDown) return;
+      try {
+        const previousThumbprint = currentCtx.enrollment.mtls.clientCertThumbprint;
+        const renewed = await maybeRenewClientCertificate({
+          enrollment: currentCtx.enrollment,
+          store: currentCtx.store,
+          priv: currentCtx.priv,
+          logger: currentCtx.logger
+        });
+        currentCtx.enrollment = renewed;
+        if (renewed.mtls.clientCertThumbprint && renewed.mtls.clientCertThumbprint !== previousThumbprint) {
+          log.info("[cert-renewal] restarting gRPC bridge after certificate renewal");
+          if (stopGrpcStream) stopGrpcStream();
+          stopGrpcStream = startGrpcStream(currentCtx);
+        }
+      } catch (e) {
+        log.warn("[cert-renewal] periodic renewal failed", e?.message || e);
+      }
+    }, Number(process.env.CERT_RENEWAL_CHECK_INTERVAL_MS || 24 * 60 * 60 * 1e3));
     log.info("Agent Core started.");
   } catch (err) {
     logger.error("Fatal startup error:", err?.message || err);
@@ -24061,6 +24692,10 @@ process.on("SIGTERM", async () => {
     if (cleanupTimer) {
       clearInterval(cleanupTimer);
       cleanupTimer = void 0;
+    }
+    if (certRenewalTimer) {
+      clearInterval(certRenewalTimer);
+      certRenewalTimer = void 0;
     }
     if (stopGrpcStream) {
       stopGrpcStream();

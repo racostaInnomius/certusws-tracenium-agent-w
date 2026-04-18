@@ -6,6 +6,8 @@ BUILD_DIR="$ROOT_DIR/build/macos"
 PKG_ROOT="$ROOT_DIR/build/pkg-root"
 COMPONENT_OUT="$ROOT_DIR/build/pkg-component"
 PKG_OUT="$ROOT_DIR/build/pkg-out"
+NPM_CACHE_DIR="$ROOT_DIR/build/.npm-cache"
+NODE_GYP_CACHE_DIR="$ROOT_DIR/build/.node-gyp"
 SCRIPTS_DIR="$ROOT_DIR/privsvc/macos/pkg-scripts"
 DIST_TEMPLATE="$ROOT_DIR/privsvc/macos/distribution/Distribution.xml"
 DIST_BUILD="$ROOT_DIR/build/pkg-distribution/Distribution.xml"
@@ -17,19 +19,111 @@ VERSION="${TRACENIUM_AGENT_VERSION:-1.0.87}"
 ARCH="${TRACENIUM_AGENT_ARCH:-arm64}"
 IDENTIFIER="${TRACENIUM_PKG_IDENTIFIER:-com.certusws.tracenium.agent}"
 
+build_agent_bundle() {
+  mkdir -p "$BUILD_DIR/Agent"
+
+  (
+    cd "$ROOT_DIR"
+    ./node_modules/.bin/esbuild src/index.ts \
+      --bundle \
+      --platform=node \
+      --format=cjs \
+      --target=node24 \
+      --external:better-sqlite3 \
+      --outfile="$BUILD_DIR/Agent/agent-core.js"
+  )
+
+  if ! rg -q "env/file/registry" "$BUILD_DIR/Agent/agent-core.js"; then
+    echo "Generated Agent Core bundle does not include the current enrollment token logic." >&2
+    exit 1
+  fi
+}
+
+build_privsvc_bundle() {
+  mkdir -p "$BUILD_DIR/PrivSvc/macos"
+  mkdir -p "$BUILD_DIR/PrivSvc/proto"
+  mkdir -p "$BUILD_DIR/PrivSvc/assets"
+
+  (
+    cd "$ROOT_DIR"
+    ./node_modules/.bin/esbuild privsvc/macos/src/index.ts \
+      --bundle \
+      --platform=node \
+      --format=cjs \
+      --target=node24 \
+      --outfile="$BUILD_DIR/PrivSvc/macos/privsvc.js"
+  )
+
+  cp "$ROOT_DIR/proto/controlplane.proto" "$BUILD_DIR/PrivSvc/proto/controlplane.proto"
+  cp "$ROOT_DIR/privsvc/windows/Tracenium.PrivSvc.Windows/assets/root-ca.crt" "$BUILD_DIR/PrivSvc/assets/root-ca.crt"
+
+  if ! rg -q "../proto/controlplane.proto" "$BUILD_DIR/PrivSvc/macos/privsvc.js"; then
+    echo "Generated PrivSvc bundle does not include the installed proto path." >&2
+    exit 1
+  fi
+
+  if [ ! -f "$BUILD_DIR/PrivSvc/assets/root-ca.crt" ]; then
+    echo "Missing packaged root CA for PrivSvc." >&2
+    exit 1
+  fi
+
+  if ! rg -q "subjectAltName = @alt_names" "$BUILD_DIR/PrivSvc/macos/privsvc.js"; then
+    echo "Generated PrivSvc bundle does not include the current CSR generation logic." >&2
+    exit 1
+  fi
+}
+
+rebuild_better_sqlite3() {
+  local target_node_version
+  target_node_version="$("$BUILD_DIR/Runtime/node" -p 'process.versions.node')"
+
+  mkdir -p "$NPM_CACHE_DIR" "$NODE_GYP_CACHE_DIR"
+
+  (
+    cd "$BUILD_DIR/Agent/node_modules/better-sqlite3"
+    HOME="$ROOT_DIR/build" \
+    npm_config_cache="$NPM_CACHE_DIR" \
+    npm_config_devdir="$NODE_GYP_CACHE_DIR" \
+    npm_config_target="$target_node_version" \
+    npm_config_runtime="node" \
+    npm_config_arch="$ARCH" \
+    npm_config_platform="darwin" \
+    npm_config_build_from_source="true" \
+    npm rebuild
+  )
+
+  if ! "$BUILD_DIR/Runtime/node" -e "require('$BUILD_DIR/Agent/node_modules/better-sqlite3');" >/dev/null 2>&1; then
+    echo "better-sqlite3 rebuild completed but the bundled Node runtime still cannot load it." >&2
+    exit 1
+  fi
+}
+
 if [ ! -x "$BUILD_DIR/Runtime/node" ]; then
   echo "Missing bundled node runtime: $BUILD_DIR/Runtime/node" >&2
   exit 1
 fi
 
-if [ ! -f "$BUILD_DIR/Agent/agent-core.js" ]; then
-  echo "Missing Agent Core bundle: $BUILD_DIR/Agent/agent-core.js" >&2
-  exit 1
-fi
+build_agent_bundle
+build_privsvc_bundle
 
 if [ ! -f "$BUILD_DIR/PrivSvc/macos/privsvc.js" ]; then
   echo "Missing PrivSvc bundle: $BUILD_DIR/PrivSvc/macos/privsvc.js" >&2
   exit 1
+fi
+
+if [ ! -d "$BUILD_DIR/Agent/node_modules/better-sqlite3" ]; then
+  echo "Missing better-sqlite3 module directory in Agent payload." >&2
+  exit 1
+fi
+
+if [ ! -f "$BUILD_DIR/Agent/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
+  echo "better-sqlite3 native module missing. Rebuilding for bundled Node runtime..." >&2
+  rebuild_better_sqlite3
+fi
+
+if ! "$BUILD_DIR/Runtime/node" -e "require('$BUILD_DIR/Agent/node_modules/better-sqlite3');" >/dev/null 2>&1; then
+  echo "better-sqlite3 ABI mismatch detected. Rebuilding for bundled Node runtime..." >&2
+  rebuild_better_sqlite3
 fi
 
 if [ ! -f "$RESOURCES_DIR/tracenium_pgk.png" ]; then

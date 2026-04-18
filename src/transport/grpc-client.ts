@@ -172,11 +172,6 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         return;
       }
 
-      if (method === "grpc.control.requestFacts") {
-        stream.emit("data", { requestFacts: params });
-        return;
-      }
-
       if (method === "grpc.control.disconnect") {
         stream.emit("data", { disconnect: params });
         return;

@@ -156,9 +156,6 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
   }
 
   switch (jobType) {
-    case "request_facts":
-    case "requestFacts":
-    case "collect_facts":
     case "facts_snapshot": {
       const factType = String(payload?.factType || "inventory");
       const result = await collectFactsSnapshot(ctx, `runJob:${jobId}`, factType);
@@ -422,24 +419,6 @@ stream = client.Connect();
       } catch (err: any) {
         ctx.logger?.error?.("policyUpdate handler error", err?.message || err);
       }
-      return;
-    }
-
-    if (msg.requestFacts) {
-      ctx.logger?.info?.("gRPC control message: requestFacts received", msg.requestFacts);
-
-      (async () => {
-        try {
-          await collectFactsSnapshot(
-            ctx,
-            "requestFacts",
-            String(msg.requestFacts?.factType || "inventory")
-          );
-        } catch (err: any) {
-          ctx.logger?.error?.("requestFacts immediate collection failed", err?.message || err);
-        }
-      })();
-
       return;
     }
 

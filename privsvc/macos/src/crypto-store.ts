@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import https from "https";
+import os from "os";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { certPaths, ensurePrivSvcDirs } from "./paths";
@@ -9,14 +10,104 @@ import { fail, success } from "./protocol";
 
 const execFileAsync = promisify(execFile);
 const OPENSSL_BIN = process.env.OPENSSL_BIN || "/usr/bin/openssl";
+const MACOS_CSR_KEY_BITS = "2048";
 
 function normalizePem(value: any): string {
   return String(value || "").trim() + "\n";
 }
 
+function splitPemCertificates(pemBundle: string): string[] {
+  const matches = String(pemBundle || "").match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g);
+  return matches ? matches.map((pem) => normalizePem(pem)) : [];
+}
+
 function certFingerprintPem(pem: string): string {
   const x509 = new crypto.X509Certificate(pem);
   return String(x509.fingerprint256 || "").replace(/:/g, "").toLowerCase();
+}
+
+function readBundledRootCaPem(): string | null {
+  const paths = certPaths();
+  try {
+    if (!fs.existsSync(paths.bundledRootCa)) return null;
+    const pem = fs.readFileSync(paths.bundledRootCa, "utf8");
+    return pem.includes("BEGIN CERTIFICATE") ? normalizePem(pem) : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildFullCaBundlePem(caBundlePem: string): { fullBundlePem: string; issuingCaThumbprint?: string } {
+  const certs = splitPemCertificates(caBundlePem);
+  const bundledRootCaPem = readBundledRootCaPem();
+
+  if (bundledRootCaPem) {
+    certs.push(bundledRootCaPem);
+  }
+
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+
+  for (const certPem of certs) {
+    try {
+      const fingerprint = certFingerprintPem(certPem);
+      if (seen.has(fingerprint)) continue;
+      seen.add(fingerprint);
+      deduped.push(certPem);
+    } catch {
+      continue;
+    }
+  }
+
+  const issuingCaThumbprint = deduped.length > 0 ? certFingerprintPem(deduped[0]) : undefined;
+
+  return {
+    fullBundlePem: deduped.join(""),
+    issuingCaThumbprint
+  };
+}
+
+async function installCaCertificatesToSystemKeychain(bundlePem: string): Promise<void> {
+  const certs = splitPemCertificates(bundlePem);
+  if (certs.length === 0) return;
+
+  const tempDir = fs.mkdtempSync("/tmp/tracenium-ca-");
+
+  try {
+    const certFiles = certs.map((certPem, index) => {
+      const file = `${tempDir}/ca-${index}.crt`;
+      fs.writeFileSync(file, certPem, { encoding: "utf8", mode: 0o644 });
+      return {
+        file,
+        cert: new crypto.X509Certificate(certPem)
+      };
+    });
+
+    for (const entry of certFiles) {
+      if (entry.cert.subject === entry.cert.issuer) {
+        await execFileAsync("/usr/bin/security", [
+          "add-trusted-cert",
+          "-d",
+          "-r",
+          "trustRoot",
+          "-k",
+          "/Library/Keychains/System.keychain",
+          entry.file
+        ]).catch(() => undefined);
+      } else {
+        await execFileAsync("/usr/bin/security", [
+          "add-certificates",
+          "-k",
+          "/Library/Keychains/System.keychain",
+          entry.file
+        ]).catch(() => undefined);
+      }
+    }
+  } finally {
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+  }
 }
 
 function assertDeviceId(value: any): string {
@@ -25,37 +116,86 @@ function assertDeviceId(value: any): string {
   return deviceId;
 }
 
+async function isRsaPrivateKey(keyPath: string): Promise<boolean> {
+  if (!fs.existsSync(keyPath)) return false;
+
+  try {
+    const { stdout } = await execFileAsync(OPENSSL_BIN, [
+      "pkey",
+      "-in",
+      keyPath,
+      "-text",
+      "-noout"
+    ]);
+
+    return /Private-Key:\s*\(2048 bit/.test(stdout);
+  } catch {
+    return false;
+  }
+}
+
+async function ensureEnrollmentPrivateKey(keyPath: string, reuseExistingKey: boolean): Promise<void> {
+  const canReuse = reuseExistingKey && await isRsaPrivateKey(keyPath);
+
+  if (canReuse) {
+    return;
+  }
+
+  try {
+    fs.rmSync(keyPath, { force: true });
+  } catch {}
+
+  await execFileAsync(OPENSSL_BIN, [
+    "genpkey",
+    "-algorithm",
+    "RSA",
+    "-pkeyopt",
+    `rsa_keygen_bits:${MACOS_CSR_KEY_BITS}`,
+    "-out",
+    keyPath
+  ]);
+  fs.chmodSync(keyPath, 0o600);
+}
+
 export async function handleGenerateCsr(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const paths = certPaths();
+  const csrConfigPath = `${paths.clientCsr}.cnf`;
+
   try {
     ensurePrivSvcDirs();
-    const paths = certPaths();
     const params = req.params || {};
     const tenantId = String(params.tenantId || req.meta?.tenantId || "bootstrap");
     const deviceId = assertDeviceId(params.deviceId || req.meta?.deviceId);
     const reuseExistingKey = params.reuseExistingKey !== false;
+    const dnsName = os.hostname();
 
-    if (!reuseExistingKey || !fs.existsSync(paths.clientKey)) {
-      await execFileAsync(OPENSSL_BIN, [
-        "ecparam",
-        "-name",
-        "prime256v1",
-        "-genkey",
-        "-noout",
-        "-out",
-        paths.clientKey
-      ]);
-      fs.chmodSync(paths.clientKey, 0o600);
-    }
+    await ensureEnrollmentPrivateKey(paths.clientKey, reuseExistingKey);
 
-    const subject = `/CN=tracenium-agent-${deviceId}/O=Tracenium/OU=${tenantId}`;
+    const csrConfig = [
+      "[req]",
+      "prompt = no",
+      "distinguished_name = dn",
+      "req_extensions = req_ext",
+      "[dn]",
+      `CN = ${dnsName}`,
+      "[req_ext]",
+      "keyUsage = critical,digitalSignature",
+      "extendedKeyUsage = clientAuth",
+      "subjectAltName = @alt_names",
+      "[alt_names]",
+      `DNS.1 = ${dnsName}`,
+      `URI.1 = tracenium://tenant/${tenantId}/device/${deviceId}`
+    ].join("\n");
+    fs.writeFileSync(csrConfigPath, `${csrConfig}\n`, { encoding: "utf8", mode: 0o600 });
+
     await execFileAsync(OPENSSL_BIN, [
       "req",
       "-new",
       "-sha256",
       "-key",
       paths.clientKey,
-      "-subj",
-      subject,
+      "-config",
+      csrConfigPath,
       "-out",
       paths.clientCsr
     ]);
@@ -64,12 +204,17 @@ export async function handleGenerateCsr(req: PrivSvcRequest): Promise<PrivSvcRes
     return success(req.id, {
       csrPem,
       deviceId,
-      keyAlgorithm: "ECDSA_P256",
+      dnsName,
+      keyAlgorithm: "RSA_2048",
       keyStore: "file",
       keyPath: paths.clientKey
     });
   } catch (err: any) {
     return fail(req.id, "csr_generate_failed", err?.message || String(err));
+  } finally {
+    try {
+      fs.rmSync(csrConfigPath, { force: true });
+    } catch {}
   }
 }
 
@@ -93,11 +238,14 @@ export async function handleInstallCert(req: PrivSvcRequest): Promise<PrivSvcRes
       return fail(req.id, "missing_private_key", "CSR private key was not found");
     }
 
+    const { fullBundlePem, issuingCaThumbprint } = buildFullCaBundlePem(caBundlePem);
+
     fs.writeFileSync(paths.clientCert, clientCertPem, { encoding: "utf8", mode: 0o600 });
-    fs.writeFileSync(paths.caBundle, caBundlePem, { encoding: "utf8", mode: 0o644 });
+    fs.writeFileSync(paths.caBundle, fullBundlePem, { encoding: "utf8", mode: 0o644 });
+
+    await installCaCertificatesToSystemKeychain(fullBundlePem).catch(() => undefined);
 
     const clientCertThumbprint = certFingerprintPem(clientCertPem);
-    const issuingCaThumbprint = certFingerprintPem(caBundlePem);
 
     return success(req.id, {
       clientCertThumbprint,
@@ -115,6 +263,7 @@ function postJsonMtls(url: string, payload: any, identity: { clientCert: Buffer;
   return new Promise((resolve, reject) => {
     const body = Buffer.from(JSON.stringify(payload), "utf8");
     const target = new URL(url);
+    const trustAgentCa = process.env.CERT_RENEWAL_TRUST_AGENT_CA === "1";
 
     const request = https.request({
       protocol: target.protocol,
@@ -124,7 +273,7 @@ function postJsonMtls(url: string, payload: any, identity: { clientCert: Buffer;
       method: "POST",
       cert: identity.clientCert,
       key: identity.clientKey,
-      ca: identity.caBundle,
+      ...(trustAgentCa ? { ca: identity.caBundle } : {}),
       headers: {
         "Content-Type": "application/json",
         "Content-Length": String(body.length)
@@ -210,11 +359,11 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
     fs.writeFileSync(pendingConf, conf + "\n", { encoding: "utf8", mode: 0o600 });
 
     await execFileAsync(OPENSSL_BIN, [
-      "ecparam",
-      "-name",
-      "prime256v1",
-      "-genkey",
-      "-noout",
+      "genpkey",
+      "-algorithm",
+      "RSA",
+      "-pkeyopt",
+      `rsa_keygen_bits:${MACOS_CSR_KEY_BITS}`,
       "-out",
       pendingKey
     ]);
@@ -247,8 +396,10 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
       return fail(req.id, "renew_response_invalid", "renewal response missing certificate material");
     }
 
+    const { fullBundlePem, issuingCaThumbprint } = buildFullCaBundlePem(caBundlePem);
+
     fs.writeFileSync(pendingCert, clientCertPem, { encoding: "utf8", mode: 0o600 });
-    fs.writeFileSync(pendingCa, caBundlePem, { encoding: "utf8", mode: 0o644 });
+    fs.writeFileSync(pendingCa, fullBundlePem, { encoding: "utf8", mode: 0o644 });
 
     const keyBackup = backupFile(paths.clientKey);
     const certBackup = backupFile(paths.clientCert);
@@ -266,8 +417,9 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
     }
 
     const clientCertThumbprint = certFingerprintPem(clientCertPem);
-    const issuingCaThumbprint = certFingerprintPem(caBundlePem);
     const x509 = new crypto.X509Certificate(clientCertPem);
+
+    await installCaCertificatesToSystemKeychain(fullBundlePem).catch(() => undefined);
 
     for (const file of [pendingCsr, pendingConf]) {
       try { fs.unlinkSync(file); } catch {}
@@ -276,7 +428,7 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
     return success(req.id, {
       deviceId,
       clientCertPem,
-      caBundlePem,
+      caBundlePem: fullBundlePem,
       clientCertThumbprint,
       issuingCaThumbprint,
       notAfter: x509.validTo,
@@ -292,7 +444,9 @@ export function loadInstalledIdentity() {
   const paths = certPaths();
   const clientCert = fs.readFileSync(paths.clientCert);
   const clientKey = fs.readFileSync(paths.clientKey);
-  const caBundle = fs.readFileSync(paths.caBundle);
+  const caBundlePem = fs.readFileSync(paths.caBundle, "utf8");
+  const { fullBundlePem } = buildFullCaBundlePem(caBundlePem);
+  const caBundle = Buffer.from(fullBundlePem, "utf8");
 
   return {
     clientCert,

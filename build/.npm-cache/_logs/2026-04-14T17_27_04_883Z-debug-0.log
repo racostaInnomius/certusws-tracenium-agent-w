@@ -1,0 +1,65 @@
+0 verbose cli /opt/homebrew/Cellar/node@22/22.21.1_4/bin/node /opt/homebrew/bin/npm
+1 info using npm@10.9.4
+2 info using node@v22.21.1
+3 silly config load:file:/opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/npmrc
+4 silly config load:file:/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/build/macos/Agent/node_modules/better-sqlite3/.npmrc
+5 silly config load:file:/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/build/.npmrc
+6 silly config load:file:/opt/homebrew/etc/npmrc
+7 verbose title npm rebuild
+8 verbose argv "rebuild"
+9 verbose logfile logs-max:10 dir:/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/build/.npm-cache/_logs/2026-04-14T17_27_04_883Z-
+10 verbose logfile /Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/build/.npm-cache/_logs/2026-04-14T17_27_04_883Z-debug-0.log
+11 silly logfile done cleaning log files
+12 silly packumentCache heap:4345298944 maxSize:1086324736 maxEntrySize:543162368
+13 http fetch GET https://registry.npmjs.org/npm attempt 1 failed with ENOTFOUND
+14 info run better-sqlite3@12.6.2 install  prebuild-install || node-gyp rebuild --release
+15 info run better-sqlite3@12.6.2 install { code: 1, signal: null }
+16 verbose stack Error: command failed
+16 verbose stack     at promiseSpawn (/opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/@npmcli/promise-spawn/lib/index.js:22:22)
+16 verbose stack     at spawnWithShell (/opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/@npmcli/promise-spawn/lib/index.js:124:10)
+16 verbose stack     at promiseSpawn (/opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/@npmcli/promise-spawn/lib/index.js:12:12)
+16 verbose stack     at runScriptPkg (/opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/run-script-pkg.js:79:13)
+16 verbose stack     at runScript (/opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/@npmcli/run-script/lib/run-script.js:9:12)
+16 verbose stack     at /opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/rebuild.js:329:17
+16 verbose stack     at run (/opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/promise-call-limit/dist/commonjs/index.js:67:22)
+16 verbose stack     at /opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/promise-call-limit/dist/commonjs/index.js:84:9
+16 verbose stack     at new Promise (<anonymous>)
+16 verbose stack     at callLimit (/opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/promise-call-limit/dist/commonjs/index.js:35:69)
+17 verbose pkgid better-sqlite3@12.6.2
+18 error code 1
+19 error path /Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/build/macos/Agent/node_modules/better-sqlite3
+20 error command failed
+21 error command sh -c prebuild-install || node-gyp rebuild --release
+22 error gyp info it worked if it ends with ok
+22 error gyp info using node-gyp@11.2.0
+22 error gyp info using node@22.21.1 | darwin | arm64
+22 error gyp info find Python using Python version 3.14.2 found at "/opt/homebrew/opt/python@3.14/bin/python3.14"
+22 error gyp http GET https://nodejs.org/dist/v24.14.1/node-v24.14.1-headers.tar.gz
+22 error gyp http fetch GET https://nodejs.org/dist/v24.14.1/node-v24.14.1-headers.tar.gz attempt 1 failed with ENOTFOUND
+22 error gyp WARN install got an error, rolling back install
+22 error gyp ERR! configure error 
+22 error gyp ERR! stack Error: This is most likely not a problem with node-gyp or the package itself and
+22 error gyp ERR! stack is related to network connectivity. In most cases you are behind a proxy or have bad
+22 error gyp ERR! stack network settings.
+22 error gyp ERR! stack at go (/opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/node-gyp/lib/install.js:244:21)
+22 error gyp ERR! stack at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+22 error gyp ERR! stack at async install (/opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/node-gyp/lib/install.js:63:18)
+22 error gyp ERR! stack at async getNodeDir (/opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/node-gyp/lib/configure.js:79:7)
+22 error gyp ERR! stack at async run (/opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js:81:18)
+22 error gyp ERR! System Darwin 25.3.0
+22 error gyp ERR! command "/opt/homebrew/Cellar/node@22/22.21.1_4/bin/node" "/opt/homebrew/Cellar/node@22/22.21.1_4/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js" "rebuild" "--release"
+22 error gyp ERR! cwd /Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/build/macos/Agent/node_modules/better-sqlite3
+22 error gyp ERR! node -v v22.21.1
+22 error gyp ERR! node-gyp -v v11.2.0
+22 error gyp ERR! not ok
+23 silly unfinished npm timer build 1776187625153
+24 silly unfinished npm timer build:deps 1776187625153
+25 silly unfinished npm timer build:run:install 1776187625153
+26 silly unfinished npm timer build:run:install: 1776187625153
+27 verbose cwd /Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/build/macos/Agent/node_modules/better-sqlite3
+28 verbose os Darwin 25.3.0
+29 verbose node v22.21.1
+30 verbose npm  v10.9.4
+31 verbose exit 1
+32 verbose code 1
+33 error A complete log of this run can be found in: /Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/build/.npm-cache/_logs/2026-04-14T17_27_04_883Z-debug-0.log

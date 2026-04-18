@@ -1332,7 +1332,7 @@ var require_service_config = __commonJS({
     exports2.validateRetryThrottling = validateRetryThrottling;
     exports2.validateServiceConfig = validateServiceConfig;
     exports2.extractAndSelectServiceConfig = extractAndSelectServiceConfig;
-    var os2 = require("os");
+    var os3 = require("os");
     var constants_1 = require_constants();
     var DURATION_REGEX = /^\d+(\.\d{1,9})?s$/;
     var CLIENT_LANGUAGE_STRING = "node";
@@ -1631,7 +1631,7 @@ var require_service_config = __commonJS({
         if (Array.isArray(validatedConfig.clientHostname)) {
           let hostnameMatched = false;
           for (const hostname of validatedConfig.clientHostname) {
-            if (hostname === os2.hostname()) {
+            if (hostname === os3.hostname()) {
               hostnameMatched = true;
             }
           }
@@ -15931,7 +15931,7 @@ var require_subchannel_call = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.Http2SubchannelCall = void 0;
     var http2 = require("http2");
-    var os2 = require("os");
+    var os3 = require("os");
     var constants_1 = require_constants();
     var metadata_1 = require_metadata();
     var stream_decoder_1 = require_stream_decoder();
@@ -15939,7 +15939,7 @@ var require_subchannel_call = __commonJS({
     var constants_2 = require_constants();
     var TRACER_NAME = "subchannel_call";
     function getSystemErrorName(errno) {
-      for (const [name, num] of Object.entries(os2.constants.errno)) {
+      for (const [name, num] of Object.entries(os3.constants.errno)) {
         if (num === errno) {
           return name;
         }
@@ -24010,15 +24010,17 @@ var RUN_DIR = configuredSocketPath ? import_path.default.dirname(configuredSocke
 var SOCKET_PATH = configuredSocketPath || import_path.default.join(RUN_DIR, "privsvc.sock");
 var DATA_DIR = process.env.TRACENIUM_PRIVSVC_DATA_DIR || "/Library/Application Support/Tracenium/PrivSvc";
 var CERT_DIR = import_path.default.join(DATA_DIR, "certs");
+var ASSETS_DIR = import_path.default.join(DATA_DIR, "assets");
 var LOG_DIR = process.env.TRACENIUM_PRIVSVC_LOG_DIR || "/Library/Logs/Tracenium";
 function ensurePrivSvcDirs() {
-  for (const dir of [RUN_DIR, DATA_DIR, CERT_DIR, LOG_DIR]) {
+  for (const dir of [RUN_DIR, DATA_DIR, CERT_DIR, ASSETS_DIR, LOG_DIR]) {
     import_fs.default.mkdirSync(dir, { recursive: true });
   }
   try {
     import_fs.default.chmodSync(RUN_DIR, 493);
     import_fs.default.chmodSync(DATA_DIR, 448);
     import_fs.default.chmodSync(CERT_DIR, 448);
+    import_fs.default.chmodSync(ASSETS_DIR, 493);
     import_fs.default.chmodSync(LOG_DIR, 493);
   } catch {
   }
@@ -24028,7 +24030,8 @@ function certPaths() {
     clientKey: import_path.default.join(CERT_DIR, "client.key.pem"),
     clientCsr: import_path.default.join(CERT_DIR, "client.csr.pem"),
     clientCert: import_path.default.join(CERT_DIR, "client.crt.pem"),
-    caBundle: import_path.default.join(CERT_DIR, "ca-bundle.crt.pem")
+    caBundle: import_path.default.join(CERT_DIR, "ca-bundle.crt.pem"),
+    bundledRootCa: import_path.default.join(ASSETS_DIR, "root-ca.crt")
   };
 }
 
@@ -24041,56 +24044,179 @@ function fail(id, code, message) {
 }
 
 // privsvc/macos/src/router.ts
-var import_os = __toESM(require("os"));
+var import_os2 = __toESM(require("os"));
 
 // privsvc/macos/src/crypto-store.ts
 var import_crypto = __toESM(require("crypto"));
 var import_fs2 = __toESM(require("fs"));
+var import_https = __toESM(require("https"));
+var import_os = __toESM(require("os"));
 var import_child_process = require("child_process");
 var import_util = require("util");
 var execFileAsync = (0, import_util.promisify)(import_child_process.execFile);
 var OPENSSL_BIN = process.env.OPENSSL_BIN || "/usr/bin/openssl";
+var MACOS_CSR_KEY_BITS = "2048";
 function normalizePem(value) {
   return String(value || "").trim() + "\n";
+}
+function splitPemCertificates(pemBundle) {
+  const matches = String(pemBundle || "").match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g);
+  return matches ? matches.map((pem) => normalizePem(pem)) : [];
 }
 function certFingerprintPem(pem) {
   const x509 = new import_crypto.default.X509Certificate(pem);
   return String(x509.fingerprint256 || "").replace(/:/g, "").toLowerCase();
+}
+function readBundledRootCaPem() {
+  const paths = certPaths();
+  try {
+    if (!import_fs2.default.existsSync(paths.bundledRootCa)) return null;
+    const pem = import_fs2.default.readFileSync(paths.bundledRootCa, "utf8");
+    return pem.includes("BEGIN CERTIFICATE") ? normalizePem(pem) : null;
+  } catch {
+    return null;
+  }
+}
+function buildFullCaBundlePem(caBundlePem) {
+  const certs = splitPemCertificates(caBundlePem);
+  const bundledRootCaPem = readBundledRootCaPem();
+  if (bundledRootCaPem) {
+    certs.push(bundledRootCaPem);
+  }
+  const deduped = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const certPem of certs) {
+    try {
+      const fingerprint = certFingerprintPem(certPem);
+      if (seen.has(fingerprint)) continue;
+      seen.add(fingerprint);
+      deduped.push(certPem);
+    } catch {
+      continue;
+    }
+  }
+  const issuingCaThumbprint = deduped.length > 0 ? certFingerprintPem(deduped[0]) : void 0;
+  return {
+    fullBundlePem: deduped.join(""),
+    issuingCaThumbprint
+  };
+}
+async function installCaCertificatesToSystemKeychain(bundlePem) {
+  const certs = splitPemCertificates(bundlePem);
+  if (certs.length === 0) return;
+  const tempDir = import_fs2.default.mkdtempSync("/tmp/tracenium-ca-");
+  try {
+    const certFiles = certs.map((certPem, index) => {
+      const file = `${tempDir}/ca-${index}.crt`;
+      import_fs2.default.writeFileSync(file, certPem, { encoding: "utf8", mode: 420 });
+      return {
+        file,
+        cert: new import_crypto.default.X509Certificate(certPem)
+      };
+    });
+    for (const entry of certFiles) {
+      if (entry.cert.subject === entry.cert.issuer) {
+        await execFileAsync("/usr/bin/security", [
+          "add-trusted-cert",
+          "-d",
+          "-r",
+          "trustRoot",
+          "-k",
+          "/Library/Keychains/System.keychain",
+          entry.file
+        ]).catch(() => void 0);
+      } else {
+        await execFileAsync("/usr/bin/security", [
+          "add-certificates",
+          "-k",
+          "/Library/Keychains/System.keychain",
+          entry.file
+        ]).catch(() => void 0);
+      }
+    }
+  } finally {
+    try {
+      import_fs2.default.rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+    }
+  }
 }
 function assertDeviceId(value) {
   const deviceId = String(value || "").trim();
   if (!deviceId) throw new Error("deviceId_required");
   return deviceId;
 }
+async function isRsaPrivateKey(keyPath) {
+  if (!import_fs2.default.existsSync(keyPath)) return false;
+  try {
+    const { stdout } = await execFileAsync(OPENSSL_BIN, [
+      "pkey",
+      "-in",
+      keyPath,
+      "-text",
+      "-noout"
+    ]);
+    return /Private-Key:\s*\(2048 bit/.test(stdout);
+  } catch {
+    return false;
+  }
+}
+async function ensureEnrollmentPrivateKey(keyPath, reuseExistingKey) {
+  const canReuse = reuseExistingKey && await isRsaPrivateKey(keyPath);
+  if (canReuse) {
+    return;
+  }
+  try {
+    import_fs2.default.rmSync(keyPath, { force: true });
+  } catch {
+  }
+  await execFileAsync(OPENSSL_BIN, [
+    "genpkey",
+    "-algorithm",
+    "RSA",
+    "-pkeyopt",
+    `rsa_keygen_bits:${MACOS_CSR_KEY_BITS}`,
+    "-out",
+    keyPath
+  ]);
+  import_fs2.default.chmodSync(keyPath, 384);
+}
 async function handleGenerateCsr(req) {
+  const paths = certPaths();
+  const csrConfigPath = `${paths.clientCsr}.cnf`;
   try {
     ensurePrivSvcDirs();
-    const paths = certPaths();
     const params = req.params || {};
     const tenantId = String(params.tenantId || req.meta?.tenantId || "bootstrap");
     const deviceId = assertDeviceId(params.deviceId || req.meta?.deviceId);
     const reuseExistingKey = params.reuseExistingKey !== false;
-    if (!reuseExistingKey || !import_fs2.default.existsSync(paths.clientKey)) {
-      await execFileAsync(OPENSSL_BIN, [
-        "ecparam",
-        "-name",
-        "prime256v1",
-        "-genkey",
-        "-noout",
-        "-out",
-        paths.clientKey
-      ]);
-      import_fs2.default.chmodSync(paths.clientKey, 384);
-    }
-    const subject = `/CN=tracenium-agent-${deviceId}/O=Tracenium/OU=${tenantId}`;
+    const dnsName = import_os.default.hostname();
+    await ensureEnrollmentPrivateKey(paths.clientKey, reuseExistingKey);
+    const csrConfig = [
+      "[req]",
+      "prompt = no",
+      "distinguished_name = dn",
+      "req_extensions = req_ext",
+      "[dn]",
+      `CN = ${dnsName}`,
+      "[req_ext]",
+      "keyUsage = critical,digitalSignature",
+      "extendedKeyUsage = clientAuth",
+      "subjectAltName = @alt_names",
+      "[alt_names]",
+      `DNS.1 = ${dnsName}`,
+      `URI.1 = tracenium://tenant/${tenantId}/device/${deviceId}`
+    ].join("\n");
+    import_fs2.default.writeFileSync(csrConfigPath, `${csrConfig}
+`, { encoding: "utf8", mode: 384 });
     await execFileAsync(OPENSSL_BIN, [
       "req",
       "-new",
       "-sha256",
       "-key",
       paths.clientKey,
-      "-subj",
-      subject,
+      "-config",
+      csrConfigPath,
       "-out",
       paths.clientCsr
     ]);
@@ -24098,12 +24224,18 @@ async function handleGenerateCsr(req) {
     return success(req.id, {
       csrPem,
       deviceId,
-      keyAlgorithm: "ECDSA_P256",
+      dnsName,
+      keyAlgorithm: "RSA_2048",
       keyStore: "file",
       keyPath: paths.clientKey
     });
   } catch (err) {
     return fail(req.id, "csr_generate_failed", err?.message || String(err));
+  } finally {
+    try {
+      import_fs2.default.rmSync(csrConfigPath, { force: true });
+    } catch {
+    }
   }
 }
 async function handleInstallCert(req) {
@@ -24122,10 +24254,11 @@ async function handleInstallCert(req) {
     if (!import_fs2.default.existsSync(paths.clientKey)) {
       return fail(req.id, "missing_private_key", "CSR private key was not found");
     }
+    const { fullBundlePem, issuingCaThumbprint } = buildFullCaBundlePem(caBundlePem);
     import_fs2.default.writeFileSync(paths.clientCert, clientCertPem, { encoding: "utf8", mode: 384 });
-    import_fs2.default.writeFileSync(paths.caBundle, caBundlePem, { encoding: "utf8", mode: 420 });
+    import_fs2.default.writeFileSync(paths.caBundle, fullBundlePem, { encoding: "utf8", mode: 420 });
+    await installCaCertificatesToSystemKeychain(fullBundlePem).catch(() => void 0);
     const clientCertThumbprint = certFingerprintPem(clientCertPem);
-    const issuingCaThumbprint = certFingerprintPem(caBundlePem);
     return success(req.id, {
       clientCertThumbprint,
       issuingCaThumbprint,
@@ -24137,11 +24270,172 @@ async function handleInstallCert(req) {
     return fail(req.id, "cert_install_failed", err?.message || String(err));
   }
 }
+function postJsonMtls(url, payload, identity) {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from(JSON.stringify(payload), "utf8");
+    const target = new URL(url);
+    const trustAgentCa = process.env.CERT_RENEWAL_TRUST_AGENT_CA === "1";
+    const request = import_https.default.request({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port || 443,
+      path: `${target.pathname}${target.search}`,
+      method: "POST",
+      cert: identity.clientCert,
+      key: identity.clientKey,
+      ...trustAgentCa ? { ca: identity.caBundle } : {},
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": String(body.length)
+      },
+      timeout: 3e4
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        if ((response.statusCode || 500) < 200 || (response.statusCode || 500) >= 300) {
+          reject(new Error(`HTTP ${response.statusCode}: ${text}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(text));
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
+    request.on("timeout", () => {
+      request.destroy(new Error("renew request timeout"));
+    });
+    request.on("error", reject);
+    request.write(body);
+    request.end();
+  });
+}
+function backupFile(file) {
+  if (!import_fs2.default.existsSync(file)) return null;
+  const backup = `${file}.bak`;
+  import_fs2.default.copyFileSync(file, backup);
+  return backup;
+}
+function restoreBackup(backup, file) {
+  if (!backup || !import_fs2.default.existsSync(backup)) return;
+  import_fs2.default.copyFileSync(backup, file);
+}
+async function handleRenewCert(req) {
+  try {
+    ensurePrivSvcDirs();
+    const paths = certPaths();
+    const params = req.params || {};
+    const serverBaseUrl = String(params.serverBaseUrl || "").replace(/\/+$/, "");
+    const tenantId = String(params.tenantId || req.meta?.tenantId || "");
+    const deviceId = assertDeviceId(params.deviceId || req.meta?.deviceId);
+    if (!serverBaseUrl) {
+      return fail(req.id, "bad_request", "serverBaseUrl required");
+    }
+    if (!tenantId) {
+      return fail(req.id, "bad_request", "tenantId required");
+    }
+    const pendingKey = `${paths.clientKey}.pending`;
+    const pendingCsr = `${paths.clientCsr}.pending`;
+    const pendingConf = `${paths.clientCsr}.cnf`;
+    const pendingCert = `${paths.clientCert}.pending`;
+    const pendingCa = `${paths.caBundle}.pending`;
+    const conf = [
+      "[req]",
+      "prompt = no",
+      "distinguished_name = dn",
+      "req_extensions = req_ext",
+      "[dn]",
+      `CN = tracenium-agent-${deviceId}`,
+      "O = Tracenium",
+      `OU = ${tenantId}`,
+      "[req_ext]",
+      "keyUsage = critical,digitalSignature",
+      "extendedKeyUsage = clientAuth",
+      `subjectAltName = URI:tracenium://tenant/${tenantId}/device/${deviceId}`
+    ].join("\n");
+    import_fs2.default.writeFileSync(pendingConf, conf + "\n", { encoding: "utf8", mode: 384 });
+    await execFileAsync(OPENSSL_BIN, [
+      "genpkey",
+      "-algorithm",
+      "RSA",
+      "-pkeyopt",
+      `rsa_keygen_bits:${MACOS_CSR_KEY_BITS}`,
+      "-out",
+      pendingKey
+    ]);
+    import_fs2.default.chmodSync(pendingKey, 384);
+    await execFileAsync(OPENSSL_BIN, [
+      "req",
+      "-new",
+      "-sha256",
+      "-key",
+      pendingKey,
+      "-out",
+      pendingCsr,
+      "-config",
+      pendingConf
+    ]);
+    const csrPem = import_fs2.default.readFileSync(pendingCsr, "utf8");
+    const identity = loadInstalledIdentity();
+    const response = await postJsonMtls(
+      `${serverBaseUrl}/api/v1/security/certificates/renew`,
+      { csrPem },
+      identity
+    );
+    const clientCertPem = normalizePem(response.clientCertPem);
+    const caBundlePem = normalizePem(response.caBundlePem);
+    if (!clientCertPem.includes("BEGIN CERTIFICATE") || !caBundlePem.includes("BEGIN CERTIFICATE")) {
+      return fail(req.id, "renew_response_invalid", "renewal response missing certificate material");
+    }
+    const { fullBundlePem, issuingCaThumbprint } = buildFullCaBundlePem(caBundlePem);
+    import_fs2.default.writeFileSync(pendingCert, clientCertPem, { encoding: "utf8", mode: 384 });
+    import_fs2.default.writeFileSync(pendingCa, fullBundlePem, { encoding: "utf8", mode: 420 });
+    const keyBackup = backupFile(paths.clientKey);
+    const certBackup = backupFile(paths.clientCert);
+    const caBackup = backupFile(paths.caBundle);
+    try {
+      import_fs2.default.renameSync(pendingKey, paths.clientKey);
+      import_fs2.default.renameSync(pendingCert, paths.clientCert);
+      import_fs2.default.renameSync(pendingCa, paths.caBundle);
+    } catch (err) {
+      restoreBackup(keyBackup, paths.clientKey);
+      restoreBackup(certBackup, paths.clientCert);
+      restoreBackup(caBackup, paths.caBundle);
+      throw err;
+    }
+    const clientCertThumbprint = certFingerprintPem(clientCertPem);
+    const x509 = new import_crypto.default.X509Certificate(clientCertPem);
+    await installCaCertificatesToSystemKeychain(fullBundlePem).catch(() => void 0);
+    for (const file of [pendingCsr, pendingConf]) {
+      try {
+        import_fs2.default.unlinkSync(file);
+      } catch {
+      }
+    }
+    return success(req.id, {
+      deviceId,
+      clientCertPem,
+      caBundlePem: fullBundlePem,
+      clientCertThumbprint,
+      issuingCaThumbprint,
+      notAfter: x509.validTo,
+      status: response.status || "pending",
+      keyStore: "file"
+    });
+  } catch (err) {
+    return fail(req.id, "cert_renew_failed", err?.message || String(err));
+  }
+}
 function loadInstalledIdentity() {
   const paths = certPaths();
   const clientCert = import_fs2.default.readFileSync(paths.clientCert);
   const clientKey = import_fs2.default.readFileSync(paths.clientKey);
-  const caBundle = import_fs2.default.readFileSync(paths.caBundle);
+  const caBundlePem = import_fs2.default.readFileSync(paths.caBundle, "utf8");
+  const { fullBundlePem } = buildFullCaBundlePem(caBundlePem);
+  const caBundle = Buffer.from(fullBundlePem, "utf8");
   return {
     clientCert,
     clientKey,
@@ -24183,7 +24477,7 @@ var logger = {
 };
 
 // privsvc/macos/src/grpc-bridge.ts
-var PROTO_PATH = import_path3.default.resolve(__dirname, "../../../proto/controlplane.proto");
+var PROTO_PATH = import_path3.default.resolve(__dirname, "../proto/controlplane.proto");
 var state = {
   connected: false,
   connecting: false,
@@ -24547,7 +24841,7 @@ async function routeRequest(req, push2) {
       return success(req.id, {
         uid: typeof process.getuid === "function" ? process.getuid() : null,
         gid: typeof process.getgid === "function" ? process.getgid() : null,
-        user: import_os.default.userInfo().username,
+        user: import_os2.default.userInfo().username,
         isRoot: isRoot(),
         utc: (/* @__PURE__ */ new Date()).toISOString()
       });
@@ -24555,6 +24849,8 @@ async function routeRequest(req, push2) {
       return handleGenerateCsr(req);
     case "crypto.cert.install":
       return handleInstallCert(req);
+    case "crypto.cert.renew":
+      return handleRenewCert(req);
     case "grpc.connect":
       return handleGrpcConnect(req, push2);
     case "grpc.facts.send":
@@ -24567,6 +24863,7 @@ async function routeRequest(req, push2) {
       return handleClose(req);
     case "software.inventory":
       return fail(req.id, "not_supported", "software.inventory is collected by Agent Core on macOS");
+    case "security.compliance":
     case "security.posture":
       return handleSecurityPosture(req);
     default:

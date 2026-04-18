@@ -7,7 +7,7 @@ import type { PrivSvcRequest, PrivSvcResponse, PushSink } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
 
-const PROTO_PATH = path.resolve(__dirname, "../../../proto/controlplane.proto");
+const PROTO_PATH = path.resolve(__dirname, "../proto/controlplane.proto");
 
 type BridgeState = {
   client?: any;
@@ -103,14 +103,6 @@ function handleControlMessage(msg: any) {
     push("grpc.control.policyUpdate", {
       policyVersion: msg.policyUpdate.policyVersion || "",
       policyJson: decodeBytes(msg.policyUpdate.policyJson),
-      receivedAtUtc: new Date().toISOString()
-    });
-    return;
-  }
-
-  if (msg.requestFacts) {
-    push("grpc.control.requestFacts", {
-      factType: msg.requestFacts.factType || "inventory",
       receivedAtUtc: new Date().toISOString()
     });
     return;

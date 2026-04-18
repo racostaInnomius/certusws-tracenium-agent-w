@@ -1,12 +1,66 @@
 // src/bootstrap/enrollment-store.ts
 import fs from "fs";
 import path from "path";
-import { ensureAgentDataDir } from "./paths";
+import os from "os";
+import { agentDataDir, ensureAgentDataDir, getLegacyAgentDataDir } from "./paths";
 import { EnrollmentState } from "./enrollment-state";
 
 export class EnrollmentStore {
   private dir = ensureAgentDataDir();
   private statePath = path.join(this.dir, "enrollment.json");
+
+  constructor() {
+    this.migrateLegacyMacosState();
+  }
+
+  private writeSecureFile(filePath: string, content: string) {
+    fs.writeFileSync(filePath, content, { encoding: "utf8", mode: 0o600 });
+    try {
+      fs.chmodSync(filePath, 0o600);
+    } catch {}
+  }
+
+  private migrateLegacyMacosState() {
+    if (os.platform() !== "darwin") {
+      return;
+    }
+
+    const legacyDir = getLegacyAgentDataDir();
+    if (!legacyDir || legacyDir === this.dir || !fs.existsSync(legacyDir)) {
+      return;
+    }
+
+    const files = [
+      "enrollment.json",
+      "mtls-client.crt.pem",
+      "mtls-client.key.pem",
+      "mtls-ca.pem",
+      "agent.db"
+    ];
+
+    let migrated = false;
+    for (const name of files) {
+      const source = path.join(legacyDir, name);
+      const target = path.join(this.dir, name);
+      if (!fs.existsSync(source) || fs.existsSync(target)) {
+        continue;
+      }
+      fs.copyFileSync(source, target);
+      if (name !== "agent.db") {
+        try {
+          fs.chmodSync(target, 0o600);
+        } catch {}
+      }
+      migrated = true;
+    }
+
+    if (migrated) {
+      console.log("[Enroll] migrated legacy macOS agent state", {
+        from: legacyDir,
+        to: this.dir
+      });
+    }
+  }
 
   private normalizeCapabilities(state: EnrollmentState): boolean {
     const capabilities = Array.isArray(state.bootstrap?.capabilities)
@@ -72,7 +126,7 @@ export class EnrollmentStore {
   }
 
   save(state: EnrollmentState) {
-    fs.writeFileSync(this.statePath, JSON.stringify(state, null, 2), { encoding: "utf8" });
+    this.writeSecureFile(this.statePath, JSON.stringify(state, null, 2));
   }
 
   clear() {
@@ -80,7 +134,7 @@ export class EnrollmentStore {
   }
 
   getPaths() {
-    const dir = this.dir;
+    const dir = agentDataDir();
     return {
       dir,
       enrollmentJson: this.statePath,

@@ -78,7 +78,7 @@ export type SoftwareInventory = {
   count: number;
 
   /**
-   * Present ONLY when hasChanges = true OR forced (baseline/requestFacts)
+   * Present ONLY when hasChanges = true OR forced (baseline/manual facts snapshot)
    */
   items?: SoftwareApplication[];
 

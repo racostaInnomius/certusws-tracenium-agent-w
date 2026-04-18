@@ -1064,20 +1064,6 @@ private const int MaxPendingPushEvents = 50;
                     });
                 }
 
-                if (msg.RequestFacts is not null)
-                {
-                    PushToAll(new
-                    {
-                        v = 1,
-                        method = "grpc.control.requestFacts",
-                        @params = new
-                        {
-                            factType = msg.RequestFacts.FactType ?? "inventory",
-                            receivedAtUtc = DateTime.UtcNow.ToString("o")
-                        }
-                    });
-                }
-
                 if (msg.Disconnect is not null)
                 {
                     PushToAll(new

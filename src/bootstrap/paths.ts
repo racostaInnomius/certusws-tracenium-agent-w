@@ -3,6 +3,8 @@ import os from "os";
 import path from "path";
 import fs from "fs";
 
+const MACOS_AGENT_DATA_DIR = "/Library/Application Support/Tracenium/Agent";
+
 function resolveProgramData(): string {
   return (
     process.env.PROGRAMDATA ||
@@ -11,9 +13,19 @@ function resolveProgramData(): string {
   );
 }
 
+export function getLegacyAgentDataDir(): string | null {
+  if (os.platform() === "darwin") {
+    return path.join(os.homedir(), ".tracenium", "agent");
+  }
+  return null;
+}
+
 export function agentDataDir(): string {
   if (os.platform() === "win32") {
     return path.join(resolveProgramData(), "Tracenium", "Agent");
+  }
+  if (os.platform() === "darwin") {
+    return process.env.TRACENIUM_AGENT_DATA_DIR || MACOS_AGENT_DATA_DIR;
   }
   return path.join(os.homedir(), ".tracenium", "agent");
 }

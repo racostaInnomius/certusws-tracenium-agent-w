@@ -36,7 +36,6 @@ export type PrivSvcPushMethod =
   | "grpc.control.rotateCert"
   | "grpc.control.runJob"
   | "grpc.control.policyUpdate"
-  | "grpc.control.requestFacts"
   | "grpc.control.disconnect"
   | "grpc.control.agentUpdate"
   | "grpc.control.streamClosed"

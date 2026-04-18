@@ -1,6 +1,17 @@
 #!/bin/sh
 set -eu
 
+LOG_DIR="/Library/Application Support/Tracenium/Logs"
+LOG_FILE="$LOG_DIR/installer.pkg.log"
+/bin/mkdir -p "$LOG_DIR"
+/usr/bin/touch "$LOG_FILE"
+/bin/chmod 644 "$LOG_FILE" || true
+exec >> "$LOG_FILE" 2>&1
+
+echo "==== $(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ') postinstall start ===="
+set -x
+trap 'rc=$?; set +x; echo "==== $(/bin/date -u "+%Y-%m-%dT%H:%M:%SZ") postinstall exit rc=$rc ===="; exit $rc' EXIT
+
 BASE="/Library/Application Support/Tracenium"
 AGENT_DIR="$BASE/Agent"
 PRIVSVC_DIR="$BASE/PrivSvc"
@@ -9,8 +20,10 @@ TOKEN_FILE="$AGENT_DIR/enrollment.token"
 ENV_FILE="$AGENT_DIR/.env"
 TMP_TOKEN_FILE="/private/tmp/tracenium-enrollment.token"
 ENROLLMENT_FILE="$AGENT_DIR/enrollment.json"
+LEGACY_AGENT_DIR="/var/root/.tracenium/agent"
 
 SERVER_BASE_URL="${TRACENIUM_SERVER_BASE_URL:-https://api.tracenium.com}"
+CERT_RENEWAL_BASE_URL="${TRACENIUM_CERT_RENEWAL_BASE_URL:-$SERVER_BASE_URL}"
 GRPC_ENDPOINT="${TRACENIUM_GRPC_ENDPOINT:-grpc.tracenium.com:50051}"
 AGENT_VERSION="${TRACENIUM_AGENT_VERSION:-1.0.87}"
 CORE_VERSION="${TRACENIUM_CORE_VERSION:-1.0.87}"
@@ -23,24 +36,33 @@ mkdir -p "$PRIVSVC_DIR/certs"
 mkdir -p "$LOG_DIR"
 mkdir -p "/var/run/tracenium"
 
+/bin/ls -la "/Library/Application Support" || true
+/bin/ls -la "$BASE" || true
+
 chown -R root:wheel "$BASE"
 chmod 755 "$BASE"
 chmod 755 "$BASE/Runtime/node"
-chmod 755 "$AGENT_DIR"
+chmod 700 "$AGENT_DIR"
 chmod 700 "$PRIVSVC_DIR"
 chmod 700 "$PRIVSVC_DIR/certs"
 chmod 755 "$LOG_DIR"
 
 cat > "$ENV_FILE" <<EOF
 SERVER_BASE_URL=$SERVER_BASE_URL
+CERT_RENEWAL_BASE_URL=$CERT_RENEWAL_BASE_URL
 GRPC_ENDPOINT=$GRPC_ENDPOINT
 AGENT_VERSION=$AGENT_VERSION
 CORE_VERSION=$CORE_VERSION
 CHANNEL=$CHANNEL
+TRACENIUM_ENROLLMENT_TOKEN_FILE=$TOKEN_FILE
 EOF
 
 chown root:wheel "$ENV_FILE"
 chmod 600 "$ENV_FILE"
+
+/bin/ls -la "$AGENT_DIR" || true
+/bin/ls -la "$PRIVSVC_DIR/macos" || true
+/bin/ls -la /Library/LaunchDaemons || true
 
 prompt_token() {
   CONSOLE_USER="$(/usr/bin/stat -f %Su /dev/console 2>/dev/null || true)"
@@ -59,6 +81,27 @@ return text returned of dialogResult
 APPLESCRIPT
 }
 
+migrate_legacy_agent_state() {
+  if [ ! -d "$LEGACY_AGENT_DIR" ]; then
+    return 0
+  fi
+
+  for name in enrollment.json mtls-client.crt.pem mtls-client.key.pem mtls-ca.pem agent.db; do
+    src="$LEGACY_AGENT_DIR/$name"
+    dst="$AGENT_DIR/$name"
+    if [ -f "$src" ] && [ ! -f "$dst" ]; then
+      /bin/cp "$src" "$dst"
+      /usr/sbin/chown root:wheel "$dst" || true
+      case "$name" in
+        agent.db) /bin/chmod 600 "$dst" || true ;;
+        *) /bin/chmod 600 "$dst" || true ;;
+      esac
+    fi
+  done
+}
+
+migrate_legacy_agent_state
+
 if [ ! -f "$ENROLLMENT_FILE" ]; then
   TOKEN="${TRACENIUM_ENROLLMENT_TOKEN:-}"
 
@@ -70,14 +113,16 @@ if [ ! -f "$ENROLLMENT_FILE" ]; then
     TOKEN="$(prompt_token || true)"
   fi
 
-  TOKEN="$(/bin/printf "%s" "$TOKEN" | /usr/bin/sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  echo "prompt token length: $(/usr/bin/printf "%s" "$TOKEN" | /usr/bin/wc -c | /usr/bin/awk '{print $1}')"
+
+  TOKEN="$(/usr/bin/printf "%s" "$TOKEN" | /usr/bin/sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 
   if [ -z "$TOKEN" ]; then
     echo "Tracenium enrollment token is required for first install." >&2
     exit 1
   fi
 
-  /bin/printf "%s\n" "$TOKEN" > "$TOKEN_FILE"
+  /usr/bin/printf "%s\n" "$TOKEN" > "$TOKEN_FILE"
   chown root:wheel "$TOKEN_FILE"
   chmod 600 "$TOKEN_FILE"
   /bin/rm -f "$TMP_TOKEN_FILE"
@@ -87,6 +132,9 @@ chown root:wheel /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
 chown root:wheel /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
 chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
 chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
+
+/usr/bin/plutil -lint /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
+/usr/bin/plutil -lint /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
 
 /bin/launchctl bootout system/com.certusws.tracenium.agent >/dev/null 2>&1 || true
 /bin/launchctl bootout system/com.certusws.tracenium.privsvc >/dev/null 2>&1 || true
@@ -98,5 +146,8 @@ chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
 /bin/launchctl bootstrap system /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
 /bin/launchctl enable system/com.certusws.tracenium.agent
 /bin/launchctl kickstart -k system/com.certusws.tracenium.agent
+
+/bin/launchctl print system/com.certusws.tracenium.privsvc || true
+/bin/launchctl print system/com.certusws.tracenium.agent || true
 
 exit 0
