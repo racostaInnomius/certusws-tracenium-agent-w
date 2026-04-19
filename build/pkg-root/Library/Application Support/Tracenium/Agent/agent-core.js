@@ -23753,10 +23753,6 @@ function createGrpcClient(ctx) {
         stream.emit("data", { policyUpdate: params });
         return;
       }
-      if (method === "grpc.control.requestFacts") {
-        stream.emit("data", { requestFacts: params });
-        return;
-      }
       if (method === "grpc.control.disconnect") {
         stream.emit("data", { disconnect: params });
         return;
@@ -24121,9 +24117,6 @@ async function executeRunJob(ctx, runJob) {
     };
   }
   switch (jobType) {
-    case "request_facts":
-    case "requestFacts":
-    case "collect_facts":
     case "facts_snapshot": {
       const factType = String(payload?.factType || "inventory");
       const result2 = await collectFactsSnapshot(ctx, `runJob:${jobId}`, factType);
@@ -24357,21 +24350,6 @@ function startGrpcStream(ctx) {
       } catch (err) {
         ctx.logger?.error?.("policyUpdate handler error", err?.message || err);
       }
-      return;
-    }
-    if (msg.requestFacts) {
-      ctx.logger?.info?.("gRPC control message: requestFacts received", msg.requestFacts);
-      (async () => {
-        try {
-          await collectFactsSnapshot(
-            ctx,
-            "requestFacts",
-            String(msg.requestFacts?.factType || "inventory")
-          );
-        } catch (err) {
-          ctx.logger?.error?.("requestFacts immediate collection failed", err?.message || err);
-        }
-      })();
       return;
     }
     if (msg.agentUpdate) {

@@ -1055,6 +1055,7 @@ private const int MaxPendingPushEvents = 50;
                         method = "grpc.control.policyUpdate",
                         @params = new
                         {
+                            eventId = msg.PolicyUpdate.EventId ?? string.Empty,
                             policyVersion = msg.PolicyUpdate.PolicyVersion ?? string.Empty,
                             policyJson = msg.PolicyUpdate.PolicyJson?.ToByteArray() is byte[] bytes
                                 ? System.Text.Encoding.UTF8.GetString(bytes)

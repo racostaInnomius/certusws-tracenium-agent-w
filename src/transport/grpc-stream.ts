@@ -371,15 +371,21 @@ stream = client.Connect();
 
     if (msg.policyUpdate) {
       try {
+        const eventId = String(
+          msg.policyUpdate?.eventId ||
+          `policy:${ctx.enrollment.tenantId}:${ctx.enrollment.deviceId}:${String(msg.policyUpdate?.policyVersion || "")}`
+        ).trim();
         const policyVersion = String(msg.policyUpdate?.policyVersion || "");
         const payload = msg.policyUpdate?.policyJson;
 
         ctx.logger?.info?.("gRPC control message: policyUpdate received", {
+          eventId,
           policyVersion
         });
 
         if (!policyVersion || !payload) {
           ctx.logger?.warn?.("policyUpdate ignored: missing required fields");
+          sendControlAck(ctx, eventId, 2, "policy_update rejected: missing required fields").catch(() => {});
           return;
         }
 
@@ -390,6 +396,7 @@ stream = client.Connect();
           parsed = JSON.parse(payloadStr);
         } catch (e) {
           ctx.logger?.error?.("policyUpdate JSON parse failed", e);
+          sendControlAck(ctx, eventId, 2, "policy_update rejected: invalid json").catch(() => {});
           return;
         }
 
@@ -397,23 +404,23 @@ stream = client.Connect();
 
         const localHash = ctx.policy.getHash();
         if (localHash === computedHash) {
-          ctx.logger?.info?.("policyUpdate skipped: already applied", { policyVersion });
+          ctx.logger?.info?.("policyUpdate skipped: already applied", { eventId, policyVersion });
+          sendControlAck(ctx, eventId, 0, "policy_already_applied").catch(() => {});
           return;
         }
 
         ctx.policy
           .save(policyVersion, computedHash, parsed)
           .then(async () => {
-            ctx.logger?.info?.("Policy successfully updated", { policyVersion });
-            try {
-              await ctx.policyRuntime.applyUpdate();
-              ctx.logger?.info?.("Policy runtime reloaded", ctx.policyRuntime.snapshot());
-            } catch (err: any) {
-              ctx.logger?.error?.("Policy runtime reload failed", err?.message || err);
-            }
+            ctx.logger?.info?.("Policy successfully updated", { eventId, policyVersion });
+            await ctx.policyRuntime.applyUpdate();
+            ctx.logger?.info?.("Policy runtime reloaded", ctx.policyRuntime.snapshot());
+            await sendControlAck(ctx, eventId, 0, "policy_applied");
           })
-          .catch((err: any) => {
-            ctx.logger?.error?.("Policy save failed", err?.message || err);
+          .catch(async (err: any) => {
+            const message = String(err?.message || err || "policy_apply_failed");
+            ctx.logger?.error?.("policyUpdate apply failed", { eventId, policyVersion, err: message });
+            await sendControlAck(ctx, eventId, 2, message);
           });
 
       } catch (err: any) {

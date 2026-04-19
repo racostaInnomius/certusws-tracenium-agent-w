@@ -159,11 +159,16 @@ function buildAgentInfo(ctx: AgentContext) {
       ? "macos"
       : "linux";
 
+  const capabilities = Array.from(new Set([
+    ...(ctx.enrollment.bootstrap.capabilities || []),
+    ...ctx.policyRuntime.getEnabledPlugins()
+  ])) as AgentCapability[];
+
   return {
     agentVersion: ctx.config.agentVersion,
     coreVersion: ctx.config.coreVersion,
     osProvider: platform,
-    capabilities: ctx.enrollment.bootstrap.capabilities as AgentCapability[],
+    capabilities,
     install: {
       // Nota v1: installId podría ser distinto a deviceId; lo dejamos así por ahora.
       installId: ctx.enrollment.deviceId,

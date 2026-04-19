@@ -101,6 +101,7 @@ function handleControlMessage(msg: any) {
 
   if (msg.policyUpdate) {
     push("grpc.control.policyUpdate", {
+      eventId: msg.policyUpdate.eventId || "",
       policyVersion: msg.policyUpdate.policyVersion || "",
       policyJson: decodeBytes(msg.policyUpdate.policyJson),
       receivedAtUtc: new Date().toISOString()

@@ -24556,13 +24556,6 @@ function handleControlMessage(msg) {
     });
     return;
   }
-  if (msg.requestFacts) {
-    push("grpc.control.requestFacts", {
-      factType: msg.requestFacts.factType || "inventory",
-      receivedAtUtc: (/* @__PURE__ */ new Date()).toISOString()
-    });
-    return;
-  }
   if (msg.disconnect) {
     push("grpc.control.disconnect", {
       reason: msg.disconnect.reason || "server_request",

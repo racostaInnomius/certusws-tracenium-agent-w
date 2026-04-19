@@ -7,6 +7,9 @@ export type RuntimePolicy = {
   inventory?: {
     intervalSeconds?: number;
   };
+  compliance?: {
+    intervalSeconds?: number;
+  };
   plugins?: {
     enabled?: string[];
   };
@@ -29,6 +32,9 @@ type RuntimeFeatureName = keyof NonNullable<RuntimePolicy["features"]>;
 const DEFAULT_POLICY: RuntimePolicy = {
   inventory: {
     intervalSeconds: 21600 // 6h
+  },
+  compliance: {
+    intervalSeconds: 28800 // 8h
   },
   plugins: {
     enabled: ["amp"]
@@ -83,6 +89,10 @@ export class PolicyRuntime extends EventEmitter {
 
   getInventoryInterval(): number {
     return this.policy.inventory?.intervalSeconds || DEFAULT_POLICY.inventory!.intervalSeconds!;
+  }
+
+  getComplianceInterval(): number {
+    return this.policy.compliance?.intervalSeconds || DEFAULT_POLICY.compliance!.intervalSeconds!;
   }
 
   getEnabledPlugins(): string[] {
@@ -159,6 +169,10 @@ export class PolicyRuntime extends EventEmitter {
         ...DEFAULT_POLICY.inventory,
         ...policy.inventory
       },
+      compliance: {
+        ...DEFAULT_POLICY.compliance,
+        ...policy.compliance
+      },
       plugins: {
         ...DEFAULT_POLICY.plugins,
         ...policy.plugins
@@ -180,6 +194,14 @@ export class PolicyRuntime extends EventEmitter {
     ) {
       this.logger?.warn?.("Invalid inventory interval in policy, reverting to default");
       validated.inventory!.intervalSeconds = DEFAULT_POLICY.inventory!.intervalSeconds;
+    }
+
+    if (
+      validated.compliance?.intervalSeconds &&
+      (validated.compliance.intervalSeconds < 300 || validated.compliance.intervalSeconds > 86400)
+    ) {
+      this.logger?.warn?.("Invalid compliance interval in policy, reverting to default");
+      validated.compliance!.intervalSeconds = DEFAULT_POLICY.compliance!.intervalSeconds;
     }
 
     // validate plugins
@@ -211,6 +233,7 @@ export class PolicyRuntime extends EventEmitter {
     return {
       version: this.store.getVersion(),
       inventoryInterval: this.getInventoryInterval(),
+      complianceInterval: this.getComplianceInterval(),
       plugins: this.getEnabledPlugins(),
       modules: this.listEnabledModules(),
       features: this.policy.features
