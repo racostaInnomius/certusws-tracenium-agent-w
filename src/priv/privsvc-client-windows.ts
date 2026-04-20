@@ -21,6 +21,8 @@ function getTimeoutForMethod(method: string): number {
     case "security.compliance":
     case "patch.scan":
       return 30000;
+    case "patch.install":
+      return 60 * 60 * 1000;
     default:
       return DEFAULT_TIMEOUT_MS;
   }

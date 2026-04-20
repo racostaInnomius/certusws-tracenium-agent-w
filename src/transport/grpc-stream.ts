@@ -25,7 +25,7 @@ async function collectFactsSnapshot(
 ) {
   const namespaces = {} as Namespaces;
 
-  if (ctx.policyRuntime.isInventoryEnabled() && ctx.policyRuntime.pluginEnabled("amp")) {
+  if ((factType === "inventory" || factType === "all") && ctx.policyRuntime.isInventoryEnabled() && ctx.policyRuntime.pluginEnabled("amp")) {
     try {
       namespaces.amp = await ctx.plugins.run("amp.collect");
     } catch (err) {
@@ -33,7 +33,7 @@ async function collectFactsSnapshot(
     }
   }
 
-  if (ctx.policyRuntime.isComplianceEnabled() && ctx.policyRuntime.pluginEnabled("scp")) {
+  if ((factType === "compliance" || factType === "all") && ctx.policyRuntime.isComplianceEnabled() && ctx.policyRuntime.pluginEnabled("scp")) {
     try {
       namespaces.scp = await ctx.plugins.run("scp.collect");
     } catch (err) {
@@ -41,7 +41,7 @@ async function collectFactsSnapshot(
     }
   }
 
-  if (ctx.policyRuntime.isPatchEnabled() && ctx.policyRuntime.pluginEnabled("pmp")) {
+  if ((factType === "patch" || factType === "all") && ctx.policyRuntime.isPatchEnabled() && ctx.policyRuntime.pluginEnabled("pmp")) {
     try {
       namespaces.pmp = await ctx.plugins.run("pmp.collect");
     } catch (err) {
@@ -171,6 +171,113 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
         status: 0,
         message: `facts_enqueued:${result.outboxId}`
       };
+    }
+
+    case "patch_scan": {
+      if (!ctx.policyRuntime.isPatchEnabled()) {
+        return {
+          status: 2,
+          message: "patch_scan rejected: patch module disabled by policy"
+        };
+      }
+
+      if (!ctx.policyRuntime.pluginEnabled("pmp")) {
+        return {
+          status: 2,
+          message: "patch_scan rejected: pmp plugin disabled by policy"
+        };
+      }
+
+      const result = await collectFactsSnapshot(ctx, `runJob:${jobId}`, "patch");
+      return {
+        status: 0,
+        message: `patch_scan_enqueued:${result.outboxId}`
+      };
+    }
+
+    case "patch_install": {
+      if (!ctx.policyRuntime.isPatchEnabled()) {
+        return {
+          status: 2,
+          message: "patch_install rejected: patch module disabled by policy"
+        };
+      }
+
+      if (!ctx.policyRuntime.pluginEnabled("pmp")) {
+        return {
+          status: 2,
+          message: "patch_install rejected: pmp plugin disabled by policy"
+        };
+      }
+
+      if ((ctx as any)._patchInstallInProgress) {
+        return {
+          status: 1,
+          message: "patch_install retry: patch install already in progress"
+        };
+      }
+
+      const mode = String(payload?.mode || "install").trim().toLowerCase();
+      const kbArticleIds = Array.isArray(payload?.kbArticleIds)
+        ? payload.kbArticleIds.map((item: unknown) => String(item || "").trim()).filter(Boolean)
+        : [];
+
+      if (mode !== "install" && mode !== "download") {
+        return {
+          status: 2,
+          message: "patch_install rejected: invalid mode"
+        };
+      }
+
+      (ctx as any)._patchInstallInProgress = true;
+      try {
+        const resp = await ctx.priv.call({
+          v: 1,
+          id: `patch-install-${jobId}-${Date.now()}`,
+          method: "patch.install",
+          params: {
+            mode,
+            kbArticleIds
+          },
+          meta: {
+            tenantId: ctx.enrollment.tenantId,
+            deviceId: ctx.enrollment.deviceId
+          }
+        });
+
+        if (!resp?.ok) {
+          return {
+            status: 2,
+            message: `patch_install failed: ${String(resp?.error?.message || "patch.install failed")}`
+          };
+        }
+
+        try {
+          await collectFactsSnapshot(ctx, `runJob:${jobId}:post_patch_install`, "patch");
+        } catch (err) {
+          ctx.logger?.warn?.("Post patch-install scan enqueue failed", { err, jobId });
+        }
+
+        const result = resp.result || {};
+        const resultStatus = String(result?.status || "").trim().toLowerCase();
+        const installedCount = Number(result?.installedCount ?? 0);
+        const failedCount = Number(result?.failedCount ?? 0);
+        const rebootRequired = result?.rebootRequired === true;
+
+        if (resultStatus === "success" || resultStatus === "no_updates") {
+          return {
+            status: 0,
+            message: `patch_install ${resultStatus}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
+          };
+        }
+
+        return {
+          status: 2,
+          message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
+        };
+      } finally {
+        (ctx as any)._patchInstallInProgress = false;
+      }
     }
 
     case "agent_update": {

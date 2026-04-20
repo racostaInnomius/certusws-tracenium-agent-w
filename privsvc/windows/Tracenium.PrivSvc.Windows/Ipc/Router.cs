@@ -75,6 +75,7 @@ public sealed class Router
             "software.inventory" => SoftwareInventory.Handle(req),
             "security.compliance" => SecurityCompliance.Handle(req),
             "patch.scan" => PatchManagement.HandleScan(req),
+            "patch.install" => PatchManagement.HandleInstall(req),
 
             // Crypto
             "crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),

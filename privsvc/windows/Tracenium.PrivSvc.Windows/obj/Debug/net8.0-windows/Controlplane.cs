@@ -39,27 +39,25 @@ namespace Tracenium.Control {
             "ASgDEhQKDGFnZW50VmVyc2lvbhgEIAEoCRIVCg1wb2xpY3lWZXJzaW9uGAUg",
             "ASgJIj0KBlJ1bkpvYhINCgVqb2JJZBgBIAEoCRIPCgdqb2JUeXBlGAIgASgJ",
             "EhMKC3BheWxvYWRKc29uGAMgASgMIhwKClJvdGF0ZUNlcnQSDgoGcmVhc29u",
-            "GAEgASgJIjkKDFBvbGljeVVwZGF0ZRIVCg1wb2xpY3lWZXJzaW9uGAEgASgJ",
-            "EhIKCnBvbGljeUpzb24YAiABKAwiHAoKRGlzY29ubmVjdBIOCgZyZWFzb24Y",
-            "ASABKAkiLQoLQWdlbnRVcGRhdGUSDQoFam9iSWQYASABKAkSDwoHdmVyc2lv",
-            "bhgCIAEoCSIgCgxSZXF1ZXN0RmFjdHMSEAoIZmFjdFR5cGUYASABKAkiwwQK",
-            "DkNvbnRyb2xNZXNzYWdlEg8KB3RyYWNlSWQYCiABKAkSKQoFaGVsbG8YASAB",
-            "KAsyGC50cmFjZW5pdW0uY29udHJvbC5IZWxsb0gAEikKBWZhY3RzGAIgASgL",
-            "MhgudHJhY2VuaXVtLmNvbnRyb2wuRmFjdHNIABIxCgloZWFydGJlYXQYAyAB",
-            "KAsyHC50cmFjZW5pdW0uY29udHJvbC5IZWFydGJlYXRIABIrCgZydW5Kb2IY",
-            "BCABKAsyGS50cmFjZW5pdW0uY29udHJvbC5SdW5Kb2JIABIzCgpyb3RhdGVD",
-            "ZXJ0GAUgASgLMh0udHJhY2VuaXVtLmNvbnRyb2wuUm90YXRlQ2VydEgAEjcK",
-            "DHBvbGljeVVwZGF0ZRgGIAEoCzIfLnRyYWNlbml1bS5jb250cm9sLlBvbGlj",
-            "eVVwZGF0ZUgAEjMKCmRpc2Nvbm5lY3QYByABKAsyHS50cmFjZW5pdW0uY29u",
-            "dHJvbC5EaXNjb25uZWN0SAASNQoLYWdlbnRVcGRhdGUYCCABKAsyHi50cmFj",
-            "ZW5pdW0uY29udHJvbC5BZ2VudFVwZGF0ZUgAEjcKDHJlcXVlc3RGYWN0cxgJ",
-            "IAEoCzIfLnRyYWNlbml1bS5jb250cm9sLlJlcXVlc3RGYWN0c0gAEiUKA2Fj",
-            "axgLIAEoCzIWLnRyYWNlbml1bS5jb250cm9sLkFja0gAEikKBWVycm9yGAwg",
-            "ASgLMhgudHJhY2VuaXVtLmNvbnRyb2wuRXJyb3JIAEIFCgNtc2cqOAoJQWNr",
-            "U3RhdHVzEgoKBkFDS19PSxAAEg0KCUFDS19SRVRSWRABEhAKDEFDS19SRUpF",
-            "Q1RFRBACMmMKDENvbnRyb2xQbGFuZRJTCgdDb25uZWN0EiEudHJhY2VuaXVt",
-            "LmNvbnRyb2wuQ29udHJvbE1lc3NhZ2UaIS50cmFjZW5pdW0uY29udHJvbC5D",
-            "b250cm9sTWVzc2FnZSgBMAFiBnByb3RvMw=="));
+            "GAEgASgJIkoKDFBvbGljeVVwZGF0ZRIPCgdldmVudElkGAEgASgJEhUKDXBv",
+            "bGljeVZlcnNpb24YAiABKAkSEgoKcG9saWN5SnNvbhgDIAEoDCIcCgpEaXNj",
+            "b25uZWN0Eg4KBnJlYXNvbhgBIAEoCSItCgtBZ2VudFVwZGF0ZRINCgVqb2JJ",
+            "ZBgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJIooECg5Db250cm9sTWVzc2FnZRIP",
+            "Cgd0cmFjZUlkGAogASgJEikKBWhlbGxvGAEgASgLMhgudHJhY2VuaXVtLmNv",
+            "bnRyb2wuSGVsbG9IABIpCgVmYWN0cxgCIAEoCzIYLnRyYWNlbml1bS5jb250",
+            "cm9sLkZhY3RzSAASMQoJaGVhcnRiZWF0GAMgASgLMhwudHJhY2VuaXVtLmNv",
+            "bnRyb2wuSGVhcnRiZWF0SAASKwoGcnVuSm9iGAQgASgLMhkudHJhY2VuaXVt",
+            "LmNvbnRyb2wuUnVuSm9iSAASMwoKcm90YXRlQ2VydBgFIAEoCzIdLnRyYWNl",
+            "bml1bS5jb250cm9sLlJvdGF0ZUNlcnRIABI3Cgxwb2xpY3lVcGRhdGUYBiAB",
+            "KAsyHy50cmFjZW5pdW0uY29udHJvbC5Qb2xpY3lVcGRhdGVIABIzCgpkaXNj",
+            "b25uZWN0GAcgASgLMh0udHJhY2VuaXVtLmNvbnRyb2wuRGlzY29ubmVjdEgA",
+            "EjUKC2FnZW50VXBkYXRlGAggASgLMh4udHJhY2VuaXVtLmNvbnRyb2wuQWdl",
+            "bnRVcGRhdGVIABIlCgNhY2sYCyABKAsyFi50cmFjZW5pdW0uY29udHJvbC5B",
+            "Y2tIABIpCgVlcnJvchgMIAEoCzIYLnRyYWNlbml1bS5jb250cm9sLkVycm9y",
+            "SABCBQoDbXNnKjgKCUFja1N0YXR1cxIKCgZBQ0tfT0sQABINCglBQ0tfUkVU",
+            "UlkQARIQCgxBQ0tfUkVKRUNURUQQAjJjCgxDb250cm9sUGxhbmUSUwoHQ29u",
+            "bmVjdBIhLnRyYWNlbml1bS5jb250cm9sLkNvbnRyb2xNZXNzYWdlGiEudHJh",
+            "Y2VuaXVtLmNvbnRyb2wuQ29udHJvbE1lc3NhZ2UoATABYgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::Tracenium.Control.AckStatus), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -70,11 +68,10 @@ namespace Tracenium.Control {
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Heartbeat), global::Tracenium.Control.Heartbeat.Parser, new[]{ "EventId", "DeviceId", "UptimeSeconds", "AgentVersion", "PolicyVersion" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RunJob), global::Tracenium.Control.RunJob.Parser, new[]{ "JobId", "JobType", "PayloadJson" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RotateCert), global::Tracenium.Control.RotateCert.Parser, new[]{ "Reason" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.PolicyUpdate), global::Tracenium.Control.PolicyUpdate.Parser, new[]{ "PolicyVersion", "PolicyJson" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.PolicyUpdate), global::Tracenium.Control.PolicyUpdate.Parser, new[]{ "EventId", "PolicyVersion", "PolicyJson" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Disconnect), global::Tracenium.Control.Disconnect.Parser, new[]{ "Reason" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.AgentUpdate), global::Tracenium.Control.AgentUpdate.Parser, new[]{ "JobId", "Version" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RequestFacts), global::Tracenium.Control.RequestFacts.Parser, new[]{ "FactType" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.ControlMessage), global::Tracenium.Control.ControlMessage.Parser, new[]{ "TraceId", "Hello", "Facts", "Heartbeat", "RunJob", "RotateCert", "PolicyUpdate", "Disconnect", "AgentUpdate", "RequestFacts", "Ack", "Error" }, new[]{ "Msg" }, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.ControlMessage), global::Tracenium.Control.ControlMessage.Parser, new[]{ "TraceId", "Hello", "Facts", "Heartbeat", "RunJob", "RotateCert", "PolicyUpdate", "Disconnect", "AgentUpdate", "Ack", "Error" }, new[]{ "Msg" }, null, null, null)
           }));
     }
     #endregion
@@ -2269,6 +2266,7 @@ namespace Tracenium.Control {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public PolicyUpdate(PolicyUpdate other) : this() {
+      eventId_ = other.eventId_;
       policyVersion_ = other.policyVersion_;
       policyJson_ = other.policyJson_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
@@ -2280,8 +2278,20 @@ namespace Tracenium.Control {
       return new PolicyUpdate(this);
     }
 
+    /// <summary>Field number for the "eventId" field.</summary>
+    public const int EventIdFieldNumber = 1;
+    private string eventId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string EventId {
+      get { return eventId_; }
+      set {
+        eventId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
     /// <summary>Field number for the "policyVersion" field.</summary>
-    public const int PolicyVersionFieldNumber = 1;
+    public const int PolicyVersionFieldNumber = 2;
     private string policyVersion_ = "";
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -2293,7 +2303,7 @@ namespace Tracenium.Control {
     }
 
     /// <summary>Field number for the "policyJson" field.</summary>
-    public const int PolicyJsonFieldNumber = 2;
+    public const int PolicyJsonFieldNumber = 3;
     private pb::ByteString policyJson_ = pb::ByteString.Empty;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
@@ -2319,6 +2329,7 @@ namespace Tracenium.Control {
       if (ReferenceEquals(other, this)) {
         return true;
       }
+      if (EventId != other.EventId) return false;
       if (PolicyVersion != other.PolicyVersion) return false;
       if (PolicyJson != other.PolicyJson) return false;
       return Equals(_unknownFields, other._unknownFields);
@@ -2328,6 +2339,7 @@ namespace Tracenium.Control {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override int GetHashCode() {
       int hash = 1;
+      if (EventId.Length != 0) hash ^= EventId.GetHashCode();
       if (PolicyVersion.Length != 0) hash ^= PolicyVersion.GetHashCode();
       if (PolicyJson.Length != 0) hash ^= PolicyJson.GetHashCode();
       if (_unknownFields != null) {
@@ -2348,12 +2360,16 @@ namespace Tracenium.Control {
     #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       output.WriteRawMessage(this);
     #else
-      if (PolicyVersion.Length != 0) {
+      if (EventId.Length != 0) {
         output.WriteRawTag(10);
+        output.WriteString(EventId);
+      }
+      if (PolicyVersion.Length != 0) {
+        output.WriteRawTag(18);
         output.WriteString(PolicyVersion);
       }
       if (PolicyJson.Length != 0) {
-        output.WriteRawTag(18);
+        output.WriteRawTag(26);
         output.WriteBytes(PolicyJson);
       }
       if (_unknownFields != null) {
@@ -2366,12 +2382,16 @@ namespace Tracenium.Control {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
-      if (PolicyVersion.Length != 0) {
+      if (EventId.Length != 0) {
         output.WriteRawTag(10);
+        output.WriteString(EventId);
+      }
+      if (PolicyVersion.Length != 0) {
+        output.WriteRawTag(18);
         output.WriteString(PolicyVersion);
       }
       if (PolicyJson.Length != 0) {
-        output.WriteRawTag(18);
+        output.WriteRawTag(26);
         output.WriteBytes(PolicyJson);
       }
       if (_unknownFields != null) {
@@ -2384,6 +2404,9 @@ namespace Tracenium.Control {
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public int CalculateSize() {
       int size = 0;
+      if (EventId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(EventId);
+      }
       if (PolicyVersion.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(PolicyVersion);
       }
@@ -2401,6 +2424,9 @@ namespace Tracenium.Control {
     public void MergeFrom(PolicyUpdate other) {
       if (other == null) {
         return;
+      }
+      if (other.EventId.Length != 0) {
+        EventId = other.EventId;
       }
       if (other.PolicyVersion.Length != 0) {
         PolicyVersion = other.PolicyVersion;
@@ -2428,10 +2454,14 @@ namespace Tracenium.Control {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
             break;
           case 10: {
-            PolicyVersion = input.ReadString();
+            EventId = input.ReadString();
             break;
           }
           case 18: {
+            PolicyVersion = input.ReadString();
+            break;
+          }
+          case 26: {
             PolicyJson = input.ReadBytes();
             break;
           }
@@ -2455,10 +2485,14 @@ namespace Tracenium.Control {
             _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
             break;
           case 10: {
-            PolicyVersion = input.ReadString();
+            EventId = input.ReadString();
             break;
           }
           case 18: {
+            PolicyVersion = input.ReadString();
+            break;
+          }
+          case 26: {
             PolicyJson = input.ReadBytes();
             break;
           }
@@ -2903,204 +2937,6 @@ namespace Tracenium.Control {
   }
 
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
-  public sealed partial class RequestFacts : pb::IMessage<RequestFacts>
-  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-      , pb::IBufferMessage
-  #endif
-  {
-    private static readonly pb::MessageParser<RequestFacts> _parser = new pb::MessageParser<RequestFacts>(() => new RequestFacts());
-    private pb::UnknownFieldSet _unknownFields;
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public static pb::MessageParser<RequestFacts> Parser { get { return _parser; } }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public static pbr::MessageDescriptor Descriptor {
-      get { return global::Tracenium.Control.ControlplaneReflection.Descriptor.MessageTypes[10]; }
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    pbr::MessageDescriptor pb::IMessage.Descriptor {
-      get { return Descriptor; }
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RequestFacts() {
-      OnConstruction();
-    }
-
-    partial void OnConstruction();
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RequestFacts(RequestFacts other) : this() {
-      factType_ = other.factType_;
-      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public RequestFacts Clone() {
-      return new RequestFacts(this);
-    }
-
-    /// <summary>Field number for the "factType" field.</summary>
-    public const int FactTypeFieldNumber = 1;
-    private string factType_ = "";
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public string FactType {
-      get { return factType_; }
-      set {
-        factType_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
-      }
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public override bool Equals(object other) {
-      return Equals(other as RequestFacts);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public bool Equals(RequestFacts other) {
-      if (ReferenceEquals(other, null)) {
-        return false;
-      }
-      if (ReferenceEquals(other, this)) {
-        return true;
-      }
-      if (FactType != other.FactType) return false;
-      return Equals(_unknownFields, other._unknownFields);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public override int GetHashCode() {
-      int hash = 1;
-      if (FactType.Length != 0) hash ^= FactType.GetHashCode();
-      if (_unknownFields != null) {
-        hash ^= _unknownFields.GetHashCode();
-      }
-      return hash;
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public override string ToString() {
-      return pb::JsonFormatter.ToDiagnosticString(this);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void WriteTo(pb::CodedOutputStream output) {
-    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-      output.WriteRawMessage(this);
-    #else
-      if (FactType.Length != 0) {
-        output.WriteRawTag(10);
-        output.WriteString(FactType);
-      }
-      if (_unknownFields != null) {
-        _unknownFields.WriteTo(output);
-      }
-    #endif
-    }
-
-    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
-      if (FactType.Length != 0) {
-        output.WriteRawTag(10);
-        output.WriteString(FactType);
-      }
-      if (_unknownFields != null) {
-        _unknownFields.WriteTo(ref output);
-      }
-    }
-    #endif
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public int CalculateSize() {
-      int size = 0;
-      if (FactType.Length != 0) {
-        size += 1 + pb::CodedOutputStream.ComputeStringSize(FactType);
-      }
-      if (_unknownFields != null) {
-        size += _unknownFields.CalculateSize();
-      }
-      return size;
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void MergeFrom(RequestFacts other) {
-      if (other == null) {
-        return;
-      }
-      if (other.FactType.Length != 0) {
-        FactType = other.FactType;
-      }
-      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
-    }
-
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public void MergeFrom(pb::CodedInputStream input) {
-    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-      input.ReadRawMessage(this);
-    #else
-      uint tag;
-      while ((tag = input.ReadTag()) != 0) {
-      if ((tag & 7) == 4) {
-        // Abort on any end group tag.
-        return;
-      }
-      switch(tag) {
-          default:
-            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
-            break;
-          case 10: {
-            FactType = input.ReadString();
-            break;
-          }
-        }
-      }
-    #endif
-    }
-
-    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
-      uint tag;
-      while ((tag = input.ReadTag()) != 0) {
-      if ((tag & 7) == 4) {
-        // Abort on any end group tag.
-        return;
-      }
-      switch(tag) {
-          default:
-            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
-            break;
-          case 10: {
-            FactType = input.ReadString();
-            break;
-          }
-        }
-      }
-    }
-    #endif
-
-  }
-
-  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
   public sealed partial class ControlMessage : pb::IMessage<ControlMessage>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
       , pb::IBufferMessage
@@ -3115,7 +2951,7 @@ namespace Tracenium.Control {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::Tracenium.Control.ControlplaneReflection.Descriptor.MessageTypes[11]; }
+      get { return global::Tracenium.Control.ControlplaneReflection.Descriptor.MessageTypes[10]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3160,9 +2996,6 @@ namespace Tracenium.Control {
           break;
         case MsgOneofCase.AgentUpdate:
           AgentUpdate = other.AgentUpdate.Clone();
-          break;
-        case MsgOneofCase.RequestFacts:
-          RequestFacts = other.RequestFacts.Clone();
           break;
         case MsgOneofCase.Ack:
           Ack = other.Ack.Clone();
@@ -3295,18 +3128,6 @@ namespace Tracenium.Control {
       }
     }
 
-    /// <summary>Field number for the "requestFacts" field.</summary>
-    public const int RequestFactsFieldNumber = 9;
-    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
-    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
-    public global::Tracenium.Control.RequestFacts RequestFacts {
-      get { return msgCase_ == MsgOneofCase.RequestFacts ? (global::Tracenium.Control.RequestFacts) msg_ : null; }
-      set {
-        msg_ = value;
-        msgCase_ = value == null ? MsgOneofCase.None : MsgOneofCase.RequestFacts;
-      }
-    }
-
     /// <summary>Field number for the "ack" field.</summary>
     public const int AckFieldNumber = 11;
     /// <summary>
@@ -3346,7 +3167,6 @@ namespace Tracenium.Control {
       PolicyUpdate = 6,
       Disconnect = 7,
       AgentUpdate = 8,
-      RequestFacts = 9,
       Ack = 11,
       Error = 12,
     }
@@ -3388,7 +3208,6 @@ namespace Tracenium.Control {
       if (!object.Equals(PolicyUpdate, other.PolicyUpdate)) return false;
       if (!object.Equals(Disconnect, other.Disconnect)) return false;
       if (!object.Equals(AgentUpdate, other.AgentUpdate)) return false;
-      if (!object.Equals(RequestFacts, other.RequestFacts)) return false;
       if (!object.Equals(Ack, other.Ack)) return false;
       if (!object.Equals(Error, other.Error)) return false;
       if (MsgCase != other.MsgCase) return false;
@@ -3408,7 +3227,6 @@ namespace Tracenium.Control {
       if (msgCase_ == MsgOneofCase.PolicyUpdate) hash ^= PolicyUpdate.GetHashCode();
       if (msgCase_ == MsgOneofCase.Disconnect) hash ^= Disconnect.GetHashCode();
       if (msgCase_ == MsgOneofCase.AgentUpdate) hash ^= AgentUpdate.GetHashCode();
-      if (msgCase_ == MsgOneofCase.RequestFacts) hash ^= RequestFacts.GetHashCode();
       if (msgCase_ == MsgOneofCase.Ack) hash ^= Ack.GetHashCode();
       if (msgCase_ == MsgOneofCase.Error) hash ^= Error.GetHashCode();
       hash ^= (int) msgCase_;
@@ -3461,10 +3279,6 @@ namespace Tracenium.Control {
       if (msgCase_ == MsgOneofCase.AgentUpdate) {
         output.WriteRawTag(66);
         output.WriteMessage(AgentUpdate);
-      }
-      if (msgCase_ == MsgOneofCase.RequestFacts) {
-        output.WriteRawTag(74);
-        output.WriteMessage(RequestFacts);
       }
       if (TraceId.Length != 0) {
         output.WriteRawTag(82);
@@ -3520,10 +3334,6 @@ namespace Tracenium.Control {
         output.WriteRawTag(66);
         output.WriteMessage(AgentUpdate);
       }
-      if (msgCase_ == MsgOneofCase.RequestFacts) {
-        output.WriteRawTag(74);
-        output.WriteMessage(RequestFacts);
-      }
       if (TraceId.Length != 0) {
         output.WriteRawTag(82);
         output.WriteString(TraceId);
@@ -3572,9 +3382,6 @@ namespace Tracenium.Control {
       }
       if (msgCase_ == MsgOneofCase.AgentUpdate) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(AgentUpdate);
-      }
-      if (msgCase_ == MsgOneofCase.RequestFacts) {
-        size += 1 + pb::CodedOutputStream.ComputeMessageSize(RequestFacts);
       }
       if (msgCase_ == MsgOneofCase.Ack) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(Ack);
@@ -3645,12 +3452,6 @@ namespace Tracenium.Control {
             AgentUpdate = new global::Tracenium.Control.AgentUpdate();
           }
           AgentUpdate.MergeFrom(other.AgentUpdate);
-          break;
-        case MsgOneofCase.RequestFacts:
-          if (RequestFacts == null) {
-            RequestFacts = new global::Tracenium.Control.RequestFacts();
-          }
-          RequestFacts.MergeFrom(other.RequestFacts);
           break;
         case MsgOneofCase.Ack:
           if (Ack == null) {
@@ -3755,15 +3556,6 @@ namespace Tracenium.Control {
             }
             input.ReadMessage(subBuilder);
             AgentUpdate = subBuilder;
-            break;
-          }
-          case 74: {
-            global::Tracenium.Control.RequestFacts subBuilder = new global::Tracenium.Control.RequestFacts();
-            if (msgCase_ == MsgOneofCase.RequestFacts) {
-              subBuilder.MergeFrom(RequestFacts);
-            }
-            input.ReadMessage(subBuilder);
-            RequestFacts = subBuilder;
             break;
           }
           case 82: {
@@ -3877,15 +3669,6 @@ namespace Tracenium.Control {
             }
             input.ReadMessage(subBuilder);
             AgentUpdate = subBuilder;
-            break;
-          }
-          case 74: {
-            global::Tracenium.Control.RequestFacts subBuilder = new global::Tracenium.Control.RequestFacts();
-            if (msgCase_ == MsgOneofCase.RequestFacts) {
-              subBuilder.MergeFrom(RequestFacts);
-            }
-            input.ReadMessage(subBuilder);
-            RequestFacts = subBuilder;
             break;
           }
           case 82: {
