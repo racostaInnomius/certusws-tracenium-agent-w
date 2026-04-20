@@ -6,6 +6,7 @@ import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { AgentContext } from "./agent-context";
 import type { Namespaces } from "../domain/device-facts";
 import type { AmpNamespace } from "../domain/amp-types";
+import type { PmpNamespace } from "../domain/pmp-types";
 import type { ScpNamespace } from "../domain/scp-types";
 import { runUpdateTask } from "../update/update-task";
 import crypto from "crypto";
@@ -53,6 +54,11 @@ function buildScpStateForHash(namespace: ScpNamespace) {
   return rest;
 }
 
+function buildPmpStateForHash(namespace: PmpNamespace) {
+  const { hasChanges: _ignored, ...rest } = namespace;
+  return rest;
+}
+
 class Scheduler {
 
   private timers: Map<string, NodeJS.Timeout> = new Map();
@@ -60,6 +66,7 @@ class Scheduler {
   private inventoryRunning: boolean = false;
   private complianceRunning: boolean = false;
   private updateRunning: boolean = false;
+  private patchRunning: boolean = false;
   private policyListeners: Array<{
     event: string;
     handler: (...args: any[]) => void;
@@ -223,8 +230,15 @@ class Scheduler {
 
       logger.info("Patch pipeline enabled", { intervalSeconds });
 
+      this.runPatch(ctx).catch(err =>
+        logger.error("Patch pipeline initial run error", { err })
+      );
+
       const timer = setInterval(() => {
-        logger.info("Patch pipeline tick (not implemented yet)");
+        logger.info("[scheduler] patch tick");
+        this.runPatch(ctx).catch(err =>
+          logger.error("Patch pipeline error", { err })
+        );
       }, intervalSeconds * 1000);
 
       this.timers.set("patch", timer);
@@ -441,6 +455,81 @@ class Scheduler {
     } finally {
 
       this.updateRunning = false;
+
+    }
+  }
+
+  private async runPatch(ctx: AgentContext) {
+
+    if (!ctx.policyRuntime.isPatchEnabled()) {
+      logger.info("Patch module disabled by policy, skipping patch scan");
+      return;
+    }
+
+    if (!ctx.policyRuntime.pluginEnabled("pmp")) {
+      logger.info("PMP plugin disabled by policy, skipping patch scan");
+      return;
+    }
+
+    if ((this as any).patchRunning) {
+      logger.warn("Patch scan already running, skipping overlapping execution");
+      return;
+    }
+
+    (this as any).patchRunning = true;
+
+    try {
+      logger.info("Collecting PMP facts...");
+
+      const namespaces = {} as Namespaces;
+
+      try {
+        namespaces.pmp = await ctx.plugins.run("pmp.collect") as PmpNamespace;
+      } catch (err) {
+        logger.error("PMP plugin execution failed", { err });
+      }
+
+      if (!namespaces.pmp) {
+        logger.warn("No PMP namespace returned, skipping patch snapshot");
+        return;
+      }
+
+      const currentHash = hashNamespace(buildPmpStateForHash(namespaces.pmp));
+      const previousHash = outbox.getState("namespaceHash:pmp");
+      const hasChanges = currentHash !== previousHash;
+
+      namespaces.pmp.hasChanges = hasChanges;
+
+      if (!hasChanges) {
+        logger.info("Skipping PMP FACTS enqueue — no changes detected", {
+          deviceId: ctx.enrollment.deviceId,
+          namespace: "pmp"
+        });
+        return;
+      }
+
+      const facts = await buildDeviceFacts(ctx, namespaces);
+
+      outbox.enqueue({
+        type: "FACTS_SNAPSHOT",
+        payload: facts
+      });
+      outbox.setState("namespaceHash:pmp", currentHash);
+
+      logger.info("FACTS_SNAPSHOT enqueued", {
+        deviceId: ctx.enrollment.deviceId,
+        modules: Object.keys(namespaces),
+        hasAnyChanges: hasChanges,
+        pmpInstalledPatchCount: Number(namespaces.pmp.scan?.installedPatchCount ?? 0)
+      });
+
+    } catch (err) {
+
+      logger.error("Patch pipeline failed", { err });
+
+    } finally {
+
+      (this as any).patchRunning = false;
 
     }
   }

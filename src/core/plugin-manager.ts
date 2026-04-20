@@ -73,6 +73,20 @@ export class PluginManager {
     } catch (err: any) {
       this.ctx?.logger?.error?.("Failed to register SCP plugin", err?.message || err);
     }
+
+    try {
+      const { collectPMP } = await import("../plugins/pmp");
+
+      this.register({
+        name: "pmp",
+        tasks: {
+          collect: async (ctx: AgentContext) => collectPMP(ctx)
+        }
+      });
+
+    } catch (err: any) {
+      this.ctx?.logger?.error?.("Failed to register PMP plugin", err?.message || err);
+    }
   }
 
   // -----------------------------

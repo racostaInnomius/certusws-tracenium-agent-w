@@ -1,6 +1,7 @@
 // src/domain/device-facts.ts
 
 import type { AmpNamespace } from "./amp-types";
+import type { PmpNamespace } from "./pmp-types";
 import type { ScpNamespace } from "./scp-types";
 
 export type AgentCapability =
@@ -55,6 +56,6 @@ export interface Namespaces {
   // Plugin namespaces
   amp?: AmpNamespace;
   scp?: ScpNamespace;
-  pmp?: unknown;
+  pmp?: PmpNamespace;
   rcm?: unknown;
 }

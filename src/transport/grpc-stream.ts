@@ -41,6 +41,14 @@ async function collectFactsSnapshot(
     }
   }
 
+  if (ctx.policyRuntime.isPatchEnabled() && ctx.policyRuntime.pluginEnabled("pmp")) {
+    try {
+      namespaces.pmp = await ctx.plugins.run("pmp.collect");
+    } catch (err) {
+      ctx.logger?.error?.(`PMP collect failed (${source})`, { err });
+    }
+  }
+
   if (Object.keys(namespaces).length === 0) {
     throw new Error(`${source}: no plugin namespaces collected`);
   }

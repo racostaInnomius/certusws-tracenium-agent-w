@@ -11,6 +11,7 @@ export type PrivSvcMethod =
   | "identity"
   | "software.inventory"
   | "security.compliance"
+  | "patch.scan"
   | "crypto.csr.generate" // enrollment CSR generation
   | "crypto.cert.install" // install client cert (bind to existing key)
   // gRPC bridge (PrivSvc owns mTLS private key + channel)

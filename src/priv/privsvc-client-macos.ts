@@ -19,6 +19,7 @@ function getTimeoutForMethod(method: string): number {
     case "software.inventory":
       return 60000;
     case "security.compliance":
+    case "patch.scan":
       return 30000;
     default:
       return DEFAULT_TIMEOUT_MS;

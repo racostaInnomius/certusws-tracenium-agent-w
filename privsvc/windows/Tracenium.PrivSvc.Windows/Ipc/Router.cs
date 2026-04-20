@@ -74,6 +74,7 @@ public sealed class Router
             // Inventory / compliance
             "software.inventory" => SoftwareInventory.Handle(req),
             "security.compliance" => SecurityCompliance.Handle(req),
+            "patch.scan" => PatchManagement.HandleScan(req),
 
             // Crypto
             "crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),
