@@ -8,13 +8,14 @@ import https from "https";
 
 import type { AgentContext } from "../core/agent-context";
 import type {
+  AgentBinaryFileMetadata,
   AgentMetadataResponse,
   AgentDownloadResponse,
   UpdateCheckResult,
   DownloadedUpdateInfo
 } from "./update-types";
 import { updateUpdateState } from "./update-state";
-import { runWindowsMsiUpdate } from "./updater-runner";
+import { runMacosPkgUpdate, runWindowsMsiUpdate } from "./updater-runner";
 
 function resolveBaseDir() {
   if (process.platform === "win32") {
@@ -123,6 +124,19 @@ function getArch(): "x64" | "arm64" {
   }
 
   return process.arch === "arm64" ? "arm64" : "x64";
+}
+
+function getBinaryFormat(): "msi" | "pkg" {
+  return getPlatform() === "macos" ? "pkg" : "msi";
+}
+
+function getBinaryMetadataForCurrentPlatform(
+  metadata: AgentMetadataResponse
+): AgentBinaryFileMetadata | undefined {
+  const arch = getArch();
+  return getPlatform() === "macos"
+    ? metadata.files?.pkg?.[arch]
+    : metadata.files?.msi?.[arch];
 }
 
 function buildHeaders(ctx: AgentContext): Record<string, string> {
@@ -341,27 +355,33 @@ export function checkForAvailableUpdate(
     arch,
     forceUpdate: metadata.forceUpdate === true,
     allowDowngrade: metadata.allowDowngrade === true,
-    hasMsi: !!metadata.files?.msi,
-    hasArch: !!metadata.files?.msi?.[arch]
+    binaryFormat: getBinaryFormat(),
+    hasBinaryGroup: getPlatform() === "macos" ? !!metadata.files?.pkg : !!metadata.files?.msi,
+    hasArch: !!getBinaryMetadataForCurrentPlatform(metadata)
   });
 
-  if (!metadata.files?.msi) {
+  if (getPlatform() === "macos" && !metadata.files?.pkg) {
+    console.warn("[update] metadata has no pkg section");
+  }
+
+  if (getPlatform() !== "macos" && !metadata.files?.msi) {
     console.warn("[update] metadata has no msi section");
   }
 
-  const msiForArch = metadata.files?.msi?.[arch];
+  const binaryForArch = getBinaryMetadataForCurrentPlatform(metadata);
 
-  if (!metadata.files?.msi || !msiForArch) {
+  if (!binaryForArch) {
     console.warn("[update] no compatible binary found in metadata", {
       arch,
-      availableArchs: Object.keys(metadata.files?.msi || {})
+      format: getBinaryFormat(),
+      availableArchs: Object.keys((getPlatform() === "macos" ? metadata.files?.pkg : metadata.files?.msi) || {})
     });
 
     return {
       available: false,
       currentVersion,
       latestVersion,
-      reason: "missing_msi_metadata",
+      reason: "missing_binary_metadata",
       metadata
     };
   }
@@ -433,8 +453,7 @@ export function checkForAvailableUpdate(
 export function getExpectedHashForArch(
   metadata: AgentMetadataResponse
 ): string | undefined {
-  const arch = getArch();
-  return metadata.files?.msi?.[arch]?.hash;
+  return getBinaryMetadataForCurrentPlatform(metadata)?.hash;
 }
 
 export async function fetchWindowsMsiDownloadUrl(
@@ -452,6 +471,29 @@ export async function fetchWindowsMsiDownloadUrl(
     version,
     arch,
     platform: "windows"
+  });
+
+  return httpJson<AgentDownloadResponse>(url, {
+    headers: buildHeaders(ctx),
+    timeoutMs: 15000
+  });
+}
+
+export async function fetchMacosPkgDownloadUrl(
+  ctx: AgentContext,
+  version = "latest"
+): Promise<AgentDownloadResponse> {
+  const base = getApiBaseUrl(ctx);
+  const arch = getArch();
+
+  const url =
+    `${base}/api/v1/binaries/agent` +
+    `?platform=macos&arch=${encodeURIComponent(arch)}&format=pkg&version=${encodeURIComponent(version)}`;
+
+  console.log("[update] requesting download url", {
+    version,
+    arch,
+    platform: "macos"
   });
 
   return httpJson<AgentDownloadResponse>(url, {
@@ -480,6 +522,51 @@ export async function downloadWindowsMsi(
 
   const { size } = await downloadToFile(dl.downloadUrl, filePath);
 
+  const sha256 = await sha256File(filePath);
+
+  if (!expectedHash) {
+    console.warn("[update] expected hash missing for arch", { arch });
+  }
+
+  if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
+    fs.rmSync(filePath, { force: true });
+    throw new Error("update_hash_mismatch");
+  }
+
+  updateUpdateState({
+    lastDownloadedPath: filePath,
+    lastDownloadedSha256: sha256,
+    arch: getArch()
+  });
+
+  return {
+    filePath,
+    fileName,
+    sha256,
+    size,
+    latestVersion
+  };
+}
+
+export async function downloadMacosPkg(
+  ctx: AgentContext,
+  latestVersion: string,
+  expectedHash?: string
+): Promise<DownloadedUpdateInfo> {
+  const dl = await fetchMacosPkgDownloadUrl(ctx, latestVersion);
+
+  if (!dl?.downloadUrl) {
+    throw new Error("update_download_url_missing");
+  }
+
+  const dir = path.join(resolveBaseDir(), "updates");
+  ensureDir(dir);
+
+  const arch = getArch();
+  const fileName = `Tracenium-Agent-${latestVersion}-${arch}.pkg`;
+  const filePath = path.join(dir, fileName);
+
+  const { size } = await downloadToFile(dl.downloadUrl, filePath);
   const sha256 = await sha256File(filePath);
 
   if (!expectedHash) {
@@ -570,6 +657,73 @@ export async function performWindowsMsiUpdate(
   });
 
   const result = await runWindowsMsiUpdate(downloaded.filePath);
+
+  return result;
+}
+
+export async function performMacosPkgUpdate(
+  ctx: AgentContext,
+  latestVersion: string,
+  expectedHash?: string,
+  downloadUrlOverride?: string
+) {
+  let downloaded;
+
+  if (downloadUrlOverride) {
+    const dir = path.join(resolveBaseDir(), "updates");
+    ensureDir(dir);
+
+    const arch = getArch();
+    const fileName = `Tracenium-Agent-${latestVersion}-${arch}.pkg`;
+    const filePath = path.join(dir, fileName);
+
+    console.log("[update] downloading pkg from override url", {
+      url: downloadUrlOverride,
+      version: latestVersion
+    });
+
+    const { size } = await downloadToFile(downloadUrlOverride, filePath);
+    const sha256 = await sha256File(filePath);
+
+    if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
+      fs.rmSync(filePath, { force: true });
+      throw new Error("update_hash_mismatch");
+    }
+
+    downloaded = {
+      filePath,
+      fileName,
+      sha256,
+      size,
+      latestVersion
+    };
+
+    updateUpdateState({
+      lastDownloadedPath: filePath,
+      lastDownloadedSha256: sha256,
+      arch: getArch()
+    });
+  } else {
+    downloaded = await downloadMacosPkg(ctx, latestVersion, expectedHash);
+  }
+
+  updateUpdateState({
+    updateInProgress: true,
+    status: "install_started",
+    installStartedAtUtc: new Date().toISOString(),
+    lastAttemptedAtUtc: new Date().toISOString(),
+    lastAttemptedVersion: latestVersion,
+    lastError: undefined,
+    arch: getArch()
+  });
+
+  console.log("[update] executing pkg", {
+    path: downloaded.filePath,
+    version: latestVersion,
+    arch: getArch()
+  });
+
+  const result = await runMacosPkgUpdate(downloaded.filePath);
 
   return result;
 }

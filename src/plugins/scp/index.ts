@@ -2,6 +2,7 @@
 import os from "os";
 import type { AgentContext } from "../../core/agent-context";
 import type { ScpNamespace } from "../../domain/scp-types";
+import { collectMacosScp } from "./providers/macos";
 import { collectWindowsScp } from "./providers/windows";
 
 export async function collectSCP(ctx: AgentContext): Promise<ScpNamespace> {
@@ -9,6 +10,10 @@ export async function collectSCP(ctx: AgentContext): Promise<ScpNamespace> {
 
   if (platform === "win32") {
     return collectWindowsScp(ctx);
+  }
+
+  if (platform === "darwin") {
+    return collectMacosScp(ctx);
   }
 
   return {

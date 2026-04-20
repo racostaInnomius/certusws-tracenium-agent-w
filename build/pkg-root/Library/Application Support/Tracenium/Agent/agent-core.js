@@ -148,7 +148,7 @@ var require_main = __commonJS({
     var fs15 = require("fs");
     var path10 = require("path");
     var os15 = require("os");
-    var crypto8 = require("crypto");
+    var crypto9 = require("crypto");
     var packageJson = require_package();
     var version = packageJson.version;
     var LINE = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg;
@@ -367,7 +367,7 @@ var require_main = __commonJS({
       const authTag = ciphertext.subarray(-16);
       ciphertext = ciphertext.subarray(12, -16);
       try {
-        const aesgcm = crypto8.createDecipheriv("aes-256-gcm", key, nonce);
+        const aesgcm = crypto9.createDecipheriv("aes-256-gcm", key, nonce);
         aesgcm.setAuthTag(authTag);
         return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
       } catch (error) {
@@ -20500,6 +20500,238 @@ var init_amp = __esm({
   }
 });
 
+// src/plugins/scp/providers/macos.ts
+function scoreFromFindings(findings) {
+  if (findings.length === 0) return 100;
+  const weights = {
+    critical: 35,
+    high: 25,
+    medium: 15,
+    low: 5,
+    info: 0
+  };
+  const penalty = findings.reduce((sum, finding) => {
+    if (finding.status !== "fail") return sum;
+    return sum + (weights[finding.severity] ?? 0);
+  }, 0);
+  return Math.max(0, 100 - penalty);
+}
+function complianceStatus(value) {
+  if (value === "enabled" || value === true) return "pass";
+  if (value === "disabled" || value === false) return "fail";
+  return "unknown";
+}
+function remediation(status, summary) {
+  return {
+    type: status === "pass" ? "none" : "manual",
+    summary: status === "pass" ? "No remediation required." : summary
+  };
+}
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+async function readSecurityCompliance(ctx) {
+  const resp = await ctx.priv.call({
+    v: 1,
+    id: `scp_${Date.now()}`,
+    method: "security.compliance",
+    params: {},
+    meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+  });
+  if (!resp?.ok) {
+    throw new Error(resp?.error?.message || "security.compliance failed");
+  }
+  return resp.result || {};
+}
+async function collectMacosScp(ctx) {
+  let posture = {};
+  const findings = [];
+  try {
+    posture = await readSecurityCompliance(ctx);
+    findings.push({
+      checkId: "macos.security.compliance.available",
+      category: "collector",
+      severity: "info",
+      status: "pass",
+      title: "macOS security compliance data was collected successfully",
+      evidence: {
+        collectedAtUtc: posture?.collectedAtUtc
+      },
+      remediation: {
+        type: "none",
+        summary: "No remediation required."
+      }
+    });
+  } catch (err) {
+    findings.push({
+      checkId: "macos.security.compliance.available",
+      category: "collector",
+      severity: "high",
+      status: "fail",
+      title: "macOS security compliance could not be collected",
+      evidence: { error: err?.message || String(err) },
+      remediation: {
+        type: "manual",
+        summary: "Verify Tracenium PrivSvc is running and can execute security compliance checks on macOS."
+      }
+    });
+  }
+  const fileVaultStatus = complianceStatus(posture?.filevault?.status);
+  findings.push({
+    checkId: "macos.filevault.enabled",
+    category: "disk_encryption",
+    severity: "high",
+    status: fileVaultStatus,
+    title: "FileVault should be enabled",
+    evidence: posture?.filevault ?? {},
+    remediation: remediation(fileVaultStatus, "Enable FileVault according to the organization's disk encryption policy.")
+  });
+  const firewallStatus = complianceStatus(posture?.firewall?.status);
+  findings.push({
+    checkId: "macos.firewall.enabled",
+    category: "firewall",
+    severity: "high",
+    status: firewallStatus,
+    title: "macOS Application Firewall should be enabled",
+    evidence: posture?.firewall ?? {},
+    remediation: remediation(firewallStatus, "Enable the macOS Application Firewall.")
+  });
+  const gatekeeperStatus = complianceStatus(posture?.gatekeeper?.status);
+  findings.push({
+    checkId: "macos.gatekeeper.enabled",
+    category: "application_control",
+    severity: "medium",
+    status: gatekeeperStatus,
+    title: "Gatekeeper should be enabled",
+    evidence: posture?.gatekeeper ?? {},
+    remediation: remediation(gatekeeperStatus, "Enable Gatekeeper to restrict unsigned or untrusted applications.")
+  });
+  const sipStatus = complianceStatus(posture?.sip?.status);
+  findings.push({
+    checkId: "macos.sip.enabled",
+    category: "platform_integrity",
+    severity: "high",
+    status: sipStatus,
+    title: "System Integrity Protection should be enabled",
+    evidence: posture?.sip ?? {},
+    remediation: remediation(sipStatus, "Re-enable System Integrity Protection from macOS Recovery.")
+  });
+  const patchItems = asArray(posture?.patches?.items);
+  const patchInventoryStatus = patchItems.length > 0 ? "pass" : "unknown";
+  findings.push({
+    checkId: "macos.security_patches.inventory_available",
+    category: "patching",
+    severity: "medium",
+    status: patchInventoryStatus,
+    title: "Installed security updates should be reported on macOS",
+    evidence: posture?.patches ?? {},
+    remediation: remediation(patchInventoryStatus, "Verify software update history can be read from PrivSvc on macOS.")
+  });
+  const avInstalledCount = Number(posture?.antivirus?.installedCount ?? 0);
+  const antivirusStatus = avInstalledCount > 0 ? "pass" : "unknown";
+  findings.push({
+    checkId: "macos.antivirus.inventory_available",
+    category: "antimalware",
+    severity: "medium",
+    status: antivirusStatus,
+    title: "Built-in macOS malware protections should report update metadata",
+    evidence: posture?.antivirus ?? {},
+    remediation: remediation(antivirusStatus, "Verify XProtect and MRT package receipts are available on the endpoint.")
+  });
+  const riskyShareCount = Number(posture?.shares?.riskyCount ?? 0);
+  const shareInventoryKnown = posture?.shares?.status === "available";
+  findings.push({
+    checkId: "macos.shares.everyone_write_absent",
+    category: "network_sharing",
+    severity: "high",
+    status: !shareInventoryKnown ? "unknown" : riskyShareCount > 0 ? "fail" : "pass",
+    title: "Shared paths should not expose broad write access",
+    evidence: posture?.shares ?? {},
+    remediation: {
+      type: !shareInventoryKnown || riskyShareCount > 0 ? "manual" : "none",
+      summary: !shareInventoryKnown ? "Verify local share inventory can be collected on macOS." : riskyShareCount > 0 ? "Review shared path ACLs and remove Everyone-style write access." : "No remediation required."
+    }
+  });
+  const smbKnown = posture?.smb?.status === "enabled" || posture?.smb?.status === "disabled";
+  findings.push({
+    checkId: "macos.smb.inventory_available",
+    category: "network_sharing",
+    severity: "medium",
+    status: smbKnown ? "pass" : "unknown",
+    title: "SMB service state should be reported on macOS",
+    evidence: posture?.smb ?? {},
+    remediation: remediation(smbKnown ? "pass" : "unknown", "Verify SMB service status can be inspected from PrivSvc.")
+  });
+  const profileInventoryKnown = posture?.domain?.profiles?.status === "available";
+  findings.push({
+    checkId: "macos.identity_policy.inventory_available",
+    category: "identity_policy",
+    severity: "low",
+    status: profileInventoryKnown ? "pass" : "unknown",
+    title: "Directory binding and profile inventory should be available on macOS",
+    evidence: posture?.domain ?? {},
+    remediation: remediation(profileInventoryKnown ? "pass" : "unknown", "Verify profiles and directory binding inspection can run on macOS.")
+  });
+  findings.push({
+    checkId: "macos.crypto.inventory_pending",
+    category: "cryptography",
+    severity: "medium",
+    status: "unknown",
+    title: "TLS protocol and cipher inventory model is still pending for macOS",
+    evidence: {
+      phase: "phase_2",
+      collector: "pending_model_definition"
+    },
+    remediation: {
+      type: "manual",
+      summary: "Define the supported macOS cryptography inventory model before collecting TLS/cipher data."
+    }
+  });
+  const score = scoreFromFindings(findings);
+  const hasFailures = findings.some((f) => f.status === "fail");
+  const hasUnknown = findings.some((f) => f.status === "unknown");
+  const hasWarnings = findings.some((f) => f.status === "warning");
+  return {
+    schemaVersion: "1.0",
+    collector: {
+      plugin: "scp",
+      version: ctx.config.agentVersion
+    },
+    hasChanges: true,
+    overall: {
+      status: hasFailures ? "fail" : hasUnknown ? "unknown" : hasWarnings ? "warning" : "pass",
+      score
+    },
+    checks: findings,
+    patches: {
+      status: patchItems.length > 0 ? "pass" : "unknown",
+      installedCount: Number(posture?.patches?.securityCount ?? patchItems.length),
+      missingCount: void 0,
+      lastScanUtc: posture?.patches?.lastScanUtc ?? posture?.collectedAtUtc,
+      items: patchItems
+    },
+    crypto: {
+      status: "unknown",
+      tls10Enabled: void 0,
+      tls11Enabled: void 0,
+      tls12Enabled: void 0,
+      tls13Enabled: void 0,
+      weakCiphers: [],
+      ciphers: [],
+      protocols: []
+    },
+    smb: posture?.smb,
+    shares: posture?.shares,
+    antivirus: posture?.antivirus,
+    domain: posture?.domain
+  };
+}
+var init_macos2 = __esm({
+  "src/plugins/scp/providers/macos.ts"() {
+    "use strict";
+  }
+});
+
 // src/plugins/scp/providers/windows.ts
 function statusFromEnabled(value) {
   if (value === true || value === "enabled") return "pass";
@@ -20519,7 +20751,7 @@ function boolValue(value) {
   }
   return void 0;
 }
-function scoreFromFindings(findings) {
+function scoreFromFindings2(findings) {
   if (findings.length === 0) return 100;
   const weights = {
     critical: 35,
@@ -20534,7 +20766,7 @@ function scoreFromFindings(findings) {
   }, 0);
   return Math.max(0, 100 - penalty);
 }
-async function readSecurityCompliance(ctx) {
+async function readSecurityCompliance2(ctx) {
   const resp = await ctx.priv.call({
     v: 1,
     id: `scp_${Date.now()}`,
@@ -20562,7 +20794,7 @@ async function collectWindowsScp(ctx) {
   let posture = {};
   const findings = [];
   try {
-    posture = await readSecurityCompliance(ctx);
+    posture = await readSecurityCompliance2(ctx);
   } catch (err) {
     findings.push({
       checkId: "windows.security.compliance.available",
@@ -20717,7 +20949,7 @@ async function collectWindowsScp(ctx) {
       summary: patchItems.length > 0 ? "No remediation required." : "Verify Windows Update / Get-HotFix access from PrivSvc."
     }
   });
-  const score = scoreFromFindings(findings);
+  const score = scoreFromFindings2(findings);
   const hasFailures = findings.some((f) => f.status === "fail");
   const hasUnknown = findings.some((f) => f.status === "unknown");
   const hasWarnings = findings.some((f) => f.status === "warning");
@@ -20774,6 +21006,9 @@ async function collectSCP(ctx) {
   if (platform === "win32") {
     return collectWindowsScp(ctx);
   }
+  if (platform === "darwin") {
+    return collectMacosScp(ctx);
+  }
   return {
     schemaVersion: "1.0",
     collector: {
@@ -20805,6 +21040,7 @@ var init_scp = __esm({
   "src/plugins/scp/index.ts"() {
     "use strict";
     import_os12 = __toESM(require("os"));
+    init_macos2();
     init_windows2();
   }
 });
@@ -20933,6 +21169,40 @@ function runWindowsMsiUpdate(msiPath) {
     throw err;
   }
 }
+function runMacosPkgUpdate(pkgPath) {
+  if (!import_fs13.default.existsSync(pkgPath)) {
+    throw new Error(`pkg_not_found: ${pkgPath}`);
+  }
+  const args = ["-pkg", pkgPath, "-target", "/"];
+  try {
+    const child = (0, import_child_process6.spawn)("/usr/sbin/installer", args, {
+      detached: true,
+      stdio: "ignore"
+    });
+    child.on("error", (err) => {
+      console.error("[update] installer spawn error", {
+        error: err?.message || err,
+        path: pkgPath
+      });
+    });
+    child.unref();
+    console.log("[update] macOS installer launched", {
+      path: pkgPath,
+      pid: child.pid
+    });
+    return {
+      started: true,
+      command: "/usr/sbin/installer",
+      args
+    };
+  } catch (err) {
+    console.error("[update] failed to start macOS installer", {
+      error: err?.message || err,
+      path: pkgPath
+    });
+    throw err;
+  }
+}
 var import_child_process6, import_fs13;
 var init_updater_runner = __esm({
   "src/update/updater-runner.ts"() {
@@ -21016,6 +21286,13 @@ function getArch() {
     }
   }
   return process.arch === "arm64" ? "arm64" : "x64";
+}
+function getBinaryFormat() {
+  return getPlatform() === "macos" ? "pkg" : "msi";
+}
+function getBinaryMetadataForCurrentPlatform(metadata) {
+  const arch = getArch();
+  return getPlatform() === "macos" ? metadata.files?.pkg?.[arch] : metadata.files?.msi?.[arch];
 }
 function buildHeaders(ctx) {
   const headers = {
@@ -21172,23 +21449,28 @@ function checkForAvailableUpdate(currentVersion, metadata) {
     arch,
     forceUpdate: metadata.forceUpdate === true,
     allowDowngrade: metadata.allowDowngrade === true,
-    hasMsi: !!metadata.files?.msi,
-    hasArch: !!metadata.files?.msi?.[arch]
+    binaryFormat: getBinaryFormat(),
+    hasBinaryGroup: getPlatform() === "macos" ? !!metadata.files?.pkg : !!metadata.files?.msi,
+    hasArch: !!getBinaryMetadataForCurrentPlatform(metadata)
   });
-  if (!metadata.files?.msi) {
+  if (getPlatform() === "macos" && !metadata.files?.pkg) {
+    console.warn("[update] metadata has no pkg section");
+  }
+  if (getPlatform() !== "macos" && !metadata.files?.msi) {
     console.warn("[update] metadata has no msi section");
   }
-  const msiForArch = metadata.files?.msi?.[arch];
-  if (!metadata.files?.msi || !msiForArch) {
+  const binaryForArch = getBinaryMetadataForCurrentPlatform(metadata);
+  if (!binaryForArch) {
     console.warn("[update] no compatible binary found in metadata", {
       arch,
-      availableArchs: Object.keys(metadata.files?.msi || {})
+      format: getBinaryFormat(),
+      availableArchs: Object.keys((getPlatform() === "macos" ? metadata.files?.pkg : metadata.files?.msi) || {})
     });
     return {
       available: false,
       currentVersion,
       latestVersion,
-      reason: "missing_msi_metadata",
+      reason: "missing_binary_metadata",
       metadata
     };
   }
@@ -21259,6 +21541,20 @@ async function fetchWindowsMsiDownloadUrl(ctx, version = "latest") {
     timeoutMs: 15e3
   });
 }
+async function fetchMacosPkgDownloadUrl(ctx, version = "latest") {
+  const base = getApiBaseUrl(ctx);
+  const arch = getArch();
+  const url = `${base}/api/v1/binaries/agent?platform=macos&arch=${encodeURIComponent(arch)}&format=pkg&version=${encodeURIComponent(version)}`;
+  console.log("[update] requesting download url", {
+    version,
+    arch,
+    platform: "macos"
+  });
+  return httpJson(url, {
+    headers: buildHeaders(ctx),
+    timeoutMs: 15e3
+  });
+}
 async function downloadWindowsMsi(ctx, latestVersion, expectedHash) {
   const dl = await fetchWindowsMsiDownloadUrl(ctx, latestVersion);
   if (!dl?.downloadUrl) {
@@ -21268,6 +21564,38 @@ async function downloadWindowsMsi(ctx, latestVersion, expectedHash) {
   ensureDir2(dir);
   const arch = getArch();
   const fileName = `Tracenium-Agent-${latestVersion}-${arch}.msi`;
+  const filePath = import_path9.default.join(dir, fileName);
+  const { size } = await downloadToFile(dl.downloadUrl, filePath);
+  const sha256 = await sha256File(filePath);
+  if (!expectedHash) {
+    console.warn("[update] expected hash missing for arch", { arch });
+  }
+  if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
+    import_fs14.default.rmSync(filePath, { force: true });
+    throw new Error("update_hash_mismatch");
+  }
+  updateUpdateState({
+    lastDownloadedPath: filePath,
+    lastDownloadedSha256: sha256,
+    arch: getArch()
+  });
+  return {
+    filePath,
+    fileName,
+    sha256,
+    size,
+    latestVersion
+  };
+}
+async function downloadMacosPkg(ctx, latestVersion, expectedHash) {
+  const dl = await fetchMacosPkgDownloadUrl(ctx, latestVersion);
+  if (!dl?.downloadUrl) {
+    throw new Error("update_download_url_missing");
+  }
+  const dir = import_path9.default.join(resolveBaseDir2(), "updates");
+  ensureDir2(dir);
+  const arch = getArch();
+  const fileName = `Tracenium-Agent-${latestVersion}-${arch}.pkg`;
   const filePath = import_path9.default.join(dir, fileName);
   const { size } = await downloadToFile(dl.downloadUrl, filePath);
   const sha256 = await sha256File(filePath);
@@ -21339,6 +21667,56 @@ async function performWindowsMsiUpdate(ctx, latestVersion, expectedHash, downloa
     arch: getArch()
   });
   const result2 = await runWindowsMsiUpdate(downloaded.filePath);
+  return result2;
+}
+async function performMacosPkgUpdate(ctx, latestVersion, expectedHash, downloadUrlOverride) {
+  let downloaded;
+  if (downloadUrlOverride) {
+    const dir = import_path9.default.join(resolveBaseDir2(), "updates");
+    ensureDir2(dir);
+    const arch = getArch();
+    const fileName = `Tracenium-Agent-${latestVersion}-${arch}.pkg`;
+    const filePath = import_path9.default.join(dir, fileName);
+    console.log("[update] downloading pkg from override url", {
+      url: downloadUrlOverride,
+      version: latestVersion
+    });
+    const { size } = await downloadToFile(downloadUrlOverride, filePath);
+    const sha256 = await sha256File(filePath);
+    if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
+      import_fs14.default.rmSync(filePath, { force: true });
+      throw new Error("update_hash_mismatch");
+    }
+    downloaded = {
+      filePath,
+      fileName,
+      sha256,
+      size,
+      latestVersion
+    };
+    updateUpdateState({
+      lastDownloadedPath: filePath,
+      lastDownloadedSha256: sha256,
+      arch: getArch()
+    });
+  } else {
+    downloaded = await downloadMacosPkg(ctx, latestVersion, expectedHash);
+  }
+  updateUpdateState({
+    updateInProgress: true,
+    status: "install_started",
+    installStartedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+    lastAttemptedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+    lastAttemptedVersion: latestVersion,
+    lastError: void 0,
+    arch: getArch()
+  });
+  console.log("[update] executing pkg", {
+    path: downloaded.filePath,
+    version: latestVersion,
+    arch: getArch()
+  });
+  const result2 = await runMacosPkgUpdate(downloaded.filePath);
   return result2;
 }
 var import_fs14, import_path9, import_crypto10, import_http, import_https;
@@ -21415,8 +21793,10 @@ async function runUpdateTask(ctx, opts) {
   const force = opts?.force === true;
   const targetVersion = opts?.targetVersion ? String(opts.targetVersion).trim() : void 0;
   const intervalMs = opts?.intervalMs ?? 6 * 60 * 60 * 1e3;
-  if (ctx.agent?.platform !== "windows" && process.platform !== "win32") {
-    logger2?.info?.("[update] skipping auto-update: only windows supported currently");
+  const isWindows = ctx.agent?.platform === "windows" || process.platform === "win32";
+  const isMacos = ctx.agent?.platform === "macos" || process.platform === "darwin";
+  if (!isWindows && !isMacos) {
+    logger2?.info?.("[update] skipping auto-update: platform not supported currently");
     return;
   }
   const currentVersion = String(ctx.agent?.version || "").trim();
@@ -21485,7 +21865,7 @@ async function runUpdateTask(ctx, opts) {
       return;
     }
     const arch = resolveArch2();
-    const fileMeta = result2.metadata?.files?.msi?.[arch];
+    const fileMeta = isMacos ? result2.metadata?.files?.pkg?.[arch] : result2.metadata?.files?.msi?.[arch];
     if (!fileMeta) {
       logger2?.warn?.("[update] no compatible binary for this arch", { arch });
       return;
@@ -21500,13 +21880,10 @@ async function runUpdateTask(ctx, opts) {
       lastAttemptedVersion: effectiveVersion,
       lastAttemptedAtUtc: (/* @__PURE__ */ new Date()).toISOString()
     });
-    const run2 = await performWindowsMsiUpdate(
-      ctx,
-      effectiveVersion,
-      expectedHash
-    );
-    logger2?.warn?.("[update] msi update started", {
+    const run2 = isMacos ? await performMacosPkgUpdate(ctx, effectiveVersion, expectedHash) : await performWindowsMsiUpdate(ctx, effectiveVersion, expectedHash);
+    logger2?.warn?.("[update] update started", {
       latestVersion: effectiveVersion,
+      format: isMacos ? "pkg" : "msi",
       command: run2.command,
       args: run2.args
     });
@@ -21725,8 +22102,8 @@ var config = {
   })(),
   agentId: process.env.AGENT_ID || "auto",
   enrollmentToken: process.env.ENROLLMENT_TOKEN || "",
-  agentVersion: process.env.AGENT_VERSION || "1.0.87",
-  coreVersion: process.env.CORE_VERSION || "1.0.87",
+  agentVersion: process.env.AGENT_VERSION || "1.0.88",
+  coreVersion: process.env.CORE_VERSION || "1.0.88",
   channel: process.env.CHANNEL || "stable"
 };
 
@@ -22461,6 +22838,10 @@ var DEFAULT_POLICY = {
     intervalSeconds: 21600
     // 6h
   },
+  compliance: {
+    intervalSeconds: 28800
+    // 8h
+  },
   plugins: {
     enabled: ["amp"]
   },
@@ -22506,6 +22887,9 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
   }
   getInventoryInterval() {
     return this.policy.inventory?.intervalSeconds || DEFAULT_POLICY.inventory.intervalSeconds;
+  }
+  getComplianceInterval() {
+    return this.policy.compliance?.intervalSeconds || DEFAULT_POLICY.compliance.intervalSeconds;
   }
   getEnabledPlugins() {
     return this.policy.plugins?.enabled || DEFAULT_POLICY.plugins.enabled;
@@ -22561,6 +22945,10 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
         ...DEFAULT_POLICY.inventory,
         ...policy.inventory
       },
+      compliance: {
+        ...DEFAULT_POLICY.compliance,
+        ...policy.compliance
+      },
       plugins: {
         ...DEFAULT_POLICY.plugins,
         ...policy.plugins
@@ -22577,6 +22965,10 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
     if (validated.inventory?.intervalSeconds && (validated.inventory.intervalSeconds < 60 || validated.inventory.intervalSeconds > 86400)) {
       this.logger?.warn?.("Invalid inventory interval in policy, reverting to default");
       validated.inventory.intervalSeconds = DEFAULT_POLICY.inventory.intervalSeconds;
+    }
+    if (validated.compliance?.intervalSeconds && (validated.compliance.intervalSeconds < 300 || validated.compliance.intervalSeconds > 86400)) {
+      this.logger?.warn?.("Invalid compliance interval in policy, reverting to default");
+      validated.compliance.intervalSeconds = DEFAULT_POLICY.compliance.intervalSeconds;
     }
     if (!Array.isArray(validated.plugins?.enabled)) {
       validated.plugins = { enabled: DEFAULT_POLICY.plugins.enabled };
@@ -22599,6 +22991,7 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
     return {
       version: this.store.getVersion(),
       inventoryInterval: this.getInventoryInterval(),
+      complianceInterval: this.getComplianceInterval(),
       plugins: this.getEnabledPlugins(),
       modules: this.listEnabledModules(),
       features: this.policy.features
@@ -23280,11 +23673,15 @@ async function buildHardwareNamespace() {
 function buildAgentInfo(ctx) {
   const nodePlatform = import_os14.default.platform();
   const platform = nodePlatform === "win32" ? "windows" : nodePlatform === "darwin" ? "macos" : "linux";
+  const capabilities = Array.from(/* @__PURE__ */ new Set([
+    ...ctx.enrollment.bootstrap.capabilities || [],
+    ...ctx.policyRuntime.getEnabledPlugins()
+  ]));
   return {
     agentVersion: ctx.config.agentVersion,
     coreVersion: ctx.config.coreVersion,
     osProvider: platform,
-    capabilities: ctx.enrollment.bootstrap.capabilities,
+    capabilities,
     install: {
       // Nota v1: installId podría ser distinto a deviceId; lo dejamos así por ahora.
       installId: ctx.enrollment.deviceId,
@@ -23366,6 +23763,37 @@ async function buildDeviceFacts(ctx, namespaces) {
 
 // src/core/scheduler.ts
 init_update_task();
+var import_crypto11 = __toESM(require("crypto"));
+function normalizeForHash(value) {
+  if (value === void 0) {
+    return null;
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeForHash);
+  }
+  const entries = Object.entries(value).filter(([, entryValue]) => entryValue !== void 0).sort(([left], [right]) => left.localeCompare(right)).map(([key, entryValue]) => [key, normalizeForHash(entryValue)]);
+  return Object.fromEntries(entries);
+}
+function stableStringify2(value) {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify2).join(",")}]`;
+  }
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((key) => `"${key}":${stableStringify2(value[key])}`).join(",")}}`;
+}
+function hashNamespace(value) {
+  return import_crypto11.default.createHash("sha256").update(stableStringify2(normalizeForHash(value))).digest("hex");
+}
+function buildScpStateForHash(namespace) {
+  const { hasChanges: _ignored, ...rest } = namespace;
+  return rest;
+}
 var Scheduler = class {
   timers = /* @__PURE__ */ new Map();
   ctx = null;
@@ -23465,7 +23893,7 @@ var Scheduler = class {
       this.timers.set("update", timer);
     }
     if (ctx.policyRuntime.isComplianceEnabled()) {
-      const intervalSeconds = 4 * 60 * 60;
+      const intervalSeconds = ctx.policyRuntime.getComplianceInterval();
       logger.info("Compliance pipeline enabled", { intervalSeconds });
       this.runCompliance(ctx).catch(
         (err) => logger.error("Compliance pipeline initial run error", { err })
@@ -23579,9 +24007,14 @@ var Scheduler = class {
         logger.warn("No SCP namespace returned, skipping compliance snapshot");
         return;
       }
-      if (namespaces.scp.hasChanges !== true) {
+      const currentHash = hashNamespace(buildScpStateForHash(namespaces.scp));
+      const previousHash = outbox.getState("namespaceHash:scp");
+      const hasChanges = currentHash !== previousHash;
+      namespaces.scp.hasChanges = hasChanges;
+      if (!hasChanges) {
         logger.info("Skipping SCP FACTS enqueue \u2014 no changes detected", {
-          deviceId: ctx.enrollment.deviceId
+          deviceId: ctx.enrollment.deviceId,
+          namespace: "scp"
         });
         return;
       }
@@ -23590,10 +24023,11 @@ var Scheduler = class {
         type: "FACTS_SNAPSHOT",
         payload: facts
       });
+      outbox.setState("namespaceHash:scp", currentHash);
       logger.info("FACTS_SNAPSHOT enqueued", {
         deviceId: ctx.enrollment.deviceId,
         modules: Object.keys(namespaces),
-        hasAnyChanges: true,
+        hasAnyChanges: hasChanges,
         scpChecks: Array.isArray(namespaces.scp.checks) ? namespaces.scp.checks.length : 0
       });
     } catch (err) {
@@ -24313,13 +24747,19 @@ function startGrpcStream(ctx) {
     }
     if (msg.policyUpdate) {
       try {
+        const eventId = String(
+          msg.policyUpdate?.eventId || `policy:${ctx.enrollment.tenantId}:${ctx.enrollment.deviceId}:${String(msg.policyUpdate?.policyVersion || "")}`
+        ).trim();
         const policyVersion = String(msg.policyUpdate?.policyVersion || "");
         const payload = msg.policyUpdate?.policyJson;
         ctx.logger?.info?.("gRPC control message: policyUpdate received", {
+          eventId,
           policyVersion
         });
         if (!policyVersion || !payload) {
           ctx.logger?.warn?.("policyUpdate ignored: missing required fields");
+          sendControlAck(ctx, eventId, 2, "policy_update rejected: missing required fields").catch(() => {
+          });
           return;
         }
         const payloadStr = Buffer.isBuffer(payload) ? payload.toString("utf8") : String(payload);
@@ -24328,24 +24768,27 @@ function startGrpcStream(ctx) {
           parsed = JSON.parse(payloadStr);
         } catch (e) {
           ctx.logger?.error?.("policyUpdate JSON parse failed", e);
+          sendControlAck(ctx, eventId, 2, "policy_update rejected: invalid json").catch(() => {
+          });
           return;
         }
         const computedHash = PolicyStore.computeHash(parsed);
         const localHash = ctx.policy.getHash();
         if (localHash === computedHash) {
-          ctx.logger?.info?.("policyUpdate skipped: already applied", { policyVersion });
+          ctx.logger?.info?.("policyUpdate skipped: already applied", { eventId, policyVersion });
+          sendControlAck(ctx, eventId, 0, "policy_already_applied").catch(() => {
+          });
           return;
         }
         ctx.policy.save(policyVersion, computedHash, parsed).then(async () => {
-          ctx.logger?.info?.("Policy successfully updated", { policyVersion });
-          try {
-            await ctx.policyRuntime.applyUpdate();
-            ctx.logger?.info?.("Policy runtime reloaded", ctx.policyRuntime.snapshot());
-          } catch (err) {
-            ctx.logger?.error?.("Policy runtime reload failed", err?.message || err);
-          }
-        }).catch((err) => {
-          ctx.logger?.error?.("Policy save failed", err?.message || err);
+          ctx.logger?.info?.("Policy successfully updated", { eventId, policyVersion });
+          await ctx.policyRuntime.applyUpdate();
+          ctx.logger?.info?.("Policy runtime reloaded", ctx.policyRuntime.snapshot());
+          await sendControlAck(ctx, eventId, 0, "policy_applied");
+        }).catch(async (err) => {
+          const message = String(err?.message || err || "policy_apply_failed");
+          ctx.logger?.error?.("policyUpdate apply failed", { eventId, policyVersion, err: message });
+          await sendControlAck(ctx, eventId, 2, message);
         });
       } catch (err) {
         ctx.logger?.error?.("policyUpdate handler error", err?.message || err);

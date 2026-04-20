@@ -73,8 +73,9 @@ message RotateCert {
 }
 
 message PolicyUpdate {
-  string policyVersion = 1;
-  bytes policyJson = 2;
+  string eventId = 1;
+  string policyVersion = 2;
+  bytes policyJson = 3;
 }
 
 message Disconnect {

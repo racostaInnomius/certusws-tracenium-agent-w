@@ -10,6 +10,7 @@ import {
 import {
   fetchAgentMetadata,
   checkForAvailableUpdate,
+  performMacosPkgUpdate,
   performWindowsMsiUpdate
 } from "./update-service";
 
@@ -99,8 +100,11 @@ export async function runUpdateTask(
   const targetVersion = opts?.targetVersion ? String(opts.targetVersion).trim() : undefined;
   const intervalMs = opts?.intervalMs ?? 6 * 60 * 60 * 1000;
 
-  if (ctx.agent?.platform !== "windows" && process.platform !== "win32") {
-    logger?.info?.("[update] skipping auto-update: only windows supported currently");
+  const isWindows = ctx.agent?.platform === "windows" || process.platform === "win32";
+  const isMacos = ctx.agent?.platform === "macos" || process.platform === "darwin";
+
+  if (!isWindows && !isMacos) {
+    logger?.info?.("[update] skipping auto-update: platform not supported currently");
     return;
   }
 
@@ -202,7 +206,9 @@ export async function runUpdateTask(
     }
 
     const arch = resolveArch();
-    const fileMeta = result.metadata?.files?.msi?.[arch];
+    const fileMeta = isMacos
+      ? result.metadata?.files?.pkg?.[arch]
+      : result.metadata?.files?.msi?.[arch];
 
     if (!fileMeta) {
       logger?.warn?.("[update] no compatible binary for this arch", { arch });
@@ -222,14 +228,13 @@ export async function runUpdateTask(
       lastAttemptedAtUtc: new Date().toISOString()
     });
 
-    const run = await performWindowsMsiUpdate(
-      ctx,
-      effectiveVersion,
-      expectedHash
-    );
+    const run = isMacos
+      ? await performMacosPkgUpdate(ctx, effectiveVersion, expectedHash)
+      : await performWindowsMsiUpdate(ctx, effectiveVersion, expectedHash);
 
-    logger?.warn?.("[update] msi update started", {
+    logger?.warn?.("[update] update started", {
       latestVersion: effectiveVersion,
+      format: isMacos ? "pkg" : "msi",
       command: run.command,
       args: run.args
     });

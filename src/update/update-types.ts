@@ -1,7 +1,7 @@
 // src/update/update-types.ts
 
 export type AgentBinaryPlatform = "windows" | "macos" | "linux";
-export type AgentBinaryFormat = "msi" | "exe";
+export type AgentBinaryFormat = "msi" | "exe" | "pkg";
 export type AgentBinaryArch = "x64" | "arm64";
 
 export interface AgentBinaryFileMetadata {
@@ -17,6 +17,7 @@ export interface AgentMetadataResponse {
   files: {
     exe?: Record<AgentBinaryArch, AgentBinaryFileMetadata>;
     msi?: Record<AgentBinaryArch, AgentBinaryFileMetadata>;
+    pkg?: Record<AgentBinaryArch, AgentBinaryFileMetadata>;
   };
 }
 
@@ -32,7 +33,7 @@ export interface UpdateCheckResult {
   reason?:
     | "up_to_date"
     | "invalid_remote_version"
-    | "missing_msi_metadata"
+    | "missing_binary_metadata"
     | "same_version"
     | "downgrade_blocked"
     | "new_version_available"

@@ -46,3 +46,45 @@ export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
     throw err;
   }
 }
+
+export function runMacosPkgUpdate(pkgPath: string): RunUpdateResult {
+  if (!fs.existsSync(pkgPath)) {
+    throw new Error(`pkg_not_found: ${pkgPath}`);
+  }
+
+  const args = ["-pkg", pkgPath, "-target", "/"];
+
+  try {
+    const child = spawn("/usr/sbin/installer", args, {
+      detached: true,
+      stdio: "ignore"
+    });
+
+    child.on("error", (err) => {
+      console.error("[update] installer spawn error", {
+        error: err?.message || err,
+        path: pkgPath
+      });
+    });
+
+    child.unref();
+
+    console.log("[update] macOS installer launched", {
+      path: pkgPath,
+      pid: child.pid
+    });
+
+    return {
+      started: true,
+      command: "/usr/sbin/installer",
+      args
+    };
+  } catch (err: any) {
+    console.error("[update] failed to start macOS installer", {
+      error: err?.message || err,
+      path: pkgPath
+    });
+
+    throw err;
+  }
+}

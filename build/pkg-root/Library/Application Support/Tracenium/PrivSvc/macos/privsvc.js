@@ -24550,6 +24550,7 @@ function handleControlMessage(msg) {
   }
   if (msg.policyUpdate) {
     push("grpc.control.policyUpdate", {
+      eventId: msg.policyUpdate.eventId || "",
       policyVersion: msg.policyUpdate.policyVersion || "",
       policyJson: decodeBytes(msg.policyUpdate.policyJson),
       receivedAtUtc: (/* @__PURE__ */ new Date()).toISOString()
@@ -24744,14 +24745,36 @@ var import_util2 = require("util");
 var execFileAsync2 = (0, import_util2.promisify)(import_child_process2.execFile);
 async function run(command, args, timeout = 5e3) {
   try {
-    const { stdout, stderr } = await execFileAsync2(command, args, { timeout });
-    return `${stdout || ""}${stderr || ""}`.trim();
+    const { stdout, stderr } = await execFileAsync2(command, args, { timeout, maxBuffer: 8 * 1024 * 1024 });
+    return {
+      output: `${stdout || ""}${stderr || ""}`.trim(),
+      ok: true
+    };
   } catch (err) {
-    return String(err?.stdout || err?.stderr || err?.message || err || "").trim();
+    return {
+      output: String(err?.stdout || err?.stderr || err?.message || err || "").trim(),
+      ok: false
+    };
   }
 }
+async function runJson(command, args, timeout = 1e4) {
+  const result = await run(command, args, timeout);
+  if (!result.output) return null;
+  try {
+    return JSON.parse(result.output);
+  } catch {
+    return null;
+  }
+}
+function parseDate(value) {
+  if (typeof value !== "string" || !value.trim()) return void 0;
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return void 0;
+  return dt.toISOString();
+}
 async function collectFileVault() {
-  const output = await run("/usr/bin/fdesetup", ["status"]);
+  const result = await run("/usr/bin/fdesetup", ["status"]);
+  const output = result.output;
   const enabled = /FileVault is On/i.test(output);
   const disabled = /FileVault is Off/i.test(output);
   return {
@@ -24760,7 +24783,8 @@ async function collectFileVault() {
   };
 }
 async function collectFirewall() {
-  const output = await run("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getglobalstate"]);
+  const result = await run("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getglobalstate"]);
+  const output = result.output;
   const enabled = /enabled/i.test(output);
   const disabled = /disabled/i.test(output);
   return {
@@ -24769,7 +24793,8 @@ async function collectFirewall() {
   };
 }
 async function collectGatekeeper() {
-  const output = await run("/usr/sbin/spctl", ["--status"]);
+  const result = await run("/usr/sbin/spctl", ["--status"]);
+  const output = result.output;
   const enabled = /assessments enabled/i.test(output);
   const disabled = /assessments disabled/i.test(output);
   return {
@@ -24778,7 +24803,8 @@ async function collectGatekeeper() {
   };
 }
 async function collectSip() {
-  const output = await run("/usr/bin/csrutil", ["status"]);
+  const result = await run("/usr/bin/csrutil", ["status"]);
+  const output = result.output;
   const enabled = /enabled/i.test(output);
   const disabled = /disabled/i.test(output);
   return {
@@ -24786,18 +24812,239 @@ async function collectSip() {
     raw: output || void 0
   };
 }
+async function collectPatches() {
+  const profiler = await runJson(
+    "/usr/sbin/system_profiler",
+    ["SPInstallHistoryDataType", "-json"],
+    25e3
+  );
+  const items = Array.isArray(profiler?.SPInstallHistoryDataType) ? profiler.SPInstallHistoryDataType : [];
+  const normalized = items.map((item) => ({
+    name: item?._name || "unknown",
+    version: item?.version || void 0,
+    installedAtUtc: parseDate(item?.install_date),
+    packageIdentifiers: Array.isArray(item?.packageIdentifiers) ? item.packageIdentifiers : []
+  }));
+  const securityItems = normalized.filter(
+    (item) => /security|rapid security response|xprotect|gatekeeper|mrt|malware/i.test(String(item.name))
+  );
+  return {
+    status: normalized.length > 0 ? "available" : "unknown",
+    count: normalized.length,
+    securityCount: securityItems.length,
+    lastScanUtc: (/* @__PURE__ */ new Date()).toISOString(),
+    lastSecurityInstallUtc: (() => {
+      const installs = securityItems.map((item) => item.installedAtUtc).filter((item) => Boolean(item)).sort();
+      return installs.length > 0 ? installs[installs.length - 1] : void 0;
+    })(),
+    items: securityItems,
+    rawCount: normalized.length
+  };
+}
+async function readPkgInfo(packageId) {
+  const result = await run("/usr/sbin/pkgutil", ["--pkg-info", packageId], 8e3);
+  const output = result.output;
+  if (!output) {
+    return {
+      packageId,
+      installed: false
+    };
+  }
+  const version = output.match(/^version:\s*(.+)$/im)?.[1]?.trim();
+  const installTime = output.match(/^install-time:\s*(.+)$/im)?.[1]?.trim();
+  return {
+    packageId,
+    installed: result.ok,
+    version: version || void 0,
+    installTimeEpoch: installTime ? Number(installTime) : void 0,
+    installedAtUtc: installTime && Number.isFinite(Number(installTime)) ? new Date(Number(installTime) * 1e3).toISOString() : void 0,
+    raw: output || void 0
+  };
+}
+async function collectAntivirus() {
+  const [xprotectConfig, xprotectPayloads, mrtConfig] = await Promise.all([
+    readPkgInfo("com.apple.pkg.XProtectPlistConfigData"),
+    readPkgInfo("com.apple.pkg.XProtectPayloads"),
+    readPkgInfo("com.apple.pkg.MRTConfigData")
+  ]);
+  const receipts = [xprotectConfig, xprotectPayloads, mrtConfig];
+  const installedCount = receipts.filter((item) => item.installed).length;
+  const latestUpdate = receipts.map((item) => item.installedAtUtc).filter((item) => Boolean(item)).sort();
+  return {
+    status: installedCount > 0 ? "enabled" : "unknown",
+    provider: installedCount > 0 ? "apple_builtin" : "unknown",
+    installedCount,
+    lastUpdateUtc: latestUpdate.length > 0 ? latestUpdate[latestUpdate.length - 1] : void 0,
+    xprotect: {
+      config: xprotectConfig,
+      payloads: xprotectPayloads
+    },
+    mrt: mrtConfig,
+    receipts
+  };
+}
+function parseSharingBlocks(output) {
+  const lines = output.split(/\r?\n/);
+  const items = [];
+  let current = null;
+  for (const rawLine of lines) {
+    const line2 = rawLine.trim();
+    if (!line2) continue;
+    const nameMatch = line2.match(/^name:\s*(.+)$/i);
+    if (nameMatch) {
+      if (current) items.push(current);
+      current = { name: nameMatch[1].trim() };
+      continue;
+    }
+    const pathMatch = line2.match(/^path:\s*(.+)$/i);
+    if (pathMatch) {
+      current = current || {};
+      current.path = pathMatch[1].trim();
+      continue;
+    }
+    const smbMatch = line2.match(/^smb:\s*(.+)$/i);
+    if (smbMatch) {
+      current = current || {};
+      current.smb = smbMatch[1].trim();
+      continue;
+    }
+    const afpMatch = line2.match(/^afp:\s*(.+)$/i);
+    if (afpMatch) {
+      current = current || {};
+      current.afp = afpMatch[1].trim();
+      continue;
+    }
+    const ftpMatch = line2.match(/^ftp:\s*(.+)$/i);
+    if (ftpMatch) {
+      current = current || {};
+      current.ftp = ftpMatch[1].trim();
+      continue;
+    }
+    const permissionMatch = line2.match(/^users?:\s*(.+)$/i) || line2.match(/^groups?:\s*(.+)$/i);
+    if (permissionMatch) {
+      current = current || {};
+      const permissions = Array.isArray(current.permissions) ? current.permissions : [];
+      permissions.push(permissionMatch[1].trim());
+      current.permissions = permissions;
+    }
+  }
+  if (current) items.push(current);
+  return items;
+}
+async function inspectShareRisk(path4) {
+  const result = await run("/bin/ls", ["-lde", path4], 8e3);
+  const output = result.output;
+  const hasEveryoneWriteAcl = /everyone allow .*?(write|delete|add_file|add_subdirectory|writeattr|writeextattr|chown)/i.test(output);
+  const worldWritable = /^[\-d].{7}w/.test(output);
+  return {
+    path: path4,
+    hasEveryoneWriteAcl,
+    worldWritable,
+    raw: output || void 0
+  };
+}
+async function collectShares() {
+  const result = await run("/usr/sbin/sharing", ["-l"], 12e3);
+  const items = parseSharingBlocks(result.output);
+  const detailed = await Promise.all(items.map(async (item) => {
+    const path4 = typeof item.path === "string" ? item.path : void 0;
+    const risk = path4 ? await inspectShareRisk(path4) : null;
+    const risky = Boolean(risk?.hasEveryoneWriteAcl || risk?.worldWritable);
+    return {
+      ...item,
+      risky,
+      risk: risk || void 0
+    };
+  }));
+  const riskyItems = detailed.filter((item) => item.risky);
+  const smbEnabled = detailed.some((item) => String(item.smb || "").toLowerCase() === "yes");
+  return {
+    status: detailed.length > 0 ? "available" : "unknown",
+    count: detailed.length,
+    riskyCount: riskyItems.length,
+    items: detailed,
+    raw: result.output || void 0,
+    smbEnabled
+  };
+}
+async function collectSmb(shares) {
+  const launchctl = await run("/bin/launchctl", ["print", "system/com.apple.smbd"], 8e3);
+  const running = /state = running/i.test(launchctl.output) || /active count = [1-9]/i.test(launchctl.output);
+  const disabled = /Could not find service|not found/i.test(launchctl.output);
+  return {
+    status: shares.smbEnabled || running ? "enabled" : disabled ? "disabled" : "unknown",
+    running,
+    raw: launchctl.output || shares.raw
+  };
+}
+async function collectProfiles() {
+  const [enrollmentResult, listResult] = await Promise.all([
+    run("/usr/bin/profiles", ["status", "-type", "enrollment"], 12e3),
+    run("/usr/bin/profiles", ["list", "-all"], 15e3)
+  ]);
+  const enrollmentOutput = enrollmentResult.output;
+  const listOutput = listResult.output;
+  const enrolled = /mdm enrollment:\s*yes|enrolled via dep:\s*yes|enrollment state:\s*enrolled/i.test(enrollmentOutput);
+  const profileLines = listOutput.split(/\r?\n/).map((line2) => line2.trim()).filter((line2) => /^attribute:/i.test(line2) || /^profile:/i.test(line2) || /^identifier:/i.test(line2));
+  return {
+    status: enrollmentOutput || listOutput ? "available" : "unknown",
+    mdmEnrolled: enrolled,
+    profileLineCount: profileLines.length,
+    enrollmentRaw: enrollmentOutput || void 0,
+    listRaw: listOutput || void 0
+  };
+}
+async function collectDirectoryBinding() {
+  const result = await run("/usr/sbin/dsconfigad", ["-show"], 1e4);
+  const output = result.output;
+  const bound = result.ok && /Active Directory Domain/i.test(output);
+  const domainName = output.match(/Active Directory Domain\s*=\s*(.+)$/im)?.[1]?.trim();
+  const computerAccount = output.match(/Computer Account\s*=\s*(.+)$/im)?.[1]?.trim();
+  return {
+    status: bound ? "bound" : output ? "unbound" : "unknown",
+    bound,
+    domainName: domainName || void 0,
+    computerAccount: computerAccount || void 0,
+    raw: output || void 0
+  };
+}
+async function collectDomain() {
+  const [profiles, directoryBinding] = await Promise.all([
+    collectProfiles(),
+    collectDirectoryBinding()
+  ]);
+  return {
+    status: profiles.status === "available" || directoryBinding.status !== "unknown" ? "available" : "unknown",
+    profiles,
+    directoryBinding
+  };
+}
 async function handleSecurityPosture(req) {
-  const [filevault, firewall, gatekeeper, sip] = await Promise.all([
+  const [filevault, firewall, gatekeeper, sip, patches, antivirus, shares, domain] = await Promise.all([
     collectFileVault(),
     collectFirewall(),
     collectGatekeeper(),
-    collectSip()
+    collectSip(),
+    collectPatches(),
+    collectAntivirus(),
+    collectShares(),
+    collectDomain()
   ]);
+  const smb = await collectSmb(shares);
   return success(req.id, {
     filevault,
     firewall,
     gatekeeper,
     sip,
+    patches,
+    antivirus,
+    shares,
+    smb,
+    domain,
+    crypto: {
+      status: "unknown",
+      source: "phase_2_pending_model_definition"
+    },
     collectedAtUtc: (/* @__PURE__ */ new Date()).toISOString()
   });
 }
