@@ -8,8 +8,8 @@ export async function buildEnrollmentPayload() {
 
   return {
     agent: {
-      agentVersion: "1.0.91",
-      coreVersion: "1.0.91",
+      agentVersion: "1.0.92",
+      coreVersion: "1.0.92",
       platform: os.platform(),
       arch: os.arch(),
     },

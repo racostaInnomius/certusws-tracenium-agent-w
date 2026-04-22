@@ -380,18 +380,48 @@ class Scheduler {
       // a failure here keeps forcing retries on subsequent ticks.
       const forceInitialSnapshot = !this.initialInventorySent;
 
-      if (!hasAnyChanges && !forceInitialSnapshot) {
+      // Second trigger: force a re-snapshot whenever the running
+      // agentVersion differs from what was baked into the last shipped
+      // snapshot. Prevents the degenerate case where:
+      //   1. Agent at 1.0.87 sends a snapshot.
+      //   2. Agent auto-updates to 1.0.92 (restart, initial snapshot
+      //      fires, but gRPC/outbox were briefly down so it fails to
+      //      ship).
+      //   3. Subsequent ticks see `hasAnyChanges=false` (software is
+      //      unchanged) and skip the enqueue. Backend is stuck with a
+      //      phantom "1.0.87" view of a device that's really on 1.0.92.
+      //
+      // The hash over the namespace intentionally excludes `agent.*`
+      // (version, coreVersion, capabilities) because we want software
+      // changes to drive the cadence — but a version bump is itself a
+      // semantic change the backend needs to know about. We track it
+      // separately in outbox state.
+      const lastSentVersion = outbox.getState("lastSentAgentVersion");
+      const currentVersion = ctx.config.agentVersion || "";
+      const versionChanged = lastSentVersion !== currentVersion;
+
+      if (!hasAnyChanges && !forceInitialSnapshot && !versionChanged) {
         logger.info("Skipping FACTS enqueue — no changes detected (all modules)", {
-          deviceId: ctx.enrollment.deviceId
+          deviceId: ctx.enrollment.deviceId,
+          currentVersion,
+          lastSentVersion
         });
         return;
       }
 
-      // When we're forcing the startup snapshot and the AMP provider
-      // returned software without items (delta said "no changes"),
-      // re-hydrate items from the baseline so the server doesn't get a
-      // partial snapshot on first contact.
-      if (forceInitialSnapshot && namespaces.amp?.software && namespaces.amp.software.items == null) {
+      if (versionChanged && !hasAnyChanges && !forceInitialSnapshot) {
+        logger.info("Forcing FACTS enqueue — agentVersion changed since last snapshot", {
+          previousVersion: lastSentVersion,
+          currentVersion
+        });
+      }
+
+      // When we're forcing a snapshot (startup OR version-change) and
+      // the AMP provider returned software without items (delta said
+      // "no changes"), re-hydrate items from the baseline so the
+      // server doesn't get a partial snapshot on first contact.
+      const needsRehydrate = forceInitialSnapshot || versionChanged;
+      if (needsRehydrate && namespaces.amp?.software && namespaces.amp.software.items == null) {
         try {
           const { loadSoftwareBaseline } = await import("../domain/software-baseline-repo");
           const baseline = loadSoftwareBaseline() ?? [];
@@ -411,6 +441,16 @@ class Scheduler {
         payload: facts
       });
 
+      // Record the agentVersion we just shipped so the next tick's
+      // `versionChanged` check works correctly. Stored in outbox state
+      // (SQLite), so it survives daemon restarts — exactly what we
+      // want, since an upgrade+restart is the scenario this fix targets.
+      try {
+        outbox.setState("lastSentAgentVersion", currentVersion);
+      } catch (err) {
+        logger.warn("Failed to persist lastSentAgentVersion", { err });
+      }
+
       this.initialInventorySent = true;
 
       logger.info("FACTS_SNAPSHOT enqueued", {
@@ -418,6 +458,8 @@ class Scheduler {
         modules: Object.keys(namespaces),
         hasAnyChanges,
         forceInitialSnapshot,
+        versionChanged,
+        currentVersion,
         ampSoftwareItems: Array.isArray(namespaces.amp?.software?.items)
           ? namespaces.amp.software.items.length
           : 0

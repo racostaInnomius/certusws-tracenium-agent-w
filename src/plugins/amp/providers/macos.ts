@@ -33,6 +33,43 @@ type RawMacApp = {
 };
 
 /**
+ * Prefixes of Apple system-internal pkgutil receipts that should never
+ * appear in a user-facing software inventory.
+ *
+ * Rules for adding a prefix here:
+ *   - The package is system-owned and installed by macOS/SoftwareUpdate,
+ *     not by a user action.
+ *   - Dropping it doesn't hide any real user-installed app (Apple's
+ *     user-facing apps have separate receipts OR come through the
+ *     /Applications .app bundle collector).
+ *
+ * Matched by `startsWith`, case-sensitive — Apple's pkg ids are
+ * consistently lowercase under `com.apple.pkg.*`.
+ */
+const APPLE_PKGUTIL_NOISE_PREFIXES = [
+  "com.apple.pkg.MAContent10_",            // GarageBand / Logic sample libraries (hundreds of entries)
+  "com.apple.pkg.XProtectPayloads_",       // XProtect malware definition bundles
+  "com.apple.pkg.XProtectPlistConfigData_",// XProtect configuration plists
+  "com.apple.pkg.MRTConfigData_",          // Malware Removal Tool config
+  "com.apple.pkg.MobileAssets",            // On-demand assets (Siri voices, language packs…)
+  "com.apple.pkg.CLTools_",                // Xcode Command Line Tools component receipts
+  "com.apple.pkg.FirmwareUpdate",          // Firmware update receipts
+  "com.apple.pkg.InputMethod_",            // Input method bundles
+  "com.apple.pkg.GarageBand_AppStore",     // covered by .app bundle at /Applications/GarageBand.app
+  "com.apple.pkg.iMovie_AppStore",         // same — user-facing, captured via .app
+  "com.apple.pkg.XcodeSystemResources",    // Xcode internal receipt
+  "com.apple.pkg.XcodeExtensionSupport"    // Xcode internal receipt
+];
+
+function isApplePkgutilNoise(pkgId: string): boolean {
+  if (!pkgId) return false;
+  for (const prefix of APPLE_PKGUTIL_NOISE_PREFIXES) {
+    if (pkgId.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
+/**
  * Enterprise-grade hybrid macOS software collector (Applications, Utilities, User Apps, Homebrew, pkgutil)
  */
 async function collectMacSoftware(): Promise<SoftwareApplication[]> {
@@ -165,6 +202,22 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
       const pkgs = stdout.split("\n").map(p => p.trim()).filter(Boolean);
 
       for (const pkg of pkgs) {
+        // Filter Apple system noise. `pkgutil --pkgs` on any normal Mac
+        // returns hundreds of `com.apple.pkg.MAContent10_AssetPack_*`
+        // entries (GarageBand/Logic sample libraries), dozens of
+        // `com.apple.pkg.XProtectPlistConfigData_*` and XProtectPayloads
+        // entries (system security updates), and a lot of
+        // `com.apple.pkg.CLTools_*` (Xcode CLT components). None of
+        // these are user-installed software, they have no meaningful
+        // name, and they drown the legitimate inventory 10:1.
+        //
+        // The prefixes below are all system-internal packages that an
+        // admin viewing the inventory does NOT want to see. Legitimate
+        // Apple user-facing apps (Keynote, Numbers, Pages, iMovie,
+        // GarageBand proper, Xcode.app) come through the .app bundle
+        // collector above, so dropping all of these here is safe.
+        if (isApplePkgutilNoise(pkg)) continue;
+
         const normalized = normalizeApp({
           name: pkg,
           version: null,
@@ -182,14 +235,64 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
       // ignore
     }
 
-    // Deduplicate by installId
-    const map = new Map<string, SoftwareApplication>();
+    // --------------------------------------------------------------------
+    // Two-pass dedup
+    // --------------------------------------------------------------------
+    // Pass 1 (installId dedup): normalizeApp produces a stable installId
+    // from (name|publisher|packageFamilyName|source), so two scans of
+    // the same source+app would already collapse here. This is cheap
+    // and deterministic; keep it.
+    //
+    // Pass 2 (cross-source semantic dedup): the SAME logical app often
+    // surfaces from multiple collectors:
+    //
+    //   .app bundle:   name="Microsoft OneNote"       pfn="com.microsoft.onenote.mac"
+    //   pkgutil:       name="com.microsoft.onenote.mac" pfn="com.microsoft.onenote.mac"
+    //
+    // Both produce different `installId`s because `source` is part of
+    // the hash. Pass 1 keeps both; Pass 2 merges them by
+    // `packageFamilyName` and picks the entry that gives operators the
+    // most useful data.
+    //
+    // Priority: macos-app-bundle > homebrew > pkgutil.
+    //   - .app bundle has the human-readable display name and the
+    //     user-facing install location.
+    //   - homebrew has a version string.
+    //   - pkgutil is last-resort identification for things that aren't
+    //     bundles (drivers, kexts, receipts for deleted apps).
+    const byInstallId = new Map<string, SoftwareApplication>();
     for (const app of results) {
       if (!app.installId) continue;
-      map.set(app.installId, app);
+      byInstallId.set(app.installId, app);
     }
 
-    return Array.from(map.values());
+    const SOURCE_PRIORITY: Record<string, number> = {
+      "macos-app-bundle": 3,
+      "homebrew": 2,
+      "pkgutil": 1
+    };
+    const sourceRank = (s: string) => SOURCE_PRIORITY[s?.toLowerCase?.() || ""] ?? 0;
+
+    const byPfn = new Map<string, SoftwareApplication>();
+    const unkeyed: SoftwareApplication[] = [];
+
+    for (const app of byInstallId.values()) {
+      const pfn = app.packageFamilyName?.toLowerCase?.() || "";
+      if (!pfn) {
+        // No packageFamilyName to merge on — keep as-is. Anything
+        // without a PFN is rare (nping from /Applications with "(null)"
+        // bundle id, a handful of sideloaded apps); these stay.
+        unkeyed.push(app);
+        continue;
+      }
+
+      const existing = byPfn.get(pfn);
+      if (!existing || sourceRank(app.source) > sourceRank(existing.source)) {
+        byPfn.set(pfn, app);
+      }
+    }
+
+    return [...byPfn.values(), ...unkeyed];
   } catch (err) {
     console.warn("[MACOS] enterprise collector failed", err);
     return [];

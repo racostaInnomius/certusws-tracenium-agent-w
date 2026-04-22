@@ -31,7 +31,19 @@ type BridgeState = {
   tenantId?: string;
   deviceId?: string;
   target?: string;
-  chunks: Map<string, { totalChunks: number; chunks: string[]; createdAt: number }>;
+  chunks: Map<string, {
+    totalChunks: number;
+    chunks: string[];
+    createdAt: number;
+    // Namespace metadata from the first chunk is preserved across
+    // reassembly so the final Facts frame has the same `namespace` /
+    // `namespaces` fields it would if the payload had fit in one
+    // message. agent-core sends these in every chunk request but we
+    // only store them on first arrival; the backend validator wants
+    // them in the single reassembled `facts` frame.
+    namespace: string;
+    namespaces: string[];
+  }>;
   channelWatchGen: number;
 };
 
@@ -491,11 +503,43 @@ export async function handleFactsSend(req: PrivSvcRequest): Promise<PrivSvcRespo
     const payloadJson = String(req.params?.payloadJson || "{}");
     if (!eventId) return fail(req.id, "bad_request", "eventId required");
 
+    // --- Regression fix (macOS contract parity with Windows) ---
+    //
+    // The Facts proto has four relevant fields:
+    //   string eventId = 1;
+    //   bytes  payloadJson = 2;
+    //   string deviceId = 3;
+    //   string namespace = 4;
+    //   repeated string namespaces = 5;
+    //
+    // The backend's validator (controlplane.ts `validateFactsEnvelope`)
+    // REQUIRES `facts.namespaces` to be a non-empty string[] that also
+    // matches the keys inside payloadJson.namespaces. If we don't set
+    // it, gRPC-js serialises `namespaces` as `[]` (the default for
+    // `repeated string`), the backend runs `normalizeWireNamespaces([])`
+    // → `[]`, and rejects with:
+    //
+    //   status: 2, message: "missing facts.namespaces"
+    //
+    // Windows PrivSvc (IpcGrpcHandlers.cs → GrpcBridge.SendFacts) does
+    // forward these fields. macOS did not, so every FACTS_SNAPSHOT from
+    // a Mac was silently rejected post-ACK. agent-core does mark these
+    // as FAILED in the outbox, which means new snapshots never land on
+    // the backend and the device's row stays frozen at whatever version
+    // last succeeded (typically before we shipped the macOS PrivSvc).
+    const factNamespace = String(req.params?.namespace || "");
+    const rawNamespaces = req.params?.namespaces;
+    const factNamespaces = Array.isArray(rawNamespaces)
+      ? rawNamespaces.filter((ns: unknown) => typeof ns === "string" && ns.length > 0) as string[]
+      : [];
+
     await write({
       traceId: eventId,
       facts: {
         eventId,
         deviceId: state.deviceId || "",
+        namespace: factNamespace,
+        namespaces: factNamespaces,
         payloadJson: Buffer.from(payloadJson, "utf8")
       }
     });
@@ -534,10 +578,20 @@ export async function handleFactsChunk(req: PrivSvcRequest): Promise<PrivSvcResp
     return fail(req.id, "bad_request", `chunk size ${payloadChunk.length} exceeds cap ${MAX_CHUNK_BYTES}`);
   }
 
+  // Capture namespace metadata from this chunk so the reassembled
+  // Facts frame carries them forward (see BridgeState.chunks comment).
+  const incomingNamespace = String(params.namespace || "");
+  const incomingNamespacesRaw = params.namespaces;
+  const incomingNamespaces = Array.isArray(incomingNamespacesRaw)
+    ? incomingNamespacesRaw.filter((ns: unknown) => typeof ns === "string" && ns.length > 0) as string[]
+    : [];
+
   const current = state.chunks.get(eventId) || {
     totalChunks,
     chunks: new Array<string>(totalChunks).fill(""),
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    namespace: incomingNamespace,
+    namespaces: incomingNamespaces
   };
 
   // Guard against a caller re-opening the same eventId with a different
@@ -551,6 +605,15 @@ export async function handleFactsChunk(req: PrivSvcRequest): Promise<PrivSvcResp
     return fail(req.id, "bad_request", "totalChunks changed mid-stream");
   }
 
+  // Late chunks may arrive with fresh namespace values — trust the
+  // most recent non-empty pair (agent-core emits identical values in
+  // every chunk, so this only matters if the first chunk was somehow
+  // missing the metadata).
+  if (incomingNamespace && !current.namespace) current.namespace = incomingNamespace;
+  if (incomingNamespaces.length > 0 && current.namespaces.length === 0) {
+    current.namespaces = incomingNamespaces;
+  }
+
   current.chunks[chunkIndex] = payloadChunk;
   state.chunks.set(eventId, current);
 
@@ -560,7 +623,9 @@ export async function handleFactsChunk(req: PrivSvcRequest): Promise<PrivSvcResp
       ...req,
       params: {
         eventId,
-        payloadJson: current.chunks.join("")
+        payloadJson: current.chunks.join(""),
+        namespace: current.namespace,
+        namespaces: current.namespaces
       }
     });
   }

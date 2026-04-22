@@ -7,7 +7,7 @@
 // control (they come from our own backend metadata endpoint). A bundled
 // 60 KB of code for two dozen lines of logic is not worth the dep churn.
 //
-// Prerelease / build-metadata handling is intentionally dumb: "1.0.89-rc1"
+// Prerelease / build-metadata handling is intentionally dumb: "1.0.92-rc1"
 // parses to [1, 0, 89, 0] (the `rc1` segment drops to 0). That matches the
 // old ad-hoc implementations that were duplicated across both callers;
 // the point of extracting is to keep behaviour identical, not to upgrade

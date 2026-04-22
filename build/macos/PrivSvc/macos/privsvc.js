@@ -24966,11 +24966,16 @@ async function handleFactsSend(req) {
     const eventId = String(req.params?.eventId || "");
     const payloadJson = String(req.params?.payloadJson || "{}");
     if (!eventId) return fail(req.id, "bad_request", "eventId required");
+    const factNamespace = String(req.params?.namespace || "");
+    const rawNamespaces = req.params?.namespaces;
+    const factNamespaces = Array.isArray(rawNamespaces) ? rawNamespaces.filter((ns) => typeof ns === "string" && ns.length > 0) : [];
     await write({
       traceId: eventId,
       facts: {
         eventId,
         deviceId: state.deviceId || "",
+        namespace: factNamespace,
+        namespaces: factNamespaces,
         payloadJson: Buffer.from(payloadJson, "utf8")
       }
     });
@@ -24999,10 +25004,15 @@ async function handleFactsChunk(req) {
     logger.warn("chunk_rejected_too_large", { eventId, chunkIndex, bytes: payloadChunk.length, cap: MAX_CHUNK_BYTES });
     return fail(req.id, "bad_request", `chunk size ${payloadChunk.length} exceeds cap ${MAX_CHUNK_BYTES}`);
   }
+  const incomingNamespace = String(params.namespace || "");
+  const incomingNamespacesRaw = params.namespaces;
+  const incomingNamespaces = Array.isArray(incomingNamespacesRaw) ? incomingNamespacesRaw.filter((ns) => typeof ns === "string" && ns.length > 0) : [];
   const current = state.chunks.get(eventId) || {
     totalChunks,
     chunks: new Array(totalChunks).fill(""),
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    namespace: incomingNamespace,
+    namespaces: incomingNamespaces
   };
   if (current.totalChunks !== totalChunks) {
     logger.warn("chunk_totals_mismatch", {
@@ -25012,6 +25022,10 @@ async function handleFactsChunk(req) {
     });
     return fail(req.id, "bad_request", "totalChunks changed mid-stream");
   }
+  if (incomingNamespace && !current.namespace) current.namespace = incomingNamespace;
+  if (incomingNamespaces.length > 0 && current.namespaces.length === 0) {
+    current.namespaces = incomingNamespaces;
+  }
   current.chunks[chunkIndex] = payloadChunk;
   state.chunks.set(eventId, current);
   if (current.chunks.every((chunk) => chunk.length > 0)) {
@@ -25020,7 +25034,9 @@ async function handleFactsChunk(req) {
       ...req,
       params: {
         eventId,
-        payloadJson: current.chunks.join("")
+        payloadJson: current.chunks.join(""),
+        namespace: current.namespace,
+        namespaces: current.namespaces
       }
     });
   }

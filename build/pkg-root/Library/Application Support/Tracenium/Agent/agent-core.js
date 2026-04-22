@@ -19972,6 +19972,13 @@ var init_windows = __esm({
 });
 
 // src/plugins/amp/providers/macos.ts
+function isApplePkgutilNoise(pkgId) {
+  if (!pkgId) return false;
+  for (const prefix of APPLE_PKGUTIL_NOISE_PREFIXES) {
+    if (pkgId.startsWith(prefix)) return true;
+  }
+  return false;
+}
 async function collectMacSoftware() {
   try {
     const appDirs = [
@@ -20060,6 +20067,7 @@ async function collectMacSoftware() {
       });
       const pkgs = stdout.split("\n").map((p) => p.trim()).filter(Boolean);
       for (const pkg of pkgs) {
+        if (isApplePkgutilNoise(pkg)) continue;
         const normalized = normalizeApp({
           name: pkg,
           version: null,
@@ -20074,12 +20082,31 @@ async function collectMacSoftware() {
       }
     } catch {
     }
-    const map = /* @__PURE__ */ new Map();
+    const byInstallId = /* @__PURE__ */ new Map();
     for (const app of results) {
       if (!app.installId) continue;
-      map.set(app.installId, app);
+      byInstallId.set(app.installId, app);
     }
-    return Array.from(map.values());
+    const SOURCE_PRIORITY = {
+      "macos-app-bundle": 3,
+      "homebrew": 2,
+      "pkgutil": 1
+    };
+    const sourceRank = (s) => SOURCE_PRIORITY[s?.toLowerCase?.() || ""] ?? 0;
+    const byPfn = /* @__PURE__ */ new Map();
+    const unkeyed = [];
+    for (const app of byInstallId.values()) {
+      const pfn = app.packageFamilyName?.toLowerCase?.() || "";
+      if (!pfn) {
+        unkeyed.push(app);
+        continue;
+      }
+      const existing = byPfn.get(pfn);
+      if (!existing || sourceRank(app.source) > sourceRank(existing.source)) {
+        byPfn.set(pfn, app);
+      }
+    }
+    return [...byPfn.values(), ...unkeyed];
   } catch (err) {
     console.warn("[MACOS] enterprise collector failed", err);
     return [];
@@ -20158,7 +20185,7 @@ async function collectMacSecurity(ctx) {
     return unknown;
   }
 }
-var import_os9, import_systeminformation2, import_child_process4, import_util, import_fs10, execFileAsync, macProvider;
+var import_os9, import_systeminformation2, import_child_process4, import_util, import_fs10, execFileAsync, APPLE_PKGUTIL_NOISE_PREFIXES, macProvider;
 var init_macos = __esm({
   "src/plugins/amp/providers/macos.ts"() {
     "use strict";
@@ -20171,6 +20198,32 @@ var init_macos = __esm({
     init_software_inventory_delta();
     init_software_baseline_repo();
     execFileAsync = (0, import_util.promisify)(import_child_process4.execFile);
+    APPLE_PKGUTIL_NOISE_PREFIXES = [
+      "com.apple.pkg.MAContent10_",
+      // GarageBand / Logic sample libraries (hundreds of entries)
+      "com.apple.pkg.XProtectPayloads_",
+      // XProtect malware definition bundles
+      "com.apple.pkg.XProtectPlistConfigData_",
+      // XProtect configuration plists
+      "com.apple.pkg.MRTConfigData_",
+      // Malware Removal Tool config
+      "com.apple.pkg.MobileAssets",
+      // On-demand assets (Siri voices, language packs…)
+      "com.apple.pkg.CLTools_",
+      // Xcode Command Line Tools component receipts
+      "com.apple.pkg.FirmwareUpdate",
+      // Firmware update receipts
+      "com.apple.pkg.InputMethod_",
+      // Input method bundles
+      "com.apple.pkg.GarageBand_AppStore",
+      // covered by .app bundle at /Applications/GarageBand.app
+      "com.apple.pkg.iMovie_AppStore",
+      // same — user-facing, captured via .app
+      "com.apple.pkg.XcodeSystemResources",
+      // Xcode internal receipt
+      "com.apple.pkg.XcodeExtensionSupport"
+      // Xcode internal receipt
+    ];
     macProvider = {
       async collect(ctx) {
         if (import_os9.default.platform() !== "darwin") {
@@ -22417,8 +22470,8 @@ var config = {
   })(),
   agentId: process.env.AGENT_ID || "auto",
   enrollmentToken: process.env.ENROLLMENT_TOKEN || "",
-  agentVersion: process.env.AGENT_VERSION || "1.0.91",
-  coreVersion: process.env.CORE_VERSION || "1.0.91",
+  agentVersion: process.env.AGENT_VERSION || "1.0.92",
+  coreVersion: process.env.CORE_VERSION || "1.0.92",
   channel: process.env.CHANNEL || "stable"
 };
 
@@ -24433,13 +24486,25 @@ var Scheduler = class {
         return ns?.software?.hasChanges === true || ns?.hasChanges === true;
       });
       const forceInitialSnapshot = !this.initialInventorySent;
-      if (!hasAnyChanges && !forceInitialSnapshot) {
+      const lastSentVersion = outbox.getState("lastSentAgentVersion");
+      const currentVersion = ctx.config.agentVersion || "";
+      const versionChanged = lastSentVersion !== currentVersion;
+      if (!hasAnyChanges && !forceInitialSnapshot && !versionChanged) {
         logger.info("Skipping FACTS enqueue \u2014 no changes detected (all modules)", {
-          deviceId: ctx.enrollment.deviceId
+          deviceId: ctx.enrollment.deviceId,
+          currentVersion,
+          lastSentVersion
         });
         return;
       }
-      if (forceInitialSnapshot && namespaces.amp?.software && namespaces.amp.software.items == null) {
+      if (versionChanged && !hasAnyChanges && !forceInitialSnapshot) {
+        logger.info("Forcing FACTS enqueue \u2014 agentVersion changed since last snapshot", {
+          previousVersion: lastSentVersion,
+          currentVersion
+        });
+      }
+      const needsRehydrate = forceInitialSnapshot || versionChanged;
+      if (needsRehydrate && namespaces.amp?.software && namespaces.amp.software.items == null) {
         try {
           const { loadSoftwareBaseline: loadSoftwareBaseline2 } = await Promise.resolve().then(() => (init_software_baseline_repo(), software_baseline_repo_exports));
           const baseline = loadSoftwareBaseline2() ?? [];
@@ -24456,12 +24521,19 @@ var Scheduler = class {
         type: "FACTS_SNAPSHOT",
         payload: facts
       });
+      try {
+        outbox.setState("lastSentAgentVersion", currentVersion);
+      } catch (err) {
+        logger.warn("Failed to persist lastSentAgentVersion", { err });
+      }
       this.initialInventorySent = true;
       logger.info("FACTS_SNAPSHOT enqueued", {
         deviceId: ctx.enrollment.deviceId,
         modules: Object.keys(namespaces),
         hasAnyChanges,
         forceInitialSnapshot,
+        versionChanged,
+        currentVersion,
         ampSoftwareItems: Array.isArray(namespaces.amp?.software?.items) ? namespaces.amp.software.items.length : 0
       });
     } catch (err) {
