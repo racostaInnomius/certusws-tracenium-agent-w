@@ -16,6 +16,11 @@ function getTimeoutForMethod(method: string): number {
     case "grpc.ack":
     case "grpc.close":
       return 30000;
+    case "grpc.heartbeat":
+      // Short timeout — heartbeat is a fire-and-forget write to the
+      // local bridge; if PrivSvc is unresponsive the agent should know
+      // quickly and trigger a reconnect.
+      return 5000;
     case "software.inventory":
       return 60000;
     case "security.compliance":

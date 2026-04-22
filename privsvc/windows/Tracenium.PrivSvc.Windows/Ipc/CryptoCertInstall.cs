@@ -126,17 +126,40 @@ public static class CryptoCertInstall
 
             Console.WriteLine($"[PrivSvc][Crypto] Installing cert using key: {keyName}");
 
-            // Open previously generated key container
+            // Open previously generated key container. We can't assume
+            // ECDSA anymore — since the contract pinned RSA_2048 most
+            // fresh enrolls will produce an RSA CNG key, but legacy
+            // hosts that enrolled before the contract change still have
+            // ECDSA keys sitting in the same container name. Detect at
+            // runtime and wrap with the matching provider.
             var key = CngKey.Open(
                 keyName,
                 CngProvider.MicrosoftSoftwareKeyStorageProvider,
                 CngKeyOpenOptions.MachineKey
             );
 
-            using var ecdsa = new ECDsaCng(key);
-
-            // Associate certificate with private key
-            var certWithKey = certTmp.CopyWithPrivateKey(ecdsa);
+            // Associate certificate with private key. CopyWithPrivateKey
+            // has RSA and ECDSA overloads — picking the right one is
+            // the whole reason we dispatch on key.Algorithm here.
+            X509Certificate2 certWithKey;
+            if (string.Equals(key.Algorithm.Algorithm, CngAlgorithm.Rsa.Algorithm,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                using var rsa = new RSACng(key);
+                certWithKey = certTmp.CopyWithPrivateKey(rsa);
+            }
+            else if (string.Equals(key.Algorithm.Algorithm, CngAlgorithm.ECDsaP256.Algorithm,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                using var ecdsa = new ECDsaCng(key);
+                certWithKey = certTmp.CopyWithPrivateKey(ecdsa);
+            }
+            else
+            {
+                key.Dispose();
+                throw new Exception(
+                    $"Unsupported CNG key algorithm '{key.Algorithm.Algorithm}' for key '{keyName}'");
+            }
 
             // Validate EKU (Client Authentication required for mTLS)
             var ekuExt = certWithKey.Extensions

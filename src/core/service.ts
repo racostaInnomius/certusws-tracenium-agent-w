@@ -91,29 +91,89 @@ export async function startService() {
       }
     }, 12 * 60 * 60 * 1000); // every 12h
 
-    certRenewalTimer = setInterval(async () => {
-      if (!currentCtx || shuttingDown) return;
+    // --- Periodic certificate renewal check ---
+    //
+    // Two problems the simple `setInterval(fn, 24h)` had:
+    //
+    //   1. Renewal storm. Every agent in the fleet checks on the same
+    //      24-hour cadence, so a mass deployment puts the entire fleet
+    //      at the renewal endpoint at hour 24, 48, 72... Adding uniform
+    //      jitter across ±1 h spreads the herd.
+    //
+    //   2. Enrollment mutation race. The previous code called
+    //      `maybeRenewClientCertificate({enrollment: currentCtx.enrollment, ...})`
+    //      which captures the reference at call time, then awaits the
+    //      privsvc round-trip. If gRPC pushed a rotateCert during that
+    //      window, `currentCtx.enrollment` got mutated mid-await and we
+    //      could end up writing back an inconsistent state. Snapshot
+    //      locally so the renewal operates on a stable view.
+    const CERT_RENEWAL_BASE_MS = Number(
+      process.env.CERT_RENEWAL_CHECK_INTERVAL_MS || 24 * 60 * 60 * 1000
+    );
+    const CERT_RENEWAL_JITTER_MS = 60 * 60 * 1000; // ±1 h
 
-      try {
-        const previousThumbprint = currentCtx.enrollment.mtls.clientCertThumbprint;
-        const renewed = await maybeRenewClientCertificate({
-          enrollment: currentCtx.enrollment,
-          store: currentCtx.store,
-          priv: currentCtx.priv,
-          logger: currentCtx.logger
-        });
-
-        currentCtx.enrollment = renewed;
-
-        if (renewed.mtls.clientCertThumbprint && renewed.mtls.clientCertThumbprint !== previousThumbprint) {
-          log.info("[cert-renewal] restarting gRPC bridge after certificate renewal");
-          if (stopGrpcStream) stopGrpcStream();
-          stopGrpcStream = startGrpcStream(currentCtx);
-        }
-      } catch (e: any) {
-        log.warn("[cert-renewal] periodic renewal failed", e?.message || e);
+    const armCertRenewal = () => {
+      if (shuttingDown) return;
+      if (certRenewalTimer) {
+        clearTimeout(certRenewalTimer);
+        certRenewalTimer = undefined;
       }
-    }, Number(process.env.CERT_RENEWAL_CHECK_INTERVAL_MS || 24 * 60 * 60 * 1000));
+      const jitter = Math.floor(Math.random() * CERT_RENEWAL_JITTER_MS);
+      const delayMs = CERT_RENEWAL_BASE_MS + jitter;
+
+      certRenewalTimer = setTimeout(async () => {
+        certRenewalTimer = undefined;
+        if (!currentCtx || shuttingDown) return;
+
+        // Snapshot the enrollment BEFORE the await. If a rotateCert
+        // control message fires during our call, it'll mutate the
+        // context; we want to detect that by comparing thumbprints
+        // after, not to operate on a half-mutated record.
+        const enrollmentSnapshot = {
+          ...currentCtx.enrollment,
+          mtls: { ...currentCtx.enrollment.mtls }
+        };
+        const previousThumbprint = enrollmentSnapshot.mtls.clientCertThumbprint;
+
+        try {
+          const renewed = await maybeRenewClientCertificate({
+            enrollment: enrollmentSnapshot,
+            store: currentCtx.store,
+            priv: currentCtx.priv,
+            logger: currentCtx.logger
+          });
+
+          // Re-check that nobody else mutated enrollment while we were
+          // awaiting. If they did (e.g. gRPC rotateCert), drop our
+          // renewal result on the floor — the other path already
+          // installed a newer cert. The next tick will re-evaluate.
+          const liveThumbprint = currentCtx.enrollment.mtls.clientCertThumbprint;
+          if (liveThumbprint !== previousThumbprint) {
+            log.warn("[cert-renewal] enrollment mutated during renewal, discarding result", {
+              previousThumbprint,
+              liveThumbprint,
+              renewedThumbprint: renewed.mtls.clientCertThumbprint
+            });
+          } else {
+            currentCtx.enrollment = renewed;
+
+            if (
+              renewed.mtls.clientCertThumbprint &&
+              renewed.mtls.clientCertThumbprint !== previousThumbprint
+            ) {
+              log.info("[cert-renewal] restarting gRPC bridge after certificate renewal");
+              if (stopGrpcStream) stopGrpcStream();
+              stopGrpcStream = startGrpcStream(currentCtx);
+            }
+          }
+        } catch (e: any) {
+          log.warn("[cert-renewal] periodic renewal failed", e?.message || e);
+        } finally {
+          armCertRenewal();
+        }
+      }, delayMs);
+    };
+    armCertRenewal();
 
     log.info("Agent Core started.");
   } catch (err: any) {
@@ -138,7 +198,10 @@ process.on("SIGTERM", async () => {
     }
 
     if (certRenewalTimer) {
-      clearInterval(certRenewalTimer);
+      // cert renewal is now a chained setTimeout (see armCertRenewal);
+      // clearTimeout is the matching disposer, though Node treats both
+      // clearTimeout and clearInterval identically for timer objects.
+      clearTimeout(certRenewalTimer);
       certRenewalTimer = undefined;
     }
 

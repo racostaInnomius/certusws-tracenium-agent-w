@@ -16,6 +16,8 @@ function getTimeoutForMethod(method: string): number {
     case "grpc.ack":
     case "grpc.close":
       return 30000;
+    case "grpc.heartbeat":
+      return 5000;
     case "software.inventory":
       return 60000; // inventory can be heavy (WMI/registry)
     case "security.compliance":

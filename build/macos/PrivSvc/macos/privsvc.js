@@ -1914,10 +1914,10 @@ var require_load_balancer_child_handler = __commonJS({
           createSubchannel(subchannelAddress, subchannelArgs) {
             return this.parent.channelControlHelper.createSubchannel(subchannelAddress, subchannelArgs);
           }
-          updateState(connectivityState, picker, errorMessage) {
+          updateState(connectivityState2, picker, errorMessage) {
             var _a;
             if (this.calledByPendingChild()) {
-              if (connectivityState === connectivity_state_1.ConnectivityState.CONNECTING) {
+              if (connectivityState2 === connectivity_state_1.ConnectivityState.CONNECTING) {
                 return;
               }
               (_a = this.parent.currentChild) === null || _a === void 0 ? void 0 : _a.destroy();
@@ -1926,7 +1926,7 @@ var require_load_balancer_child_handler = __commonJS({
             } else if (!this.calledByCurrentChild()) {
               return;
             }
-            this.parent.channelControlHelper.updateState(connectivityState, picker, errorMessage);
+            this.parent.channelControlHelper.updateState(connectivityState2, picker, errorMessage);
           }
           requestReresolution() {
             var _a;
@@ -2220,13 +2220,13 @@ var require_resolving_load_balancer = __commonJS({
         }
         this.backoffTimeout.runOnce();
       }
-      updateState(connectivityState, picker, errorMessage) {
-        trace((0, uri_parser_1.uriToString)(this.target) + " " + connectivity_state_1.ConnectivityState[this.currentState] + " -> " + connectivity_state_1.ConnectivityState[connectivityState]);
-        if (connectivityState === connectivity_state_1.ConnectivityState.IDLE) {
+      updateState(connectivityState2, picker, errorMessage) {
+        trace((0, uri_parser_1.uriToString)(this.target) + " " + connectivity_state_1.ConnectivityState[this.currentState] + " -> " + connectivity_state_1.ConnectivityState[connectivityState2]);
+        if (connectivityState2 === connectivity_state_1.ConnectivityState.IDLE) {
           picker = new picker_1.QueuePicker(this, picker);
         }
-        this.currentState = connectivityState;
-        this.channelControlHelper.updateState(connectivityState, picker, errorMessage);
+        this.currentState = connectivityState2;
+        this.channelControlHelper.updateState(connectivityState2, picker, errorMessage);
       }
       handleResolutionFailure(error) {
         if (this.latestChildState === connectivity_state_1.ConnectivityState.IDLE) {
@@ -6800,8 +6800,12 @@ var require_message = __commonJS({
     var util = require_minimal();
     function Message(properties) {
       if (properties)
-        for (var keys = Object.keys(properties), i = 0; i < keys.length; ++i)
-          this[keys[i]] = properties[keys[i]];
+        for (var keys = Object.keys(properties), i = 0; i < keys.length; ++i) {
+          var key = keys[i];
+          if (key === "__proto__")
+            continue;
+          this[key] = properties[key];
+        }
     }
     Message.create = function create(properties) {
       return this.$type.create(properties);
@@ -7266,6 +7270,7 @@ var require_type = __commonJS({
     var converter = require_converter();
     var wrappers = require_wrappers();
     function Type(name, options) {
+      name = name.replace(/\W/g, "");
       Namespace.call(this, name, options);
       this.fields = {};
       this.oneofs = void 0;
@@ -18376,7 +18381,7 @@ var require_internal_channel = __commonJS({
             const wrappedSubchannel = new ChannelSubchannelWrapper(subchannel, this);
             return wrappedSubchannel;
           },
-          updateState: (connectivityState, picker) => {
+          updateState: (connectivityState2, picker) => {
             this.currentPicker = picker;
             const queueCopy = this.pickQueue.slice();
             this.pickQueue = [];
@@ -18386,7 +18391,7 @@ var require_internal_channel = __commonJS({
             for (const call of queueCopy) {
               call.doPick();
             }
-            this.updateState(connectivityState);
+            this.updateState(connectivityState2);
           },
           requestReresolution: () => {
             throw new Error("Resolving load balancer should never call requestReresolution");
@@ -18662,13 +18667,13 @@ var require_internal_channel = __commonJS({
         return (0, uri_parser_1.uriToString)(this.target);
       }
       getConnectivityState(tryToConnect) {
-        const connectivityState = this.connectivityState;
+        const connectivityState2 = this.connectivityState;
         if (tryToConnect) {
           this.resolvingLoadBalancer.exitIdle();
           this.lastActivityTimestamp = /* @__PURE__ */ new Date();
           this.maybeStartIdleTimer();
         }
-        return connectivityState;
+        return connectivityState2;
       }
       watchConnectivityState(currentState, deadline, callback) {
         if (this.connectivityState === connectivity_state_1.ConnectivityState.SHUTDOWN) {
@@ -22252,10 +22257,10 @@ var require_load_balancer_pick_first = __commonJS({
         this.resolutionNote = resolutionNote;
         this.latestState = connectivity_state_1.ConnectivityState.IDLE;
         const childChannelControlHelper = (0, load_balancer_1.createChildChannelControlHelper)(channelControlHelper, {
-          updateState: (connectivityState, picker, errorMessage) => {
-            this.latestState = connectivityState;
+          updateState: (connectivityState2, picker, errorMessage) => {
+            this.latestState = connectivityState2;
             this.latestPicker = picker;
-            channelControlHelper.updateState(connectivityState, picker, errorMessage);
+            channelControlHelper.updateState(connectivityState2, picker, errorMessage);
           }
         });
         this.pickFirstBalancer = new PickFirstLoadBalancer(childChannelControlHelper);
@@ -22754,8 +22759,8 @@ var require_load_balancer_round_robin = __commonJS({
         this.updatesPaused = false;
         this.lastError = null;
         this.childChannelControlHelper = (0, load_balancer_1.createChildChannelControlHelper)(channelControlHelper, {
-          updateState: (connectivityState, picker, errorMessage) => {
-            if (this.currentState === connectivity_state_1.ConnectivityState.READY && connectivityState !== connectivity_state_1.ConnectivityState.READY) {
+          updateState: (connectivityState2, picker, errorMessage) => {
+            if (this.currentState === connectivity_state_1.ConnectivityState.READY && connectivityState2 !== connectivity_state_1.ConnectivityState.READY) {
               this.channelControlHelper.requestReresolution();
             }
             if (errorMessage) {
@@ -23120,11 +23125,11 @@ var require_load_balancer_outlier_detection = __commonJS({
             mapEntry === null || mapEntry === void 0 ? void 0 : mapEntry.subchannelWrappers.push(subchannelWrapper);
             return subchannelWrapper;
           },
-          updateState: (connectivityState, picker, errorMessage) => {
-            if (connectivityState === connectivity_state_1.ConnectivityState.READY) {
-              channelControlHelper.updateState(connectivityState, new OutlierDetectionPicker(picker, this.isCountingEnabled()), errorMessage);
+          updateState: (connectivityState2, picker, errorMessage) => {
+            if (connectivityState2 === connectivity_state_1.ConnectivityState.READY) {
+              channelControlHelper.updateState(connectivityState2, new OutlierDetectionPicker(picker, this.isCountingEnabled()), errorMessage);
             } else {
-              channelControlHelper.updateState(connectivityState, picker, errorMessage);
+              channelControlHelper.updateState(connectivityState2, picker, errorMessage);
             }
           }
         }));
@@ -23737,11 +23742,11 @@ var require_load_balancer_weighted_round_robin = __commonJS({
           if (!entry) {
             entry = {
               child: new load_balancer_pick_first_1.LeafLoadBalancer(endpoint, (0, load_balancer_1.createChildChannelControlHelper)(this.channelControlHelper, {
-                updateState: (connectivityState, picker, errorMessage) => {
-                  if (this.currentState === connectivity_state_1.ConnectivityState.READY && connectivityState !== connectivity_state_1.ConnectivityState.READY) {
+                updateState: (connectivityState2, picker, errorMessage) => {
+                  if (this.currentState === connectivity_state_1.ConnectivityState.READY && connectivityState2 !== connectivity_state_1.ConnectivityState.READY) {
                     this.channelControlHelper.requestReresolution();
                   }
-                  if (connectivityState === connectivity_state_1.ConnectivityState.READY) {
+                  if (connectivityState2 === connectivity_state_1.ConnectivityState.READY) {
                     entry.nonEmptySince = null;
                   }
                   if (errorMessage) {
@@ -24048,11 +24053,40 @@ var import_os2 = __toESM(require("os"));
 
 // privsvc/macos/src/crypto-store.ts
 var import_crypto = __toESM(require("crypto"));
-var import_fs2 = __toESM(require("fs"));
+var import_fs3 = __toESM(require("fs"));
 var import_https = __toESM(require("https"));
 var import_os = __toESM(require("os"));
 var import_child_process = require("child_process");
 var import_util = require("util");
+
+// privsvc/macos/src/logger.ts
+var import_fs2 = __toESM(require("fs"));
+var import_path2 = __toESM(require("path"));
+function line(level, message, details) {
+  const record = {
+    atUtc: (/* @__PURE__ */ new Date()).toISOString(),
+    level,
+    message,
+    details: details ?? void 0
+  };
+  return JSON.stringify(record);
+}
+function log(level, message, details) {
+  const entry = line(level, message, details);
+  console.log(entry);
+  try {
+    ensurePrivSvcDirs();
+    import_fs2.default.appendFileSync(import_path2.default.join(LOG_DIR, "tracenium-privsvc-macos.log"), entry + "\n", "utf8");
+  } catch {
+  }
+}
+var logger = {
+  info: (message, details) => log("info", message, details),
+  warn: (message, details) => log("warn", message, details),
+  error: (message, details) => log("error", message, details)
+};
+
+// privsvc/macos/src/crypto-store.ts
 var execFileAsync = (0, import_util.promisify)(import_child_process.execFile);
 var OPENSSL_BIN = process.env.OPENSSL_BIN || "/usr/bin/openssl";
 var MACOS_CSR_KEY_BITS = "2048";
@@ -24070,8 +24104,8 @@ function certFingerprintPem(pem) {
 function readBundledRootCaPem() {
   const paths = certPaths();
   try {
-    if (!import_fs2.default.existsSync(paths.bundledRootCa)) return null;
-    const pem = import_fs2.default.readFileSync(paths.bundledRootCa, "utf8");
+    if (!import_fs3.default.existsSync(paths.bundledRootCa)) return null;
+    const pem = import_fs3.default.readFileSync(paths.bundledRootCa, "utf8");
     return pem.includes("BEGIN CERTIFICATE") ? normalizePem(pem) : null;
   } catch {
     return null;
@@ -24104,11 +24138,11 @@ function buildFullCaBundlePem(caBundlePem) {
 async function installCaCertificatesToSystemKeychain(bundlePem) {
   const certs = splitPemCertificates(bundlePem);
   if (certs.length === 0) return;
-  const tempDir = import_fs2.default.mkdtempSync("/tmp/tracenium-ca-");
+  const tempDir = import_fs3.default.mkdtempSync("/tmp/tracenium-ca-");
   try {
     const certFiles = certs.map((certPem, index) => {
       const file = `${tempDir}/ca-${index}.crt`;
-      import_fs2.default.writeFileSync(file, certPem, { encoding: "utf8", mode: 420 });
+      import_fs3.default.writeFileSync(file, certPem, { encoding: "utf8", mode: 420 });
       return {
         file,
         cert: new import_crypto.default.X509Certificate(certPem)
@@ -24136,8 +24170,97 @@ async function installCaCertificatesToSystemKeychain(bundlePem) {
     }
   } finally {
     try {
-      import_fs2.default.rmSync(tempDir, { recursive: true, force: true });
+      import_fs3.default.rmSync(tempDir, { recursive: true, force: true });
     } catch {
+    }
+  }
+}
+var KEYCHAIN_PATH = "/Library/Keychains/System.keychain";
+var PRIVSVC_NODE_BIN = "/Library/Application Support/Tracenium/Runtime/node";
+function keychainLabelForDevice(deviceId) {
+  return `Tracenium Agent mTLS (${deviceId})`;
+}
+async function installClientIdentityToSystemKeychain(clientCertPem, clientKeyPem, deviceId) {
+  const label = keychainLabelForDevice(deviceId);
+  let tempDir = null;
+  try {
+    tempDir = import_fs3.default.mkdtempSync("/private/tmp/tracenium-id-");
+    import_fs3.default.chmodSync(tempDir, 448);
+    const certPath = `${tempDir}/client.crt`;
+    const keyPath = `${tempDir}/client.key`;
+    const p12Path = `${tempDir}/identity.p12`;
+    import_fs3.default.writeFileSync(certPath, clientCertPem, { encoding: "utf8", mode: 384 });
+    import_fs3.default.writeFileSync(keyPath, clientKeyPem, { encoding: "utf8", mode: 384 });
+    const passphrase = import_crypto.default.randomBytes(16).toString("base64").replace(/[=+/]/g, "");
+    await execFileAsync(OPENSSL_BIN, [
+      "pkcs12",
+      "-export",
+      "-in",
+      certPath,
+      "-inkey",
+      keyPath,
+      "-name",
+      label,
+      "-out",
+      p12Path,
+      "-passout",
+      `pass:${passphrase}`
+    ]);
+    import_fs3.default.chmodSync(p12Path, 384);
+    await execFileAsync("/usr/bin/security", [
+      "delete-identity",
+      "-c",
+      label,
+      KEYCHAIN_PATH
+    ]).catch(() => void 0);
+    await execFileAsync("/usr/bin/security", [
+      "import",
+      p12Path,
+      "-k",
+      KEYCHAIN_PATH,
+      "-P",
+      passphrase,
+      "-t",
+      "priv",
+      "-f",
+      "pkcs12",
+      "-T",
+      PRIVSVC_NODE_BIN,
+      "-T",
+      "/usr/bin/security"
+    ]);
+    await execFileAsync("/usr/bin/security", [
+      "set-key-partition-list",
+      "-S",
+      "apple-tool:,apple:,unsigned:",
+      "-k",
+      "",
+      // system keychain has no password
+      "-s",
+      // sign operations
+      "-l",
+      label,
+      // match by label
+      KEYCHAIN_PATH
+    ]).catch((err) => {
+      logger.warn("keychain_set_partition_list_failed", {
+        error: err?.message || String(err)
+      });
+    });
+    logger.info("keychain_client_identity_installed", { label, deviceId });
+    return { installed: true, label };
+  } catch (err) {
+    logger.warn("keychain_client_identity_install_failed", {
+      deviceId,
+      error: err?.message || String(err)
+    });
+    return null;
+  } finally {
+    if (tempDir) {
+      try {
+        import_fs3.default.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
+      }
     }
   }
 }
@@ -24147,7 +24270,7 @@ function assertDeviceId(value) {
   return deviceId;
 }
 async function isRsaPrivateKey(keyPath) {
-  if (!import_fs2.default.existsSync(keyPath)) return false;
+  if (!import_fs3.default.existsSync(keyPath)) return false;
   try {
     const { stdout } = await execFileAsync(OPENSSL_BIN, [
       "pkey",
@@ -24167,7 +24290,7 @@ async function ensureEnrollmentPrivateKey(keyPath, reuseExistingKey) {
     return;
   }
   try {
-    import_fs2.default.rmSync(keyPath, { force: true });
+    import_fs3.default.rmSync(keyPath, { force: true });
   } catch {
   }
   await execFileAsync(OPENSSL_BIN, [
@@ -24179,7 +24302,7 @@ async function ensureEnrollmentPrivateKey(keyPath, reuseExistingKey) {
     "-out",
     keyPath
   ]);
-  import_fs2.default.chmodSync(keyPath, 384);
+  import_fs3.default.chmodSync(keyPath, 384);
 }
 async function handleGenerateCsr(req) {
   const paths = certPaths();
@@ -24191,6 +24314,14 @@ async function handleGenerateCsr(req) {
     const deviceId = assertDeviceId(params.deviceId || req.meta?.deviceId);
     const reuseExistingKey = params.reuseExistingKey !== false;
     const dnsName = import_os.default.hostname();
+    const keyAlgorithm = String(params.keyAlgorithm || "RSA_2048").toUpperCase();
+    if (keyAlgorithm !== "RSA_2048") {
+      return fail(
+        req.id,
+        "bad_request",
+        `unsupported keyAlgorithm on macOS: ${keyAlgorithm} (only RSA_2048)`
+      );
+    }
     await ensureEnrollmentPrivateKey(paths.clientKey, reuseExistingKey);
     const csrConfig = [
       "[req]",
@@ -24207,7 +24338,7 @@ async function handleGenerateCsr(req) {
       `DNS.1 = ${dnsName}`,
       `URI.1 = tracenium://tenant/${tenantId}/device/${deviceId}`
     ].join("\n");
-    import_fs2.default.writeFileSync(csrConfigPath, `${csrConfig}
+    import_fs3.default.writeFileSync(csrConfigPath, `${csrConfig}
 `, { encoding: "utf8", mode: 384 });
     await execFileAsync(OPENSSL_BIN, [
       "req",
@@ -24220,7 +24351,7 @@ async function handleGenerateCsr(req) {
       "-out",
       paths.clientCsr
     ]);
-    const csrPem = import_fs2.default.readFileSync(paths.clientCsr, "utf8");
+    const csrPem = import_fs3.default.readFileSync(paths.clientCsr, "utf8");
     return success(req.id, {
       csrPem,
       deviceId,
@@ -24233,7 +24364,7 @@ async function handleGenerateCsr(req) {
     return fail(req.id, "csr_generate_failed", err?.message || String(err));
   } finally {
     try {
-      import_fs2.default.rmSync(csrConfigPath, { force: true });
+      import_fs3.default.rmSync(csrConfigPath, { force: true });
     } catch {
     }
   }
@@ -24251,20 +24382,31 @@ async function handleInstallCert(req) {
     if (!caBundlePem.includes("BEGIN CERTIFICATE")) {
       return fail(req.id, "invalid_ca_bundle", "caBundlePem is required");
     }
-    if (!import_fs2.default.existsSync(paths.clientKey)) {
+    if (!import_fs3.default.existsSync(paths.clientKey)) {
       return fail(req.id, "missing_private_key", "CSR private key was not found");
     }
     const { fullBundlePem, issuingCaThumbprint } = buildFullCaBundlePem(caBundlePem);
-    import_fs2.default.writeFileSync(paths.clientCert, clientCertPem, { encoding: "utf8", mode: 384 });
-    import_fs2.default.writeFileSync(paths.caBundle, fullBundlePem, { encoding: "utf8", mode: 420 });
+    import_fs3.default.writeFileSync(paths.clientCert, clientCertPem, { encoding: "utf8", mode: 384 });
+    import_fs3.default.writeFileSync(paths.caBundle, fullBundlePem, { encoding: "utf8", mode: 420 });
     await installCaCertificatesToSystemKeychain(fullBundlePem).catch(() => void 0);
+    const clientKeyPem = import_fs3.default.readFileSync(paths.clientKey, "utf8");
+    const deviceId = assertDeviceId(params.deviceId || req.meta?.deviceId);
+    const keychainResult = await installClientIdentityToSystemKeychain(
+      clientCertPem,
+      clientKeyPem,
+      deviceId
+    );
     const clientCertThumbprint = certFingerprintPem(clientCertPem);
     return success(req.id, {
       clientCertThumbprint,
       issuingCaThumbprint,
       clientCertPath: paths.clientCert,
       caBundlePath: paths.caBundle,
-      keyStore: "file"
+      // `keyStore` reflects the authoritative runtime source (still
+      // "file" for gRPC-js) plus whether the Keychain mirror landed.
+      // Ops can query this to verify the dual-storage invariant.
+      keyStore: keychainResult?.installed ? "file+keychain" : "file",
+      keychainLabel: keychainResult?.label ?? null
     });
   } catch (err) {
     return fail(req.id, "cert_install_failed", err?.message || String(err));
@@ -24314,19 +24456,24 @@ function postJsonMtls(url, payload, identity) {
   });
 }
 function backupFile(file) {
-  if (!import_fs2.default.existsSync(file)) return null;
+  if (!import_fs3.default.existsSync(file)) return null;
   const backup = `${file}.bak`;
-  import_fs2.default.copyFileSync(file, backup);
+  import_fs3.default.copyFileSync(file, backup);
   return backup;
 }
 function restoreBackup(backup, file) {
-  if (!backup || !import_fs2.default.existsSync(backup)) return;
-  import_fs2.default.copyFileSync(backup, file);
+  if (!backup || !import_fs3.default.existsSync(backup)) return;
+  import_fs3.default.copyFileSync(backup, file);
 }
 async function handleRenewCert(req) {
+  ensurePrivSvcDirs();
+  const paths = certPaths();
+  const pendingKey = `${paths.clientKey}.pending`;
+  const pendingCsr = `${paths.clientCsr}.pending`;
+  const pendingConf = `${paths.clientCsr}.cnf`;
+  const pendingCert = `${paths.clientCert}.pending`;
+  const pendingCa = `${paths.caBundle}.pending`;
   try {
-    ensurePrivSvcDirs();
-    const paths = certPaths();
     const params = req.params || {};
     const serverBaseUrl = String(params.serverBaseUrl || "").replace(/\/+$/, "");
     const tenantId = String(params.tenantId || req.meta?.tenantId || "");
@@ -24337,11 +24484,6 @@ async function handleRenewCert(req) {
     if (!tenantId) {
       return fail(req.id, "bad_request", "tenantId required");
     }
-    const pendingKey = `${paths.clientKey}.pending`;
-    const pendingCsr = `${paths.clientCsr}.pending`;
-    const pendingConf = `${paths.clientCsr}.cnf`;
-    const pendingCert = `${paths.clientCert}.pending`;
-    const pendingCa = `${paths.caBundle}.pending`;
     const conf = [
       "[req]",
       "prompt = no",
@@ -24356,7 +24498,7 @@ async function handleRenewCert(req) {
       "extendedKeyUsage = clientAuth",
       `subjectAltName = URI:tracenium://tenant/${tenantId}/device/${deviceId}`
     ].join("\n");
-    import_fs2.default.writeFileSync(pendingConf, conf + "\n", { encoding: "utf8", mode: 384 });
+    import_fs3.default.writeFileSync(pendingConf, conf + "\n", { encoding: "utf8", mode: 384 });
     await execFileAsync(OPENSSL_BIN, [
       "genpkey",
       "-algorithm",
@@ -24366,7 +24508,7 @@ async function handleRenewCert(req) {
       "-out",
       pendingKey
     ]);
-    import_fs2.default.chmodSync(pendingKey, 384);
+    import_fs3.default.chmodSync(pendingKey, 384);
     await execFileAsync(OPENSSL_BIN, [
       "req",
       "-new",
@@ -24378,7 +24520,7 @@ async function handleRenewCert(req) {
       "-config",
       pendingConf
     ]);
-    const csrPem = import_fs2.default.readFileSync(pendingCsr, "utf8");
+    const csrPem = import_fs3.default.readFileSync(pendingCsr, "utf8");
     const identity = loadInstalledIdentity();
     const response = await postJsonMtls(
       `${serverBaseUrl}/api/v1/security/certificates/renew`,
@@ -24391,15 +24533,15 @@ async function handleRenewCert(req) {
       return fail(req.id, "renew_response_invalid", "renewal response missing certificate material");
     }
     const { fullBundlePem, issuingCaThumbprint } = buildFullCaBundlePem(caBundlePem);
-    import_fs2.default.writeFileSync(pendingCert, clientCertPem, { encoding: "utf8", mode: 384 });
-    import_fs2.default.writeFileSync(pendingCa, fullBundlePem, { encoding: "utf8", mode: 420 });
+    import_fs3.default.writeFileSync(pendingCert, clientCertPem, { encoding: "utf8", mode: 384 });
+    import_fs3.default.writeFileSync(pendingCa, fullBundlePem, { encoding: "utf8", mode: 420 });
     const keyBackup = backupFile(paths.clientKey);
     const certBackup = backupFile(paths.clientCert);
     const caBackup = backupFile(paths.caBundle);
     try {
-      import_fs2.default.renameSync(pendingKey, paths.clientKey);
-      import_fs2.default.renameSync(pendingCert, paths.clientCert);
-      import_fs2.default.renameSync(pendingCa, paths.caBundle);
+      import_fs3.default.renameSync(pendingKey, paths.clientKey);
+      import_fs3.default.renameSync(pendingCert, paths.clientCert);
+      import_fs3.default.renameSync(pendingCa, paths.caBundle);
     } catch (err) {
       restoreBackup(keyBackup, paths.clientKey);
       restoreBackup(certBackup, paths.clientCert);
@@ -24409,12 +24551,12 @@ async function handleRenewCert(req) {
     const clientCertThumbprint = certFingerprintPem(clientCertPem);
     const x509 = new import_crypto.default.X509Certificate(clientCertPem);
     await installCaCertificatesToSystemKeychain(fullBundlePem).catch(() => void 0);
-    for (const file of [pendingCsr, pendingConf]) {
-      try {
-        import_fs2.default.unlinkSync(file);
-      } catch {
-      }
-    }
+    const renewedKeyPem = import_fs3.default.readFileSync(paths.clientKey, "utf8");
+    const keychainResult = await installClientIdentityToSystemKeychain(
+      clientCertPem,
+      renewedKeyPem,
+      deviceId
+    );
     return success(req.id, {
       deviceId,
       clientCertPem,
@@ -24423,17 +24565,25 @@ async function handleRenewCert(req) {
       issuingCaThumbprint,
       notAfter: x509.validTo,
       status: response.status || "pending",
-      keyStore: "file"
+      keyStore: keychainResult?.installed ? "file+keychain" : "file",
+      keychainLabel: keychainResult?.label ?? null
     });
   } catch (err) {
     return fail(req.id, "cert_renew_failed", err?.message || String(err));
+  } finally {
+    for (const file of [pendingCsr, pendingConf, pendingKey, pendingCert, pendingCa]) {
+      try {
+        import_fs3.default.unlinkSync(file);
+      } catch {
+      }
+    }
   }
 }
 function loadInstalledIdentity() {
   const paths = certPaths();
-  const clientCert = import_fs2.default.readFileSync(paths.clientCert);
-  const clientKey = import_fs2.default.readFileSync(paths.clientKey);
-  const caBundlePem = import_fs2.default.readFileSync(paths.caBundle, "utf8");
+  const clientCert = import_fs3.default.readFileSync(paths.clientCert);
+  const clientKey = import_fs3.default.readFileSync(paths.clientKey);
+  const caBundlePem = import_fs3.default.readFileSync(paths.caBundle, "utf8");
   const { fullBundlePem } = buildFullCaBundlePem(caBundlePem);
   const caBundle = Buffer.from(fullBundlePem, "utf8");
   return {
@@ -24448,41 +24598,109 @@ var import_crypto2 = __toESM(require("crypto"));
 var import_path3 = __toESM(require("path"));
 var grpc = __toESM(require_src3());
 var protoLoader = __toESM(require_src2());
-
-// privsvc/macos/src/logger.ts
-var import_fs3 = __toESM(require("fs"));
-var import_path2 = __toESM(require("path"));
-function line(level, message, details) {
-  const record = {
-    atUtc: (/* @__PURE__ */ new Date()).toISOString(),
-    level,
-    message,
-    details: details ?? void 0
-  };
-  return JSON.stringify(record);
-}
-function log(level, message, details) {
-  const entry = line(level, message, details);
-  console.log(entry);
-  try {
-    ensurePrivSvcDirs();
-    import_fs3.default.appendFileSync(import_path2.default.join(LOG_DIR, "tracenium-privsvc-macos.log"), entry + "\n", "utf8");
-  } catch {
-  }
-}
-var logger = {
-  info: (message, details) => log("info", message, details),
-  warn: (message, details) => log("warn", message, details),
-  error: (message, details) => log("error", message, details)
-};
-
-// privsvc/macos/src/grpc-bridge.ts
 var PROTO_PATH = import_path3.default.resolve(__dirname, "../proto/controlplane.proto");
+var CHANNEL_OPTIONS = {
+  "grpc.keepalive_time_ms": 3e4,
+  // send a ping every 30s
+  "grpc.keepalive_timeout_ms": 1e4,
+  // fail if no pong in 10s
+  "grpc.keepalive_permit_without_calls": 1,
+  // ping even with no RPCs
+  "grpc.http2.max_pings_without_data": 0,
+  // unlimited idle pings
+  "grpc.http2.min_time_between_pings_ms": 3e4,
+  "grpc.http2.min_ping_interval_without_data_ms": 3e4
+};
 var state = {
   connected: false,
   connecting: false,
-  chunks: /* @__PURE__ */ new Map()
+  chunks: /* @__PURE__ */ new Map(),
+  channelWatchGen: 0
 };
+var CHUNK_TTL_MS = 5 * 60 * 1e3;
+var CHUNK_SWEEP_INTERVAL_MS = 60 * 1e3;
+var MAX_CHUNKS_PER_MESSAGE = 64;
+var MAX_CHUNK_BYTES = 64 * 1024;
+var MAX_CONTROL_PAYLOAD_BYTES = 256 * 1024;
+function sweepStaleChunks() {
+  const now = Date.now();
+  for (const [eventId, entry] of state.chunks) {
+    if (now - entry.createdAt > CHUNK_TTL_MS) {
+      state.chunks.delete(eventId);
+      logger.warn("chunk_expired", {
+        eventId,
+        ageMs: now - entry.createdAt,
+        chunksReceived: entry.chunks.filter((c) => c.length > 0).length,
+        totalChunks: entry.totalChunks
+      });
+    }
+  }
+}
+var chunkSweeper = setInterval(sweepStaleChunks, CHUNK_SWEEP_INTERVAL_MS);
+chunkSweeper.unref();
+function teardownBridge(reason, details) {
+  const wasConnected = state.connected || state.connecting;
+  state.connected = false;
+  state.connecting = false;
+  state.channelWatchGen += 1;
+  const call = state.call;
+  state.call = void 0;
+  if (call) {
+    try {
+      call.removeAllListeners("error");
+    } catch {
+    }
+    try {
+      call.removeAllListeners("end");
+    } catch {
+    }
+    try {
+      call.removeAllListeners("close");
+    } catch {
+    }
+    try {
+      call.removeAllListeners("data");
+    } catch {
+    }
+    try {
+      call.on("error", () => {
+      });
+    } catch {
+    }
+    try {
+      call.cancel?.();
+    } catch {
+    }
+    try {
+      call.end();
+    } catch {
+    }
+  }
+  const client = state.client;
+  state.client = void 0;
+  if (client) {
+    try {
+      client.close?.();
+    } catch {
+    }
+  }
+  if (wasConnected) {
+    logger.warn("grpc_bridge_teardown", { reason, ...details || {} });
+    try {
+      state.push?.({
+        v: 1,
+        method: "grpc.disconnected",
+        params: { manual: reason === "manual_close", reason, atUtc: (/* @__PURE__ */ new Date()).toISOString() },
+        meta: {
+          tenantId: state.tenantId,
+          deviceId: state.deviceId,
+          connectionId: state.target
+        }
+      });
+    } catch {
+    }
+  }
+}
 function loadControlPlaneClient() {
   const def = protoLoader.loadSync(PROTO_PATH, {
     keepCase: false,
@@ -24521,6 +24739,41 @@ function decodeBytes(value) {
   if (value instanceof Uint8Array) return Buffer.from(value).toString("utf8");
   return String(value);
 }
+function classifyGrpcError(err) {
+  const code = typeof err?.code === "number" ? err.code : null;
+  const byCode = {
+    1: "cancelled",
+    2: "unknown",
+    3: "invalid_argument",
+    4: "deadline_exceeded",
+    5: "not_found",
+    6: "already_exists",
+    7: "permission_denied",
+    8: "resource_exhausted",
+    9: "failed_precondition",
+    10: "aborted",
+    11: "out_of_range",
+    12: "unimplemented",
+    13: "internal",
+    14: "unavailable",
+    15: "data_loss",
+    16: "unauthenticated"
+  };
+  const tag = code != null && byCode[code] ? byCode[code] : "error";
+  return { code, tag };
+}
+function decodeBoundedBytes(value, fieldName) {
+  const decoded = decodeBytes(value);
+  if (decoded.length > MAX_CONTROL_PAYLOAD_BYTES) {
+    logger.warn("control_payload_truncated", {
+      field: fieldName,
+      bytes: decoded.length,
+      cap: MAX_CONTROL_PAYLOAD_BYTES
+    });
+    return decoded.slice(0, MAX_CONTROL_PAYLOAD_BYTES);
+  }
+  return decoded;
+}
 function handleControlMessage(msg) {
   if (msg.ack) {
     push("grpc.ack", {
@@ -24536,7 +24789,7 @@ function handleControlMessage(msg) {
     push("grpc.control.runJob", {
       jobId: String(msg.runJob.jobId || ""),
       jobType: String(msg.runJob.jobType || ""),
-      payloadJson: decodeBytes(msg.runJob.payloadJson),
+      payloadJson: decodeBoundedBytes(msg.runJob.payloadJson, "runJob.payloadJson"),
       receivedAtUtc: (/* @__PURE__ */ new Date()).toISOString()
     });
     return;
@@ -24552,7 +24805,7 @@ function handleControlMessage(msg) {
     push("grpc.control.policyUpdate", {
       eventId: msg.policyUpdate.eventId || "",
       policyVersion: msg.policyUpdate.policyVersion || "",
-      policyJson: decodeBytes(msg.policyUpdate.policyJson),
+      policyJson: decodeBoundedBytes(msg.policyUpdate.policyJson, "policyUpdate.policyJson"),
       receivedAtUtc: (/* @__PURE__ */ new Date()).toISOString()
     });
     return;
@@ -24585,14 +24838,48 @@ function write(msg) {
     });
   });
 }
+function watchChannelState(client, generation) {
+  const channel = client?.getChannel?.();
+  if (!channel) return;
+  const check = () => {
+    if (state.channelWatchGen !== generation) return;
+    let current;
+    try {
+      current = channel.getConnectivityState(false);
+    } catch {
+      return;
+    }
+    if (current === grpc.connectivityState.TRANSIENT_FAILURE || current === grpc.connectivityState.SHUTDOWN) {
+      teardownBridge("channel_transient_failure", { state: current });
+      return;
+    }
+    const deadline = new Date(Date.now() + 5 * 60 * 1e3);
+    try {
+      channel.watchConnectivityState(current, deadline, (err) => {
+        if (state.channelWatchGen !== generation) return;
+        if (err) {
+          check();
+          return;
+        }
+        check();
+      });
+    } catch {
+    }
+  };
+  check();
+}
 async function startConnection(params, pushSink) {
   if (state.connected || state.connecting) return;
+  if (state.call || state.client) {
+    teardownBridge("pre_connect_cleanup");
+  }
   state.connecting = true;
   state.push = pushSink;
   state.tenantId = String(params.tenantId || "");
   state.deviceId = String(params.deviceId || "");
   state.target = normalizeTarget(params.target);
   if (!state.tenantId || !state.deviceId) {
+    state.connecting = false;
     throw new Error("tenantId_deviceId_required");
   }
   try {
@@ -24603,24 +24890,34 @@ async function startConnection(params, pushSink) {
       identity.clientCert
     );
     const ControlPlane = loadControlPlaneClient();
-    state.client = new ControlPlane(state.target, creds);
+    state.client = new ControlPlane(state.target, creds, CHANNEL_OPTIONS);
     const call = state.client.Connect();
     state.call = call;
+    state.channelWatchGen += 1;
+    const generation = state.channelWatchGen;
     call.on("data", handleControlMessage);
     call.on("error", (err) => {
-      state.connected = false;
-      state.connecting = false;
-      logger.error("grpc_stream_error", { error: err?.message || String(err) });
+      const classified = classifyGrpcError(err);
+      logger.error("grpc_stream_error", {
+        code: classified.code,
+        tag: classified.tag,
+        error: err?.message || String(err)
+      });
       push("grpc.control.streamClosed", {
-        reason: err?.message || "grpc_stream_error",
+        reason: classified.tag,
+        code: classified.code,
         atUtc: (/* @__PURE__ */ new Date()).toISOString()
       });
-      push("grpc.disconnected", { manual: false });
+      teardownBridge("stream_error", {
+        code: classified.code,
+        tag: classified.tag
+      });
     });
     call.on("end", () => {
-      state.connected = false;
-      state.connecting = false;
-      push("grpc.disconnected", { manual: false });
+      teardownBridge("stream_end");
+    });
+    call.on("close", () => {
+      teardownBridge("stream_close");
     });
     const eventId = import_crypto2.default.randomUUID().replace(/-/g, "");
     call.write({
@@ -24641,6 +24938,7 @@ async function startConnection(params, pushSink) {
       target: state.target,
       atUtc: (/* @__PURE__ */ new Date()).toISOString()
     });
+    watchChannelState(state.client, generation);
   } finally {
     state.connecting = false;
   }
@@ -24654,7 +24952,13 @@ async function handleGrpcConnect(req, pushSink) {
       target: state.target
     });
   } catch (err) {
-    return fail(req.id, "grpc_connect_failed", err?.message || String(err));
+    const classified = classifyGrpcError(err);
+    logger.error("grpc_connect_failed", {
+      code: classified.code,
+      tag: classified.tag,
+      error: err?.message || String(err)
+    });
+    return fail(req.id, "grpc_connect_failed", classified.tag);
   }
 }
 async function handleFactsSend(req) {
@@ -24684,10 +24988,30 @@ async function handleFactsChunk(req) {
   if (!eventId || !Number.isInteger(chunkIndex) || !Number.isInteger(totalChunks) || totalChunks <= 0) {
     return fail(req.id, "bad_request", "invalid chunk parameters");
   }
+  if (totalChunks > MAX_CHUNKS_PER_MESSAGE) {
+    logger.warn("chunks_rejected_too_many", { eventId, totalChunks, cap: MAX_CHUNKS_PER_MESSAGE });
+    return fail(req.id, "bad_request", `totalChunks ${totalChunks} exceeds cap ${MAX_CHUNKS_PER_MESSAGE}`);
+  }
+  if (chunkIndex < 0 || chunkIndex >= totalChunks) {
+    return fail(req.id, "bad_request", `chunkIndex ${chunkIndex} out of range`);
+  }
+  if (payloadChunk.length > MAX_CHUNK_BYTES) {
+    logger.warn("chunk_rejected_too_large", { eventId, chunkIndex, bytes: payloadChunk.length, cap: MAX_CHUNK_BYTES });
+    return fail(req.id, "bad_request", `chunk size ${payloadChunk.length} exceeds cap ${MAX_CHUNK_BYTES}`);
+  }
   const current = state.chunks.get(eventId) || {
     totalChunks,
-    chunks: new Array(totalChunks).fill("")
+    chunks: new Array(totalChunks).fill(""),
+    createdAt: Date.now()
   };
+  if (current.totalChunks !== totalChunks) {
+    logger.warn("chunk_totals_mismatch", {
+      eventId,
+      existing: current.totalChunks,
+      incoming: totalChunks
+    });
+    return fail(req.id, "bad_request", "totalChunks changed mid-stream");
+  }
   current.chunks[chunkIndex] = payloadChunk;
   state.chunks.set(eventId, current);
   if (current.chunks.every((chunk) => chunk.length > 0)) {
@@ -24706,6 +25030,25 @@ async function handleFactsChunk(req) {
     chunkIndex,
     totalChunks
   });
+}
+async function handleHeartbeat(req) {
+  try {
+    const deviceId = String(req.params?.deviceId || state.deviceId || "");
+    if (!deviceId) return fail(req.id, "bad_request", "deviceId required");
+    const traceId = import_crypto2.default.randomUUID().replace(/-/g, "");
+    await write({
+      traceId,
+      heartbeat: {
+        deviceId,
+        uptimeSeconds: Number(req.params?.uptimeSeconds ?? 0),
+        agentVersion: String(req.params?.agentVersion || ""),
+        policyVersion: String(req.params?.policyVersion || "")
+      }
+    });
+    return success(req.id, { accepted: true, traceId });
+  } catch (err) {
+    return fail(req.id, "heartbeat_send_failed", err?.message || String(err));
+  }
 }
 async function handleAck(req) {
   try {
@@ -24727,12 +25070,7 @@ async function handleAck(req) {
 }
 async function handleClose(req) {
   try {
-    state.connected = false;
-    state.connecting = false;
-    state.call?.end();
-    state.call = void 0;
-    state.client = void 0;
-    push("grpc.disconnected", { manual: true });
+    teardownBridge("manual_close");
     return success(req.id, { closed: true });
   } catch (err) {
     return fail(req.id, "grpc_close_failed", err?.message || String(err));
@@ -25099,6 +25437,8 @@ async function routeRequest(req, push2) {
       return handleFactsChunk(req);
     case "grpc.ack":
       return handleAck(req);
+    case "grpc.heartbeat":
+      return handleHeartbeat(req);
     case "grpc.close":
       return handleClose(req);
     case "software.inventory":
@@ -25170,11 +25510,32 @@ function startServer() {
   }
   const server = import_net.default.createServer(handleClient);
   server.listen(SOCKET_PATH, () => {
+    let ownerOk = false;
     try {
-      import_fs4.default.chmodSync(SOCKET_PATH, 432);
+      if (typeof import_fs4.default.chownSync === "function") {
+        import_fs4.default.chownSync(SOCKET_PATH, 0, 0);
+        ownerOk = true;
+      }
+    } catch (err) {
+      logger.warn("socket_chown_failed", { error: err?.message || String(err) });
+    }
+    try {
+      import_fs4.default.chmodSync(SOCKET_PATH, 384);
+    } catch (err) {
+      logger.warn("socket_chmod_failed", { error: err?.message || String(err) });
+    }
+    let stat = null;
+    try {
+      stat = import_fs4.default.statSync(SOCKET_PATH);
     } catch {
     }
-    logger.info("privsvc_macos_listening", { socket: SOCKET_PATH });
+    logger.info("privsvc_macos_listening", {
+      socket: SOCKET_PATH,
+      mode: stat ? (stat.mode & 511).toString(8) : "unknown",
+      uid: stat?.uid,
+      gid: stat?.gid,
+      ownerOk
+    });
   });
   server.on("error", (err) => {
     logger.error("server_error", { error: err.message });

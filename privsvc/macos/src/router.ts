@@ -7,7 +7,8 @@ import {
   handleClose,
   handleFactsChunk,
   handleFactsSend,
-  handleGrpcConnect
+  handleGrpcConnect,
+  handleHeartbeat
 } from "./grpc-bridge";
 import { handleSecurityPosture } from "./security-posture";
 import { logger } from "./logger";
@@ -74,6 +75,9 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "grpc.ack":
       return handleAck(req);
+
+    case "grpc.heartbeat":
+      return handleHeartbeat(req);
 
     case "grpc.close":
       return handleClose(req);

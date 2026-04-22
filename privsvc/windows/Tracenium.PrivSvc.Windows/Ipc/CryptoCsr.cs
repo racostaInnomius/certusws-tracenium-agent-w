@@ -10,6 +10,23 @@ public static class CryptoCsr
     // Clave persistente en CNG - LocalMachine (Machine Keyset)
     // Nota: con MachineKeySet el key material se guarda en el equipo.
 
+    // Cross-platform contract (driven by agent-core):
+    //
+    //   Default algorithm: RSA_2048
+    //
+    // The backend's CSR validator checks the DER public key OID and
+    // rejects anything that isn't rsaEncryption (1.2.840.113549.1.1.1).
+    // This used to default to ECDSA_P256 via CngAlgorithm.ECDsaP256,
+    // which silently broke Windows enrollment once the backend's
+    // validator tightened — macOS kept working because its openssl
+    // flow already used RSA.
+    //
+    // We keep the algorithm negotiable via the `keyAlgorithm` param so
+    // the day the backend accepts ECDSA we only have to change one
+    // caller (agent-core) rather than tracking down every PrivSvc.
+    private const string DefaultKeyAlgorithm = "RSA_2048";
+    private const int RsaKeyBits = 2048;
+
     public static Task<PrivSvcResponse> HandleGenerateCsr(PrivSvcRequest req)
     {
         try
@@ -21,6 +38,7 @@ public static class CryptoCsr
             string? dnsName = GetString(p, "dnsName");
             string? requestedKeyName = GetString(p, "keyName");
             bool reuse = GetBool(p, "reuseExistingKey", true);
+            string keyAlgorithm = GetString(p, "keyAlgorithm") ?? DefaultKeyAlgorithm;
 
             if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(deviceId))
                 return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request", "tenantId/deviceId required"));
@@ -32,62 +50,101 @@ public static class CryptoCsr
                 ? $"tracenium-{deviceId}"
                 : requestedKeyName;
             bool created;
-            using var ecdsa = OpenOrCreateMachineKey(keyName, reuse, out created);
+
+            CertificateRequest reqCsr;
+            AsymmetricAlgorithm cngKeyWrapper;
+
+            // Dispatch to the algorithm-specific key factory. Both
+            // branches return an AsymmetricAlgorithm that the
+            // CertificateRequest constructor can consume directly.
+            switch (keyAlgorithm.ToUpperInvariant())
+            {
+                case "RSA_2048":
+                {
+                    var rsa = OpenOrCreateMachineRsaKey(keyName, reuse, out created);
+                    cngKeyWrapper = rsa;
+                    reqCsr = new CertificateRequest(
+                        new X500DistinguishedName($"CN={EscapeDn(dnsName)}"),
+                        rsa,
+                        HashAlgorithmName.SHA256,
+                        RSASignaturePadding.Pkcs1
+                    );
+                    break;
+                }
+                case "ECDSA_P256":
+                {
+                    // Legacy path — kept so existing deployments that
+                    // already have ECDSA keys in CNG can still rotate
+                    // without us having to purge their key store.
+                    var ecdsa = OpenOrCreateMachineEcdsaKey(keyName, reuse, out created);
+                    cngKeyWrapper = ecdsa;
+                    reqCsr = new CertificateRequest(
+                        new X500DistinguishedName($"CN={EscapeDn(dnsName)}"),
+                        ecdsa,
+                        HashAlgorithmName.SHA256
+                    );
+                    break;
+                }
+                default:
+                    return Task.FromResult(
+                        PrivSvcResponse.Fail(req.Id, "bad_request",
+                            $"unsupported keyAlgorithm: {keyAlgorithm}"));
+            }
 
             // Diagnostic logging (helps identify key reuse vs creation)
             try
             {
-                Console.WriteLine($"[PrivSvc][Crypto] CNG key '{keyName}' created: {created}");
+                Console.WriteLine($"[PrivSvc][Crypto] CNG key '{keyName}' ({keyAlgorithm}) created: {created}");
             }
             catch { }
 
-            // 2) Construir CSR
-            // Subject minimal (CN=dnsName)
-            var subject = new X500DistinguishedName($"CN={EscapeDn(dnsName)}");
-
-            var reqCsr = new CertificateRequest(
-                subject,
-                ecdsa,
-                HashAlgorithmName.SHA256
-            );
-
-            // Key usage y EKU clientAuth
-            reqCsr.CertificateExtensions.Add(
-                new X509KeyUsageExtension(
-                    X509KeyUsageFlags.DigitalSignature,
-                    critical: true
-                )
-            );
-
-            var eku = new OidCollection();
-            eku.Add(new Oid("1.3.6.1.5.5.7.3.2")); // clientAuth
-            reqCsr.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(eku, critical: true));
-
-            // SAN: DNS hostname
-            var san = new SubjectAlternativeNameBuilder();
-            san.AddDnsName(dnsName);
-
-            // Opcional: URI que el backend también mete en cert final
-            // (no es obligatorio en CSR, pero ayuda a consistencia)
-            san.AddUri(new Uri($"tracenium://tenant/{tenantId}/device/{deviceId}"));
-
-            reqCsr.CertificateExtensions.Add(san.Build(critical: false));
-
-            // 3) Export CSR DER -> PEM
-            var csrDer = reqCsr.CreateSigningRequest();
-            var csrPem = PemEncode("CERTIFICATE REQUEST", csrDer);
-
-            var result = new
+            try
             {
-                keyId = keyName,
-                deviceId,
-                dnsName,
-                csrPem,
-                algo = "ECDSA_P256",
-                created
-            };
+                // Key usage y EKU clientAuth
+                reqCsr.CertificateExtensions.Add(
+                    new X509KeyUsageExtension(
+                        X509KeyUsageFlags.DigitalSignature,
+                        critical: true
+                    )
+                );
 
-            return Task.FromResult(PrivSvcResponse.Success(req.Id, result));
+                var eku = new OidCollection();
+                eku.Add(new Oid("1.3.6.1.5.5.7.3.2")); // clientAuth
+                reqCsr.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(eku, critical: true));
+
+                // SAN: DNS hostname
+                var san = new SubjectAlternativeNameBuilder();
+                san.AddDnsName(dnsName);
+
+                // Opcional: URI que el backend también mete en cert final
+                // (no es obligatorio en CSR, pero ayuda a consistencia)
+                san.AddUri(new Uri($"tracenium://tenant/{tenantId}/device/{deviceId}"));
+
+                reqCsr.CertificateExtensions.Add(san.Build(critical: false));
+
+                // 3) Export CSR DER -> PEM
+                var csrDer = reqCsr.CreateSigningRequest();
+                var csrPem = PemEncode("CERTIFICATE REQUEST", csrDer);
+
+                var result = new
+                {
+                    keyId = keyName,
+                    deviceId,
+                    dnsName,
+                    csrPem,
+                    algo = keyAlgorithm,
+                    keyAlgorithm,
+                    created
+                };
+
+                return Task.FromResult(PrivSvcResponse.Success(req.Id, result));
+            }
+            finally
+            {
+                // Both RSACng and ECDsaCng implement IDisposable — release
+                // the CNG handle once the CSR is built.
+                (cngKeyWrapper as IDisposable)?.Dispose();
+            }
         }
         catch (Exception ex)
         {
@@ -97,7 +154,89 @@ public static class CryptoCsr
 
     // ===== Helpers =====
 
-    private static ECDsa OpenOrCreateMachineKey(string keyName, bool reuseExisting, out bool created)
+    /// <summary>
+    /// Open or create a persistent RSA 2048 key in the Microsoft Software
+    /// Key Storage Provider at the machine scope.
+    ///
+    /// If a key with <paramref name="keyName"/> already exists and its
+    /// algorithm matches RSA, we reuse it (unless <c>reuseExisting</c>
+    /// is false). If the stored key is a different algorithm (e.g. an
+    /// ECDSA key from the pre-contract era on an already-deployed host),
+    /// we delete it and re-create as RSA — otherwise CertificateRequest
+    /// would later throw an InvalidCastException when we wrap it in
+    /// RSACng.
+    /// </summary>
+    private static RSA OpenOrCreateMachineRsaKey(string keyName, bool reuseExisting, out bool created)
+    {
+        created = false;
+
+        // Probe the existing key's algorithm before deciding reuse.
+        bool exists = CngKey.Exists(keyName, CngProvider.MicrosoftSoftwareKeyStorageProvider,
+            CngKeyOpenOptions.MachineKey);
+
+        if (exists)
+        {
+            try
+            {
+                var existingKey = CngKey.Open(
+                    keyName,
+                    CngProvider.MicrosoftSoftwareKeyStorageProvider,
+                    CngKeyOpenOptions.MachineKey
+                );
+
+                bool algoMatches = string.Equals(
+                    existingKey.Algorithm.Algorithm,
+                    CngAlgorithm.Rsa.Algorithm,
+                    StringComparison.OrdinalIgnoreCase);
+
+                if (algoMatches && reuseExisting)
+                {
+                    return new RSACng(existingKey);
+                }
+
+                // Either the caller wants a fresh key, or the existing
+                // key is the wrong algorithm (e.g. a lingering ECDSA key
+                // from before we pinned RSA). Either way, delete + recreate.
+                existingKey.Delete();
+            }
+            catch
+            {
+                // Fall through to creation path.
+            }
+        }
+
+        var creationParams = new CngKeyCreationParameters
+        {
+            Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider,
+            ExportPolicy = CngExportPolicies.None,
+            KeyUsage = CngKeyUsages.Signing,
+            KeyCreationOptions = CngKeyCreationOptions.MachineKey
+        };
+
+        creationParams.Parameters.Add(
+            new CngProperty("Length", BitConverter.GetBytes(RsaKeyBits), CngPropertyOptions.None)
+        );
+
+        try
+        {
+            var key = CngKey.Create(CngAlgorithm.Rsa, keyName, creationParams);
+            created = true;
+            return new RSACng(key);
+        }
+        catch (CryptographicException ex) when (ex.Message.Contains("exists", StringComparison.OrdinalIgnoreCase))
+        {
+            // Race with another process that created the key between
+            // our Exists check and Create call — just open and return.
+            var existing = CngKey.Open(
+                keyName,
+                CngProvider.MicrosoftSoftwareKeyStorageProvider,
+                CngKeyOpenOptions.MachineKey
+            );
+            return new RSACng(existing);
+        }
+    }
+
+    private static ECDsa OpenOrCreateMachineEcdsaKey(string keyName, bool reuseExisting, out bool created)
     {
         created = false;
 

@@ -9,10 +9,90 @@ import { runUpdateTask } from "../update/update-task";
 
 const ACK_TIMEOUT_MS = 60_000;
 const MAX_IN_FLIGHT = 3;
-const RECONNECT_DELAY_MS = 5_000;
 const HEARTBEAT_INTERVAL_MS = 60_000;
 
+// Exponential backoff with full jitter for gRPC reconnect.
+//
+// Why: a flat 5s delay means every agent in a tenant reconnects on the
+// same cadence after a backend deploy, hammering the new replicas and
+// masking transient failures. Exponential with jitter spreads the herd.
+//
+// Schedule (worst-case deterministic):
+//   attempt 0 →   0..2s
+//   attempt 1 →   2..6s
+//   attempt 2 →   4..12s
+//   attempt 3 →   8..24s
+//   attempt 4 →  16..48s
+//   attempt 5+ → capped at 30..60s
+//
+// On first successful `data` event from the server we reset the counter
+// to 0 — that's our "READY" signal; a socket that merely opened but got
+// rejected (e.g. auth failure, TLS mismatch) won't produce data and the
+// counter keeps climbing, which is what we want.
+const RECONNECT_BASE_MS = 2_000;
+const RECONNECT_MAX_MS = 60_000;
+let reconnectAttempts = 0;
+
+function nextReconnectDelayMs(): number {
+  // min(base * 2^attempt, max) + uniform jitter [0, base * 2^attempt)
+  const exp = Math.min(
+    RECONNECT_BASE_MS * Math.pow(2, Math.min(reconnectAttempts, 6)),
+    RECONNECT_MAX_MS
+  );
+  const jitter = Math.random() * exp;
+  return Math.min(exp + jitter, RECONNECT_MAX_MS * 2);
+}
+
 let shutdownRequested = false;
+
+// `reconnecting` prevents double-scheduling when `error` and `end` fire
+// back-to-back on the same broken stream — both handlers call
+// `scheduleReconnect`, and without this guard we'd start two agents.
+let reconnecting = false;
+
+// -----------------------------------------------------------------------------
+// Structured metrics
+// -----------------------------------------------------------------------------
+// We don't have a Prometheus scrape endpoint (the agent is behind every
+// customer's egress firewall), so for production diagnosis we emit a
+// periodic structured log line like:
+//
+//   logger.info("grpc.metrics", { reconnectCount: 7, heartbeatSent: 312, ... })
+//
+// That hits the launchd log, gets captured by whatever log shipper the
+// tenant runs, and is easy to grep retroactively when a device shows up
+// offline. Cheap, no infra dependency, survives restarts (counters are
+// session-scoped — a fresh daemon starts at 0, which is itself useful
+// because a restart is an observability event).
+//
+// Keep this intentionally small: five counters and a timestamp. More
+// fields = more pressure to evolve into a real metrics system, which
+// we don't want here.
+const METRICS_FLUSH_INTERVAL_MS = 5 * 60 * 1000;
+
+const grpcMetrics = {
+  reconnectCount: 0,
+  heartbeatSent: 0,
+  heartbeatFailed: 0,
+  ackReceived: 0,
+  outboxDrainLeases: 0,
+  connectedSinceUtc: null as string | null
+};
+
+let metricsFlushTimer: NodeJS.Timeout | null = null;
+
+function armMetricsFlush(ctx: AgentContext) {
+  if (metricsFlushTimer) return; // already armed (first stream only)
+  metricsFlushTimer = setInterval(() => {
+    try {
+      ctx.logger?.info?.("grpc.metrics", { ...grpcMetrics });
+    } catch {
+      // never let a log failure kill the transport
+    }
+  }, METRICS_FLUSH_INTERVAL_MS);
+  // Don't let this keep the process alive during shutdown.
+  (metricsFlushTimer as any)?.unref?.();
+}
 
 function buildEventId(deviceId: string, outboxId: number) {
   return `${deviceId}:${outboxId}`;
@@ -322,11 +402,18 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
 
 export function startGrpcStream(ctx: AgentContext) {
   shutdownRequested = false;
+  // We're actively starting a stream now; if scheduleReconnect fires
+  // later it can safely set `reconnecting = true` again.
+  reconnecting = false;
 
   let startDelayTimer: NodeJS.Timeout | null = null;
   let retryTimer: NodeJS.Timeout | null = null;
   let reconnectTimer: NodeJS.Timeout | null = null;
-  let heartbeatInterval: NodeJS.Timeout | null = null;
+  // Heartbeat is a chained setTimeout (not setInterval) so we can
+  // re-anchor the next fire time whenever the bridge goes through a
+  // state change (READY, rotation-end, etc.) without inheriting the
+  // setInterval's fixed wall-clock cadence from the previous cycle.
+  let heartbeatTimer: NodeJS.Timeout | null = null;
   let unsubscribeOutbox: (() => void) | null = null;
   let draining = false;
   let drainScheduled = false;
@@ -361,7 +448,8 @@ stream = client.Connect();
     try { if (startDelayTimer) clearTimeout(startDelayTimer); } catch {}
     try { if (retryTimer) clearTimeout(retryTimer); } catch {}
     try { if (reconnectTimer) clearTimeout(reconnectTimer); } catch {}
-    try { if (heartbeatInterval) clearInterval(heartbeatInterval); } catch {}
+    try { if (heartbeatTimer) clearTimeout(heartbeatTimer); } catch {}
+    heartbeatTimer = null;
     try { stream.removeAllListeners(); } catch {}
 
     try { unsubscribeOutbox?.(); } catch {}
@@ -372,12 +460,73 @@ stream = client.Connect();
     }
   };
 
+  // Arm a single-shot heartbeat timer. Each fire re-arms the next one,
+  // so the cadence is always anchored at "last heartbeat attempt" rather
+  // than "T=0 of this stream life". Call this from READY to reset the
+  // phase; no-op if the stream has already stopped.
+  const armHeartbeat = () => {
+    if (stopped) return;
+    if (heartbeatTimer) {
+      clearTimeout(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+    heartbeatTimer = setTimeout(() => {
+      heartbeatTimer = null;
+      if (stopped) return;
+      try {
+        if (rotationInProgress) {
+          // During rotation we skip the write but still re-anchor the
+          // next attempt from NOW — otherwise, coming out of a multi-
+          // minute rotation we'd have a stale 60-s-ago tick firing
+          // immediately as soon as rotationInProgress flips off.
+          armHeartbeat();
+          return;
+        }
+        if (!stream || !client.isConnected?.()) {
+          // Stream not up yet — don't re-arm; the READY handler on
+          // reconnect will kick off a fresh cycle.
+          return;
+        }
+
+        stream.write({
+          heartbeat: {
+            deviceId: ctx.enrollment.deviceId,
+            tenantId: ctx.enrollment.tenantId,
+            agentVersion: ctx.config.agentVersion,
+            ts: Date.now()
+          }
+        });
+        grpcMetrics.heartbeatSent += 1;
+      } catch (err: any) {
+        grpcMetrics.heartbeatFailed += 1;
+        ctx.logger?.error?.("Heartbeat send failed", err?.message || err);
+      } finally {
+        // Re-arm regardless of success — a transient write failure
+        // shouldn't silence heartbeats forever.
+        armHeartbeat();
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+  };
+
   const scheduleReconnect = (reason: string) => {
     if (shutdownRequested) return;
+    // Both stream.on("error") and stream.on("end") can fire for the same
+    // broken connection. Without this guard we'd schedule two reconnects
+    // and spawn two concurrent startGrpcStream calls.
+    if (reconnecting) {
+      ctx.logger?.debug?.("gRPC stream: reconnect already scheduled, ignoring", { reason });
+      return;
+    }
+    reconnecting = true;
+
+    reconnectAttempts += 1;
+    grpcMetrics.reconnectCount += 1;
+    const delayMs = nextReconnectDelayMs();
 
     ctx.logger?.warn?.("gRPC stream: scheduling reconnect", {
       reason,
-      delayMs: RECONNECT_DELAY_MS
+      delayMs: Math.round(delayMs),
+      attempt: reconnectAttempts
     });
 
     try { if (reconnectTimer) clearTimeout(reconnectTimer); } catch {}
@@ -385,7 +534,7 @@ stream = client.Connect();
       reconnectTimer = null;
       if (shutdownRequested) return;
       startGrpcStream(ctx);
-    }, RECONNECT_DELAY_MS);
+    }, delayMs);
   };
 
   // Accelerate recovery of IN_FLIGHT on restart
@@ -415,16 +564,39 @@ stream = client.Connect();
   stream.on("data", (msg: any) => {
     //logger.info("gRPC raw message received", msg);
     //logger.info("gRPC stream: message received", Object.keys(msg || {}));
+    // First byte from the server = the bridge is really up (TCP + TLS +
+    // auth + stream init all passed). Reset the reconnect counter so the
+    // next transient blip starts its backoff fresh at 2s, not at minute 10.
+    if (reconnectAttempts !== 0) {
+      ctx.logger?.info?.("gRPC stream: connected, resetting reconnect backoff", {
+        priorAttempts: reconnectAttempts
+      });
+      reconnectAttempts = 0;
+    }
     if (msg?.connected === true) {
       ctx.logger?.info?.("gRPC stream: bridge ready", msg);
+      grpcMetrics.connectedSinceUtc = new Date().toISOString();
       rotationInProgress = false;
       requestDrain("bridge_connected");
+      // Restart the heartbeat cadence from T=0 on READY. This way the
+      // first heartbeat lands exactly HEARTBEAT_INTERVAL_MS after the
+      // bridge is confirmed up, regardless of how long TLS/auth took,
+      // and regardless of whether the previous interval was mid-tick
+      // when the stream broke. Prevents the degenerate case where a
+      // 3-minute rotation causes three "return-early" ticks to fire
+      // and accumulate 0-60s of skew before the next real HB.
+      armHeartbeat();
+      // Start the metrics flush on the first READY of the process —
+      // we didn't want to arm it in startGrpcStream() because every
+      // reconnect would re-enter and we'd end up with N timers.
+      armMetricsFlush(ctx);
       return;
     }
     // ACK
     if (msg.ack) {
       const eventId: string = String(msg.ack.eventId ?? "").trim();
       if (!eventId) return;
+      grpcMetrics.ackReceived += 1;
       ctx.logger?.info?.("gRPC ACK received", {
         eventId,
         status: Number(msg.ack.status ?? 0),
@@ -654,6 +826,7 @@ stream = client.Connect();
         return;
       }
 
+      grpcMetrics.outboxDrainLeases += 1;
       ctx.logger?.info?.("Sender loop leased events", { count: batch.length });
 
       for (const ev of batch) {
@@ -769,23 +942,10 @@ stream = client.Connect();
         requestDrain("outbox_changed_fallback");
       }
       requestDrain("startup");
-      if (!heartbeatInterval) heartbeatInterval = setInterval(() => {
-        try {
-          if (rotationInProgress || stopped) return;
-          if (!stream || !client.isConnected?.()) return;
-
-          stream.write({
-            heartbeat: {
-              deviceId: ctx.enrollment.deviceId,
-              tenantId: ctx.enrollment.tenantId,
-              agentVersion: ctx.config.agentVersion,
-              ts: Date.now()
-            }
-          });
-        } catch (err: any) {
-          ctx.logger?.error?.("Heartbeat send failed", err?.message || err);
-        }
-      }, HEARTBEAT_INTERVAL_MS);
+      // Heartbeat is now driven by armHeartbeat(), which is kicked off
+      // from the `{connected: true}` READY handler in the data listener.
+      // No need to start a timer here — the READY signal is what anchors
+      // the first real HB, not the arbitrary 1-s startDelayTimer.
     }
   }, 1000);
 

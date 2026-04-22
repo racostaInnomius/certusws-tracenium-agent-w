@@ -62,11 +62,22 @@ function buildPmpStateForHash(namespace: PmpNamespace) {
 class Scheduler {
 
   private timers: Map<string, NodeJS.Timeout> = new Map();
+  // Which pipelines are currently "armed". We track this separately from
+  // `timers` because a pipeline that's mid-tick (setTimeout has already
+  // fired, run() is executing, next arm hasn't happened yet) has no
+  // entry in `timers` but MUST be considered active so a straggler
+  // re-arm after `stopAll()` doesn't resurrect a dead pipeline.
+  private pipelineActive: Set<string> = new Set();
   private ctx: AgentContext | null = null;
   private inventoryRunning: boolean = false;
   private complianceRunning: boolean = false;
   private updateRunning: boolean = false;
   private patchRunning: boolean = false;
+  // Forces one full AMP snapshot on the first inventory tick after the
+  // daemon starts — ensures the server receives current posture after
+  // an upgrade / reinstall / reboot, even if the AMP delta baseline on
+  // disk says "no changes" (e.g. no apps added/removed between runs).
+  private initialInventorySent: boolean = false;
   private policyListeners: Array<{
     event: string;
     handler: (...args: any[]) => void;
@@ -75,6 +86,7 @@ class Scheduler {
   async start(ctx: AgentContext) {
     this.clearPolicyListeners();
     this.ctx = ctx;
+    this.initialInventorySent = false;
 
     logger.info("TaskScheduler starting...");
 
@@ -155,6 +167,57 @@ class Scheduler {
     this.policyListeners = [];
   }
 
+  /**
+   * Arm `run` with fresh jitter every tick.
+   *
+   * Why chained setTimeout instead of setInterval:
+   *
+   *   setInterval(cb, base + jitter)
+   *
+   * samples `jitter` exactly once at pipeline start and reuses it forever.
+   * So if two agents in the same tenant boot in the same minute, they
+   * both hit the backend at `(start + base + jitter)`, then at
+   * `(start + 2*(base + jitter))`, and so on — identical cadence, zero
+   * desynchronisation. Great for throughput benchmarks, terrible for
+   * production where we want the fleet spread out.
+   *
+   * Chained setTimeout with a fresh `Math.random()` on every re-arm
+   * guarantees drift: after a few ticks, formerly-synchronised agents
+   * have spread across the full [0, jitterRangeMs) range.
+   *
+   * The `pipelineActive` Set gate ensures that if `stopAll()` runs while
+   * a tick is mid-execution, the re-arm is suppressed — otherwise we'd
+   * leak a ghost timer that fires after the scheduler was told to stop.
+   */
+  private armJitteredPipeline(
+    key: string,
+    baseIntervalMs: number,
+    jitterRangeMs: number,
+    run: () => void
+  ): void {
+    if (!this.pipelineActive.has(key)) return;
+
+    const jitter = Math.floor(Math.random() * jitterRangeMs);
+    const delayMs = baseIntervalMs + jitter;
+
+    const timer = setTimeout(() => {
+      // Clear the stored handle before running — a tick already in
+      // flight shouldn't be clearTimeout()'d by stopAll.
+      this.timers.delete(key);
+
+      try {
+        run();
+      } catch (err) {
+        logger.error("[scheduler] tick threw synchronously", { key, err });
+      }
+
+      // Re-arm with a fresh jitter sample. Drift accumulates naturally.
+      this.armJitteredPipeline(key, baseIntervalMs, jitterRangeMs, run);
+    }, delayMs);
+
+    this.timers.set(key, timer);
+  }
+
   private startPipelines(ctx: AgentContext) {
 
     this.stopAll();
@@ -163,27 +226,24 @@ class Scheduler {
     if (ctx.policyRuntime.isInventoryEnabled()) {
 
       const intervalSeconds = ctx.policyRuntime.getInventoryInterval();
-      const jitter = Math.floor(Math.random() * 30000);
 
       logger.info("Inventory pipeline configured", {
         intervalSeconds,
-        jitter
+        jitterRangeMs: 30000
       });
 
-      const timer = setInterval(() => {
+      this.pipelineActive.add("inventory");
+      this.armJitteredPipeline("inventory", intervalSeconds * 1000, 30000, () => {
         logger.info("[scheduler] inventory tick");
         this.runInventory(ctx).catch(err =>
           logger.error("Inventory error", { err })
         );
-      }, intervalSeconds * 1000 + jitter);
-
-      this.timers.set("inventory", timer);
+      });
     }
 
     // update pipeline
     if (ctx.policyRuntime.isUpdateEnabled()) {
       const intervalSeconds = 6 * 60 * 60; // 6h default
-      const jitter = Math.floor(Math.random() * 30000);
 
       logger.info("Update pipeline enabled", { intervalSeconds });
 
@@ -192,15 +252,13 @@ class Scheduler {
         logger.error("Update pipeline initial run error", { err })
       );
 
-      // scheduled runs with jitter
-      const timer = setInterval(() => {
+      this.pipelineActive.add("update");
+      this.armJitteredPipeline("update", intervalSeconds * 1000, 30000, () => {
         logger.info("[scheduler] update tick");
         this.runUpdate(ctx).catch(err =>
           logger.error("Update pipeline error", { err })
         );
-      }, intervalSeconds * 1000 + jitter);
-
-      this.timers.set("update", timer);
+      });
     }
 
     if (ctx.policyRuntime.isComplianceEnabled()) {
@@ -213,14 +271,13 @@ class Scheduler {
         logger.error("Compliance pipeline initial run error", { err })
       );
 
-      const timer = setInterval(() => {
+      this.pipelineActive.add("compliance");
+      this.armJitteredPipeline("compliance", intervalSeconds * 1000, 30000, () => {
         logger.info("[scheduler] compliance tick");
         this.runCompliance(ctx).catch(err =>
           logger.error("Compliance pipeline error", { err })
         );
-      }, intervalSeconds * 1000);
-
-      this.timers.set("compliance", timer);
+      });
     }
 
     // patch pipeline (future)
@@ -234,14 +291,13 @@ class Scheduler {
         logger.error("Patch pipeline initial run error", { err })
       );
 
-      const timer = setInterval(() => {
+      this.pipelineActive.add("patch");
+      this.armJitteredPipeline("patch", intervalSeconds * 1000, 30000, () => {
         logger.info("[scheduler] patch tick");
         this.runPatch(ctx).catch(err =>
           logger.error("Patch pipeline error", { err })
         );
-      }, intervalSeconds * 1000);
-
-      this.timers.set("patch", timer);
+      });
     }
   }
 
@@ -256,8 +312,13 @@ class Scheduler {
 
   private stopAll() {
 
+    // clearTimeout and clearInterval are interchangeable in Node — they
+    // dispatch on the timer kind internally — so this works whether the
+    // stored handle came from setTimeout (jittered pipelines) or
+    // setInterval (legacy code paths, in case any remain).
+    this.pipelineActive.clear();
     for (const timer of this.timers.values()) {
-      clearInterval(timer);
+      clearTimeout(timer);
     }
 
     this.timers.clear();
@@ -312,11 +373,35 @@ class Scheduler {
         return ns?.software?.hasChanges === true || ns?.hasChanges === true;
       });
 
-      if (!hasAnyChanges) {
+      // Always ship the first snapshot after a daemon (re)start. The
+      // persisted software baseline survives pkg re-installs, so the
+      // delta alone would skip the upload and the server would never
+      // see the post-upgrade state. Marking the flag AFTER enqueue so
+      // a failure here keeps forcing retries on subsequent ticks.
+      const forceInitialSnapshot = !this.initialInventorySent;
+
+      if (!hasAnyChanges && !forceInitialSnapshot) {
         logger.info("Skipping FACTS enqueue — no changes detected (all modules)", {
           deviceId: ctx.enrollment.deviceId
         });
         return;
+      }
+
+      // When we're forcing the startup snapshot and the AMP provider
+      // returned software without items (delta said "no changes"),
+      // re-hydrate items from the baseline so the server doesn't get a
+      // partial snapshot on first contact.
+      if (forceInitialSnapshot && namespaces.amp?.software && namespaces.amp.software.items == null) {
+        try {
+          const { loadSoftwareBaseline } = await import("../domain/software-baseline-repo");
+          const baseline = loadSoftwareBaseline() ?? [];
+          if (baseline.length > 0) {
+            namespaces.amp.software.items = baseline as any;
+            namespaces.amp.software.count = baseline.length;
+          }
+        } catch (err) {
+          logger.warn("Failed to rehydrate AMP software baseline for initial snapshot", { err });
+        }
       }
 
       const facts = await buildDeviceFacts(ctx, namespaces);
@@ -326,10 +411,13 @@ class Scheduler {
         payload: facts
       });
 
+      this.initialInventorySent = true;
+
       logger.info("FACTS_SNAPSHOT enqueued", {
         deviceId: ctx.enrollment.deviceId,
         modules: Object.keys(namespaces),
         hasAnyChanges,
+        forceInitialSnapshot,
         ampSoftwareItems: Array.isArray(namespaces.amp?.software?.items)
           ? namespaces.amp.software.items.length
           : 0
@@ -471,12 +559,18 @@ class Scheduler {
       return;
     }
 
-    if ((this as any).patchRunning) {
+    // Use the typed field directly — the other three pipelines
+    // (inventoryRunning / complianceRunning / updateRunning) all access
+    // their guard via `this.xRunning`, and mixing any-casts in just one
+    // pipeline hides future bugs from the compiler (e.g. a typo in the
+    // property name would silently create a second unused property
+    // rather than failing typecheck).
+    if (this.patchRunning) {
       logger.warn("Patch scan already running, skipping overlapping execution");
       return;
     }
 
-    (this as any).patchRunning = true;
+    this.patchRunning = true;
 
     try {
       logger.info("Collecting PMP facts...");
@@ -529,7 +623,7 @@ class Scheduler {
 
     } finally {
 
-      (this as any).patchRunning = false;
+      this.patchRunning = false;
 
     }
   }

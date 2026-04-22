@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import Database from "better-sqlite3";
 import zlib from "zlib";
+import { logger } from "../bootstrap/logger";
 
 export type OutboxStatus = "PENDING" | "IN_FLIGHT" | "SENT" | "FAILED";
 
@@ -93,8 +94,11 @@ export class SqliteOutbox {
     fs.mkdirSync(dir, { recursive: true });
 
     this.db = new Database(dbPath);
-    console.log("[outbox] initialized");
-    //console.log("[outbox] initialized", { dbPath: this.dbPath, lockOwner: this.lockOwner });
+    // Structured logger instead of console.log — in production the
+    // daemon's stdout is captured by launchd into a plain text file,
+    // but any ops tooling that later tails these logs expects the
+    // structured shape the rest of the agent uses (logger.info).
+    logger.info("[outbox] initialized", { dbPath: this.dbPath });
     this.initialize();
   }
 
@@ -210,7 +214,7 @@ export class SqliteOutbox {
       now
     );
 
-    console.log("[outbox] enqueue inserted", {
+    logger.info("[outbox] enqueue inserted", {
       id: Number(result.lastInsertRowid),
       type: input.type,
       hash
@@ -327,7 +331,7 @@ export class SqliteOutbox {
     //console.log("[outbox] row after markSent", row);
 
     if ((res as any)?.changes === 0) {
-      console.warn("markSent: no rows updated (unexpected state)", { id });
+      logger.warn("[outbox] markSent: no rows updated (unexpected state)", { id });
       return;
     }
 
@@ -385,7 +389,7 @@ export class SqliteOutbox {
     `).run(error.slice(0, 2000), id);
 
     if ((res as any)?.changes === 0) {
-      console.warn("markRejected: no rows updated (unexpected state)", { id });
+      logger.warn("[outbox] markRejected: no rows updated (unexpected state)", { id });
       return;
     }
 

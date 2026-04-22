@@ -3,6 +3,7 @@
 import { spawn } from "child_process";
 import fs from "fs";
 import type { RunUpdateResult } from "./update-types";
+import { updateUpdateState } from "./update-state";
 
 export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
   if (!fs.existsSync(msiPath)) {
@@ -55,16 +56,72 @@ export function runMacosPkgUpdate(pkgPath: string): RunUpdateResult {
   const args = ["-pkg", pkgPath, "-target", "/"];
 
   try {
+    // stdio: pipe so we can capture installer output for diagnostics.
+    // On success the postinstall kickstarts the daemon and this parent
+    // process is killed — we never observe the exit event. On failure
+    // (bad pkg, bad signature, disk full, etc.) the installer exits
+    // with non-zero BEFORE the postinstall runs, we see the exit event,
+    // persist `install_failed`, and the backend will surface the error
+    // on the next heartbeat instead of silently believing success.
     const child = spawn("/usr/sbin/installer", args, {
       detached: true,
-      stdio: "ignore"
+      stdio: ["ignore", "pipe", "pipe"]
     });
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    const MAX_CAPTURE_BYTES = 16 * 1024;
+    let capturedBytes = 0;
+
+    const capture = (store: Buffer[]) => (chunk: Buffer) => {
+      if (capturedBytes >= MAX_CAPTURE_BYTES) return;
+      const remaining = MAX_CAPTURE_BYTES - capturedBytes;
+      const slice = chunk.length > remaining ? chunk.slice(0, remaining) : chunk;
+      store.push(slice);
+      capturedBytes += slice.length;
+    };
+
+    child.stdout?.on("data", capture(stdoutChunks));
+    child.stderr?.on("data", capture(stderrChunks));
 
     child.on("error", (err) => {
       console.error("[update] installer spawn error", {
         error: err?.message || err,
         path: pkgPath
       });
+      try {
+        updateUpdateState({
+          updateInProgress: false,
+          status: "failed",
+          lastError: `installer_spawn_error: ${err?.message || err}`
+        });
+      } catch {}
+    });
+
+    child.on("exit", (code, signal) => {
+      const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim();
+
+      if (code === 0) {
+        // If we're still alive to see this, the postinstall either didn't
+        // run yet or the pkg was a no-op. The next startup will reconcile.
+        console.log("[update] installer exited cleanly", { code, pid: child.pid });
+      } else {
+        console.error("[update] installer FAILED", {
+          code,
+          signal,
+          pid: child.pid,
+          stdoutTail: stdout.slice(-500),
+          stderrTail: stderr.slice(-500)
+        });
+        try {
+          updateUpdateState({
+            updateInProgress: false,
+            status: "failed",
+            lastError: `installer_exit_${code ?? signal ?? "unknown"}: ${(stderr || stdout).slice(0, 300)}`
+          });
+        } catch {}
+      }
     });
 
     child.unref();

@@ -1,7 +1,7 @@
 // src/plugins/amp/providers/macos.ts
 import os from "os";
 import si from "systeminformation";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import fs from "fs";
 
@@ -17,7 +17,13 @@ import {
   deleteSoftwareByIds
 } from "../../../domain/software-baseline-repo";
 
-const execAsync = promisify(exec);
+// execFile does not spawn a shell — arguments are passed directly to the
+// binary. This is critical for `mdls -name ... "$appPath"`: the path comes
+// from filesystem enumeration and could contain shell metacharacters
+// (backticks, $(…), newlines, ;) which would be interpreted if we used
+// exec. execFile sidesteps the shell entirely, so path injection via a
+// crafted .app directory name is not possible.
+const execFileAsync = promisify(execFile);
 
 type RawMacApp = {
   name?: string | null;
@@ -39,11 +45,19 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
 
     const appPaths: string[] = [];
 
+    // Why async fs here: the inventory pipeline runs on the same event
+    // loop as the gRPC heartbeat and the IPC server. `/Applications`
+    // on a well-used Mac has 200+ entries, and `readdirSync` on a
+    // spinning-disk external volume (people mount these as extra Apps
+    // dirs) can stall the loop for 100-400 ms. Missing a heartbeat
+    // window by that margin is enough for the server-side keepalive
+    // watcher to mark the device offline. `fs.promises.readdir` yields
+    // during the syscall so the gRPC socket stays responsive.
     for (const dir of appDirs) {
       try {
-        if (!fs.existsSync(dir)) continue;
+        const entries = await fs.promises.readdir(dir).catch(() => null);
+        if (!entries) continue; // ENOENT / EACCES — just skip the dir
 
-        const entries = fs.readdirSync(dir);
         for (const entry of entries) {
           if (entry.endsWith(".app")) {
             appPaths.push(`${dir}/${entry}`);
@@ -70,9 +84,11 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
           let bundleId: string | null = null;
 
           try {
-            const safePath = appPath.replace(/"/g, '\\"');
-            const { stdout } = await execAsync(
-              `mdls -name kMDItemCFBundleIdentifier -raw "${safePath}"`,
+            // Arguments passed as an array — no shell interpolation,
+            // so metacharacters inside appPath are harmless.
+            const { stdout } = await execFileAsync(
+              "/usr/bin/mdls",
+              ["-name", "kMDItemCFBundleIdentifier", "-raw", appPath],
               { timeout: 5000 }
             );
             bundleId = stdout.trim() || null;
@@ -103,7 +119,16 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
 
     // --- Homebrew packages ---
     try {
-      const { stdout } = await execAsync("brew list --versions", {
+      // Try both common brew locations (Apple Silicon vs Intel).
+      // execFile requires an absolute path; we resolve it lazily.
+      const brewBin =
+        (fs.existsSync("/opt/homebrew/bin/brew") && "/opt/homebrew/bin/brew") ||
+        (fs.existsSync("/usr/local/bin/brew") && "/usr/local/bin/brew") ||
+        null;
+
+      if (!brewBin) throw new Error("brew_not_installed");
+
+      const { stdout } = await execFileAsync(brewBin, ["list", "--versions"], {
         maxBuffer: 1024 * 1024 * 5,
         timeout: 5000
       });
@@ -132,7 +157,7 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
 
     // --- pkgutil packages ---
     try {
-      const { stdout } = await execAsync("pkgutil --pkgs", {
+      const { stdout } = await execFileAsync("/usr/sbin/pkgutil", ["--pkgs"], {
         maxBuffer: 1024 * 1024 * 5,
         timeout: 5000
       });

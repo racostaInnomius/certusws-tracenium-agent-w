@@ -13,6 +13,7 @@ import {
   performMacosPkgUpdate,
   performWindowsMsiUpdate
 } from "./update-service";
+import { compareSemver, looksLikeSemver } from "./semver";
 
 function nowMs() {
   return Date.now();
@@ -30,33 +31,6 @@ function shouldCheckNow(intervalMs: number): boolean {
 
   if (!last) return true;
   return nowMs() - last >= intervalMs;
-}
-
-function compareSemver(a: string, b: string): number {
-  const parse = (v: string): number[] =>
-    v.split(".").map((x) => {
-      const n = Number(x);
-      return Number.isFinite(n) ? n : 0;
-    });
-
-  const av = parse(a);
-  const bv = parse(b);
-  const len = Math.max(av.length, bv.length);
-
-  for (let i = 0; i < len; i += 1) {
-    const ai = av[i] ?? 0;
-    const bi = bv[i] ?? 0;
-
-    if (ai !== bi) {
-      return ai > bi ? 1 : -1;
-    }
-  }
-
-  return 0;
-}
-
-function looksLikeSemver(v: string): boolean {
-  return /^\d+\.\d+\.\d+([.-][A-Za-z0-9]+)?$/.test(v);
 }
 
 function reconcilePendingUpdate(currentVersion: string, logger?: {

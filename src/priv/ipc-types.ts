@@ -19,6 +19,7 @@ export type PrivSvcMethod =
   | "grpc.connect"
   | "grpc.facts.send"
   | "grpc.facts.chunk"
+  | "grpc.heartbeat"
   | "grpc.close";
 
 export type GrpcAckParams = {

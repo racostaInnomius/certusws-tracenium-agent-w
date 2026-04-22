@@ -15,7 +15,7 @@ RESOURCES_DIR="$ROOT_DIR/privsvc/macos/distribution/resources"
 ICON_PNG="$RESOURCES_DIR/tracenium.png"
 ICON_ICNS="$RESOURCES_DIR/tracenium.icns"
 
-VERSION="${TRACENIUM_AGENT_VERSION:-1.0.88}"
+VERSION="${TRACENIUM_AGENT_VERSION:-1.0.91}"
 ARCH="${TRACENIUM_AGENT_ARCH:-arm64}"
 IDENTIFIER="${TRACENIUM_PKG_IDENTIFIER:-com.certusws.tracenium.agent}"
 
@@ -33,7 +33,7 @@ build_agent_bundle() {
       --outfile="$BUILD_DIR/Agent/agent-core.js"
   )
 
-  if ! rg -q "env/file/registry" "$BUILD_DIR/Agent/agent-core.js"; then
+  if ! grep -qF "env/file/registry" "$BUILD_DIR/Agent/agent-core.js"; then
     echo "Generated Agent Core bundle does not include the current enrollment token logic." >&2
     exit 1
   fi
@@ -57,7 +57,7 @@ build_privsvc_bundle() {
   cp "$ROOT_DIR/proto/controlplane.proto" "$BUILD_DIR/PrivSvc/proto/controlplane.proto"
   cp "$ROOT_DIR/privsvc/windows/Tracenium.PrivSvc.Windows/assets/root-ca.crt" "$BUILD_DIR/PrivSvc/assets/root-ca.crt"
 
-  if ! rg -q "../proto/controlplane.proto" "$BUILD_DIR/PrivSvc/macos/privsvc.js"; then
+  if ! grep -qF "../proto/controlplane.proto" "$BUILD_DIR/PrivSvc/macos/privsvc.js"; then
     echo "Generated PrivSvc bundle does not include the installed proto path." >&2
     exit 1
   fi
@@ -67,7 +67,7 @@ build_privsvc_bundle() {
     exit 1
   fi
 
-  if ! rg -q "subjectAltName = @alt_names" "$BUILD_DIR/PrivSvc/macos/privsvc.js"; then
+  if ! grep -qF "subjectAltName = @alt_names" "$BUILD_DIR/PrivSvc/macos/privsvc.js"; then
     echo "Generated PrivSvc bundle does not include the current CSR generation logic." >&2
     exit 1
   fi
@@ -219,6 +219,76 @@ ICON_REZ="$ROOT_DIR/build/pkg-icon.r"
 printf "read 'icns' (-16455) \"%s\";\n" "$ICON_ICNS" > "$ICON_REZ"
 if Rez -append "$ICON_REZ" -o "$FINAL_PKG" 2>/dev/null; then
   SetFile -a C "$FINAL_PKG" 2>/dev/null || true
+fi
+
+# -----------------------------------------------------------------------------
+# Post-build: sha256 digest + optional upload to Azure Blob Storage
+# -----------------------------------------------------------------------------
+# The backend metadata endpoint (/api/v1/binaries/agent/metadata) reads the
+# blob's `sha256` metadata. The macOS agent validates the downloaded pkg
+# against that hash before running `installer`, so the metadata MUST match.
+#
+# Upload is opt-in to avoid accidental publishes from local dev runs. Enable
+# with any of: TRACENIUM_UPLOAD=1 | true | yes
+#
+# Override-able env vars (defaults sensible for production):
+#   TRACENIUM_BLOB_ACCOUNT      (default: cwsinveid)
+#   TRACENIUM_BLOB_CONTAINER    (default: tracenium)
+#   TRACENIUM_BLOB_PLATFORM     (default: macos)
+#   TRACENIUM_BLOB_PATH         (default: agents/<platform>/<arch>/<version>/<file>)
+#   TRACENIUM_AZ_AUTH_MODE      (default: key)  — passed to `az storage blob upload`
+# -----------------------------------------------------------------------------
+
+FINAL_PKG_SHA256="$(shasum -a 256 "$FINAL_PKG" | awk '{print $1}')"
+FINAL_PKG_SIZE_BYTES="$(stat -f%z "$FINAL_PKG" 2>/dev/null || wc -c < "$FINAL_PKG" | tr -d ' ')"
+
+echo ""
+echo "================================ BUILD DONE ================================"
+echo "  pkg    : $FINAL_PKG"
+echo "  size   : $FINAL_PKG_SIZE_BYTES bytes"
+echo "  sha256 : $FINAL_PKG_SHA256"
+echo "  version: $VERSION"
+echo "  arch   : $ARCH"
+echo "============================================================================"
+
+upload_flag="$(printf "%s" "${TRACENIUM_UPLOAD:-}" | tr '[:upper:]' '[:lower:]')"
+if [ "$upload_flag" = "1" ] || [ "$upload_flag" = "true" ] || [ "$upload_flag" = "yes" ]; then
+  BLOB_ACCOUNT="${TRACENIUM_BLOB_ACCOUNT:-cwsinveid}"
+  BLOB_CONTAINER="${TRACENIUM_BLOB_CONTAINER:-tracenium}"
+  BLOB_PLATFORM="${TRACENIUM_BLOB_PLATFORM:-macos}"
+  BLOB_AUTH_MODE="${TRACENIUM_AZ_AUTH_MODE:-key}"
+  BLOB_PATH="${TRACENIUM_BLOB_PATH:-agents/$BLOB_PLATFORM/$ARCH/$VERSION/$(basename "$FINAL_PKG")}"
+
+  if ! command -v az >/dev/null 2>&1; then
+    echo "TRACENIUM_UPLOAD is set but 'az' CLI is not installed. Install Azure CLI first." >&2
+    exit 1
+  fi
+
+  echo ""
+  echo "================================ UPLOADING ================================="
+  echo "  account   : $BLOB_ACCOUNT"
+  echo "  container : $BLOB_CONTAINER"
+  echo "  blob path : $BLOB_PATH"
+  echo "  auth mode : $BLOB_AUTH_MODE"
+  echo "============================================================================"
+
+  az storage blob upload \
+    --account-name "$BLOB_ACCOUNT" \
+    --container-name "$BLOB_CONTAINER" \
+    --name "$BLOB_PATH" \
+    --file "$FINAL_PKG" \
+    --metadata "sha256=$FINAL_PKG_SHA256" \
+    --auth-mode "$BLOB_AUTH_MODE" \
+    --overwrite
+
+  echo ""
+  echo "================================ UPLOADED =================================="
+  echo "Verify backend metadata picked up the new version:"
+  echo "  curl -sS 'https://api.tracenium.com/api/v1/binaries/agent/metadata?platform=$BLOB_PLATFORM&arch=$ARCH' | python3 -m json.tool"
+  echo "============================================================================"
+else
+  echo ""
+  echo "Skipping blob upload (set TRACENIUM_UPLOAD=1 to enable)."
 fi
 
 echo "$FINAL_PKG"

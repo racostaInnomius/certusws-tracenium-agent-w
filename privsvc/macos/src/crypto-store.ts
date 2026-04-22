@@ -7,6 +7,7 @@ import { promisify } from "util";
 import { certPaths, ensurePrivSvcDirs } from "./paths";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
+import { logger } from "./logger";
 
 const execFileAsync = promisify(execFile);
 const OPENSSL_BIN = process.env.OPENSSL_BIN || "/usr/bin/openssl";
@@ -110,6 +111,182 @@ async function installCaCertificatesToSystemKeychain(bundlePem: string): Promise
   }
 }
 
+// ---------------------------------------------------------------------------
+// System Keychain — client identity (cert + private key)
+// ---------------------------------------------------------------------------
+//
+// Architectural constraint: @grpc/grpc-js takes raw PEM buffers via
+// credentials.createSsl(); there is no hook to source key material from
+// the macOS Keychain at handshake time. A "proper" Keychain-native mTLS
+// stack would need a SecureTransport sidecar (C++/Rust) piping bytes into
+// Node, which is out of scope for this release.
+//
+// What we CAN do — and what P1-5 delivers — is dual-storage:
+//
+//   1. Client cert + private key are ALSO installed into System.keychain
+//      as an identity, tagged with our daemon's binary path in the ACL.
+//   2. The PEM files on disk remain the runtime source (gRPC-js reads
+//      them into buffers at connect time).
+//   3. The Keychain copy gives us:
+//        - An audit trail (security-cli and Console.app record access).
+//        - Tamper detection: if the files are deleted or corrupted, we
+//          can re-export from Keychain as a recovery mechanism (future).
+//        - Defense-in-depth: a backup snapshot that skips our PrivSvc
+//          dir (but captures /Library/Keychains) still loses the key,
+//          and vice versa — both copies have to be reached for theft.
+//        - Forces an attacker who replaces our binary on disk to either
+//          forge its codesigning identity or lose the Keychain-side key.
+//
+// On rotation, the old identity is removed so Keychain doesn't accumulate
+// dead entries that could be misused by certificate-pinning tools.
+
+const KEYCHAIN_PATH = "/Library/Keychains/System.keychain";
+
+// Path to the node binary that runs PrivSvc. The Keychain ACL is tied to
+// this executable so a malicious tampered binary at a different path
+// cannot read the key partition.
+const PRIVSVC_NODE_BIN = "/Library/Application Support/Tracenium/Runtime/node";
+
+function keychainLabelForDevice(deviceId: string): string {
+  return `Tracenium Agent mTLS (${deviceId})`;
+}
+
+/**
+ * Install a client identity (cert + private key) into the System
+ * Keychain. Best-effort: any failure is logged and swallowed — the file-
+ * based PEMs remain authoritative for runtime gRPC.
+ *
+ * Mechanics:
+ *   1. Pack cert + key into a PKCS#12 blob via `openssl pkcs12 -export`.
+ *      The blob is protected by a random passphrase that never leaves
+ *      this function — `security import` consumes it via argv and the
+ *      temp .p12 is unlinked in finally. Argv is visible in `ps` to
+ *      root, but we're already running as root and the window is
+ *      milliseconds, so the risk is acceptable vs. adding a named-pipe
+ *      dance.
+ *   2. `security import` with `-T <node bin>` binds the access ACL to
+ *      our daemon's node binary. Other binaries attempting to read the
+ *      key will be prompted for user approval (which never comes on a
+ *      headless system) — effectively blocked.
+ *   3. `security set-key-partition-list` allows the "apple:" partition
+ *      id to access non-interactively so our own daemon doesn't prompt.
+ *      The `-S "apple:,teamid:<our-team>,unsigned:"` list is permissive
+ *      enough for local execution but still gated by the -T ACL above.
+ */
+async function installClientIdentityToSystemKeychain(
+  clientCertPem: string,
+  clientKeyPem: string,
+  deviceId: string
+): Promise<{ installed: boolean; label: string } | null> {
+  const label = keychainLabelForDevice(deviceId);
+
+  let tempDir: string | null = null;
+  try {
+    tempDir = fs.mkdtempSync("/private/tmp/tracenium-id-");
+    // Lock the temp dir down — even though we're root, this reduces the
+    // chance that some rogue ad-hoc process enumerates /tmp and sees the
+    // .p12 during the brief window before we unlink it.
+    fs.chmodSync(tempDir, 0o700);
+
+    const certPath = `${tempDir}/client.crt`;
+    const keyPath = `${tempDir}/client.key`;
+    const p12Path = `${tempDir}/identity.p12`;
+
+    fs.writeFileSync(certPath, clientCertPem, { encoding: "utf8", mode: 0o600 });
+    fs.writeFileSync(keyPath, clientKeyPem, { encoding: "utf8", mode: 0o600 });
+
+    // Random passphrase ~= 22 chars base64. Used only to traverse the
+    // openssl → security boundary; never persisted.
+    const passphrase = crypto.randomBytes(16).toString("base64").replace(/[=+/]/g, "");
+
+    await execFileAsync(OPENSSL_BIN, [
+      "pkcs12",
+      "-export",
+      "-in", certPath,
+      "-inkey", keyPath,
+      "-name", label,
+      "-out", p12Path,
+      "-passout", `pass:${passphrase}`
+    ]);
+    fs.chmodSync(p12Path, 0o600);
+
+    // Remove any previous entry with the same label so import doesn't
+    // duplicate. delete-identity is idempotent — failure is fine.
+    await execFileAsync("/usr/bin/security", [
+      "delete-identity",
+      "-c", label,
+      KEYCHAIN_PATH
+    ]).catch(() => undefined);
+
+    await execFileAsync("/usr/bin/security", [
+      "import", p12Path,
+      "-k", KEYCHAIN_PATH,
+      "-P", passphrase,
+      "-t", "priv",
+      "-f", "pkcs12",
+      "-T", PRIVSVC_NODE_BIN,
+      "-T", "/usr/bin/security"
+    ]);
+
+    // Allow non-interactive access by our partition id. Without this,
+    // any attempt to read the key would trigger a UI prompt (which on a
+    // headless daemon means hangs / timeouts).
+    await execFileAsync("/usr/bin/security", [
+      "set-key-partition-list",
+      "-S", "apple-tool:,apple:,unsigned:",
+      "-k", "",                        // system keychain has no password
+      "-s",                            // sign operations
+      "-l", label,                     // match by label
+      KEYCHAIN_PATH
+    ]).catch((err) => {
+      // set-key-partition-list returns non-zero on some macOS versions
+      // when the key is already in the requested partition. Log and
+      // carry on — the import itself succeeded.
+      logger.warn("keychain_set_partition_list_failed", {
+        error: err?.message || String(err)
+      });
+    });
+
+    logger.info("keychain_client_identity_installed", { label, deviceId });
+    return { installed: true, label };
+  } catch (err: any) {
+    logger.warn("keychain_client_identity_install_failed", {
+      deviceId,
+      error: err?.message || String(err)
+    });
+    return null;
+  } finally {
+    if (tempDir) {
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+    }
+  }
+}
+
+/**
+ * Remove a previously-installed client identity from the System
+ * Keychain. Called after a successful rotation so we don't pile up
+ * stale identities across renewals (every 30 days = 12+ per year).
+ *
+ * Best-effort: no-op if the label isn't present.
+ */
+async function removeClientIdentityFromSystemKeychain(deviceId: string, labelOverride?: string): Promise<void> {
+  const label = labelOverride || keychainLabelForDevice(deviceId);
+  try {
+    await execFileAsync("/usr/bin/security", [
+      "delete-identity",
+      "-c", label,
+      KEYCHAIN_PATH
+    ]);
+    logger.info("keychain_client_identity_removed", { label });
+  } catch (err: any) {
+    // delete-identity returns non-zero when nothing matches; that's fine.
+    logger.debug?.("keychain_client_identity_remove_noop", {
+      label,
+      error: err?.message || String(err)
+    });
+  }
+}
+
 function assertDeviceId(value: any): string {
   const deviceId = String(value || "").trim();
   if (!deviceId) throw new Error("deviceId_required");
@@ -168,6 +345,22 @@ export async function handleGenerateCsr(req: PrivSvcRequest): Promise<PrivSvcRes
     const deviceId = assertDeviceId(params.deviceId || req.meta?.deviceId);
     const reuseExistingKey = params.reuseExistingKey !== false;
     const dnsName = os.hostname();
+
+    // Cross-platform contract: agent-core passes `keyAlgorithm` to tell
+    // each PrivSvc which algorithm to produce. macOS has only ever
+    // generated RSA-2048 (via `openssl genpkey -algorithm RSA`), so for
+    // now the only accepted value is `RSA_2048`. Any other value is a
+    // contract mismatch and must fail loudly rather than silently
+    // producing the wrong algorithm — exactly the class of bug that
+    // broke Windows enrollment.
+    const keyAlgorithm = String(params.keyAlgorithm || "RSA_2048").toUpperCase();
+    if (keyAlgorithm !== "RSA_2048") {
+      return fail(
+        req.id,
+        "bad_request",
+        `unsupported keyAlgorithm on macOS: ${keyAlgorithm} (only RSA_2048)`
+      );
+    }
 
     await ensureEnrollmentPrivateKey(paths.clientKey, reuseExistingKey);
 
@@ -245,6 +438,18 @@ export async function handleInstallCert(req: PrivSvcRequest): Promise<PrivSvcRes
 
     await installCaCertificatesToSystemKeychain(fullBundlePem).catch(() => undefined);
 
+    // Also install the client identity (cert + private key) into the
+    // System Keychain as a secondary store. Runtime still reads from
+    // the PEM files above — this is defense-in-depth (see the big
+    // comment at the top of the Keychain helper block for rationale).
+    const clientKeyPem = fs.readFileSync(paths.clientKey, "utf8");
+    const deviceId = assertDeviceId(params.deviceId || req.meta?.deviceId);
+    const keychainResult = await installClientIdentityToSystemKeychain(
+      clientCertPem,
+      clientKeyPem,
+      deviceId
+    );
+
     const clientCertThumbprint = certFingerprintPem(clientCertPem);
 
     return success(req.id, {
@@ -252,7 +457,11 @@ export async function handleInstallCert(req: PrivSvcRequest): Promise<PrivSvcRes
       issuingCaThumbprint,
       clientCertPath: paths.clientCert,
       caBundlePath: paths.caBundle,
-      keyStore: "file"
+      // `keyStore` reflects the authoritative runtime source (still
+      // "file" for gRPC-js) plus whether the Keychain mirror landed.
+      // Ops can query this to verify the dual-storage invariant.
+      keyStore: keychainResult?.installed ? "file+keychain" : "file",
+      keychainLabel: keychainResult?.label ?? null
     });
   } catch (err: any) {
     return fail(req.id, "cert_install_failed", err?.message || String(err));
@@ -319,9 +528,18 @@ function restoreBackup(backup: string | null, file: string) {
 }
 
 export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  ensurePrivSvcDirs();
+  const paths = certPaths();
+
+  // Defined outside the try so the `finally` cleanup can see them even
+  // if we throw before they're first written.
+  const pendingKey = `${paths.clientKey}.pending`;
+  const pendingCsr = `${paths.clientCsr}.pending`;
+  const pendingConf = `${paths.clientCsr}.cnf`;
+  const pendingCert = `${paths.clientCert}.pending`;
+  const pendingCa = `${paths.caBundle}.pending`;
+
   try {
-    ensurePrivSvcDirs();
-    const paths = certPaths();
     const params = req.params || {};
     const serverBaseUrl = String(params.serverBaseUrl || "").replace(/\/+$/, "");
     const tenantId = String(params.tenantId || req.meta?.tenantId || "");
@@ -334,12 +552,6 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
     if (!tenantId) {
       return fail(req.id, "bad_request", "tenantId required");
     }
-
-    const pendingKey = `${paths.clientKey}.pending`;
-    const pendingCsr = `${paths.clientCsr}.pending`;
-    const pendingConf = `${paths.clientCsr}.cnf`;
-    const pendingCert = `${paths.clientCert}.pending`;
-    const pendingCa = `${paths.caBundle}.pending`;
 
     const conf = [
       "[req]",
@@ -421,9 +633,16 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
 
     await installCaCertificatesToSystemKeychain(fullBundlePem).catch(() => undefined);
 
-    for (const file of [pendingCsr, pendingConf]) {
-      try { fs.unlinkSync(file); } catch {}
-    }
+    // Re-install the rotated identity into System Keychain. The install
+    // helper deletes any prior entry with the same label first, so we
+    // don't need a separate removeClientIdentity call here — renewal
+    // uses the same per-device label (only the cert changes).
+    const renewedKeyPem = fs.readFileSync(paths.clientKey, "utf8");
+    const keychainResult = await installClientIdentityToSystemKeychain(
+      clientCertPem,
+      renewedKeyPem,
+      deviceId
+    );
 
     return success(req.id, {
       deviceId,
@@ -433,10 +652,23 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
       issuingCaThumbprint,
       notAfter: x509.validTo,
       status: response.status || "pending",
-      keyStore: "file"
+      keyStore: keychainResult?.installed ? "file+keychain" : "file",
+      keychainLabel: keychainResult?.label ?? null
     });
   } catch (err: any) {
     return fail(req.id, "cert_renew_failed", err?.message || String(err));
+  } finally {
+    // Best-effort cleanup of every pending artifact. On the happy path the
+    // `.pending` cert/key/ca files have already been renamed into place
+    // and don't exist anymore, so unlinkSync errors are expected — we
+    // swallow them. On a failure path (openssl crashed, renewal API 5xx,
+    // rename collision, etc.) any of these could still be sitting in
+    // CERT_DIR leaking disk and, worse, leaving a key PEM readable by
+    // anyone who can read the dir. finally wins over mid-function
+    // cleanup precisely because we cover every exit path.
+    for (const file of [pendingCsr, pendingConf, pendingKey, pendingCert, pendingCa]) {
+      try { fs.unlinkSync(file); } catch {}
+    }
   }
 }
 

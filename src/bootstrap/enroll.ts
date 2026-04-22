@@ -93,6 +93,21 @@ async function generateCsrViaPrivSvc(): Promise<{ csrPem: string; deviceId: stri
   console.log("[Enroll] CSR request tenantId:", tenantId);
   console.log("[Enroll] CSR request deviceId:", deviceId);
 
+  // Cross-platform contract: the backend's CSR validator expects an
+  // RSA public key (checks the DER OID for rsaEncryption). Historically
+  // each PrivSvc picked its own algorithm — Windows defaulted to
+  // ECDSA P-256 (via CNG), macOS to RSA-2048 (via openssl) — and
+  // enrollment silently broke on Windows once the backend tightened
+  // validation.
+  //
+  // Agent-core owns the contract from here forward: it's the one layer
+  // that runs on every OS, so it's the right place to dictate shape.
+  // Passing `keyAlgorithm` explicitly means:
+  //   - Each PrivSvc (Windows .NET CNG, macOS openssl, future Linux)
+  //     implements the same algorithm, regardless of its platform-
+  //     native default.
+  //   - If the backend ever accepts more algorithms, we negotiate here
+  //     rather than hunting down three OS-specific code paths.
   const request = JSON.stringify({
     v: 1,
     id: `csr_${Date.now()}`,
@@ -100,7 +115,8 @@ async function generateCsrViaPrivSvc(): Promise<{ csrPem: string; deviceId: stri
     params: {
       tenantId,
       deviceId,
-      reuseExistingKey: true
+      reuseExistingKey: true,
+      keyAlgorithm: "RSA_2048"
     },
     meta: {
       tenantId,
@@ -423,7 +439,31 @@ export async function ensureEnrolled(): Promise<EnrollmentState> {
       const responseBody = await res.text();
 
       console.log("[Enroll] Response status:", res.status);
-      console.log("[Enroll] Response body:", responseBody);
+      // NEVER log the raw enrollment response body. It contains the
+      // clientCertPem and caBundlePem (bearer-equivalent material on a
+      // compromised endpoint). Log only shape + sizes so we can still
+      // diagnose issues without leaking cert material into journald /
+      // launchd logs / anywhere downstream log shippers might scrape.
+      const _bodySummary = (() => {
+        try {
+          const parsed = JSON.parse(responseBody);
+          return {
+            tenantId: parsed?.tenantId ?? null,
+            deviceId: parsed?.deviceId ?? null,
+            hasClientCertPem:
+              typeof parsed?.mTls?.clientCertPem === "string" &&
+              parsed.mTls.clientCertPem.includes("BEGIN CERTIFICATE"),
+            hasCaBundlePem:
+              typeof parsed?.mTls?.caBundlePem === "string" &&
+              parsed.mTls.caBundlePem.includes("BEGIN CERTIFICATE"),
+            clientCertBytes: parsed?.mTls?.clientCertPem?.length ?? 0,
+            caBundleBytes: parsed?.mTls?.caBundlePem?.length ?? 0
+          };
+        } catch {
+          return { parseOk: false, bytes: responseBody.length };
+        }
+      })();
+      console.log("[Enroll] Response body summary:", _bodySummary);
 
       const data = JSON.parse(responseBody) as EnrollResponse;
 
@@ -465,7 +505,16 @@ export async function ensureEnrolled(): Promise<EnrollmentState> {
       };
 
       store.save(state);
-      console.log("[Enroll] Enrollment state saved:", state);
+      // Intentionally terse: full `state` prints the cert paths and
+      // thumbprints which aren't secret, but we've had incidents where
+      // this log got piped into a SaaS log shipper. Keep identifiers
+      // only; paths are deterministic anyway.
+      console.log("[Enroll] Enrollment state saved:", {
+        tenantId: state.tenantId,
+        deviceId: state.deviceId,
+        enrolledAtUtc: state.enrolledAtUtc,
+        clientCertThumbprint: state.mtls?.clientCertThumbprint
+      });
       try {
         fs.unlinkSync(lockPath);
         console.log("[Enroll] Enroll lock released.");

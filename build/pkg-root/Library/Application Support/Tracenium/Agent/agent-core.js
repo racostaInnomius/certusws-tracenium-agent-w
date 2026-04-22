@@ -146,9 +146,9 @@ var require_package = __commonJS({
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
     var fs15 = require("fs");
-    var path10 = require("path");
-    var os15 = require("os");
-    var crypto9 = require("crypto");
+    var path11 = require("path");
+    var os16 = require("os");
+    var crypto10 = require("crypto");
     var packageJson = require_package();
     var version = packageJson.version;
     var LINE = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg;
@@ -262,7 +262,7 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path10.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path11.resolve(process.cwd(), ".env.vault");
       }
       if (fs15.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
@@ -270,7 +270,7 @@ var require_main = __commonJS({
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path10.join(os15.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path11.join(os16.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = Boolean(options && options.debug);
@@ -287,7 +287,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path10.resolve(process.cwd(), ".env");
+      const dotenvPath = path11.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       const debug = Boolean(options && options.debug);
       const quiet = options && "quiet" in options ? options.quiet : true;
@@ -311,13 +311,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path11 of optionPaths) {
+      for (const path12 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs15.readFileSync(path11, { encoding }));
+          const parsed = DotenvModule.parse(fs15.readFileSync(path12, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e) {
           if (debug) {
-            _debug(`Failed to load ${path11} ${e.message}`);
+            _debug(`Failed to load ${path12} ${e.message}`);
           }
           lastError = e;
         }
@@ -332,7 +332,7 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative = path10.relative(process.cwd(), filePath);
+            const relative = path11.relative(process.cwd(), filePath);
             shortPaths.push(relative);
           } catch (e) {
             if (debug) {
@@ -367,7 +367,7 @@ var require_main = __commonJS({
       const authTag = ciphertext.subarray(-16);
       ciphertext = ciphertext.subarray(12, -16);
       try {
-        const aesgcm = crypto9.createDecipheriv("aes-256-gcm", key, nonce);
+        const aesgcm = crypto10.createDecipheriv("aes-256-gcm", key, nonce);
         aesgcm.setAuthTag(authTag);
         return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
       } catch (error) {
@@ -446,21 +446,26 @@ function getTimeoutForMethod(method) {
     case "grpc.ack":
     case "grpc.close":
       return 3e4;
+    case "grpc.heartbeat":
+      return 5e3;
     case "software.inventory":
       return 6e4;
     // inventory can be heavy (WMI/registry)
     case "security.compliance":
+    case "patch.scan":
       return 3e4;
+    case "patch.install":
+      return 60 * 60 * 1e3;
     default:
       return DEFAULT_TIMEOUT_MS;
   }
 }
-var import_net, import_crypto3, import_events, PIPE_PATH, DEFAULT_TIMEOUT_MS, CONNECT_TIMEOUT_MS, MAX_PENDING, MAX_BUFFER_CHARS, PrivSvcClient;
+var import_net, import_crypto4, import_events, PIPE_PATH, DEFAULT_TIMEOUT_MS, CONNECT_TIMEOUT_MS, MAX_PENDING, MAX_BUFFER_CHARS, PrivSvcClient;
 var init_privsvc_client_windows = __esm({
   "src/priv/privsvc-client-windows.ts"() {
     "use strict";
     import_net = __toESM(require("net"));
-    import_crypto3 = require("crypto");
+    import_crypto4 = require("crypto");
     import_events = require("events");
     PIPE_PATH = "\\\\.\\pipe\\tracenium.privsvc.v1";
     DEFAULT_TIMEOUT_MS = 8e3;
@@ -682,7 +687,7 @@ var init_privsvc_client_windows = __esm({
         if (this.pending.size >= MAX_PENDING) {
           throw new Error(`PrivSvc pending requests overflow (${MAX_PENDING})`);
         }
-        if (!req.id) req.id = (0, import_crypto3.randomUUID)();
+        if (!req.id) req.id = (0, import_crypto4.randomUUID)();
         return new Promise((resolve, reject) => {
           const id = req.id;
           const timeoutMs = getTimeoutForMethod(req.method);
@@ -759,20 +764,25 @@ function getTimeoutForMethod2(method) {
     case "grpc.ack":
     case "grpc.close":
       return 3e4;
+    case "grpc.heartbeat":
+      return 5e3;
     case "software.inventory":
       return 6e4;
     case "security.compliance":
+    case "patch.scan":
       return 3e4;
+    case "patch.install":
+      return 60 * 60 * 1e3;
     default:
       return DEFAULT_TIMEOUT_MS2;
   }
 }
-var import_net2, import_crypto4, import_events2, SOCKET_PATH, DEFAULT_TIMEOUT_MS2, CONNECT_TIMEOUT_MS2, MAX_PENDING2, MAX_BUFFER_CHARS2, PrivSvcClient2;
+var import_net2, import_crypto5, import_events2, SOCKET_PATH, DEFAULT_TIMEOUT_MS2, CONNECT_TIMEOUT_MS2, MAX_PENDING2, MAX_BUFFER_CHARS2, PrivSvcClient2;
 var init_privsvc_client_macos = __esm({
   "src/priv/privsvc-client-macos.ts"() {
     "use strict";
     import_net2 = __toESM(require("net"));
-    import_crypto4 = require("crypto");
+    import_crypto5 = require("crypto");
     import_events2 = require("events");
     SOCKET_PATH = "/var/run/tracenium/privsvc.sock";
     DEFAULT_TIMEOUT_MS2 = 8e3;
@@ -960,7 +970,7 @@ var init_privsvc_client_macos = __esm({
         if (this.pending.size >= MAX_PENDING2) {
           throw new Error(`PrivSvc pending requests overflow (${MAX_PENDING2})`);
         }
-        if (!req.id) req.id = (0, import_crypto4.randomUUID)();
+        if (!req.id) req.id = (0, import_crypto5.randomUUID)();
         return new Promise((resolve, reject) => {
           const id = req.id;
           const timeoutMs = getTimeoutForMethod2(req.method);
@@ -1037,20 +1047,25 @@ function getTimeoutForMethod3(method) {
     case "grpc.ack":
     case "grpc.close":
       return 3e4;
+    case "grpc.heartbeat":
+      return 5e3;
     case "software.inventory":
       return 6e4;
     case "security.compliance":
+    case "patch.scan":
       return 3e4;
+    case "patch.install":
+      return 60 * 60 * 1e3;
     default:
       return DEFAULT_TIMEOUT_MS3;
   }
 }
-var import_net3, import_crypto5, import_events3, SOCKET_PATH2, DEFAULT_TIMEOUT_MS3, CONNECT_TIMEOUT_MS3, MAX_PENDING3, MAX_BUFFER_CHARS3, PrivSvcClient3;
+var import_net3, import_crypto6, import_events3, SOCKET_PATH2, DEFAULT_TIMEOUT_MS3, CONNECT_TIMEOUT_MS3, MAX_PENDING3, MAX_BUFFER_CHARS3, PrivSvcClient3;
 var init_privsvc_client_linux = __esm({
   "src/priv/privsvc-client-linux.ts"() {
     "use strict";
     import_net3 = __toESM(require("net"));
-    import_crypto5 = require("crypto");
+    import_crypto6 = require("crypto");
     import_events3 = require("events");
     SOCKET_PATH2 = "/var/run/tracenium/privsvc.sock";
     DEFAULT_TIMEOUT_MS3 = 8e3;
@@ -1238,7 +1253,7 @@ var init_privsvc_client_linux = __esm({
         if (this.pending.size >= MAX_PENDING3) {
           throw new Error(`PrivSvc pending requests overflow (${MAX_PENDING3})`);
         }
-        if (!req.id) req.id = (0, import_crypto5.randomUUID)();
+        if (!req.id) req.id = (0, import_crypto6.randomUUID)();
         return new Promise((resolve, reject) => {
           const id = req.id;
           const timeoutMs = getTimeoutForMethod3(req.method);
@@ -1412,11 +1427,11 @@ var require_package2 = __commonJS({
 var require_util = __commonJS({
   "node_modules/systeminformation/lib/util.js"(exports2) {
     "use strict";
-    var os15 = require("os");
+    var os16 = require("os");
     var fs15 = require("fs");
-    var path10 = require("path");
+    var path11 = require("path");
     var spawn2 = require("child_process").spawn;
-    var exec3 = require("child_process").exec;
+    var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require("util");
     var _platform = process.platform;
@@ -1519,7 +1534,7 @@ var require_util = __commonJS({
     }
     function cores() {
       if (_cores === 0) {
-        _cores = os15.cpus().length;
+        _cores = os16.cpus().length;
       }
       return _cores;
     }
@@ -1780,7 +1795,7 @@ var require_util = __commonJS({
     function powerShellRelease() {
       try {
         if (_psChild) {
-          _psChild.stdin.write("exit" + os15.EOL);
+          _psChild.stdin.write("exit" + os16.EOL);
           _psChild.stdin.end();
         }
       } catch {
@@ -1807,7 +1822,7 @@ var require_util = __commonJS({
             });
             try {
               if (_psChild && _psChild.pid) {
-                _psChild.stdin.write(_psToUTF8 + "echo " + _psCmdStart + id + _psIdSeperator + "; " + os15.EOL + cmd + os15.EOL + "echo " + _psCmdSeperator + os15.EOL);
+                _psChild.stdin.write(_psToUTF8 + "echo " + _psCmdStart + id + _psIdSeperator + "; " + os16.EOL + cmd + os16.EOL + "echo " + _psCmdSeperator + os16.EOL);
               }
             } catch {
               resolve("");
@@ -1819,7 +1834,7 @@ var require_util = __commonJS({
         return new Promise((resolve) => {
           process.nextTick(() => {
             try {
-              const osVersion = os15.release().split(".").map(Number);
+              const osVersion = os16.release().split(".").map(Number);
               const spanOptions = osVersion[0] < 10 ? ["-NoProfile", "-NoLogo", "-InputFormat", "Text", "-NoExit", "-ExecutionPolicy", "Unrestricted", "-Command", "-"] : ["-NoProfile", "-NoLogo", "-InputFormat", "Text", "-ExecutionPolicy", "Unrestricted", "-Command", _psToUTF8 + cmd];
               const child = spawn2(_powerShell, spanOptions, {
                 stdio: "pipe",
@@ -1851,8 +1866,8 @@ var require_util = __commonJS({
                 });
                 if (osVersion[0] < 10) {
                   try {
-                    child.stdin.write(_psToUTF8 + cmd + os15.EOL);
-                    child.stdin.write("exit" + os15.EOL);
+                    child.stdin.write(_psToUTF8 + cmd + os16.EOL);
+                    child.stdin.write("exit" + os16.EOL);
                     child.stdin.end();
                   } catch {
                     child.kill();
@@ -1992,7 +2007,7 @@ var require_util = __commonJS({
         opts = execOptsWin;
       }
       let newCmd = "chcp 65001 > nul && cmd /C " + cmd + " && chcp " + codepage + " > nul";
-      exec3(newCmd, opts, (error, stdout) => {
+      exec2(newCmd, opts, (error, stdout) => {
         callback(error, stdout);
       });
     }
@@ -2119,7 +2134,7 @@ var require_util = __commonJS({
     function getFilesInPath(source) {
       const lstatSync = fs15.lstatSync;
       const readdirSync = fs15.readdirSync;
-      const join = path10.join;
+      const join = path11.join;
       function isDirectory(source2) {
         return lstatSync(source2).isDirectory();
       }
@@ -3920,10 +3935,10 @@ var require_util = __commonJS({
 var require_osinfo = __commonJS({
   "node_modules/systeminformation/lib/osinfo.js"(exports2) {
     "use strict";
-    var os15 = require("os");
+    var os16 = require("os");
     var fs15 = require("fs");
     var util = require_util();
-    var exec3 = require("child_process").exec;
+    var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
@@ -3943,14 +3958,14 @@ var require_osinfo = __commonJS({
       }
       const result2 = {
         current: Date.now(),
-        uptime: os15.uptime(),
+        uptime: os16.uptime(),
         timezone: t.length >= 7 ? t[5] : "",
         timezoneName
       };
       if (_darwin || _linux) {
         try {
           const stdout = execSync3("date +%Z && date +%z && ls -l /etc/localtime 2>/dev/null", util.execOptsLinux);
-          const lines = stdout.toString().split(os15.EOL);
+          const lines = stdout.toString().split(os16.EOL);
           if (lines.length > 3 && !lines[0]) {
             lines.shift();
           }
@@ -3960,7 +3975,7 @@ var require_osinfo = __commonJS({
           }
           return {
             current: Date.now(),
-            uptime: os15.uptime(),
+            uptime: os16.uptime(),
             timezone: lines[1] ? timezone + lines[1] : timezone,
             timezoneName: lines[2] && lines[2].indexOf("/zoneinfo/") > 0 ? lines[2].split("/zoneinfo/")[1] || "" : ""
           };
@@ -4079,11 +4094,11 @@ var require_osinfo = __commonJS({
       return "";
     }
     function getFQDN() {
-      let fqdn = os15.hostname;
+      let fqdn = os16.hostname;
       if (_linux || _darwin) {
         try {
           const stdout = execSync3("hostname -f 2>/dev/null", util.execOptsLinux);
-          fqdn = stdout.toString().split(os15.EOL)[0];
+          fqdn = stdout.toString().split(os16.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4091,7 +4106,7 @@ var require_osinfo = __commonJS({
       if (_freebsd || _openbsd || _netbsd) {
         try {
           const stdout = execSync3("hostname 2>/dev/null");
-          fqdn = stdout.toString().split(os15.EOL)[0];
+          fqdn = stdout.toString().split(os16.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4099,7 +4114,7 @@ var require_osinfo = __commonJS({
       if (_windows) {
         try {
           const stdout = execSync3("echo %COMPUTERNAME%.%USERDNSDOMAIN%", util.execOptsWin);
-          fqdn = stdout.toString().replace(".%USERDNSDOMAIN%", "").split(os15.EOL)[0];
+          fqdn = stdout.toString().replace(".%USERDNSDOMAIN%", "").split(os16.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4114,9 +4129,9 @@ var require_osinfo = __commonJS({
             distro: "unknown",
             release: "unknown",
             codename: "",
-            kernel: os15.release(),
-            arch: os15.arch(),
-            hostname: os15.hostname(),
+            kernel: os16.release(),
+            arch: os16.arch(),
+            hostname: os16.hostname(),
             fqdn: getFQDN(),
             codepage: "",
             logofile: "",
@@ -4126,7 +4141,7 @@ var require_osinfo = __commonJS({
             uefi: false
           };
           if (_linux) {
-            exec3("cat /etc/*-release; cat /usr/lib/os-release; cat /etc/openwrt_release", (error, stdout) => {
+            exec2("cat /etc/*-release; cat /usr/lib/os-release; cat /etc/openwrt_release", (error, stdout) => {
               let release = {};
               let lines = stdout.toString().split("\n");
               lines.forEach((line) => {
@@ -4163,7 +4178,7 @@ var require_osinfo = __commonJS({
             });
           }
           if (_freebsd || _openbsd || _netbsd) {
-            exec3("sysctl kern.ostype kern.osrelease kern.osrevision kern.hostuuid machdep.bootmethod kern.geom.confxml", (error, stdout) => {
+            exec2("sysctl kern.ostype kern.osrelease kern.osrevision kern.hostuuid machdep.bootmethod kern.geom.confxml", (error, stdout) => {
               let lines = stdout.toString().split("\n");
               const distro = util.getValue(lines, "kern.ostype");
               const logofile = getLogoFile(distro);
@@ -4186,7 +4201,7 @@ var require_osinfo = __commonJS({
             });
           }
           if (_darwin) {
-            exec3("sw_vers; sysctl kern.ostype kern.osrelease kern.osrevision kern.uuid", (error, stdout) => {
+            exec2("sw_vers; sysctl kern.ostype kern.osrelease kern.osrevision kern.uuid", (error, stdout) => {
               let lines = stdout.toString().split("\n");
               result2.serial = util.getValue(lines, "kern.uuid");
               result2.distro = util.getValue(lines, "ProductName");
@@ -4222,7 +4237,7 @@ var require_osinfo = __commonJS({
           }
           if (_sunos) {
             result2.release = result2.kernel;
-            exec3("uname -o", (error, stdout) => {
+            exec2("uname -o", (error, stdout) => {
               const lines = stdout.toString().split("\n");
               result2.distro = lines[0];
               result2.logofile = getLogoFile(result2.distro);
@@ -4286,7 +4301,7 @@ var require_osinfo = __commonJS({
             if (!err) {
               return resolve(true);
             } else {
-              exec3('dmesg | grep -E "EFI v"', (error, stdout) => {
+              exec2('dmesg | grep -E "EFI v"', (error, stdout) => {
                 if (!error) {
                   const lines = stdout.toString().split("\n");
                   return resolve(lines.length > 0);
@@ -4302,12 +4317,12 @@ var require_osinfo = __commonJS({
       return new Promise((resolve) => {
         process.nextTick(() => {
           try {
-            exec3('findstr /C:"Detected boot environment" "%windir%\\Panther\\setupact.log"', util.execOptsWin, (error, stdout) => {
+            exec2('findstr /C:"Detected boot environment" "%windir%\\Panther\\setupact.log"', util.execOptsWin, (error, stdout) => {
               if (!error) {
                 const line = stdout.toString().split("\n\r")[0];
                 return resolve(line.toLowerCase().indexOf("efi") >= 0);
               } else {
-                exec3("echo %firmware_type%", util.execOptsWin, (error2, stdout2) => {
+                exec2("echo %firmware_type%", util.execOptsWin, (error2, stdout2) => {
                   if (!error2) {
                     const line = stdout2.toString() || "";
                     return resolve(line.toLowerCase().indexOf("efi") >= 0);
@@ -4325,7 +4340,7 @@ var require_osinfo = __commonJS({
     }
     function versions(apps, callback) {
       let versionObject = {
-        kernel: os15.release(),
+        kernel: os16.release(),
         apache: "",
         bash: "",
         bun: "",
@@ -4430,7 +4445,7 @@ var require_osinfo = __commonJS({
           try {
             if ({}.hasOwnProperty.call(appsObj.versions, "openssl")) {
               appsObj.versions.openssl = process.versions.openssl;
-              exec3("openssl version", (error, stdout) => {
+              exec2("openssl version", (error, stdout) => {
                 if (!error) {
                   let openssl_string = stdout.toString().split("\n")[0].trim();
                   let openssl = openssl_string.split(" ");
@@ -4441,7 +4456,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "npm")) {
-              exec3("npm -v", (error, stdout) => {
+              exec2("npm -v", (error, stdout) => {
                 if (!error) {
                   appsObj.versions.npm = stdout.toString().split("\n")[0];
                 }
@@ -4453,7 +4468,7 @@ var require_osinfo = __commonJS({
               if (_windows) {
                 cmd += ".cmd";
               }
-              exec3(`${cmd} -v`, (error, stdout) => {
+              exec2(`${cmd} -v`, (error, stdout) => {
                 if (!error) {
                   let pm2 = stdout.toString().split("\n")[0].trim();
                   if (!pm2.startsWith("[PM2]")) {
@@ -4464,7 +4479,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "yarn")) {
-              exec3("yarn --version", (error, stdout) => {
+              exec2("yarn --version", (error, stdout) => {
                 if (!error) {
                   appsObj.versions.yarn = stdout.toString().split("\n")[0];
                 }
@@ -4476,7 +4491,7 @@ var require_osinfo = __commonJS({
               if (_windows) {
                 cmd += ".cmd";
               }
-              exec3(`${cmd} --version`, (error, stdout) => {
+              exec2(`${cmd} --version`, (error, stdout) => {
                 if (!error) {
                   const gulp = stdout.toString().split("\n")[0] || "";
                   appsObj.versions.gulp = (gulp.toLowerCase().split("version")[1] || "").trim();
@@ -4486,7 +4501,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "homebrew")) {
               cmd = "brew";
-              exec3(`${cmd} --version`, (error, stdout) => {
+              exec2(`${cmd} --version`, (error, stdout) => {
                 if (!error) {
                   const brew = stdout.toString().split("\n")[0] || "";
                   appsObj.versions.homebrew = (brew.toLowerCase().split(" ")[1] || "").trim();
@@ -4499,7 +4514,7 @@ var require_osinfo = __commonJS({
               if (_windows) {
                 cmd += ".cmd";
               }
-              exec3(`${cmd} --version`, (error, stdout) => {
+              exec2(`${cmd} --version`, (error, stdout) => {
                 if (!error) {
                   const tsc = stdout.toString().split("\n")[0] || "";
                   appsObj.versions.tsc = (tsc.toLowerCase().split("version")[1] || "").trim();
@@ -4512,7 +4527,7 @@ var require_osinfo = __commonJS({
               if (_windows) {
                 cmd += ".cmd";
               }
-              exec3(`${cmd} --version`, (error, stdout) => {
+              exec2(`${cmd} --version`, (error, stdout) => {
                 if (!error) {
                   const grunt = stdout.toString().split("\n")[0] || "";
                   appsObj.versions.grunt = (grunt.toLowerCase().split("cli v")[1] || "").trim();
@@ -4524,7 +4539,7 @@ var require_osinfo = __commonJS({
               if (_darwin) {
                 const gitHomebrewExists = fs15.existsSync("/usr/local/Cellar/git") || fs15.existsSync("/opt/homebrew/bin/git");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
-                  exec3("git --version", (error, stdout) => {
+                  exec2("git --version", (error, stdout) => {
                     if (!error) {
                       let git = stdout.toString().split("\n")[0] || "";
                       git = (git.toLowerCase().split("version")[1] || "").trim();
@@ -4536,7 +4551,7 @@ var require_osinfo = __commonJS({
                   functionProcessed();
                 }
               } else {
-                exec3("git --version", (error, stdout) => {
+                exec2("git --version", (error, stdout) => {
                   if (!error) {
                     let git = stdout.toString().split("\n")[0] || "";
                     git = (git.toLowerCase().split("version")[1] || "").trim();
@@ -4547,7 +4562,7 @@ var require_osinfo = __commonJS({
               }
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "apache")) {
-              exec3("apachectl -v 2>&1", (error, stdout) => {
+              exec2("apachectl -v 2>&1", (error, stdout) => {
                 if (!error) {
                   const apache = (stdout.toString().split("\n")[0] || "").split(":");
                   appsObj.versions.apache = apache.length > 1 ? apache[1].replace("Apache", "").replace("/", "").split("(")[0].trim() : "";
@@ -4556,7 +4571,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "nginx")) {
-              exec3("nginx -v 2>&1", (error, stdout) => {
+              exec2("nginx -v 2>&1", (error, stdout) => {
                 if (!error) {
                   const nginx = stdout.toString().split("\n")[0] || "";
                   appsObj.versions.nginx = (nginx.toLowerCase().split("/")[1] || "").trim();
@@ -4565,7 +4580,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "mysql")) {
-              exec3("mysql -V", (error, stdout) => {
+              exec2("mysql -V", (error, stdout) => {
                 if (!error) {
                   let mysql = stdout.toString().split("\n")[0] || "";
                   mysql = mysql.toLowerCase();
@@ -4584,7 +4599,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "php")) {
-              exec3("php -v", (error, stdout) => {
+              exec2("php -v", (error, stdout) => {
                 if (!error) {
                   const php = stdout.toString().split("\n")[0] || "";
                   let parts = php.split("(");
@@ -4597,7 +4612,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "redis")) {
-              exec3("redis-server --version", (error, stdout) => {
+              exec2("redis-server --version", (error, stdout) => {
                 if (!error) {
                   const redis = stdout.toString().split("\n")[0] || "";
                   const parts = redis.split(" ");
@@ -4607,7 +4622,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "docker")) {
-              exec3("docker --version", (error, stdout) => {
+              exec2("docker --version", (error, stdout) => {
                 if (!error) {
                   const docker = stdout.toString().split("\n")[0] || "";
                   const parts = docker.split(" ");
@@ -4617,7 +4632,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "postfix")) {
-              exec3("postconf -d | grep mail_version", (error, stdout) => {
+              exec2("postconf -d | grep mail_version", (error, stdout) => {
                 if (!error) {
                   const postfix = stdout.toString().split("\n") || [];
                   appsObj.versions.postfix = util.getValue(postfix, "mail_version", "=", true);
@@ -4626,7 +4641,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "mongodb")) {
-              exec3("mongod --version", (error, stdout) => {
+              exec2("mongod --version", (error, stdout) => {
                 if (!error) {
                   const mongodb = stdout.toString().split("\n")[0] || "";
                   appsObj.versions.mongodb = (mongodb.toLowerCase().split(",")[0] || "").replace(/[^0-9.]/g, "");
@@ -4636,7 +4651,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "postgresql")) {
               if (_linux) {
-                exec3("locate bin/postgres", (error, stdout) => {
+                exec2("locate bin/postgres", (error, stdout) => {
                   if (!error) {
                     const safePath = /^[a-zA-Z0-9/_.-]+$/;
                     const postgresqlBin = stdout.toString().split("\n").filter((p) => safePath.test(p.trim())).sort();
@@ -4652,7 +4667,7 @@ var require_osinfo = __commonJS({
                       functionProcessed();
                     }
                   } else {
-                    exec3("psql -V", (error2, stdout2) => {
+                    exec2("psql -V", (error2, stdout2) => {
                       if (!error2) {
                         const postgresql = stdout2.toString().split("\n")[0].split(" ") || [];
                         appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : "";
@@ -4681,12 +4696,12 @@ var require_osinfo = __commonJS({
                     functionProcessed();
                   });
                 } else {
-                  exec3("postgres -V", (error, stdout) => {
+                  exec2("postgres -V", (error, stdout) => {
                     if (!error) {
                       const postgresql = stdout.toString().split("\n")[0].split(" ") || [];
                       appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : "";
                     } else {
-                      exec3("pg_config --version", (error2, stdout2) => {
+                      exec2("pg_config --version", (error2, stdout2) => {
                         if (!error2) {
                           const postgresql = stdout2.toString().split("\n")[0].split(" ") || [];
                           appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : "";
@@ -4699,7 +4714,7 @@ var require_osinfo = __commonJS({
               }
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "perl")) {
-              exec3("perl -v", (error, stdout) => {
+              exec2("perl -v", (error, stdout) => {
                 if (!error) {
                   const perl = stdout.toString().split("\n") || "";
                   while (perl.length > 0 && perl[0].trim() === "") {
@@ -4722,7 +4737,7 @@ var require_osinfo = __commonJS({
                   const gitHomebrewExists2 = fs15.existsSync("/opt/homebrew/bin/python");
                   if (util.darwinXcodeExists() && util.semverCompare("12.0.1", osVersion) < 0 || gitHomebrewExists1 || gitHomebrewExists2) {
                     const cmd2 = gitHomebrewExists1 ? "/usr/local/Cellar/python -V 2>&1" : gitHomebrewExists2 ? "/opt/homebrew/bin/python -V 2>&1" : "python -V 2>&1";
-                    exec3(cmd2, (error, stdout2) => {
+                    exec2(cmd2, (error, stdout2) => {
                       if (!error) {
                         const python = stdout2.toString().split("\n")[0] || "";
                         appsObj.versions.python = python.toLowerCase().replace("python", "").trim();
@@ -4736,7 +4751,7 @@ var require_osinfo = __commonJS({
                   functionProcessed();
                 }
               } else {
-                exec3("python -V 2>&1", (error, stdout) => {
+                exec2("python -V 2>&1", (error, stdout) => {
                   if (!error) {
                     const python = stdout.toString().split("\n")[0] || "";
                     appsObj.versions.python = python.toLowerCase().replace("python", "").trim();
@@ -4749,7 +4764,7 @@ var require_osinfo = __commonJS({
               if (_darwin) {
                 const gitHomebrewExists = fs15.existsSync("/usr/local/Cellar/python3") || fs15.existsSync("/opt/homebrew/bin/python3");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
-                  exec3("python3 -V 2>&1", (error, stdout) => {
+                  exec2("python3 -V 2>&1", (error, stdout) => {
                     if (!error) {
                       const python = stdout.toString().split("\n")[0] || "";
                       appsObj.versions.python3 = python.toLowerCase().replace("python", "").trim();
@@ -4760,7 +4775,7 @@ var require_osinfo = __commonJS({
                   functionProcessed();
                 }
               } else {
-                exec3("python3 -V 2>&1", (error, stdout) => {
+                exec2("python3 -V 2>&1", (error, stdout) => {
                   if (!error) {
                     const python = stdout.toString().split("\n")[0] || "";
                     appsObj.versions.python3 = python.toLowerCase().replace("python", "").trim();
@@ -4773,7 +4788,7 @@ var require_osinfo = __commonJS({
               if (_darwin) {
                 const gitHomebrewExists = fs15.existsSync("/usr/local/Cellar/pip") || fs15.existsSync("/opt/homebrew/bin/pip");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
-                  exec3("pip -V 2>&1", (error, stdout) => {
+                  exec2("pip -V 2>&1", (error, stdout) => {
                     if (!error) {
                       const pip = stdout.toString().split("\n")[0] || "";
                       const parts = pip.split(" ");
@@ -4785,7 +4800,7 @@ var require_osinfo = __commonJS({
                   functionProcessed();
                 }
               } else {
-                exec3("pip -V 2>&1", (error, stdout) => {
+                exec2("pip -V 2>&1", (error, stdout) => {
                   if (!error) {
                     const pip = stdout.toString().split("\n")[0] || "";
                     const parts = pip.split(" ");
@@ -4799,7 +4814,7 @@ var require_osinfo = __commonJS({
               if (_darwin) {
                 const gitHomebrewExists = fs15.existsSync("/usr/local/Cellar/pip3") || fs15.existsSync("/opt/homebrew/bin/pip3");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
-                  exec3("pip3 -V 2>&1", (error, stdout) => {
+                  exec2("pip3 -V 2>&1", (error, stdout) => {
                     if (!error) {
                       const pip = stdout.toString().split("\n")[0] || "";
                       const parts = pip.split(" ");
@@ -4811,7 +4826,7 @@ var require_osinfo = __commonJS({
                   functionProcessed();
                 }
               } else {
-                exec3("pip3 -V 2>&1", (error, stdout) => {
+                exec2("pip3 -V 2>&1", (error, stdout) => {
                   if (!error) {
                     const pip = stdout.toString().split("\n")[0] || "";
                     const parts = pip.split(" ");
@@ -4823,9 +4838,9 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "java")) {
               if (_darwin) {
-                exec3("/usr/libexec/java_home -V 2>&1", (error, stdout) => {
+                exec2("/usr/libexec/java_home -V 2>&1", (error, stdout) => {
                   if (!error && stdout.toString().toLowerCase().indexOf("no java runtime") === -1) {
-                    exec3("java -version 2>&1", (error2, stdout2) => {
+                    exec2("java -version 2>&1", (error2, stdout2) => {
                       if (!error2) {
                         const java = stdout2.toString().split("\n")[0] || "";
                         const parts = java.split('"');
@@ -4838,7 +4853,7 @@ var require_osinfo = __commonJS({
                   }
                 });
               } else {
-                exec3("java -version 2>&1", (error, stdout) => {
+                exec2("java -version 2>&1", (error, stdout) => {
                   if (!error) {
                     const java = stdout.toString().split("\n")[0] || "";
                     const parts = java.split('"');
@@ -4850,14 +4865,14 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "gcc")) {
               if (_darwin && util.darwinXcodeExists() || !_darwin) {
-                exec3("gcc -dumpversion", (error, stdout) => {
+                exec2("gcc -dumpversion", (error, stdout) => {
                   if (!error) {
                     appsObj.versions.gcc = stdout.toString().split("\n")[0].trim() || "";
                   }
                   if (appsObj.versions.gcc.indexOf(".") > -1) {
                     functionProcessed();
                   } else {
-                    exec3("gcc --version", (error2, stdout2) => {
+                    exec2("gcc --version", (error2, stdout2) => {
                       if (!error2) {
                         const gcc = stdout2.toString().split("\n")[0].trim();
                         if (gcc.indexOf("gcc") > -1 && gcc.indexOf(")") > -1) {
@@ -4874,7 +4889,7 @@ var require_osinfo = __commonJS({
               }
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "virtualbox")) {
-              exec3(util.getVboxmanage() + " -v 2>&1", (error, stdout) => {
+              exec2(util.getVboxmanage() + " -v 2>&1", (error, stdout) => {
                 if (!error) {
                   const vbox = stdout.toString().split("\n")[0] || "";
                   const parts = vbox.split("r");
@@ -4884,7 +4899,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "bash")) {
-              exec3("bash --version", (error, stdout) => {
+              exec2("bash --version", (error, stdout) => {
                 if (!error) {
                   const line = stdout.toString().split("\n")[0];
                   const parts = line.split(" version ");
@@ -4896,7 +4911,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "zsh")) {
-              exec3("zsh --version", (error, stdout) => {
+              exec2("zsh --version", (error, stdout) => {
                 if (!error) {
                   const line = stdout.toString().split("\n")[0];
                   const parts = line.split("zsh ");
@@ -4908,7 +4923,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "fish")) {
-              exec3("fish --version", (error, stdout) => {
+              exec2("fish --version", (error, stdout) => {
                 if (!error) {
                   const line = stdout.toString().split("\n")[0];
                   const parts = line.split(" version ");
@@ -4920,7 +4935,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "bun")) {
-              exec3("bun -v", (error, stdout) => {
+              exec2("bun -v", (error, stdout) => {
                 if (!error) {
                   const line = stdout.toString().split("\n")[0].trim();
                   appsObj.versions.bun = line;
@@ -4929,7 +4944,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "deno")) {
-              exec3("deno -v", (error, stdout) => {
+              exec2("deno -v", (error, stdout) => {
                 if (!error) {
                   const line = stdout.toString().split("\n")[0].trim();
                   const parts = line.split(" ");
@@ -4941,7 +4956,7 @@ var require_osinfo = __commonJS({
               });
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "node")) {
-              exec3("node -v", (error, stdout) => {
+              exec2("node -v", (error, stdout) => {
                 if (!error) {
                   let line = stdout.toString().split("\n")[0].trim();
                   if (line.startsWith("v")) {
@@ -5018,7 +5033,7 @@ var require_osinfo = __commonJS({
             }
           } else {
             let result2 = "";
-            exec3("echo $SHELL", (error, stdout) => {
+            exec2("echo $SHELL", (error, stdout) => {
               if (!error) {
                 result2 = stdout.toString().split("\n")[0];
               }
@@ -5035,7 +5050,7 @@ var require_osinfo = __commonJS({
     function getUniqueMacAdresses() {
       let macs = [];
       try {
-        const ifaces = os15.networkInterfaces();
+        const ifaces = os16.networkInterfaces();
         for (let dev in ifaces) {
           if ({}.hasOwnProperty.call(ifaces, dev)) {
             ifaces[dev].forEach((details) => {
@@ -5072,7 +5087,7 @@ var require_osinfo = __commonJS({
           };
           let parts;
           if (_darwin) {
-            exec3("system_profiler SPHardwareDataType -json", (error, stdout) => {
+            exec2("system_profiler SPHardwareDataType -json", (error, stdout) => {
               if (!error) {
                 try {
                   const jsonObj = JSON.parse(stdout.toString());
@@ -5095,7 +5110,7 @@ var require_osinfo = __commonJS({
             const cmd = `echo -n "os: "; cat /var/lib/dbus/machine-id 2> /dev/null ||
 cat /etc/machine-id 2> /dev/null; echo;
 echo -n "hardware: "; cat /sys/class/dmi/id/product_uuid 2> /dev/null; echo;`;
-            exec3(cmd, (error, stdout) => {
+            exec2(cmd, (error, stdout) => {
               const lines = stdout.toString().split("\n");
               result2.os = util.getValue(lines, "os").toLowerCase();
               result2.hardware = util.getValue(lines, "hardware").toLowerCase();
@@ -5111,7 +5126,7 @@ echo -n "hardware: "; cat /sys/class/dmi/id/product_uuid 2> /dev/null; echo;`;
             });
           }
           if (_freebsd || _openbsd || _netbsd) {
-            exec3("sysctl -i kern.hostid kern.hostuuid", (error, stdout) => {
+            exec2("sysctl -i kern.hostid kern.hostuuid", (error, stdout) => {
               const lines = stdout.toString().split("\n");
               result2.hardware = util.getValue(lines, "kern.hostid", ":").toLowerCase();
               result2.os = util.getValue(lines, "kern.hostuuid", ":").toLowerCase();
@@ -5135,7 +5150,7 @@ echo -n "hardware: "; cat /sys/class/dmi/id/product_uuid 2> /dev/null; echo;`;
             util.powerShell("Get-CimInstance Win32_ComputerSystemProduct | select UUID | fl").then((stdout) => {
               let lines = stdout.split("\r\n");
               result2.hardware = util.getValue(lines, "uuid", ":").toLowerCase();
-              exec3(`${sysdir}\\reg query "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography" /v MachineGuid`, util.execOptsWin, (error, stdout2) => {
+              exec2(`${sysdir}\\reg query "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography" /v MachineGuid`, util.execOptsWin, (error, stdout2) => {
                 parts = stdout2.toString().split("\n\r")[0].split("REG_SZ");
                 result2.os = parts.length > 1 ? parts[1].replace(/\r+|\n+|\s+/gi, "").toLowerCase() : "";
                 if (callback) {
@@ -5157,10 +5172,10 @@ var require_system = __commonJS({
   "node_modules/systeminformation/lib/system.js"(exports2) {
     "use strict";
     var fs15 = require("fs");
-    var os15 = require("os");
+    var os16 = require("os");
     var util = require_util();
     var { uuid } = require_osinfo();
-    var exec3 = require("child_process").exec;
+    var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var execPromise = util.promisify(require("child_process").exec);
     var _platform = process.platform;
@@ -5184,7 +5199,7 @@ var require_system = __commonJS({
             virtual: false
           };
           if (_linux || _freebsd || _openbsd || _netbsd) {
-            exec3("export LC_ALL=C; dmidecode -t system 2>/dev/null; unset LC_ALL", (error, stdout) => {
+            exec2("export LC_ALL=C; dmidecode -t system 2>/dev/null; unset LC_ALL", (error, stdout) => {
               let lines = stdout.toString().split("\n");
               result2.manufacturer = cleanDefaults(util.getValue(lines, "manufacturer"));
               result2.model = cleanDefaults(util.getValue(lines, "product name"));
@@ -5281,8 +5296,8 @@ var require_system = __commonJS({
                   util.noop();
                 }
               }
-              if (!result2.virtual && (os15.release().toLowerCase().indexOf("microsoft") >= 0 || os15.release().toLowerCase().endsWith("wsl2"))) {
-                const kernelVersion = parseFloat(os15.release().toLowerCase());
+              if (!result2.virtual && (os16.release().toLowerCase().indexOf("microsoft") >= 0 || os16.release().toLowerCase().endsWith("wsl2"))) {
+                const kernelVersion = parseFloat(os16.release().toLowerCase());
                 result2.virtual = true;
                 result2.manufacturer = "Microsoft";
                 result2.model = "WSL";
@@ -5373,7 +5388,7 @@ var require_system = __commonJS({
             });
           }
           if (_darwin) {
-            exec3("ioreg -c IOPlatformExpertDevice -d 2", (error, stdout) => {
+            exec2("ioreg -c IOPlatformExpertDevice -d 2", (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().replace(/[<>"]/g, "").split("\n");
                 const model = util.getAppleModel(util.getValue(lines, "model", "=", true));
@@ -5534,7 +5549,7 @@ var require_system = __commonJS({
             } else {
               cmd = "export LC_ALL=C; dmidecode -t bios 2>/dev/null; unset LC_ALL";
             }
-            exec3(cmd, (error, stdout) => {
+            exec2(cmd, (error, stdout) => {
               let lines = stdout.toString().split("\n");
               result2.vendor = util.getValue(lines, "Vendor");
               result2.version = util.getValue(lines, "Version");
@@ -5576,7 +5591,7 @@ var require_system = __commonJS({
           }
           if (_darwin) {
             result2.vendor = "Apple Inc.";
-            exec3("system_profiler SPHardwareDataType -json", (error, stdout) => {
+            exec2("system_profiler SPHardwareDataType -json", (error, stdout) => {
               try {
                 const hardwareData = JSON.parse(stdout.toString());
                 if (hardwareData && hardwareData.SPHardwareDataType && hardwareData.SPHardwareDataType.length) {
@@ -5692,7 +5707,7 @@ var require_system = __commonJS({
                 result2.model = "Raspberry Pi";
                 result2.serial = rpi.serial;
                 result2.version = rpi.type + " - " + rpi.revision;
-                result2.memMax = os15.totalmem();
+                result2.memMax = os16.totalmem();
                 result2.memSlots = 0;
               }
               if (callback) {
@@ -5718,9 +5733,9 @@ var require_system = __commonJS({
               }
               devices.shift();
               result2.memSlots = devices.length;
-              if (os15.arch() === "arm64") {
+              if (os16.arch() === "arm64") {
                 result2.memSlots = 0;
-                result2.memMax = os15.totalmem();
+                result2.memMax = os16.totalmem();
               }
               if (callback) {
                 callback(result2);
@@ -5737,7 +5752,7 @@ var require_system = __commonJS({
           if (_windows) {
             try {
               const workload = [];
-              const win10plus = parseInt(os15.release()) >= 10;
+              const win10plus = parseInt(os16.release()) >= 10;
               const maxCapacityAttribute = win10plus ? "MaxCapacityEx" : "MaxCapacity";
               workload.push(util.powerShell("Get-CimInstance Win32_baseboard | select Model,Manufacturer,Product,Version,SerialNumber,PartNumber,SKU | fl"));
               workload.push(util.powerShell(`Get-CimInstance Win32_physicalmemoryarray | select ${maxCapacityAttribute}, MemoryDevices | fl`));
@@ -5854,7 +5869,7 @@ var require_system = __commonJS({
             echo -n "chassis_type: "; cat /sys/devices/virtual/dmi/id/chassis_type 2>/dev/null; echo;
             echo -n "chassis_vendor: "; cat /sys/devices/virtual/dmi/id/chassis_vendor 2>/dev/null; echo;
             echo -n "chassis_version: "; cat /sys/devices/virtual/dmi/id/chassis_version 2>/dev/null; echo;`;
-            exec3(cmd, (error, stdout) => {
+            exec2(cmd, (error, stdout) => {
               let lines = stdout.toString().split("\n");
               result2.manufacturer = cleanDefaults(util.getValue(lines, "chassis_vendor"));
               const ctype = parseInt(util.getValue(lines, "chassis_type").replace(/\D/g, ""));
@@ -5869,7 +5884,7 @@ var require_system = __commonJS({
             });
           }
           if (_darwin) {
-            exec3("ioreg -c IOPlatformExpertDevice -d 2", (error, stdout) => {
+            exec2("ioreg -c IOPlatformExpertDevice -d 2", (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().replace(/[<>"]/g, "").split("\n");
                 const model = util.getAppleModel(util.getValue(lines, "model", "=", true));
@@ -5933,8 +5948,8 @@ var require_system = __commonJS({
 var require_cpu = __commonJS({
   "node_modules/systeminformation/lib/cpu.js"(exports2) {
     "use strict";
-    var os15 = require("os");
-    var exec3 = require("child_process").exec;
+    var os16 = require("os");
+    var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var fs15 = require("fs");
     var util = require_util();
@@ -6774,7 +6789,7 @@ var require_cpu = __commonJS({
             result2.flags = flags;
             result2.virtualization = flags.indexOf("vmx") > -1 || flags.indexOf("svm") > -1;
             if (_darwin) {
-              exec3("sysctl machdep.cpu hw.cpufrequency_max hw.cpufrequency_min hw.packages hw.physicalcpu_max hw.ncpu hw.tbfrequency hw.cpufamily hw.cpusubfamily", (error, stdout) => {
+              exec2("sysctl machdep.cpu hw.cpufrequency_max hw.cpufrequency_min hw.packages hw.physicalcpu_max hw.ncpu hw.tbfrequency hw.cpufamily hw.cpusubfamily", (error, stdout) => {
                 const lines = stdout.toString().split("\n");
                 const modelline = util.getValue(lines, "machdep.cpu.brand_string");
                 const modellineParts = modelline.split("@");
@@ -6796,7 +6811,7 @@ var require_cpu = __commonJS({
                 const countProcessors = util.getValue(lines, "hw.packages");
                 const countCores = util.getValue(lines, "hw.physicalcpu_max");
                 const countThreads = util.getValue(lines, "hw.ncpu");
-                if (os15.arch() === "arm64") {
+                if (os16.arch() === "arm64") {
                   result2.socket = "SOC";
                   try {
                     const clusters = execSync3("ioreg -c IOPlatformDevice -d 3 -r | grep cluster-type").toString().split("\n");
@@ -6824,10 +6839,10 @@ var require_cpu = __commonJS({
             if (_linux) {
               let modelline = "";
               let lines = [];
-              if (os15.cpus()[0] && os15.cpus()[0].model) {
-                modelline = os15.cpus()[0].model;
+              if (os16.cpus()[0] && os16.cpus()[0].model) {
+                modelline = os16.cpus()[0].model;
               }
-              exec3('export LC_ALL=C; lscpu; echo -n "Governor: "; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null; echo; unset LC_ALL', (error, stdout) => {
+              exec2('export LC_ALL=C; lscpu; echo -n "Governor: "; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null; echo; unset LC_ALL', (error, stdout) => {
                 if (!error) {
                   lines = stdout.toString().split("\n");
                 }
@@ -6902,7 +6917,7 @@ var require_cpu = __commonJS({
                   }
                 }
                 let lines2 = [];
-                exec3('export LC_ALL=C; dmidecode \u2013t 4 2>/dev/null | grep "Upgrade: Socket"; unset LC_ALL', (error2, stdout2) => {
+                exec2('export LC_ALL=C; dmidecode \u2013t 4 2>/dev/null | grep "Upgrade: Socket"; unset LC_ALL', (error2, stdout2) => {
                   lines2 = stdout2.toString().split("\n");
                   if (lines2 && lines2.length) {
                     result2.socket = util.getValue(lines2, "Upgrade").replace("Socket", "").trim() || result2.socket;
@@ -6914,10 +6929,10 @@ var require_cpu = __commonJS({
             if (_freebsd || _openbsd || _netbsd) {
               let modelline = "";
               let lines = [];
-              if (os15.cpus()[0] && os15.cpus()[0].model) {
-                modelline = os15.cpus()[0].model;
+              if (os16.cpus()[0] && os16.cpus()[0].model) {
+                modelline = os16.cpus()[0].model;
               }
-              exec3("export LC_ALL=C; dmidecode -t 4; dmidecode -t 7 unset LC_ALL", (error, stdout) => {
+              exec2("export LC_ALL=C; dmidecode -t 4; dmidecode -t 7 unset LC_ALL", (error, stdout) => {
                 let cache = [];
                 if (!error) {
                   const data = stdout.toString().split("# dmidecode");
@@ -7075,7 +7090,7 @@ var require_cpu = __commonJS({
     }
     exports2.cpu = cpu;
     function getCpuCurrentSpeedSync() {
-      const cpus = os15.cpus();
+      const cpus = os16.cpus();
       let minFreq = 999999999;
       let maxFreq = 0;
       let avgFreq = 0;
@@ -7184,7 +7199,7 @@ var require_cpu = __commonJS({
             }
             const cmd = 'for mon in /sys/class/hwmon/hwmon*; do for label in "$mon"/temp*_label; do if [ -f $label ]; then value=${label%_*}_input; echo $(cat "$label")___$(cat "$value"); fi; done; done;';
             try {
-              exec3(cmd, (error, stdout) => {
+              exec2(cmd, (error, stdout) => {
                 stdout = stdout.toString();
                 const tdiePos = stdout.toLowerCase().indexOf("tdie");
                 if (tdiePos !== -1) {
@@ -7225,7 +7240,7 @@ var require_cpu = __commonJS({
                   resolve(result2);
                   return;
                 }
-                exec3("sensors", (error2, stdout2) => {
+                exec2("sensors", (error2, stdout2) => {
                   if (!error2) {
                     const lines2 = stdout2.toString().split("\n");
                     let tdieTemp = null;
@@ -7308,7 +7323,7 @@ var require_cpu = __commonJS({
                         resolve(result2);
                       });
                     } else {
-                      exec3("/opt/vc/bin/vcgencmd measure_temp", (error3, stdout3) => {
+                      exec2("/opt/vc/bin/vcgencmd measure_temp", (error3, stdout3) => {
                         if (!error3) {
                           const lines2 = stdout3.toString().split("\n");
                           if (lines2.length > 0 && lines2[0].indexOf("=")) {
@@ -7333,7 +7348,7 @@ var require_cpu = __commonJS({
             }
           }
           if (_freebsd || _openbsd || _netbsd) {
-            exec3("sysctl dev.cpu | grep temp", (error, stdout) => {
+            exec2("sysctl dev.cpu | grep temp", (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().split("\n");
                 let sum = 0;
@@ -7447,7 +7462,7 @@ var require_cpu = __commonJS({
           let result2 = "";
           if (_windows) {
             try {
-              exec3('reg query "HKEY_LOCAL_MACHINE\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0" /v FeatureSet', util.execOptsWin, (error, stdout) => {
+              exec2('reg query "HKEY_LOCAL_MACHINE\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0" /v FeatureSet', util.execOptsWin, (error, stdout) => {
                 if (!error) {
                   let flag_hex = stdout.split("0x").pop().trim();
                   let flag_bin_unpadded = parseInt(flag_hex, 16).toString(2);
@@ -7507,7 +7522,7 @@ var require_cpu = __commonJS({
           }
           if (_linux) {
             try {
-              exec3("export LC_ALL=C; lscpu; unset LC_ALL", (error, stdout) => {
+              exec2("export LC_ALL=C; lscpu; unset LC_ALL", (error, stdout) => {
                 if (!error) {
                   let lines = stdout.toString().split("\n");
                   lines.forEach((line) => {
@@ -7542,7 +7557,7 @@ var require_cpu = __commonJS({
             }
           }
           if (_freebsd || _openbsd || _netbsd) {
-            exec3("export LC_ALL=C; dmidecode -t 4 2>/dev/null; unset LC_ALL", (error, stdout) => {
+            exec2("export LC_ALL=C; dmidecode -t 4 2>/dev/null; unset LC_ALL", (error, stdout) => {
               const flags = [];
               if (!error) {
                 const parts = stdout.toString().split("	Flags:");
@@ -7562,7 +7577,7 @@ var require_cpu = __commonJS({
             });
           }
           if (_darwin) {
-            exec3("sysctl machdep.cpu.features", (error, stdout) => {
+            exec2("sysctl machdep.cpu.features", (error, stdout) => {
               if (!error) {
                 let lines = stdout.toString().split("\n");
                 if (lines.length > 0 && lines[0].indexOf("machdep.cpu.features:") !== -1) {
@@ -7596,7 +7611,7 @@ var require_cpu = __commonJS({
           };
           if (_linux) {
             try {
-              exec3("export LC_ALL=C; lscpu; unset LC_ALL", (error, stdout) => {
+              exec2("export LC_ALL=C; lscpu; unset LC_ALL", (error, stdout) => {
                 if (!error) {
                   const lines = stdout.toString().split("\n");
                   lines.forEach((line) => {
@@ -7628,7 +7643,7 @@ var require_cpu = __commonJS({
             }
           }
           if (_freebsd || _openbsd || _netbsd) {
-            exec3("export LC_ALL=C; dmidecode -t 7 2>/dev/null; unset LC_ALL", (error, stdout) => {
+            exec2("export LC_ALL=C; dmidecode -t 7 2>/dev/null; unset LC_ALL", (error, stdout) => {
               let cache = [];
               if (!error) {
                 const data = stdout.toString();
@@ -7659,7 +7674,7 @@ var require_cpu = __commonJS({
             });
           }
           if (_darwin) {
-            exec3("sysctl hw.l1icachesize hw.l1dcachesize hw.l2cachesize hw.l3cachesize", (error, stdout) => {
+            exec2("sysctl hw.l1icachesize hw.l1dcachesize hw.l2cachesize hw.l3cachesize", (error, stdout) => {
               if (!error) {
                 let lines = stdout.toString().split("\n");
                 lines.forEach((line) => {
@@ -7770,7 +7785,7 @@ var require_cpu = __commonJS({
     function getLoad() {
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const loads = os15.loadavg().map((x) => {
+          const loads = os16.loadavg().map((x) => {
             return x / util.cores();
           });
           const avgLoad = parseFloat(Math.max.apply(Math, loads).toFixed(2));
@@ -7778,7 +7793,7 @@ var require_cpu = __commonJS({
           const now = Date.now() - _current_cpu.ms;
           if (now >= 200) {
             _current_cpu.ms = Date.now();
-            const cpus = os15.cpus().map((cpu2) => {
+            const cpus = os16.cpus().map((cpu2) => {
               cpu2.times.steal = 0;
               cpu2.times.guest = 0;
               return cpu2;
@@ -7972,7 +7987,7 @@ var require_cpu = __commonJS({
     function getFullLoad() {
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const cpus = os15.cpus();
+          const cpus = os16.cpus();
           let totalUser = 0;
           let totalSystem = 0;
           let totalNice = 0;
@@ -8015,8 +8030,8 @@ var require_cpu = __commonJS({
 var require_memory = __commonJS({
   "node_modules/systeminformation/lib/memory.js"(exports2) {
     "use strict";
-    var os15 = require("os");
-    var exec3 = require("child_process").exec;
+    var os16 = require("os");
+    var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
     var fs15 = require("fs");
@@ -8061,12 +8076,12 @@ var require_memory = __commonJS({
       return new Promise((resolve) => {
         process.nextTick(() => {
           let result2 = {
-            total: os15.totalmem(),
-            free: os15.freemem(),
-            used: os15.totalmem() - os15.freemem(),
-            active: os15.totalmem() - os15.freemem(),
+            total: os16.totalmem(),
+            free: os16.freemem(),
+            used: os16.totalmem() - os16.freemem(),
+            active: os16.totalmem() - os16.freemem(),
             // temporarily (fallback)
-            available: os15.freemem(),
+            available: os16.freemem(),
             // temporarily (fallback)
             buffers: 0,
             cached: 0,
@@ -8085,9 +8100,9 @@ var require_memory = __commonJS({
                 if (!error) {
                   const lines = stdout.toString().split("\n");
                   result2.total = parseInt(util.getValue(lines, "memtotal"), 10);
-                  result2.total = result2.total ? result2.total * 1024 : os15.totalmem();
+                  result2.total = result2.total ? result2.total * 1024 : os16.totalmem();
                   result2.free = parseInt(util.getValue(lines, "memfree"), 10);
-                  result2.free = result2.free ? result2.free * 1024 : os15.freemem();
+                  result2.free = result2.free ? result2.free * 1024 : os16.freemem();
                   result2.used = result2.total - result2.free;
                   result2.buffers = parseInt(util.getValue(lines, "buffers"), 10);
                   result2.buffers = result2.buffers ? result2.buffers * 1024 : 0;
@@ -8125,7 +8140,7 @@ var require_memory = __commonJS({
           }
           if (_freebsd || _openbsd || _netbsd) {
             try {
-              exec3(
+              exec2(
                 "/sbin/sysctl hw.realmem hw.physmem vm.stats.vm.v_page_count vm.stats.vm.v_wire_count vm.stats.vm.v_active_count vm.stats.vm.v_inactive_count vm.stats.vm.v_cache_count vm.stats.vm.v_free_count vm.stats.vm.v_page_size",
                 (error, stdout) => {
                   if (!error) {
@@ -8173,7 +8188,7 @@ var require_memory = __commonJS({
               util.noop();
             }
             try {
-              exec3('vm_stat 2>/dev/null | egrep "Pages active|Pages inactive"', (error, stdout) => {
+              exec2('vm_stat 2>/dev/null | egrep "Pages active|Pages inactive"', (error, stdout) => {
                 if (!error) {
                   let lines = stdout.toString().split("\n");
                   result2.active = (parseInt(util.getValue(lines, "Pages active"), 10) || 0) * pageSize;
@@ -8181,7 +8196,7 @@ var require_memory = __commonJS({
                   result2.buffcache = result2.used - result2.active;
                   result2.available = result2.free + result2.buffcache;
                 }
-                exec3("sysctl -n vm.swapusage 2>/dev/null", (error2, stdout2) => {
+                exec2("sysctl -n vm.swapusage 2>/dev/null", (error2, stdout2) => {
                   if (!error2) {
                     let lines = stdout2.toString().split("\n");
                     if (lines.length > 0) {
@@ -8259,7 +8274,7 @@ var require_memory = __commonJS({
         process.nextTick(() => {
           let result2 = [];
           if (_linux || _freebsd || _openbsd || _netbsd) {
-            exec3(
+            exec2(
               'export LC_ALL=C; dmidecode -t memory 2>/dev/null | grep -iE "Size:|Type|Speed|Manufacturer|Form Factor|Locator|Memory Device|Serial Number|Voltage|Part Number"; unset LC_ALL',
               (error, stdout) => {
                 if (!error) {
@@ -8309,7 +8324,7 @@ var require_memory = __commonJS({
                 }
                 if (!result2.length) {
                   result2.push({
-                    size: os15.totalmem(),
+                    size: os16.totalmem(),
                     bank: "",
                     type: "",
                     ecc: null,
@@ -8367,7 +8382,7 @@ var require_memory = __commonJS({
             );
           }
           if (_darwin) {
-            exec3("system_profiler SPMemoryDataType", (error, stdout) => {
+            exec2("system_profiler SPMemoryDataType", (error, stdout) => {
               if (!error) {
                 const allLines = stdout.toString().split("\n");
                 const eccStatus = util.getValue(allLines, "ecc", ":", true).toLowerCase();
@@ -8510,7 +8525,7 @@ var require_memory = __commonJS({
 var require_battery = __commonJS({
   "node_modules/systeminformation/lib/battery.js"(exports2, module2) {
     "use strict";
-    var exec3 = require("child_process").exec;
+    var exec2 = require("child_process").exec;
     var fs15 = require("fs");
     var util = require_util();
     var _platform = process.platform;
@@ -8644,7 +8659,7 @@ var require_battery = __commonJS({
           }
         }
         if (_freebsd || _openbsd || _netbsd) {
-          exec3("sysctl -i hw.acpi.battery hw.acpi.acline", (error, stdout) => {
+          exec2("sysctl -i hw.acpi.battery hw.acpi.acline", (error, stdout) => {
             let lines = stdout.toString().split("\n");
             const batteries = parseInt("0" + util.getValue(lines, "hw.acpi.battery.units"), 10);
             const percent = parseInt("0" + util.getValue(lines, "hw.acpi.battery.life"), 10);
@@ -8663,7 +8678,7 @@ var require_battery = __commonJS({
           });
         }
         if (_darwin) {
-          exec3(
+          exec2(
             'ioreg -n AppleSmartBattery -r | egrep "CycleCount|IsCharging|DesignCapacity|MaxCapacity|CurrentCapacity|DeviceName|BatterySerialNumber|Serial|TimeRemaining|Voltage"; pmset -g batt | grep %',
             (error, stdout) => {
               if (stdout) {
@@ -8803,8 +8818,8 @@ var require_graphics = __commonJS({
   "node_modules/systeminformation/lib/graphics.js"(exports2) {
     "use strict";
     var fs15 = require("fs");
-    var path10 = require("path");
-    var exec3 = require("child_process").exec;
+    var path11 = require("path");
+    var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
     var _platform = process.platform;
@@ -9164,9 +9179,9 @@ var require_graphics = __commonJS({
         }
         if (_windows) {
           try {
-            const basePath = path10.join(util.WINDIR, "System32", "DriverStore", "FileRepository");
+            const basePath = path11.join(util.WINDIR, "System32", "DriverStore", "FileRepository");
             const candidates = fs15.readdirSync(basePath, { withFileTypes: true }).filter((dir) => dir.isDirectory()).map((dir) => {
-              const nvidiaSmiPath = path10.join(basePath, dir.name, "nvidia-smi.exe");
+              const nvidiaSmiPath = path11.join(basePath, dir.name, "nvidia-smi.exe");
               try {
                 const stats = fs15.statSync(nvidiaSmiPath);
                 return { path: nvidiaSmiPath, ctime: stats.ctimeMs };
@@ -9455,7 +9470,7 @@ var require_graphics = __commonJS({
           };
           if (_darwin) {
             const cmd = "system_profiler -xml -detailLevel full SPDisplaysDataType";
-            exec3(cmd, (error, stdout) => {
+            exec2(cmd, (error, stdout) => {
               if (!error) {
                 try {
                   const output = stdout.toString();
@@ -9512,7 +9527,7 @@ var require_graphics = __commonJS({
           if (_linux) {
             if (util.isRaspberry()) {
               const cmd2 = `fbset -s 2> /dev/null | grep 'mode "' ; vcgencmd get_mem gpu 2> /dev/null; tvservice -s 2> /dev/null; tvservice -n 2> /dev/null;`;
-              exec3(cmd2, (error, stdout) => {
+              exec2(cmd2, (error, stdout) => {
                 const lines = stdout.toString().split("\n");
                 if (lines.length > 3 && lines[0].indexOf('mode "') >= -1 && lines[2].indexOf("0x12000a") > -1) {
                   const parts = lines[0].replace("mode", "").replace(/"/g, "").trim().split("x");
@@ -9548,7 +9563,7 @@ var require_graphics = __commonJS({
               });
             }
             const cmd = "lspci -vvv  2>/dev/null";
-            exec3(cmd, (error, stdout) => {
+            exec2(cmd, (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().split("\n");
                 if (result2.controllers.length === 0) {
@@ -9560,20 +9575,20 @@ var require_graphics = __commonJS({
                 }
               }
               const cmd2 = "clinfo --raw";
-              exec3(cmd2, (error2, stdout2) => {
+              exec2(cmd2, (error2, stdout2) => {
                 if (!error2) {
                   const lines = stdout2.toString().split("\n");
                   result2.controllers = parseLinesLinuxClinfo(result2.controllers, lines);
                 }
                 const cmd3 = "xdpyinfo 2>/dev/null | grep 'depth of root window' | awk '{ print $5 }'";
-                exec3(cmd3, (error3, stdout3) => {
+                exec2(cmd3, (error3, stdout3) => {
                   let depth = 0;
                   if (!error3) {
                     const lines = stdout3.toString().split("\n");
                     depth = parseInt(lines[0]) || 0;
                   }
                   const cmd4 = "xrandr --verbose 2>/dev/null";
-                  exec3(cmd4, (error4, stdout4) => {
+                  exec2(cmd4, (error4, stdout4) => {
                     if (!error4) {
                       const lines = stdout4.toString().split("\n");
                       result2.displays = parseLinesLinuxDisplays(lines, depth);
@@ -9884,7 +9899,7 @@ var require_filesystem = __commonJS({
     "use strict";
     var util = require_util();
     var fs15 = require("fs");
-    var exec3 = require("child_process").exec;
+    var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var execPromiseSave = util.promisifySave(require("child_process").exec);
     var _platform = process.platform;
@@ -10021,7 +10036,7 @@ var require_filesystem = __commonJS({
                 util.noop();
               }
             }
-            exec3(cmd, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
+            exec2(cmd, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
               const lines = filterLines(stdout);
               data = parseDf(lines);
               if (drive) {
@@ -10035,7 +10050,7 @@ var require_filesystem = __commonJS({
                 }
                 resolve(data);
               } else {
-                exec3("df -kPT 2>/dev/null", { maxBuffer: 1024 * 1024 }, (error2, stdout2) => {
+                exec2("df -kPT 2>/dev/null", { maxBuffer: 1024 * 1024 }, (error2, stdout2) => {
                   const lines2 = filterLines(stdout2);
                   data = parseDf(lines2);
                   if (callback) {
@@ -10106,7 +10121,7 @@ var require_filesystem = __commonJS({
           };
           if (_freebsd || _openbsd || _netbsd || _darwin) {
             const cmd = "sysctl -i kern.maxfiles kern.num_files kern.open_files";
-            exec3(cmd, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
+            exec2(cmd, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().split("\n");
                 result2.max = parseInt(util.getValue(lines, "kern.maxfiles", ":"), 10);
@@ -10428,7 +10443,7 @@ var require_filesystem = __commonJS({
         process.nextTick(() => {
           let data = [];
           if (_linux) {
-            const procLsblk1 = exec3("lsblk -bPo NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT,UUID,ROTA,RO,RM,TRAN,SERIAL,LABEL,MODEL,OWNER 2>/dev/null", { maxBuffer: 1024 * 1024 }, (error, stdout) => {
+            const procLsblk1 = exec2("lsblk -bPo NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT,UUID,ROTA,RO,RM,TRAN,SERIAL,LABEL,MODEL,OWNER 2>/dev/null", { maxBuffer: 1024 * 1024 }, (error, stdout) => {
               if (!error) {
                 const lines = blkStdoutToObject(stdout).split("\n");
                 data = parseBlk(lines);
@@ -10439,7 +10454,7 @@ var require_filesystem = __commonJS({
                 }
                 resolve(data);
               } else {
-                const procLsblk2 = exec3("lsblk -bPo NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT,UUID,ROTA,RO,RM,LABEL,MODEL,OWNER 2>/dev/null", { maxBuffer: 1024 * 1024 }, (error2, stdout2) => {
+                const procLsblk2 = exec2("lsblk -bPo NAME,TYPE,SIZE,FSTYPE,MOUNTPOINT,UUID,ROTA,RO,RM,LABEL,MODEL,OWNER 2>/dev/null", { maxBuffer: 1024 * 1024 }, (error2, stdout2) => {
                   if (!error2) {
                     const lines = blkStdoutToObject(stdout2).split("\n");
                     data = parseBlk(lines);
@@ -10466,7 +10481,7 @@ var require_filesystem = __commonJS({
             });
           }
           if (_darwin) {
-            const procDskutil = exec3("diskutil info -all", { maxBuffer: 1024 * 1024 }, (error, stdout) => {
+            const procDskutil = exec2("diskutil info -all", { maxBuffer: 1024 * 1024 }, (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().split("\n");
                 data = parseDevices(lines);
@@ -10609,7 +10624,7 @@ var require_filesystem = __commonJS({
           let wx = 0;
           if (_fs_speed && !_fs_speed.ms || _fs_speed && _fs_speed.ms && Date.now() - _fs_speed.ms >= 500) {
             if (_linux) {
-              const procLsblk = exec3("lsblk -r 2>/dev/null | grep /", { maxBuffer: 1024 * 1024 }, (error, stdout) => {
+              const procLsblk = exec2("lsblk -r 2>/dev/null | grep /", { maxBuffer: 1024 * 1024 }, (error, stdout) => {
                 if (!error) {
                   const lines = stdout.toString().split("\n");
                   const fs_filter = [];
@@ -10622,7 +10637,7 @@ var require_filesystem = __commonJS({
                     }
                   });
                   const output = fs_filter.join("|");
-                  const procCat = exec3('cat /proc/diskstats | egrep "' + output + '"', { maxBuffer: 1024 * 1024 }, (error2, stdout2) => {
+                  const procCat = exec2('cat /proc/diskstats | egrep "' + output + '"', { maxBuffer: 1024 * 1024 }, (error2, stdout2) => {
                     if (!error2) {
                       const lines2 = stdout2.toString().split("\n");
                       lines2.forEach((line) => {
@@ -10661,7 +10676,7 @@ var require_filesystem = __commonJS({
               });
             }
             if (_darwin) {
-              const procIoreg = exec3(
+              const procIoreg = exec2(
                 'ioreg -c IOBlockStorageDriver -k Statistics -r -w0 | sed -n "/IOBlockStorageDriver/,/Statistics/p" | grep "Statistics" | tr -cd "01234567890,\n"',
                 { maxBuffer: 1024 * 1024 },
                 (error, stdout) => {
@@ -10805,7 +10820,7 @@ var require_filesystem = __commonJS({
           if (_disk_io && !_disk_io.ms || _disk_io && _disk_io.ms && Date.now() - _disk_io.ms >= 500) {
             if (_linux || _freebsd || _openbsd || _netbsd) {
               const cmd = 'for mount in `lsblk 2>/dev/null | grep " disk " | sed "s/[\u2502\u2514\u2500\u251C]//g" | awk \'{$1=$1};1\' | cut -d " " -f 1 | sort -u`; do cat /sys/block/$mount/stat | sed -r "s/ +/;/g" | sed -r "s/^;//"; done';
-              exec3(cmd, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
+              exec2(cmd, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
                 if (!error) {
                   const lines = stdout.split("\n");
                   lines.forEach((line) => {
@@ -10833,7 +10848,7 @@ var require_filesystem = __commonJS({
               });
             }
             if (_darwin) {
-              exec3(
+              exec2(
                 'ioreg -c IOBlockStorageDriver -k Statistics -r -w0 | sed -n "/IOBlockStorageDriver/,/Statistics/p" | grep "Statistics" | tr -cd "01234567890,\n"',
                 { maxBuffer: 1024 * 1024 },
                 (error, stdout) => {
@@ -10941,7 +10956,7 @@ var require_filesystem = __commonJS({
           let cmd = "";
           if (_linux) {
             let cmdFullSmart = "";
-            exec3("export LC_ALL=C; lsblk -ablJO 2>/dev/null; unset LC_ALL", { maxBuffer: 1024 * 1024 }, (error, stdout) => {
+            exec2("export LC_ALL=C; lsblk -ablJO 2>/dev/null; unset LC_ALL", { maxBuffer: 1024 * 1024 }, (error, stdout) => {
               if (!error) {
                 try {
                   const out = stdout.toString().trim();
@@ -11011,7 +11026,7 @@ ${BSDName}|"; smartctl -H ${BSDName} | grep overall;`;
                 }
               }
               if (cmdFullSmart) {
-                exec3(cmdFullSmart, { maxBuffer: 1024 * 1024 }, (error2, stdout2) => {
+                exec2(cmdFullSmart, { maxBuffer: 1024 * 1024 }, (error2, stdout2) => {
                   try {
                     const data = JSON.parse(`[${stdout2}]`);
                     data.forEach((disk) => {
@@ -11030,7 +11045,7 @@ ${BSDName}|"; smartctl -H ${BSDName} | grep overall;`;
                   } catch {
                     if (cmd) {
                       cmd = cmd + 'printf "\n"';
-                      exec3(cmd, { maxBuffer: 1024 * 1024 }, (error3, stdout3) => {
+                      exec2(cmd, { maxBuffer: 1024 * 1024 }, (error3, stdout3) => {
                         const lines = stdout3.toString().split("\n");
                         lines.forEach((line) => {
                           if (line) {
@@ -11077,7 +11092,7 @@ ${BSDName}|"; smartctl -H ${BSDName} | grep overall;`;
           }
           if (_darwin) {
             let cmdFullSmart = "";
-            exec3("system_profiler SPSerialATADataType SPNVMeDataType SPUSBDataType", { maxBuffer: 1024 * 1024 }, (error, stdout) => {
+            exec2("system_profiler SPSerialATADataType SPNVMeDataType SPUSBDataType", { maxBuffer: 1024 * 1024 }, (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().split("\n");
                 const linesSATA = [];
@@ -11249,7 +11264,7 @@ ${BSDName}|"; diskutil info /dev/${BSDName} | grep SMART;`;
                   util.noop();
                 }
                 if (cmdFullSmart) {
-                  exec3(cmdFullSmart, { maxBuffer: 1024 * 1024 }, (error2, stdout2) => {
+                  exec2(cmdFullSmart, { maxBuffer: 1024 * 1024 }, (error2, stdout2) => {
                     try {
                       const data = JSON.parse(`[${stdout2}]`);
                       data.forEach((disk) => {
@@ -11268,7 +11283,7 @@ ${BSDName}|"; diskutil info /dev/${BSDName} | grep SMART;`;
                     } catch (e) {
                       if (cmd) {
                         cmd = cmd + 'printf "\n"';
-                        exec3(cmd, { maxBuffer: 1024 * 1024 }, (error3, stdout3) => {
+                        exec2(cmd, { maxBuffer: 1024 * 1024 }, (error3, stdout3) => {
                           const lines2 = stdout3.toString().split("\n");
                           lines2.forEach((line) => {
                             if (line) {
@@ -11298,7 +11313,7 @@ ${BSDName}|"; diskutil info /dev/${BSDName} | grep SMART;`;
                   });
                 } else if (cmd) {
                   cmd = cmd + 'printf "\n"';
-                  exec3(cmd, { maxBuffer: 1024 * 1024 }, (error2, stdout2) => {
+                  exec2(cmd, { maxBuffer: 1024 * 1024 }, (error2, stdout2) => {
                     const lines2 = stdout2.toString().split("\n");
                     lines2.forEach((line) => {
                       if (line) {
@@ -11457,8 +11472,8 @@ ${BSDName}|"; diskutil info /dev/${BSDName} | grep SMART;`;
 var require_network = __commonJS({
   "node_modules/systeminformation/lib/network.js"(exports2) {
     "use strict";
-    var os15 = require("os");
-    var exec3 = require("child_process").exec;
+    var os16 = require("os");
+    var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var fs15 = require("fs");
     var util = require_util();
@@ -11481,7 +11496,7 @@ var require_network = __commonJS({
       let ifacename = "";
       let ifacenameFirst = "";
       try {
-        const ifaces = os15.networkInterfaces();
+        const ifaces = os16.networkInterfaces();
         let scopeid = 9999;
         for (let dev in ifaces) {
           if ({}.hasOwnProperty.call(ifaces, dev)) {
@@ -11501,7 +11516,7 @@ var require_network = __commonJS({
           let defaultIp = "";
           const cmd = "netstat -r";
           const result2 = execSync3(cmd, util.execOptsWin);
-          const lines = result2.toString().split(os15.EOL);
+          const lines = result2.toString().split(os16.EOL);
           lines.forEach((line) => {
             line = line.replace(/\s+/g, " ").trim();
             if (line.indexOf("0.0.0.0 0.0.0.0") > -1 && !/[a-zA-Z]/.test(line)) {
@@ -12134,7 +12149,7 @@ var require_network = __commonJS({
       defaultString = "" + defaultString;
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const ifaces = os15.networkInterfaces();
+          const ifaces = os16.networkInterfaces();
           let result2 = [];
           let nics = [];
           let dnsSuffixes = [];
@@ -12713,7 +12728,7 @@ var require_network = __commonJS({
             if (_linux) {
               if (fs15.existsSync("/sys/class/net/" + ifaceSanitized)) {
                 cmd = "cat /sys/class/net/" + ifaceSanitized + "/operstate; cat /sys/class/net/" + ifaceSanitized + "/statistics/rx_bytes; cat /sys/class/net/" + ifaceSanitized + "/statistics/tx_bytes; cat /sys/class/net/" + ifaceSanitized + "/statistics/rx_dropped; cat /sys/class/net/" + ifaceSanitized + "/statistics/rx_errors; cat /sys/class/net/" + ifaceSanitized + "/statistics/tx_dropped; cat /sys/class/net/" + ifaceSanitized + "/statistics/tx_errors; ";
-                exec3(cmd, (error, stdout) => {
+                exec2(cmd, (error, stdout) => {
                   if (!error) {
                     lines = stdout.toString().split("\n");
                     operstate = lines[0].trim();
@@ -12733,7 +12748,7 @@ var require_network = __commonJS({
             }
             if (_freebsd || _openbsd || _netbsd) {
               cmd = "netstat -ibndI " + ifaceSanitized;
-              exec3(cmd, (error, stdout) => {
+              exec2(cmd, (error, stdout) => {
                 if (!error) {
                   lines = stdout.toString().split("\n");
                   for (let i = 1; i < lines.length; i++) {
@@ -12763,12 +12778,12 @@ var require_network = __commonJS({
             }
             if (_darwin) {
               cmd = "ifconfig " + ifaceSanitized + ' | grep "status"';
-              exec3(cmd, (error, stdout) => {
+              exec2(cmd, (error, stdout) => {
                 result2.operstate = (stdout.toString().split(":")[1] || "").trim();
                 result2.operstate = (result2.operstate || "").toLowerCase();
                 result2.operstate = result2.operstate === "active" ? "up" : result2.operstate === "inactive" ? "down" : "unknown";
                 cmd = "netstat -bdI " + ifaceSanitized;
-                exec3(cmd, (error2, stdout2) => {
+                exec2(cmd, (error2, stdout2) => {
                   if (!error2) {
                     lines = stdout2.toString().split("\n");
                     if (lines.length > 1 && lines[1].trim() !== "") {
@@ -12857,7 +12872,7 @@ var require_network = __commonJS({
             if (_freebsd || _openbsd || _netbsd) {
               cmd = 'export LC_ALL=C; netstat -na | grep "ESTABLISHED\\|SYN_SENT\\|SYN_RECV\\|FIN_WAIT1\\|FIN_WAIT2\\|TIME_WAIT\\|CLOSE\\|CLOSE_WAIT\\|LAST_ACK\\|LISTEN\\|CLOSING\\|UNKNOWN"; unset LC_ALL';
             }
-            exec3(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
+            exec2(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
               let lines = stdout.toString().split("\n");
               if (!error && (lines.length > 1 || lines[0] !== "")) {
                 lines.forEach((line) => {
@@ -12901,7 +12916,7 @@ var require_network = __commonJS({
                 resolve(result2);
               } else {
                 cmd = 'ss -tunap | grep "ESTAB\\|SYN-SENT\\|SYN-RECV\\|FIN-WAIT1\\|FIN-WAIT2\\|TIME-WAIT\\|CLOSE\\|CLOSE-WAIT\\|LAST-ACK\\|LISTEN\\|CLOSING"';
-                exec3(cmd, { maxBuffer: 1024 * 102400 }, (error2, stdout2) => {
+                exec2(cmd, { maxBuffer: 1024 * 102400 }, (error2, stdout2) => {
                   if (!error2) {
                     const lines2 = stdout2.toString().split("\n");
                     lines2.forEach((line) => {
@@ -12968,9 +12983,9 @@ var require_network = __commonJS({
           if (_darwin) {
             const cmd = 'netstat -natvln | head -n2; netstat -natvln | grep "tcp4\\|tcp6\\|udp4\\|udp6"';
             const states = "ESTABLISHED|SYN_SENT|SYN_RECV|FIN_WAIT1|FIN_WAIT_1|FIN_WAIT2|FIN_WAIT_2|TIME_WAIT|CLOSE|CLOSE_WAIT|LAST_ACK|LISTEN|CLOSING|UNKNOWN".split("|");
-            exec3(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
+            exec2(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
               if (!error) {
-                exec3("ps -axo pid,command", { maxBuffer: 1024 * 102400 }, (err2, stdout2) => {
+                exec2("ps -axo pid,command", { maxBuffer: 1024 * 102400 }, (err2, stdout2) => {
                   let processes = stdout2.toString().split("\n");
                   processes = processes.map((line) => {
                     return line.trim().replace(/ +/g, " ");
@@ -13038,7 +13053,7 @@ var require_network = __commonJS({
           if (_windows) {
             let cmd = "netstat -nao";
             try {
-              exec3(cmd, util.execOptsWin, (error, stdout) => {
+              exec2(cmd, util.execOptsWin, (error, stdout) => {
                 if (!error) {
                   let lines = stdout.toString().split("\r\n");
                   lines.forEach((line) => {
@@ -13140,7 +13155,7 @@ var require_network = __commonJS({
           if (_linux || _freebsd || _openbsd || _netbsd) {
             const cmd = "ip route get 1";
             try {
-              exec3(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
+              exec2(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
                 if (!error) {
                   let lines = stdout.toString().split("\n");
                   const line = lines && lines[0] ? lines[0] : "";
@@ -13170,14 +13185,14 @@ var require_network = __commonJS({
           if (_darwin) {
             let cmd = "route -n get default";
             try {
-              exec3(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
+              exec2(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
                 if (!error) {
                   const lines = stdout.toString().split("\n").map((line) => line.trim());
                   result2 = util.getValue(lines, "gateway");
                 }
                 if (!result2) {
                   cmd = "netstat -rn | awk '/default/ {print $2}'";
-                  exec3(cmd, { maxBuffer: 1024 * 102400 }, (error2, stdout2) => {
+                  exec2(cmd, { maxBuffer: 1024 * 102400 }, (error2, stdout2) => {
                     const lines = stdout2.toString().split("\n").map((line) => line.trim());
                     result2 = lines.find(
                       (line) => /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(line)
@@ -13203,8 +13218,8 @@ var require_network = __commonJS({
           }
           if (_windows) {
             try {
-              exec3("netstat -r", util.execOptsWin, (error, stdout) => {
-                const lines = stdout.toString().split(os15.EOL);
+              exec2("netstat -r", util.execOptsWin, (error, stdout) => {
+                const lines = stdout.toString().split(os16.EOL);
                 lines.forEach((line) => {
                   line = line.replace(/\s+/g, " ").trim();
                   if (line.indexOf("0.0.0.0 0.0.0.0") > -1 && !/[a-zA-Z]/.test(line)) {
@@ -13250,8 +13265,8 @@ var require_network = __commonJS({
 var require_wifi = __commonJS({
   "node_modules/systeminformation/lib/wifi.js"(exports2) {
     "use strict";
-    var os15 = require("os");
-    var exec3 = require("child_process").exec;
+    var os16 = require("os");
+    var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
     var _platform = process.platform;
@@ -13472,7 +13487,7 @@ var require_wifi = __commonJS({
         parts.shift();
         parts.forEach((part) => {
           part = "ACTIVE:" + part;
-          const lines = part.split(os15.EOL);
+          const lines = part.split(os16.EOL);
           const channel = util.getValue(lines, "CHAN");
           const frequency = util.getValue(lines, "FREQ").toLowerCase().replace("mhz", "").trim();
           const security = util.getValue(lines, "SECURITY").replace("(", "").replace(")", "");
@@ -13686,7 +13701,7 @@ var require_wifi = __commonJS({
             }
           } else if (_darwin) {
             const cmd = "system_profiler SPAirPortDataType -json 2>/dev/null";
-            exec3(cmd, { maxBuffer: 1024 * 4e4 }, (error, stdout) => {
+            exec2(cmd, { maxBuffer: 1024 * 4e4 }, (error, stdout) => {
               result2 = parseWifiDarwin(stdout.toString());
               if (callback) {
                 callback(result2);
@@ -13696,15 +13711,15 @@ var require_wifi = __commonJS({
           } else if (_windows) {
             const cmd = "netsh wlan show networks mode=Bssid";
             util.powerShell(cmd).then((stdout) => {
-              const ssidParts = stdout.toString("utf8").split(os15.EOL + os15.EOL + "SSID ");
+              const ssidParts = stdout.toString("utf8").split(os16.EOL + os16.EOL + "SSID ");
               ssidParts.shift();
               ssidParts.forEach((ssidPart) => {
-                const ssidLines = ssidPart.split(os15.EOL);
+                const ssidLines = ssidPart.split(os16.EOL);
                 if (ssidLines && ssidLines.length >= 8 && ssidLines[0].indexOf(":") >= 0) {
                   const bssidsParts = ssidPart.split(" BSSID");
                   bssidsParts.shift();
                   bssidsParts.forEach((bssidPart) => {
-                    const bssidLines = bssidPart.split(os15.EOL);
+                    const bssidLines = bssidPart.split(os16.EOL);
                     const bssidLine = bssidLines[0].split(":");
                     bssidLine.shift();
                     const bssid = bssidLine.join(":").trim().toLowerCase();
@@ -13827,7 +13842,7 @@ var require_wifi = __commonJS({
             resolve(result2);
           } else if (_darwin) {
             const cmd = 'system_profiler SPNetworkDataType SPAirPortDataType -xml 2>/dev/null; echo "######" ; ioreg -n AppleBCMWLANSkywalkInterface -r 2>/dev/null';
-            exec3(cmd, (error, stdout) => {
+            exec2(cmd, (error, stdout) => {
               try {
                 const parts = stdout.toString().split("######");
                 const profilerObj = util.plistParser(parts[0]);
@@ -13956,7 +13971,7 @@ var require_wifi = __commonJS({
             resolve(result2);
           } else if (_darwin) {
             const cmd = "system_profiler SPNetworkDataType";
-            exec3(cmd, (error, stdout) => {
+            exec2(cmd, (error, stdout) => {
               const parts1 = stdout.toString().split("\n\n    Wi-Fi:\n\n");
               if (parts1.length > 1) {
                 const lines = parts1[1].split("\n\n")[0].split("\n");
@@ -14028,10 +14043,10 @@ var require_wifi = __commonJS({
 var require_processes = __commonJS({
   "node_modules/systeminformation/lib/processes.js"(exports2) {
     "use strict";
-    var os15 = require("os");
+    var os16 = require("os");
     var fs15 = require("fs");
-    var path10 = require("path");
-    var exec3 = require("child_process").exec;
+    var path11 = require("path");
+    var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
     var _platform = process.platform;
@@ -14247,7 +14262,7 @@ var require_processes = __commonJS({
                           cmd += ";cat /proc/" + result2[i].pids[j] + "/stat";
                         }
                       }
-                      exec3(cmd, { maxBuffer: 1024 * 102400 }, function(error, stdout2) {
+                      exec2(cmd, { maxBuffer: 1024 * 102400 }, function(error, stdout2) {
                         let curr_processes = stdout2.toString().split("\n");
                         let all = parseProcStat(curr_processes.shift());
                         let list_new = {};
@@ -14600,7 +14615,7 @@ var require_processes = __commonJS({
               }
               if (firstPos === 1e4 && tmpCommand.indexOf(" ") > -1) {
                 const parts = tmpCommand.split(" ");
-                if (fs15.existsSync(path10.join(cmdPath, parts[0]))) {
+                if (fs15.existsSync(path11.join(cmdPath, parts[0]))) {
                   command = parts.shift();
                   params = (parts.join(" ") + " " + tmpParams).trim();
                 } else {
@@ -14679,7 +14694,7 @@ var require_processes = __commonJS({
             line = line.trim().replace(/ +/g, " ").replace(/,+/g, ".");
             const parts = line.split(" ");
             const command = parts.slice(9).join(" ");
-            const pmem = parseFloat((1 * parseInt(parts[3]) * 1024 / os15.totalmem()).toFixed(1));
+            const pmem = parseFloat((1 * parseInt(parts[3]) * 1024 / os16.totalmem()).toFixed(1));
             const started = parseElapsed(parts[5]);
             result2.push({
               pid: parseInt(parts[0]),
@@ -14729,7 +14744,7 @@ var require_processes = __commonJS({
                 cmd = "ps -Ao pid,ppid,pcpu,pmem,pri,vsz,rss,nice,stime,s,tty,user,comm";
               }
               try {
-                exec3(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
+                exec2(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout) => {
                   if (!error && stdout.toString().trim()) {
                     result2.list = parseProcesses(stdout.toString().split("\n")).slice();
                     result2.all = result2.list.length;
@@ -14747,7 +14762,7 @@ var require_processes = __commonJS({
                       result2.list.forEach((element) => {
                         cmd += ";cat /proc/" + element.pid + "/stat";
                       });
-                      exec3(cmd, { maxBuffer: 1024 * 102400 }, (error2, stdout2) => {
+                      exec2(cmd, { maxBuffer: 1024 * 102400 }, (error2, stdout2) => {
                         let curr_processes = stdout2.toString().split("\n");
                         let all = parseProcStat(curr_processes.shift());
                         let list_new = {};
@@ -14793,7 +14808,7 @@ var require_processes = __commonJS({
                     if (_sunos) {
                       cmd = "ps -o pid,ppid,vsz,rss,nice,etime,s,tty,user,comm";
                     }
-                    exec3(cmd, { maxBuffer: 1024 * 102400 }, (error2, stdout2) => {
+                    exec2(cmd, { maxBuffer: 1024 * 102400 }, (error2, stdout2) => {
                       if (!error2) {
                         let lines = stdout2.toString().split("\n");
                         lines.shift();
@@ -14882,7 +14897,7 @@ var require_processes = __commonJS({
                         cpu: 0,
                         cpuu: 0,
                         cpus: 0,
-                        mem: memw / os15.totalmem() * 100,
+                        mem: memw / os16.totalmem() * 100,
                         priority: element.Priority | null,
                         memVsz: element.PageFileUsage || null,
                         memRss: Math.floor((element.WorkingSetSize || 0) / 1024),
@@ -15036,7 +15051,7 @@ var require_processes = __commonJS({
                         result2.forEach((item) => {
                           if (item.proc.toLowerCase() === pname.toLowerCase()) {
                             item.pids.push(pid);
-                            item.mem += mem / os15.totalmem() * 100;
+                            item.mem += mem / os16.totalmem() * 100;
                             processFound = true;
                           }
                         });
@@ -15046,7 +15061,7 @@ var require_processes = __commonJS({
                             pid,
                             pids: [pid],
                             cpu: 0,
-                            mem: mem / os15.totalmem() * 100
+                            mem: mem / os16.totalmem() * 100
                           });
                         }
                       }
@@ -15195,7 +15210,7 @@ var require_processes = __commonJS({
                         cmd += ";cat /proc/" + result2[i].pids[j] + "/stat";
                       }
                     }
-                    exec3(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout2) => {
+                    exec2(cmd, { maxBuffer: 1024 * 102400 }, (error, stdout2) => {
                       let curr_processes = stdout2.toString().split("\n");
                       let all = parseProcStat(curr_processes.shift());
                       let list_new = {};
@@ -15260,7 +15275,7 @@ var require_processes = __commonJS({
 var require_users = __commonJS({
   "node_modules/systeminformation/lib/users.js"(exports2) {
     "use strict";
-    var exec3 = require("child_process").exec;
+    var exec2 = require("child_process").exec;
     var util = require_util();
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
@@ -15398,12 +15413,12 @@ var require_users = __commonJS({
         process.nextTick(() => {
           let result2 = [];
           if (_linux) {
-            exec3('export LC_ALL=C; who --ips; echo "---"; w; unset LC_ALL | tail -n +2', (error, stdout) => {
+            exec2('export LC_ALL=C; who --ips; echo "---"; w; unset LC_ALL | tail -n +2', (error, stdout) => {
               if (!error) {
                 let lines = stdout.toString().split("\n");
                 result2 = parseUsersLinux(lines, 1);
                 if (result2.length === 0) {
-                  exec3('who; echo "---"; w | tail -n +2', (error2, stdout2) => {
+                  exec2('who; echo "---"; w | tail -n +2', (error2, stdout2) => {
                     if (!error2) {
                       lines = stdout2.toString().split("\n");
                       result2 = parseUsersLinux(lines, 2);
@@ -15428,7 +15443,7 @@ var require_users = __commonJS({
             });
           }
           if (_freebsd || _openbsd || _netbsd) {
-            exec3('who; echo "---"; w -ih', (error, stdout) => {
+            exec2('who; echo "---"; w -ih', (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().split("\n");
                 result2 = parseUsersDarwin(lines);
@@ -15440,7 +15455,7 @@ var require_users = __commonJS({
             });
           }
           if (_sunos) {
-            exec3('who; echo "---"; w -h', (error, stdout) => {
+            exec2('who; echo "---"; w -h', (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().split("\n");
                 result2 = parseUsersDarwin(lines);
@@ -15452,7 +15467,7 @@ var require_users = __commonJS({
             });
           }
           if (_darwin) {
-            exec3('export LC_ALL=C; who; echo "---"; w -ih; unset LC_ALL', (error, stdout) => {
+            exec2('export LC_ALL=C; who; echo "---"; w -ih; unset LC_ALL', (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().split("\n");
                 result2 = parseUsersDarwin(lines);
@@ -16787,19 +16802,19 @@ var require_docker = __commonJS({
 var require_virtualbox = __commonJS({
   "node_modules/systeminformation/lib/virtualbox.js"(exports2) {
     "use strict";
-    var os15 = require("os");
-    var exec3 = require("child_process").exec;
+    var os16 = require("os");
+    var exec2 = require("child_process").exec;
     var util = require_util();
     function vboxInfo(callback) {
       let result2 = [];
       return new Promise((resolve) => {
         process.nextTick(() => {
           try {
-            exec3(util.getVboxmanage() + " list vms --long", (error, stdout) => {
-              let parts = (os15.EOL + stdout.toString()).split(os15.EOL + "Name:");
+            exec2(util.getVboxmanage() + " list vms --long", (error, stdout) => {
+              let parts = (os16.EOL + stdout.toString()).split(os16.EOL + "Name:");
               parts.shift();
               parts.forEach((part) => {
-                const lines = ("Name:" + part).split(os15.EOL);
+                const lines = ("Name:" + part).split(os16.EOL);
                 const state = util.getValue(lines, "State");
                 const running = state.startsWith("running");
                 const runningSinceString = running ? state.replace("running (since ", "").replace(")", "").trim() : "";
@@ -16885,7 +16900,7 @@ var require_virtualbox = __commonJS({
 var require_printer = __commonJS({
   "node_modules/systeminformation/lib/printer.js"(exports2) {
     "use strict";
-    var exec3 = require("child_process").exec;
+    var exec2 = require("child_process").exec;
     var util = require_util();
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
@@ -16975,7 +16990,7 @@ var require_printer = __commonJS({
           let result2 = [];
           if (_linux || _freebsd || _openbsd || _netbsd) {
             let cmd = "cat /etc/cups/printers.conf 2>/dev/null";
-            exec3(cmd, (error, stdout) => {
+            exec2(cmd, (error, stdout) => {
               if (!error) {
                 const parts = stdout.toString().split("<Printer ");
                 const printerHeader = parseLinuxCupsHeader(parts[0]);
@@ -16991,7 +17006,7 @@ var require_printer = __commonJS({
               if (result2.length === 0) {
                 if (_linux) {
                   cmd = "export LC_ALL=C; lpstat -lp 2>/dev/null; unset LC_ALL";
-                  exec3(cmd, (error2, stdout2) => {
+                  exec2(cmd, (error2, stdout2) => {
                     const parts = ("\n" + stdout2.toString()).split("\nprinter ");
                     for (let i = 1; i < parts.length; i++) {
                       const printers = parseLinuxLpstatPrinter(parts[i].split("\n"), i);
@@ -17018,7 +17033,7 @@ var require_printer = __commonJS({
           }
           if (_darwin) {
             let cmd = "system_profiler SPPrintersDataType -json";
-            exec3(cmd, (error, stdout) => {
+            exec2(cmd, (error, stdout) => {
               if (!error) {
                 try {
                   const outObj = JSON.parse(stdout.toString());
@@ -17069,7 +17084,7 @@ var require_printer = __commonJS({
 var require_usb = __commonJS({
   "node_modules/systeminformation/lib/usb.js"(exports2) {
     "use strict";
-    var exec3 = require("child_process").exec;
+    var exec2 = require("child_process").exec;
     var util = require_util();
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
@@ -17279,7 +17294,7 @@ var require_usb = __commonJS({
           let result2 = [];
           if (_linux) {
             const cmd = "export LC_ALL=C; lsusb -v 2>/dev/null; unset LC_ALL";
-            exec3(cmd, { maxBuffer: 1024 * 1024 * 128 }, function(error, stdout) {
+            exec2(cmd, { maxBuffer: 1024 * 1024 * 128 }, function(error, stdout) {
               if (!error) {
                 const parts = ("\n\n" + stdout.toString()).split("\n\nBus ");
                 for (let i = 1; i < parts.length; i++) {
@@ -17295,7 +17310,7 @@ var require_usb = __commonJS({
           }
           if (_darwin) {
             let cmd = "ioreg -p IOUSB -c AppleUSBRootHubDevice -w0 -l";
-            exec3(cmd, { maxBuffer: 1024 * 1024 * 128 }, function(error, stdout) {
+            exec2(cmd, { maxBuffer: 1024 * 1024 * 128 }, function(error, stdout) {
               if (!error) {
                 const parts = stdout.toString().split(" +-o ");
                 for (let i = 1; i < parts.length; i++) {
@@ -17346,7 +17361,7 @@ var require_usb = __commonJS({
 var require_audio = __commonJS({
   "node_modules/systeminformation/lib/audio.js"(exports2) {
     "use strict";
-    var exec3 = require("child_process").exec;
+    var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
     var _platform = process.platform;
@@ -17520,7 +17535,7 @@ var require_audio = __commonJS({
           const result2 = [];
           if (_linux || _freebsd || _openbsd || _netbsd) {
             const cmd = "lspci -vmm 2>/dev/null";
-            exec3(cmd, (error, stdout) => {
+            exec2(cmd, (error, stdout) => {
               if (!error) {
                 const audioPCI = getLinuxAudioPci();
                 const parts = stdout.toString().split("\n\n");
@@ -17540,7 +17555,7 @@ var require_audio = __commonJS({
           }
           if (_darwin) {
             const cmd = "system_profiler SPAudioDataType -json";
-            exec3(cmd, (error, stdout) => {
+            exec2(cmd, (error, stdout) => {
               if (!error) {
                 try {
                   const outObj = JSON.parse(stdout.toString());
@@ -18734,9 +18749,9 @@ var require_bluetoothVendors = __commonJS({
 var require_bluetooth = __commonJS({
   "node_modules/systeminformation/lib/bluetooth.js"(exports2) {
     "use strict";
-    var exec3 = require("child_process").exec;
+    var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
-    var path10 = require("path");
+    var path11 = require("path");
     var util = require_util();
     var bluetoothVendors = require_bluetoothVendors();
     var fs15 = require("fs");
@@ -18868,7 +18883,7 @@ var require_bluetooth = __commonJS({
           if (_linux) {
             const btFiles = util.getFilesInPath("/var/lib/bluetooth/");
             btFiles.forEach((element) => {
-              const filename = path10.basename(element);
+              const filename = path11.basename(element);
               const pathParts = element.split("/");
               const macAddr1 = pathParts.length >= 6 ? pathParts[pathParts.length - 2] : null;
               const macAddr2 = pathParts.length >= 7 ? pathParts[pathParts.length - 3] : null;
@@ -18894,7 +18909,7 @@ var require_bluetooth = __commonJS({
           }
           if (_darwin) {
             let cmd = "system_profiler SPBluetoothDataType -json";
-            exec3(cmd, (error, stdout) => {
+            exec2(cmd, (error, stdout) => {
               if (!error) {
                 try {
                   const outObj = JSON.parse(stdout.toString());
@@ -19399,7 +19414,7 @@ function generateInstallId(data) {
     data.packageFamilyName || "",
     (data.source || "").toLowerCase()
   ].join("|");
-  const hash = import_crypto8.default.createHash("sha256").update(base).digest("hex");
+  const hash = import_crypto9.default.createHash("sha256").update(base).digest("hex");
   return `sha256:${hash}`;
 }
 function normalizeApp(input) {
@@ -19428,11 +19443,11 @@ function normalizeApp(input) {
     detectedAtUtc
   };
 }
-var import_crypto8;
+var import_crypto9;
 var init_normalize_app = __esm({
   "src/domain/normalize-app.ts"() {
     "use strict";
-    import_crypto8 = __toESM(require("crypto"));
+    import_crypto9 = __toESM(require("crypto"));
   }
 });
 
@@ -19525,6 +19540,13 @@ var init_software_inventory_delta = __esm({
 });
 
 // src/domain/software-baseline-repo.ts
+var software_baseline_repo_exports = {};
+__export(software_baseline_repo_exports, {
+  deleteSoftwareByIds: () => deleteSoftwareByIds,
+  loadSoftwareBaseline: () => loadSoftwareBaseline,
+  saveSoftwareBaseline: () => saveSoftwareBaseline,
+  upsertSoftwareBaseline: () => upsertSoftwareBaseline
+});
 function ensureDbDir() {
   ensureAgentDataDir();
 }
@@ -19598,6 +19620,50 @@ function loadSoftwareBaseline() {
   ).all();
   return rows;
 }
+function saveSoftwareBaseline(apps) {
+  const db = getDb();
+  const insertStmt = db.prepare(`
+    INSERT INTO software_baseline (
+      install_id,
+      name,
+      version,
+      publisher,
+      source,
+      install_location,
+      package_family_name,
+      detected_at_utc
+    ) VALUES (
+      @installId,
+      @name,
+      @version,
+      @publisher,
+      @source,
+      @installLocation,
+      @packageFamilyName,
+      @detectedAtUtc
+    )
+  `);
+  const tx = db.transaction((apps2) => {
+    db.exec(`DELETE FROM software_baseline`);
+    for (const app of apps2) {
+      if (!app?.installId || !app?.name || !app?.source) {
+        console.warn("[BASELINE] Skipping invalid software row", app);
+        continue;
+      }
+      insertStmt.run({
+        installId: app.installId,
+        name: app.name,
+        version: app.version ?? null,
+        publisher: app.publisher ?? null,
+        source: app.source,
+        installLocation: app.installLocation ?? null,
+        packageFamilyName: app.packageFamilyName ?? null,
+        detectedAtUtc: app.detectedAtUtc
+      });
+    }
+  });
+  tx(apps);
+}
 function upsertSoftwareBaseline(apps) {
   if (!apps?.length) return;
   const db = getDb();
@@ -19660,17 +19726,17 @@ function deleteSoftwareByIds(installIds) {
   `);
   stmt.run(...installIds);
 }
-var import_better_sqlite3, import_path6, import_fs9, DB_PATH, LEGACY_DB_PATH, DB_DIR, dbInstance;
+var import_better_sqlite3, import_path7, import_fs9, DB_PATH, LEGACY_DB_PATH, DB_DIR, dbInstance;
 var init_software_baseline_repo = __esm({
   "src/domain/software-baseline-repo.ts"() {
     "use strict";
     import_better_sqlite3 = __toESM(require("better-sqlite3"));
-    import_path6 = __toESM(require("path"));
+    import_path7 = __toESM(require("path"));
     import_fs9 = __toESM(require("fs"));
     init_paths();
     DB_PATH = getSoftwareBaselineDbPath();
     LEGACY_DB_PATH = getLegacySoftwareBaselineDbPath();
-    DB_DIR = import_path6.default.dirname(DB_PATH);
+    DB_DIR = import_path7.default.dirname(DB_PATH);
     dbInstance = null;
   }
 });
@@ -19916,8 +19982,8 @@ async function collectMacSoftware() {
     const appPaths = [];
     for (const dir of appDirs) {
       try {
-        if (!import_fs10.default.existsSync(dir)) continue;
-        const entries = import_fs10.default.readdirSync(dir);
+        const entries = await import_fs10.default.promises.readdir(dir).catch(() => null);
+        if (!entries) continue;
         for (const entry of entries) {
           if (entry.endsWith(".app")) {
             appPaths.push(`${dir}/${entry}`);
@@ -19936,9 +20002,9 @@ async function collectMacSoftware() {
           const name = appName.replace(/\.app$/, "");
           let bundleId = null;
           try {
-            const safePath = appPath.replace(/"/g, '\\"');
-            const { stdout } = await execAsync(
-              `mdls -name kMDItemCFBundleIdentifier -raw "${safePath}"`,
+            const { stdout } = await execFileAsync(
+              "/usr/bin/mdls",
+              ["-name", "kMDItemCFBundleIdentifier", "-raw", appPath],
               { timeout: 5e3 }
             );
             bundleId = stdout.trim() || null;
@@ -19964,7 +20030,9 @@ async function collectMacSoftware() {
       await processBatch(batch);
     }
     try {
-      const { stdout } = await execAsync("brew list --versions", {
+      const brewBin = import_fs10.default.existsSync("/opt/homebrew/bin/brew") && "/opt/homebrew/bin/brew" || import_fs10.default.existsSync("/usr/local/bin/brew") && "/usr/local/bin/brew" || null;
+      if (!brewBin) throw new Error("brew_not_installed");
+      const { stdout } = await execFileAsync(brewBin, ["list", "--versions"], {
         maxBuffer: 1024 * 1024 * 5,
         timeout: 5e3
       });
@@ -19986,7 +20054,7 @@ async function collectMacSoftware() {
     } catch {
     }
     try {
-      const { stdout } = await execAsync("pkgutil --pkgs", {
+      const { stdout } = await execFileAsync("/usr/sbin/pkgutil", ["--pkgs"], {
         maxBuffer: 1024 * 1024 * 5,
         timeout: 5e3
       });
@@ -20090,7 +20158,7 @@ async function collectMacSecurity(ctx) {
     return unknown;
   }
 }
-var import_os9, import_systeminformation2, import_child_process4, import_util, import_fs10, execAsync, macProvider;
+var import_os9, import_systeminformation2, import_child_process4, import_util, import_fs10, execFileAsync, macProvider;
 var init_macos = __esm({
   "src/plugins/amp/providers/macos.ts"() {
     "use strict";
@@ -20102,7 +20170,7 @@ var init_macos = __esm({
     init_normalize_app();
     init_software_inventory_delta();
     init_software_baseline_repo();
-    execAsync = (0, import_util.promisify)(import_child_process4.exec);
+    execFileAsync = (0, import_util.promisify)(import_child_process4.execFile);
     macProvider = {
       async collect(ctx) {
         if (import_os9.default.platform() !== "darwin") {
@@ -20234,7 +20302,7 @@ function collectLinuxSecurity() {
 }
 async function run(cmd) {
   try {
-    const { stdout } = await execAsync2(cmd, {
+    const { stdout } = await execAsync(cmd, {
       maxBuffer: 1024 * 1024 * 10,
       timeout: 5e3
     });
@@ -20361,7 +20429,7 @@ async function collectLinuxSoftware() {
   }
   return Array.from(map.values());
 }
-var import_os10, import_systeminformation3, import_child_process5, import_util2, execAsync2, cachedPM, linuxProvider;
+var import_os10, import_systeminformation3, import_child_process5, import_util2, execAsync, cachedPM, linuxProvider;
 var init_linux = __esm({
   "src/plugins/amp/providers/linux.ts"() {
     "use strict";
@@ -20372,7 +20440,7 @@ var init_linux = __esm({
     init_normalize_app();
     init_software_inventory_delta();
     init_software_baseline_repo();
-    execAsync2 = (0, import_util2.promisify)(import_child_process5.exec);
+    execAsync = (0, import_util2.promisify)(import_child_process5.exec);
     cachedPM = null;
     linuxProvider = {
       async collect(ctx) {
@@ -21045,13 +21113,168 @@ var init_scp = __esm({
   }
 });
 
+// src/plugins/pmp/providers/windows.ts
+function normalizeArray2(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") return [value];
+  return [];
+}
+async function readSecurityCompliance3(ctx) {
+  const resp = await ctx.priv.call({
+    v: 1,
+    id: `pmp_${Date.now()}`,
+    method: "patch.scan",
+    params: {},
+    meta: {
+      tenantId: ctx.enrollment.tenantId,
+      deviceId: ctx.enrollment.deviceId
+    }
+  });
+  if (!resp?.ok) {
+    throw new Error(resp?.error?.message || "patch.scan failed");
+  }
+  return resp.result || {};
+}
+function normalizePatchItems(items) {
+  return items.map((item) => ({
+    hotFixId: Array.isArray(item?.kbArticleIds) && item.kbArticleIds.length > 0 ? String(item.kbArticleIds[0]) : void 0,
+    title: item?.title ? String(item.title) : void 0,
+    installedBy: void 0,
+    installedOn: void 0,
+    source: "windows_update_agent"
+  }));
+}
+async function collectWindowsPmp(ctx) {
+  let posture = {};
+  let scanItems = [];
+  let overallStatus = "inventory_only";
+  try {
+    posture = await readSecurityCompliance3(ctx);
+    scanItems = normalizePatchItems(normalizeArray2(posture?.items));
+    overallStatus = posture?.status === "updates_available" ? "updates_available" : posture?.status === "healthy" ? "healthy" : "inventory_only";
+  } catch (err) {
+    overallStatus = "error";
+    return {
+      schemaVersion: "1.0",
+      collector: {
+        plugin: "pmp",
+        version: ctx.config.agentVersion
+      },
+      hasChanges: true,
+      overall: {
+        status: overallStatus,
+        score: 0
+      },
+      scan: {
+        scannedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+        source: "windows_update_agent",
+        mode: "inventory_only",
+        installedPatchCount: 0,
+        securityPatchCount: 0,
+        items: []
+      },
+      remediation: {
+        status: "idle",
+        rebootRequired: false,
+        installedCount: 0,
+        failedCount: 0,
+        results: [
+          {
+            result: "failed",
+            message: err?.message || String(err)
+          }
+        ]
+      }
+    };
+  }
+  return {
+    schemaVersion: "1.0",
+    collector: {
+      plugin: "pmp",
+      version: ctx.config.agentVersion
+    },
+    hasChanges: true,
+    overall: {
+      status: overallStatus,
+      score: scanItems.length > 0 ? 100 : 0
+    },
+    scan: {
+      scannedAtUtc: posture?.scannedAtUtc ?? (/* @__PURE__ */ new Date()).toISOString(),
+      source: "windows_update_agent",
+      mode: "inventory_only",
+      installedPatchCount: Number(posture?.updateCount ?? scanItems.length),
+      securityPatchCount: Number(posture?.securityUpdateCount ?? scanItems.length),
+      items: scanItems
+    },
+    remediation: {
+      status: "idle",
+      rebootRequired: false,
+      installedCount: 0,
+      failedCount: 0,
+      results: []
+    }
+  };
+}
+var init_windows3 = __esm({
+  "src/plugins/pmp/providers/windows.ts"() {
+    "use strict";
+  }
+});
+
+// src/plugins/pmp/index.ts
+var pmp_exports = {};
+__export(pmp_exports, {
+  collectPMP: () => collectPMP
+});
+async function collectPMP(ctx) {
+  const platform = import_os13.default.platform();
+  if (platform === "win32") {
+    return collectWindowsPmp(ctx);
+  }
+  return {
+    schemaVersion: "1.0",
+    collector: {
+      plugin: "pmp",
+      version: ctx.config.agentVersion
+    },
+    hasChanges: true,
+    overall: {
+      status: "error",
+      score: 0
+    },
+    scan: {
+      scannedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+      source: "windows_security_compliance_inventory",
+      mode: "inventory_only",
+      installedPatchCount: 0,
+      securityPatchCount: 0,
+      items: []
+    },
+    remediation: {
+      status: "idle",
+      rebootRequired: false,
+      installedCount: 0,
+      failedCount: 0,
+      results: []
+    }
+  };
+}
+var import_os13;
+var init_pmp = __esm({
+  "src/plugins/pmp/index.ts"() {
+    "use strict";
+    import_os13 = __toESM(require("os"));
+    init_windows3();
+  }
+});
+
 // src/update/update-state.ts
 function ensureDir(dir) {
   import_fs12.default.mkdirSync(dir, { recursive: true });
 }
 function resolveBaseDir() {
   if (process.platform === "win32") {
-    return import_path8.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
+    return import_path9.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
   }
   if (process.platform === "darwin") {
     return "/Library/Application Support/Tracenium";
@@ -21059,9 +21282,9 @@ function resolveBaseDir() {
   return "/var/lib/tracenium";
 }
 function getStatePath() {
-  const dir = import_path8.default.join(resolveBaseDir(), "state");
+  const dir = import_path9.default.join(resolveBaseDir(), "state");
   ensureDir(dir);
-  return import_path8.default.join(dir, "update-state.json");
+  return import_path9.default.join(dir, "update-state.json");
 }
 function loadUpdateState() {
   const file = getStatePath();
@@ -21124,12 +21347,12 @@ function markUpdateFailed(error) {
     installStartedAtUtc: void 0
   });
 }
-var import_fs12, import_path8;
+var import_fs12, import_path9;
 var init_update_state = __esm({
   "src/update/update-state.ts"() {
     "use strict";
     import_fs12 = __toESM(require("fs"));
-    import_path8 = __toESM(require("path"));
+    import_path9 = __toESM(require("path"));
   }
 });
 
@@ -21177,13 +21400,57 @@ function runMacosPkgUpdate(pkgPath) {
   try {
     const child = (0, import_child_process6.spawn)("/usr/sbin/installer", args, {
       detached: true,
-      stdio: "ignore"
+      stdio: ["ignore", "pipe", "pipe"]
     });
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    const MAX_CAPTURE_BYTES = 16 * 1024;
+    let capturedBytes = 0;
+    const capture = (store) => (chunk) => {
+      if (capturedBytes >= MAX_CAPTURE_BYTES) return;
+      const remaining = MAX_CAPTURE_BYTES - capturedBytes;
+      const slice = chunk.length > remaining ? chunk.slice(0, remaining) : chunk;
+      store.push(slice);
+      capturedBytes += slice.length;
+    };
+    child.stdout?.on("data", capture(stdoutChunks));
+    child.stderr?.on("data", capture(stderrChunks));
     child.on("error", (err) => {
       console.error("[update] installer spawn error", {
         error: err?.message || err,
         path: pkgPath
       });
+      try {
+        updateUpdateState({
+          updateInProgress: false,
+          status: "failed",
+          lastError: `installer_spawn_error: ${err?.message || err}`
+        });
+      } catch {
+      }
+    });
+    child.on("exit", (code, signal) => {
+      const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim();
+      if (code === 0) {
+        console.log("[update] installer exited cleanly", { code, pid: child.pid });
+      } else {
+        console.error("[update] installer FAILED", {
+          code,
+          signal,
+          pid: child.pid,
+          stdoutTail: stdout.slice(-500),
+          stderrTail: stderr.slice(-500)
+        });
+        try {
+          updateUpdateState({
+            updateInProgress: false,
+            status: "failed",
+            lastError: `installer_exit_${code ?? signal ?? "unknown"}: ${(stderr || stdout).slice(0, 300)}`
+          });
+        } catch {
+        }
+      }
     });
     child.unref();
     console.log("[update] macOS installer launched", {
@@ -21209,31 +21476,11 @@ var init_updater_runner = __esm({
     "use strict";
     import_child_process6 = require("child_process");
     import_fs13 = __toESM(require("fs"));
+    init_update_state();
   }
 });
 
-// src/update/update-service.ts
-function resolveBaseDir2() {
-  if (process.platform === "win32") {
-    return import_path9.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
-  }
-  if (process.platform === "darwin") {
-    return "/Library/Application Support/Tracenium";
-  }
-  return "/var/lib/tracenium";
-}
-function ensureDir2(dir) {
-  import_fs14.default.mkdirSync(dir, { recursive: true });
-}
-function sha256File(filePath) {
-  return new Promise((resolve, reject) => {
-    const hash = import_crypto10.default.createHash("sha256");
-    const stream = import_fs14.default.createReadStream(filePath);
-    stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("error", reject);
-    stream.on("end", () => resolve(hash.digest("hex")));
-  });
-}
+// src/update/semver.ts
 function compareSemver(a, b) {
   const parse = (v) => v.split(".").map((x) => {
     const n = Number(x);
@@ -21254,8 +21501,36 @@ function compareSemver(a, b) {
 function looksLikeSemver(v) {
   return /^\d+\.\d+\.\d+([.-][A-Za-z0-9]+)?$/.test(v);
 }
+var init_semver = __esm({
+  "src/update/semver.ts"() {
+    "use strict";
+  }
+});
+
+// src/update/update-service.ts
+function resolveBaseDir2() {
+  if (process.platform === "win32") {
+    return import_path10.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
+  }
+  if (process.platform === "darwin") {
+    return "/Library/Application Support/Tracenium";
+  }
+  return "/var/lib/tracenium";
+}
+function ensureDir2(dir) {
+  import_fs14.default.mkdirSync(dir, { recursive: true });
+}
+function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = import_crypto11.default.createHash("sha256");
+    const stream = import_fs14.default.createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
 function getApiBaseUrl(ctx) {
-  const url = ctx.config?.apiBaseUrl || ctx.config?.serverBaseUrl || process.env.TRACENIUM_API_BASE_URL || process.env.API_BASE_URL || process.env.SERVER_BASE_URL;
+  const url = ctx.config?.serverBaseUrl;
   if (!url) {
     console.error("[update] api base url missing", {
       configKeys: Object.keys(ctx.config || {})
@@ -21350,46 +21625,100 @@ function httpJson(urlString, opts) {
     req.end();
   });
 }
-function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3) {
+function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3, idleTimeoutMs = 60 * 1e3) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlString);
     const lib = url.protocol === "https:" ? import_https.default : import_http.default;
-    ensureDir2(import_path9.default.dirname(filePath));
+    ensureDir2(import_path10.default.dirname(filePath));
     const tmpPath = `${filePath}.tmp`;
     const file = import_fs14.default.createWriteStream(tmpPath);
-    const req = lib.get(url, { timeout: timeoutMs }, (res) => {
-      if ((res.statusCode || 500) >= 400) {
-        file.close();
-        import_fs14.default.rmSync(tmpPath, { force: true });
-        reject(new Error(`download_http_${res.statusCode || 500}`));
-        return;
+    let settled = false;
+    let idleTimer = null;
+    let expectedBytes = null;
+    let bytes = 0;
+    const cleanup = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
       }
-      let bytes = 0;
-      res.on("data", (chunk) => {
-        bytes += chunk.length;
-      });
-      res.pipe(file);
-      file.on("finish", () => {
-        file.close();
-        try {
-          import_fs14.default.renameSync(tmpPath, filePath);
-          resolve({ size: bytes });
-        } catch (err) {
-          import_fs14.default.rmSync(tmpPath, { force: true });
-          reject(err);
-        }
-      });
-    });
-    req.on("error", (err) => {
       try {
         file.close();
       } catch {
       }
-      import_fs14.default.rmSync(tmpPath, { force: true });
-      reject(err);
+      try {
+        import_fs14.default.rmSync(tmpPath, { force: true });
+      } catch {
+      }
+    };
+    const finish = (err, size) => {
+      if (settled) return;
+      settled = true;
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+      if (err) {
+        cleanup();
+        reject(err);
+      } else {
+        resolve({ size: size ?? 0 });
+      }
+    };
+    const req = lib.get(url, { timeout: timeoutMs }, (res) => {
+      if ((res.statusCode || 500) >= 400) {
+        finish(new Error(`download_http_${res.statusCode || 500}`));
+        try {
+          res.resume();
+        } catch {
+        }
+        return;
+      }
+      const cl = Number(res.headers["content-length"]);
+      if (Number.isFinite(cl) && cl > 0) {
+        expectedBytes = cl;
+      }
+      const armIdle = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          try {
+            req.destroy(new Error("download_idle_timeout"));
+          } catch {
+          }
+        }, idleTimeoutMs);
+      };
+      armIdle();
+      res.on("data", (chunk) => {
+        bytes += chunk.length;
+        armIdle();
+      });
+      res.on("aborted", () => {
+        finish(new Error("download_aborted"));
+      });
+      res.pipe(file);
+      file.on("error", (err) => finish(err));
+      file.on("finish", () => {
+        try {
+          file.close();
+        } catch {
+        }
+        if (expectedBytes != null && bytes !== expectedBytes) {
+          finish(new Error(`download_truncated:${bytes}/${expectedBytes}`));
+          return;
+        }
+        try {
+          import_fs14.default.renameSync(tmpPath, filePath);
+          finish(null, bytes);
+        } catch (err) {
+          finish(err);
+        }
+      });
     });
+    req.on("error", (err) => finish(err));
     req.on("timeout", () => {
-      req.destroy(new Error("download_timeout"));
+      try {
+        req.destroy(new Error("download_timeout"));
+      } catch {
+      }
     });
   });
 }
@@ -21402,6 +21731,8 @@ async function fetchAgentMetadata(ctx) {
   const headers = buildHeaders(ctx);
   let metadata = null;
   let lastError;
+  const BASE_MS = 1e3;
+  const MAX_MS = 3e4;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       metadata = await httpJson(url, {
@@ -21416,7 +21747,9 @@ async function fetchAgentMetadata(ctx) {
         error: String(err)
       });
       if (attempt < 3) {
-        await new Promise((r) => setTimeout(r, 1e3 * attempt));
+        const exp = Math.min(BASE_MS * Math.pow(2, attempt - 1), MAX_MS);
+        const delay = exp + Math.floor(Math.random() * exp);
+        await new Promise((r) => setTimeout(r, delay));
       }
     }
   }
@@ -21560,11 +21893,11 @@ async function downloadWindowsMsi(ctx, latestVersion, expectedHash) {
   if (!dl?.downloadUrl) {
     throw new Error("update_download_url_missing");
   }
-  const dir = import_path9.default.join(resolveBaseDir2(), "updates");
+  const dir = import_path10.default.join(resolveBaseDir2(), "updates");
   ensureDir2(dir);
   const arch = getArch();
   const fileName = `Tracenium-Agent-${latestVersion}-${arch}.msi`;
-  const filePath = import_path9.default.join(dir, fileName);
+  const filePath = import_path10.default.join(dir, fileName);
   const { size } = await downloadToFile(dl.downloadUrl, filePath);
   const sha256 = await sha256File(filePath);
   if (!expectedHash) {
@@ -21592,11 +21925,11 @@ async function downloadMacosPkg(ctx, latestVersion, expectedHash) {
   if (!dl?.downloadUrl) {
     throw new Error("update_download_url_missing");
   }
-  const dir = import_path9.default.join(resolveBaseDir2(), "updates");
+  const dir = import_path10.default.join(resolveBaseDir2(), "updates");
   ensureDir2(dir);
   const arch = getArch();
   const fileName = `Tracenium-Agent-${latestVersion}-${arch}.pkg`;
-  const filePath = import_path9.default.join(dir, fileName);
+  const filePath = import_path10.default.join(dir, fileName);
   const { size } = await downloadToFile(dl.downloadUrl, filePath);
   const sha256 = await sha256File(filePath);
   if (!expectedHash) {
@@ -21622,11 +21955,11 @@ async function downloadMacosPkg(ctx, latestVersion, expectedHash) {
 async function performWindowsMsiUpdate(ctx, latestVersion, expectedHash, downloadUrlOverride) {
   let downloaded;
   if (downloadUrlOverride) {
-    const dir = import_path9.default.join(resolveBaseDir2(), "updates");
+    const dir = import_path10.default.join(resolveBaseDir2(), "updates");
     ensureDir2(dir);
     const arch = getArch();
     const fileName = `Tracenium-Agent-${latestVersion}-${arch}.msi`;
-    const filePath = import_path9.default.join(dir, fileName);
+    const filePath = import_path10.default.join(dir, fileName);
     console.log("[update] downloading from override url", {
       url: downloadUrlOverride,
       version: latestVersion
@@ -21672,11 +22005,11 @@ async function performWindowsMsiUpdate(ctx, latestVersion, expectedHash, downloa
 async function performMacosPkgUpdate(ctx, latestVersion, expectedHash, downloadUrlOverride) {
   let downloaded;
   if (downloadUrlOverride) {
-    const dir = import_path9.default.join(resolveBaseDir2(), "updates");
+    const dir = import_path10.default.join(resolveBaseDir2(), "updates");
     ensureDir2(dir);
     const arch = getArch();
     const fileName = `Tracenium-Agent-${latestVersion}-${arch}.pkg`;
-    const filePath = import_path9.default.join(dir, fileName);
+    const filePath = import_path10.default.join(dir, fileName);
     console.log("[update] downloading pkg from override url", {
       url: downloadUrlOverride,
       version: latestVersion
@@ -21719,17 +22052,18 @@ async function performMacosPkgUpdate(ctx, latestVersion, expectedHash, downloadU
   const result2 = await runMacosPkgUpdate(downloaded.filePath);
   return result2;
 }
-var import_fs14, import_path9, import_crypto10, import_http, import_https;
+var import_fs14, import_path10, import_crypto11, import_http, import_https;
 var init_update_service = __esm({
   "src/update/update-service.ts"() {
     "use strict";
     import_fs14 = __toESM(require("fs"));
-    import_path9 = __toESM(require("path"));
-    import_crypto10 = __toESM(require("crypto"));
+    import_path10 = __toESM(require("path"));
+    import_crypto11 = __toESM(require("crypto"));
     import_http = __toESM(require("http"));
     import_https = __toESM(require("https"));
     init_update_state();
     init_updater_runner();
+    init_semver();
   }
 });
 
@@ -21752,33 +22086,13 @@ function shouldCheckNow(intervalMs) {
   if (!last) return true;
   return nowMs() - last >= intervalMs;
 }
-function compareSemver2(a, b) {
-  const parse = (v) => v.split(".").map((x) => {
-    const n = Number(x);
-    return Number.isFinite(n) ? n : 0;
-  });
-  const av = parse(a);
-  const bv = parse(b);
-  const len = Math.max(av.length, bv.length);
-  for (let i = 0; i < len; i += 1) {
-    const ai = av[i] ?? 0;
-    const bi = bv[i] ?? 0;
-    if (ai !== bi) {
-      return ai > bi ? 1 : -1;
-    }
-  }
-  return 0;
-}
-function looksLikeSemver2(v) {
-  return /^\d+\.\d+\.\d+([.-][A-Za-z0-9]+)?$/.test(v);
-}
 function reconcilePendingUpdate(currentVersion, logger2) {
   const state = loadUpdateState();
   const attemptedVersion = String(state.lastAttemptedVersion || "").trim();
-  if (!state.updateInProgress || !attemptedVersion || !looksLikeSemver2(attemptedVersion)) {
+  if (!state.updateInProgress || !attemptedVersion || !looksLikeSemver(attemptedVersion)) {
     return loadUpdateState();
   }
-  if (compareSemver2(currentVersion, attemptedVersion) >= 0) {
+  if (compareSemver(currentVersion, attemptedVersion) >= 0) {
     logger2?.info?.("[update] reconciling pending update as success", {
       currentVersion,
       attemptedVersion
@@ -21801,7 +22115,7 @@ async function runUpdateTask(ctx, opts) {
   }
   const currentVersion = String(ctx.agent?.version || "").trim();
   logger2?.info?.("[update] current agent version", { currentVersion });
-  if (!currentVersion || currentVersion === "undefined" || currentVersion === "null" || !looksLikeSemver2(currentVersion)) {
+  if (!currentVersion || currentVersion === "undefined" || currentVersion === "null" || !looksLikeSemver(currentVersion)) {
     logger2?.warn?.("[update] missing current agentVersion");
     return;
   }
@@ -21900,12 +22214,13 @@ var init_update_task = __esm({
     "use strict";
     init_update_state();
     init_update_service();
+    init_semver();
   }
 });
 
 // src/bootstrap/enroll.ts
 var import_fs6 = __toESM(require("fs"));
-var import_crypto2 = __toESM(require("crypto"));
+var import_crypto3 = __toESM(require("crypto"));
 
 // src/bootstrap/enrollment-store.ts
 var import_fs2 = __toESM(require("fs"));
@@ -22102,13 +22417,14 @@ var config = {
   })(),
   agentId: process.env.AGENT_ID || "auto",
   enrollmentToken: process.env.ENROLLMENT_TOKEN || "",
-  agentVersion: process.env.AGENT_VERSION || "1.0.88",
-  coreVersion: process.env.CORE_VERSION || "1.0.88",
+  agentVersion: process.env.AGENT_VERSION || "1.0.91",
+  coreVersion: process.env.CORE_VERSION || "1.0.91",
   channel: process.env.CHANNEL || "stable"
 };
 
 // src/bootstrap/token-source.ts
 var import_child_process = require("child_process");
+var import_crypto = __toESM(require("crypto"));
 var import_fs3 = __toESM(require("fs"));
 var import_os3 = __toESM(require("os"));
 function enrollmentTokenFilePath() {
@@ -22161,8 +22477,38 @@ function clearEnrollmentTokenFile() {
   const file = enrollmentTokenFilePath();
   if (!file) return;
   try {
-    if (import_fs3.default.existsSync(file)) {
+    if (!import_fs3.default.existsSync(file)) return;
+    let fd = null;
+    try {
+      const stat = import_fs3.default.statSync(file);
+      const size = stat.size;
+      if (size > 0) {
+        fd = import_fs3.default.openSync(file, "r+");
+        const rand = import_crypto.default.randomBytes(size);
+        import_fs3.default.writeSync(fd, rand, 0, size, 0);
+        try {
+          import_fs3.default.fsyncSync(fd);
+        } catch {
+        }
+        const zeros = Buffer.alloc(size, 0);
+        import_fs3.default.writeSync(fd, zeros, 0, size, 0);
+        try {
+          import_fs3.default.fsyncSync(fd);
+        } catch {
+        }
+      }
+    } catch {
+    } finally {
+      if (fd !== null) {
+        try {
+          import_fs3.default.closeSync(fd);
+        } catch {
+        }
+      }
+    }
+    try {
       import_fs3.default.rmSync(file, { force: true });
+    } catch {
     }
   } catch {
   }
@@ -22172,7 +22518,7 @@ function clearEnrollmentTokenFile() {
 var import_os4 = __toESM(require("os"));
 var import_fs4 = __toESM(require("fs"));
 var import_path3 = __toESM(require("path"));
-var import_crypto = __toESM(require("crypto"));
+var import_crypto2 = __toESM(require("crypto"));
 var import_child_process2 = require("child_process");
 function getWindowsDeviceId() {
   const regPath = "HKLM\\Software\\CertusWS\\Tracenium";
@@ -22184,7 +22530,7 @@ function getWindowsDeviceId() {
     }
   } catch {
   }
-  const deviceId = import_crypto.default.randomUUID();
+  const deviceId = import_crypto2.default.randomUUID();
   try {
     (0, import_child_process2.execSync)(`reg add "${regPath}" /f`);
     (0, import_child_process2.execSync)(`reg add "${regPath}" /v DeviceId /t REG_SZ /d "${deviceId}" /f`);
@@ -22201,7 +22547,7 @@ function getUnixDeviceId() {
     }
   } catch {
   }
-  const id = import_crypto.default.randomUUID();
+  const id = import_crypto2.default.randomUUID();
   try {
     import_fs4.default.mkdirSync(baseDir, { recursive: true });
     import_fs4.default.writeFileSync(file, id, "utf8");
@@ -22335,7 +22681,8 @@ async function generateCsrViaPrivSvc() {
     params: {
       tenantId,
       deviceId,
-      reuseExistingKey: true
+      reuseExistingKey: true,
+      keyAlgorithm: "RSA_2048"
     },
     meta: {
       tenantId,
@@ -22458,7 +22805,7 @@ function isLocalEnrollEnabled() {
 function buildLocalEnrollmentState(store) {
   const paths = store.getPaths();
   const tenantId = process.env.TENANT_ID || "local-tenant";
-  const deviceId = process.env.DEVICE_ID || import_crypto2.default.randomUUID();
+  const deviceId = process.env.DEVICE_ID || import_crypto3.default.randomUUID();
   if (!import_fs6.default.existsSync(paths.clientCert)) import_fs6.default.writeFileSync(paths.clientCert, "", "utf8");
   if (!import_fs6.default.existsSync(paths.clientKey)) import_fs6.default.writeFileSync(paths.clientKey, "", "utf8");
   if (!import_fs6.default.existsSync(paths.caBundle)) import_fs6.default.writeFileSync(paths.caBundle, "", "utf8");
@@ -22578,7 +22925,22 @@ async function ensureEnrolled() {
       );
       const responseBody = await res.text();
       console.log("[Enroll] Response status:", res.status);
-      console.log("[Enroll] Response body:", responseBody);
+      const _bodySummary = (() => {
+        try {
+          const parsed = JSON.parse(responseBody);
+          return {
+            tenantId: parsed?.tenantId ?? null,
+            deviceId: parsed?.deviceId ?? null,
+            hasClientCertPem: typeof parsed?.mTls?.clientCertPem === "string" && parsed.mTls.clientCertPem.includes("BEGIN CERTIFICATE"),
+            hasCaBundlePem: typeof parsed?.mTls?.caBundlePem === "string" && parsed.mTls.caBundlePem.includes("BEGIN CERTIFICATE"),
+            clientCertBytes: parsed?.mTls?.clientCertPem?.length ?? 0,
+            caBundleBytes: parsed?.mTls?.caBundlePem?.length ?? 0
+          };
+        } catch {
+          return { parseOk: false, bytes: responseBody.length };
+        }
+      })();
+      console.log("[Enroll] Response body summary:", _bodySummary);
       const data = JSON.parse(responseBody);
       if (!data.tenantId || !data.deviceId) {
         throw new Error("[Enroll] Backend response missing tenantId/deviceId");
@@ -22610,7 +22972,12 @@ async function ensureEnrolled() {
         }
       };
       store.save(state);
-      console.log("[Enroll] Enrollment state saved:", state);
+      console.log("[Enroll] Enrollment state saved:", {
+        tenantId: state.tenantId,
+        deviceId: state.deviceId,
+        enrolledAtUtc: state.enrolledAtUtc,
+        clientCertThumbprint: state.mtls?.clientCertThumbprint
+      });
       try {
         import_fs6.default.unlinkSync(lockPath);
         console.log("[Enroll] Enroll lock released.");
@@ -22663,8 +23030,45 @@ function createPrivSvcClient() {
 }
 
 // src/bootstrap/cert-renewal.ts
-var import_crypto6 = __toESM(require("crypto"));
+var import_crypto7 = __toESM(require("crypto"));
 var import_fs7 = __toESM(require("fs"));
+var import_path5 = __toESM(require("path"));
+function atomicWriteFileSync(targetPath, data, mode = 384) {
+  const dir = import_path5.default.dirname(targetPath);
+  const tmp = import_path5.default.join(
+    dir,
+    `.${import_path5.default.basename(targetPath)}.tmp-${process.pid}-${import_crypto7.default.randomBytes(6).toString("hex")}`
+  );
+  let fd = null;
+  try {
+    fd = import_fs7.default.openSync(tmp, "w", mode);
+    import_fs7.default.writeFileSync(fd, data, "utf8");
+    try {
+      import_fs7.default.fsyncSync(fd);
+    } catch {
+    }
+  } finally {
+    if (fd !== null) {
+      try {
+        import_fs7.default.closeSync(fd);
+      } catch {
+      }
+    }
+  }
+  try {
+    import_fs7.default.renameSync(tmp, targetPath);
+  } catch (err) {
+    try {
+      import_fs7.default.unlinkSync(tmp);
+    } catch {
+    }
+    throw err;
+  }
+  try {
+    import_fs7.default.chmodSync(targetPath, mode);
+  } catch {
+  }
+}
 var DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
 function getRenewalThresholdDays() {
   const value = Number(process.env.CERT_RENEWAL_THRESHOLD_DAYS || DEFAULT_RENEWAL_THRESHOLD_DAYS);
@@ -22676,7 +23080,7 @@ function readClientCertNotAfter(state) {
       return null;
     }
     const pem = import_fs7.default.readFileSync(state.mtls.clientCertPath, "utf8");
-    const cert = new import_crypto6.default.X509Certificate(pem);
+    const cert = new import_crypto7.default.X509Certificate(pem);
     return cert.validTo ? new Date(cert.validTo) : null;
   } catch {
     return null;
@@ -22740,10 +23144,10 @@ async function maybeRenewClientCertificate(input) {
     }
   };
   if (typeof result2.clientCertPem === "string" && result2.clientCertPem.includes("BEGIN CERTIFICATE")) {
-    import_fs7.default.writeFileSync(enrollment.mtls.clientCertPath, result2.clientCertPem, "utf8");
+    atomicWriteFileSync(enrollment.mtls.clientCertPath, result2.clientCertPem, 384);
   }
   if (typeof result2.caBundlePem === "string" && result2.caBundlePem.includes("BEGIN CERTIFICATE")) {
-    import_fs7.default.writeFileSync(enrollment.mtls.caBundlePath, result2.caBundlePem, "utf8");
+    atomicWriteFileSync(enrollment.mtls.caBundlePath, result2.caBundlePem, 384);
   }
   store.save(nextState);
   logger2?.info?.("[cert-renewal] certificate renewal completed", {
@@ -22756,15 +23160,15 @@ async function maybeRenewClientCertificate(input) {
 
 // src/core/policy-store.ts
 var import_fs8 = __toESM(require("fs"));
-var import_path5 = __toESM(require("path"));
+var import_path6 = __toESM(require("path"));
 var import_os7 = __toESM(require("os"));
-var import_crypto7 = __toESM(require("crypto"));
+var import_crypto8 = __toESM(require("crypto"));
 function resolvePolicyPath() {
   if (process.platform === "win32") {
     const programData = process.env.ProgramData || "C:\\ProgramData";
-    return import_path5.default.join(programData, "Tracenium", "policy.json");
+    return import_path6.default.join(programData, "Tracenium", "policy.json");
   }
-  return import_path5.default.join(import_os7.default.homedir(), ".tracenium", "policy.json");
+  return import_path6.default.join(import_os7.default.homedir(), ".tracenium", "policy.json");
 }
 var PolicyStore = class {
   filePath;
@@ -22799,7 +23203,7 @@ var PolicyStore = class {
     return this.current?.policy || null;
   }
   async save(policyVersion, policyHash, policyJson) {
-    const dir = import_path5.default.dirname(this.filePath);
+    const dir = import_path6.default.dirname(this.filePath);
     await import_fs8.default.promises.mkdir(dir, { recursive: true });
     const record = {
       policyVersion,
@@ -22827,7 +23231,7 @@ var PolicyStore = class {
   static computeHash(policyJson) {
     const stable = JSON.stringify(policyJson, Object.keys(policyJson).sort());
     const buf = Buffer.from(stable);
-    return import_crypto7.default.createHash("sha256").update(buf).digest("hex");
+    return import_crypto8.default.createHash("sha256").update(buf).digest("hex");
   }
 };
 
@@ -23044,6 +23448,17 @@ var PluginManager = class {
     } catch (err) {
       this.ctx?.logger?.error?.("Failed to register SCP plugin", err?.message || err);
     }
+    try {
+      const { collectPMP: collectPMP2 } = await Promise.resolve().then(() => (init_pmp(), pmp_exports));
+      this.register({
+        name: "pmp",
+        tasks: {
+          collect: async (ctx) => collectPMP2(ctx)
+        }
+      });
+    } catch (err) {
+      this.ctx?.logger?.error?.("Failed to register PMP plugin", err?.message || err);
+    }
   }
   // -----------------------------
   // execution
@@ -23146,8 +23561,8 @@ async function bootstrapContext() {
 }
 
 // src/queue/sqlite-outbox.ts
-var import_os13 = __toESM(require("os"));
-var import_path7 = __toESM(require("path"));
+var import_os14 = __toESM(require("os"));
+var import_path8 = __toESM(require("path"));
 var import_fs11 = __toESM(require("fs"));
 var import_better_sqlite32 = __toESM(require("better-sqlite3"));
 var import_zlib = __toESM(require("zlib"));
@@ -23189,20 +23604,20 @@ function maybeDecompressPayload(value) {
   }
 }
 function defaultDbPath() {
-  if (import_os13.default.platform() === "win32") {
+  if (import_os14.default.platform() === "win32") {
     const programData = process.env.PROGRAMDATA || process.env.ProgramData || "C:\\ProgramData";
-    return import_path7.default.join(programData, "Tracenium", "Agent", "outbox.db");
+    return import_path8.default.join(programData, "Tracenium", "Agent", "outbox.db");
   }
-  return import_path7.default.join(import_os13.default.homedir(), ".tracenium", "agent", "outbox.db");
+  return import_path8.default.join(import_os14.default.homedir(), ".tracenium", "agent", "outbox.db");
 }
 var SqliteOutbox = class {
   constructor(dbPath = defaultDbPath()) {
     this.dbPath = dbPath;
-    this.lockOwner = `agentcore:${import_os13.default.hostname()}:${process.pid}`;
-    const dir = import_path7.default.dirname(dbPath);
+    this.lockOwner = `agentcore:${import_os14.default.hostname()}:${process.pid}`;
+    const dir = import_path8.default.dirname(dbPath);
     import_fs11.default.mkdirSync(dir, { recursive: true });
     this.db = new import_better_sqlite32.default(dbPath);
-    console.log("[outbox] initialized");
+    logger.info("[outbox] initialized", { dbPath: this.dbPath });
     this.initialize();
   }
   dbPath;
@@ -23301,7 +23716,7 @@ var SqliteOutbox = class {
       hash,
       now
     );
-    console.log("[outbox] enqueue inserted", {
+    logger.info("[outbox] enqueue inserted", {
       id: Number(result2.lastInsertRowid),
       type: input.type,
       hash
@@ -23386,7 +23801,7 @@ var SqliteOutbox = class {
     `).run(now, id);
     const row = this.db.prepare(`SELECT id, status, lock_owner, sent_at_utc FROM outbox_events WHERE id=?`).get(id);
     if (res?.changes === 0) {
-      console.warn("markSent: no rows updated (unexpected state)", { id });
+      logger.warn("[outbox] markSent: no rows updated (unexpected state)", { id });
       return;
     }
     this.notifyChanged();
@@ -23433,7 +23848,7 @@ var SqliteOutbox = class {
       WHERE id=? AND status IN ('PENDING','IN_FLIGHT')
     `).run(error.slice(0, 2e3), id);
     if (res?.changes === 0) {
-      console.warn("markRejected: no rows updated (unexpected state)", { id });
+      logger.warn("[outbox] markRejected: no rows updated (unexpected state)", { id });
       return;
     }
     this.notifyChanged();
@@ -23550,17 +23965,17 @@ var SqliteOutbox = class {
 var outbox = new SqliteOutbox();
 
 // src/domain/device-facts-builder.ts
-var import_os14 = __toESM(require("os"));
+var import_os15 = __toESM(require("os"));
 var import_systeminformation4 = __toESM(require_lib());
-var import_crypto9 = __toESM(require("crypto"));
+var import_crypto10 = __toESM(require("crypto"));
 function buildDeviceIdentity(ctx) {
-  const nodePlatform = import_os14.default.platform();
+  const nodePlatform = import_os15.default.platform();
   const platform = nodePlatform === "win32" ? "windows" : nodePlatform === "darwin" ? "macos" : "linux";
   return {
     deviceId: ctx.enrollment.deviceId,
     tenantId: ctx.enrollment.tenantId,
-    hostname: import_os14.default.hostname(),
-    fqdn: import_os14.default.hostname(),
+    hostname: import_os15.default.hostname(),
+    fqdn: import_os15.default.hostname(),
     domain: platform === "windows" ? process.env.USERDOMAIN || void 0 : void 0,
     platform
   };
@@ -23631,7 +24046,7 @@ async function buildHardwareNamespace() {
     bios: [bios],
     os: {
       platform: (() => {
-        const p = import_os14.default.platform();
+        const p = import_os15.default.platform();
         return p === "win32" ? "windows" : p === "darwin" ? "macos" : "linux";
       })(),
       distro: osInfo.distro,
@@ -23671,7 +24086,7 @@ async function buildHardwareNamespace() {
   };
 }
 function buildAgentInfo(ctx) {
-  const nodePlatform = import_os14.default.platform();
+  const nodePlatform = import_os15.default.platform();
   const platform = nodePlatform === "win32" ? "windows" : nodePlatform === "darwin" ? "macos" : "linux";
   const capabilities = Array.from(/* @__PURE__ */ new Set([
     ...ctx.enrollment.bootstrap.capabilities || [],
@@ -23698,7 +24113,7 @@ function stableStringify(obj) {
 }
 function hashObject(obj) {
   const json = stableStringify(obj);
-  return "sha256:" + import_crypto9.default.createHash("sha256").update(json).digest("hex");
+  return "sha256:" + import_crypto10.default.createHash("sha256").update(json).digest("hex");
 }
 function buildDeviceBaseline(ctx, hardware) {
   const device = buildDeviceIdentity(ctx);
@@ -23763,7 +24178,7 @@ async function buildDeviceFacts(ctx, namespaces) {
 
 // src/core/scheduler.ts
 init_update_task();
-var import_crypto11 = __toESM(require("crypto"));
+var import_crypto12 = __toESM(require("crypto"));
 function normalizeForHash(value) {
   if (value === void 0) {
     return null;
@@ -23788,22 +24203,39 @@ function stableStringify2(value) {
   return `{${keys.map((key) => `"${key}":${stableStringify2(value[key])}`).join(",")}}`;
 }
 function hashNamespace(value) {
-  return import_crypto11.default.createHash("sha256").update(stableStringify2(normalizeForHash(value))).digest("hex");
+  return import_crypto12.default.createHash("sha256").update(stableStringify2(normalizeForHash(value))).digest("hex");
 }
 function buildScpStateForHash(namespace) {
   const { hasChanges: _ignored, ...rest } = namespace;
   return rest;
 }
+function buildPmpStateForHash(namespace) {
+  const { hasChanges: _ignored, ...rest } = namespace;
+  return rest;
+}
 var Scheduler = class {
   timers = /* @__PURE__ */ new Map();
+  // Which pipelines are currently "armed". We track this separately from
+  // `timers` because a pipeline that's mid-tick (setTimeout has already
+  // fired, run() is executing, next arm hasn't happened yet) has no
+  // entry in `timers` but MUST be considered active so a straggler
+  // re-arm after `stopAll()` doesn't resurrect a dead pipeline.
+  pipelineActive = /* @__PURE__ */ new Set();
   ctx = null;
   inventoryRunning = false;
   complianceRunning = false;
   updateRunning = false;
+  patchRunning = false;
+  // Forces one full AMP snapshot on the first inventory tick after the
+  // daemon starts — ensures the server receives current posture after
+  // an upgrade / reinstall / reboot, even if the AMP delta baseline on
+  // disk says "no changes" (e.g. no apps added/removed between runs).
+  initialInventorySent = false;
   policyListeners = [];
   async start(ctx) {
     this.clearPolicyListeners();
     this.ctx = ctx;
+    this.initialInventorySent = false;
     logger.info("TaskScheduler starting...");
     await this.runInventory(ctx);
     this.startPipelines(ctx);
@@ -23860,37 +24292,72 @@ var Scheduler = class {
     }
     this.policyListeners = [];
   }
+  /**
+   * Arm `run` with fresh jitter every tick.
+   *
+   * Why chained setTimeout instead of setInterval:
+   *
+   *   setInterval(cb, base + jitter)
+   *
+   * samples `jitter` exactly once at pipeline start and reuses it forever.
+   * So if two agents in the same tenant boot in the same minute, they
+   * both hit the backend at `(start + base + jitter)`, then at
+   * `(start + 2*(base + jitter))`, and so on — identical cadence, zero
+   * desynchronisation. Great for throughput benchmarks, terrible for
+   * production where we want the fleet spread out.
+   *
+   * Chained setTimeout with a fresh `Math.random()` on every re-arm
+   * guarantees drift: after a few ticks, formerly-synchronised agents
+   * have spread across the full [0, jitterRangeMs) range.
+   *
+   * The `pipelineActive` Set gate ensures that if `stopAll()` runs while
+   * a tick is mid-execution, the re-arm is suppressed — otherwise we'd
+   * leak a ghost timer that fires after the scheduler was told to stop.
+   */
+  armJitteredPipeline(key, baseIntervalMs, jitterRangeMs, run2) {
+    if (!this.pipelineActive.has(key)) return;
+    const jitter = Math.floor(Math.random() * jitterRangeMs);
+    const delayMs = baseIntervalMs + jitter;
+    const timer = setTimeout(() => {
+      this.timers.delete(key);
+      try {
+        run2();
+      } catch (err) {
+        logger.error("[scheduler] tick threw synchronously", { key, err });
+      }
+      this.armJitteredPipeline(key, baseIntervalMs, jitterRangeMs, run2);
+    }, delayMs);
+    this.timers.set(key, timer);
+  }
   startPipelines(ctx) {
     this.stopAll();
     if (ctx.policyRuntime.isInventoryEnabled()) {
       const intervalSeconds = ctx.policyRuntime.getInventoryInterval();
-      const jitter = Math.floor(Math.random() * 3e4);
       logger.info("Inventory pipeline configured", {
         intervalSeconds,
-        jitter
+        jitterRangeMs: 3e4
       });
-      const timer = setInterval(() => {
+      this.pipelineActive.add("inventory");
+      this.armJitteredPipeline("inventory", intervalSeconds * 1e3, 3e4, () => {
         logger.info("[scheduler] inventory tick");
         this.runInventory(ctx).catch(
           (err) => logger.error("Inventory error", { err })
         );
-      }, intervalSeconds * 1e3 + jitter);
-      this.timers.set("inventory", timer);
+      });
     }
     if (ctx.policyRuntime.isUpdateEnabled()) {
       const intervalSeconds = 6 * 60 * 60;
-      const jitter = Math.floor(Math.random() * 3e4);
       logger.info("Update pipeline enabled", { intervalSeconds });
       this.runUpdate(ctx).catch(
         (err) => logger.error("Update pipeline initial run error", { err })
       );
-      const timer = setInterval(() => {
+      this.pipelineActive.add("update");
+      this.armJitteredPipeline("update", intervalSeconds * 1e3, 3e4, () => {
         logger.info("[scheduler] update tick");
         this.runUpdate(ctx).catch(
           (err) => logger.error("Update pipeline error", { err })
         );
-      }, intervalSeconds * 1e3 + jitter);
-      this.timers.set("update", timer);
+      });
     }
     if (ctx.policyRuntime.isComplianceEnabled()) {
       const intervalSeconds = ctx.policyRuntime.getComplianceInterval();
@@ -23898,21 +24365,27 @@ var Scheduler = class {
       this.runCompliance(ctx).catch(
         (err) => logger.error("Compliance pipeline initial run error", { err })
       );
-      const timer = setInterval(() => {
+      this.pipelineActive.add("compliance");
+      this.armJitteredPipeline("compliance", intervalSeconds * 1e3, 3e4, () => {
         logger.info("[scheduler] compliance tick");
         this.runCompliance(ctx).catch(
           (err) => logger.error("Compliance pipeline error", { err })
         );
-      }, intervalSeconds * 1e3);
-      this.timers.set("compliance", timer);
+      });
     }
     if (ctx.policyRuntime.isPatchEnabled()) {
       const intervalSeconds = 24 * 60 * 60;
       logger.info("Patch pipeline enabled", { intervalSeconds });
-      const timer = setInterval(() => {
-        logger.info("Patch pipeline tick (not implemented yet)");
-      }, intervalSeconds * 1e3);
-      this.timers.set("patch", timer);
+      this.runPatch(ctx).catch(
+        (err) => logger.error("Patch pipeline initial run error", { err })
+      );
+      this.pipelineActive.add("patch");
+      this.armJitteredPipeline("patch", intervalSeconds * 1e3, 3e4, () => {
+        logger.info("[scheduler] patch tick");
+        this.runPatch(ctx).catch(
+          (err) => logger.error("Patch pipeline error", { err })
+        );
+      });
     }
   }
   reload() {
@@ -23921,8 +24394,9 @@ var Scheduler = class {
     this.startPipelines(this.ctx);
   }
   stopAll() {
+    this.pipelineActive.clear();
     for (const timer of this.timers.values()) {
-      clearInterval(timer);
+      clearTimeout(timer);
     }
     this.timers.clear();
   }
@@ -23958,21 +24432,36 @@ var Scheduler = class {
         if (!ns) return false;
         return ns?.software?.hasChanges === true || ns?.hasChanges === true;
       });
-      if (!hasAnyChanges) {
+      const forceInitialSnapshot = !this.initialInventorySent;
+      if (!hasAnyChanges && !forceInitialSnapshot) {
         logger.info("Skipping FACTS enqueue \u2014 no changes detected (all modules)", {
           deviceId: ctx.enrollment.deviceId
         });
         return;
+      }
+      if (forceInitialSnapshot && namespaces.amp?.software && namespaces.amp.software.items == null) {
+        try {
+          const { loadSoftwareBaseline: loadSoftwareBaseline2 } = await Promise.resolve().then(() => (init_software_baseline_repo(), software_baseline_repo_exports));
+          const baseline = loadSoftwareBaseline2() ?? [];
+          if (baseline.length > 0) {
+            namespaces.amp.software.items = baseline;
+            namespaces.amp.software.count = baseline.length;
+          }
+        } catch (err) {
+          logger.warn("Failed to rehydrate AMP software baseline for initial snapshot", { err });
+        }
       }
       const facts = await buildDeviceFacts(ctx, namespaces);
       outbox.enqueue({
         type: "FACTS_SNAPSHOT",
         payload: facts
       });
+      this.initialInventorySent = true;
       logger.info("FACTS_SNAPSHOT enqueued", {
         deviceId: ctx.enrollment.deviceId,
         modules: Object.keys(namespaces),
         hasAnyChanges,
+        forceInitialSnapshot,
         ampSoftwareItems: Array.isArray(namespaces.amp?.software?.items) ? namespaces.amp.software.items.length : 0
       });
     } catch (err) {
@@ -24058,6 +24547,61 @@ var Scheduler = class {
       logger.error("Update task failed", { err });
     } finally {
       this.updateRunning = false;
+    }
+  }
+  async runPatch(ctx) {
+    if (!ctx.policyRuntime.isPatchEnabled()) {
+      logger.info("Patch module disabled by policy, skipping patch scan");
+      return;
+    }
+    if (!ctx.policyRuntime.pluginEnabled("pmp")) {
+      logger.info("PMP plugin disabled by policy, skipping patch scan");
+      return;
+    }
+    if (this.patchRunning) {
+      logger.warn("Patch scan already running, skipping overlapping execution");
+      return;
+    }
+    this.patchRunning = true;
+    try {
+      logger.info("Collecting PMP facts...");
+      const namespaces = {};
+      try {
+        namespaces.pmp = await ctx.plugins.run("pmp.collect");
+      } catch (err) {
+        logger.error("PMP plugin execution failed", { err });
+      }
+      if (!namespaces.pmp) {
+        logger.warn("No PMP namespace returned, skipping patch snapshot");
+        return;
+      }
+      const currentHash = hashNamespace(buildPmpStateForHash(namespaces.pmp));
+      const previousHash = outbox.getState("namespaceHash:pmp");
+      const hasChanges = currentHash !== previousHash;
+      namespaces.pmp.hasChanges = hasChanges;
+      if (!hasChanges) {
+        logger.info("Skipping PMP FACTS enqueue \u2014 no changes detected", {
+          deviceId: ctx.enrollment.deviceId,
+          namespace: "pmp"
+        });
+        return;
+      }
+      const facts = await buildDeviceFacts(ctx, namespaces);
+      outbox.enqueue({
+        type: "FACTS_SNAPSHOT",
+        payload: facts
+      });
+      outbox.setState("namespaceHash:pmp", currentHash);
+      logger.info("FACTS_SNAPSHOT enqueued", {
+        deviceId: ctx.enrollment.deviceId,
+        modules: Object.keys(namespaces),
+        hasAnyChanges: hasChanges,
+        pmpInstalledPatchCount: Number(namespaces.pmp.scan?.installedPatchCount ?? 0)
+      });
+    } catch (err) {
+      logger.error("Patch pipeline failed", { err });
+    } finally {
+      this.patchRunning = false;
     }
   }
 };
@@ -24377,12 +24921,38 @@ function createGrpcClient(ctx) {
           ctx.logger?.warn("[grpc-client] heartbeat ignored: deviceId missing");
           return;
         }
-        ctx.logger?.info("[grpc-client] heartbeat (handled by PrivSvc stream)", {
-          //deviceId,
-          //uptimeSeconds,
-          //agentVersion,
-          //policyVersion
-        });
+        try {
+          const resp = await ctx.priv.call({
+            v: 1,
+            id: `hb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            method: "grpc.heartbeat",
+            params: {
+              deviceId,
+              uptimeSeconds,
+              agentVersion,
+              policyVersion
+            },
+            meta: { tenantId: ctx.enrollment.tenantId, deviceId }
+          });
+          if (!resp?.ok) {
+            const errorCode = String(resp?.error?.code || "");
+            const errorMessage = String(resp?.error?.message || resp?.error || "heartbeat failed");
+            ctx.logger?.warn("[grpc-client] heartbeat IPC rejected \u2014 marking connection broken", {
+              errorCode,
+              errorMessage
+            });
+            connected = false;
+            connectPromise = null;
+            stream.emit("error", new Error(`heartbeat_failed:${errorCode || errorMessage}`));
+          }
+        } catch (err) {
+          ctx.logger?.warn("[grpc-client] heartbeat IPC threw \u2014 marking connection broken", {
+            error: err?.message || String(err)
+          });
+          connected = false;
+          connectPromise = null;
+          stream.emit("error", err instanceof Error ? err : new Error(String(err)));
+        }
         return;
       }
       ctx.logger?.warn("[grpc-client] stream.write ignored unknown message type", {
@@ -24438,26 +25008,64 @@ function createGrpcClient(ctx) {
 // src/transport/grpc-stream.ts
 init_update_task();
 var MAX_IN_FLIGHT = 3;
-var RECONNECT_DELAY_MS = 5e3;
 var HEARTBEAT_INTERVAL_MS = 6e4;
+var RECONNECT_BASE_MS = 2e3;
+var RECONNECT_MAX_MS = 6e4;
+var reconnectAttempts = 0;
+function nextReconnectDelayMs() {
+  const exp = Math.min(
+    RECONNECT_BASE_MS * Math.pow(2, Math.min(reconnectAttempts, 6)),
+    RECONNECT_MAX_MS
+  );
+  const jitter = Math.random() * exp;
+  return Math.min(exp + jitter, RECONNECT_MAX_MS * 2);
+}
 var shutdownRequested = false;
+var reconnecting = false;
+var METRICS_FLUSH_INTERVAL_MS = 5 * 60 * 1e3;
+var grpcMetrics = {
+  reconnectCount: 0,
+  heartbeatSent: 0,
+  heartbeatFailed: 0,
+  ackReceived: 0,
+  outboxDrainLeases: 0,
+  connectedSinceUtc: null
+};
+var metricsFlushTimer = null;
+function armMetricsFlush(ctx) {
+  if (metricsFlushTimer) return;
+  metricsFlushTimer = setInterval(() => {
+    try {
+      ctx.logger?.info?.("grpc.metrics", { ...grpcMetrics });
+    } catch {
+    }
+  }, METRICS_FLUSH_INTERVAL_MS);
+  metricsFlushTimer?.unref?.();
+}
 function buildEventId(deviceId, outboxId) {
   return `${deviceId}:${outboxId}`;
 }
 async function collectFactsSnapshot(ctx, source, factType = "inventory") {
   const namespaces = {};
-  if (ctx.policyRuntime.isInventoryEnabled() && ctx.policyRuntime.pluginEnabled("amp")) {
+  if ((factType === "inventory" || factType === "all") && ctx.policyRuntime.isInventoryEnabled() && ctx.policyRuntime.pluginEnabled("amp")) {
     try {
       namespaces.amp = await ctx.plugins.run("amp.collect");
     } catch (err) {
       ctx.logger?.error?.(`AMP collect failed (${source})`, { err });
     }
   }
-  if (ctx.policyRuntime.isComplianceEnabled() && ctx.policyRuntime.pluginEnabled("scp")) {
+  if ((factType === "compliance" || factType === "all") && ctx.policyRuntime.isComplianceEnabled() && ctx.policyRuntime.pluginEnabled("scp")) {
     try {
       namespaces.scp = await ctx.plugins.run("scp.collect");
     } catch (err) {
       ctx.logger?.error?.(`SCP collect failed (${source})`, { err });
+    }
+  }
+  if ((factType === "patch" || factType === "all") && ctx.policyRuntime.isPatchEnabled() && ctx.policyRuntime.pluginEnabled("pmp")) {
+    try {
+      namespaces.pmp = await ctx.plugins.run("pmp.collect");
+    } catch (err) {
+      ctx.logger?.error?.(`PMP collect failed (${source})`, { err });
     }
   }
   if (Object.keys(namespaces).length === 0) {
@@ -24559,6 +25167,97 @@ async function executeRunJob(ctx, runJob) {
         message: `facts_enqueued:${result2.outboxId}`
       };
     }
+    case "patch_scan": {
+      if (!ctx.policyRuntime.isPatchEnabled()) {
+        return {
+          status: 2,
+          message: "patch_scan rejected: patch module disabled by policy"
+        };
+      }
+      if (!ctx.policyRuntime.pluginEnabled("pmp")) {
+        return {
+          status: 2,
+          message: "patch_scan rejected: pmp plugin disabled by policy"
+        };
+      }
+      const result2 = await collectFactsSnapshot(ctx, `runJob:${jobId}`, "patch");
+      return {
+        status: 0,
+        message: `patch_scan_enqueued:${result2.outboxId}`
+      };
+    }
+    case "patch_install": {
+      if (!ctx.policyRuntime.isPatchEnabled()) {
+        return {
+          status: 2,
+          message: "patch_install rejected: patch module disabled by policy"
+        };
+      }
+      if (!ctx.policyRuntime.pluginEnabled("pmp")) {
+        return {
+          status: 2,
+          message: "patch_install rejected: pmp plugin disabled by policy"
+        };
+      }
+      if (ctx._patchInstallInProgress) {
+        return {
+          status: 1,
+          message: "patch_install retry: patch install already in progress"
+        };
+      }
+      const mode = String(payload?.mode || "install").trim().toLowerCase();
+      const kbArticleIds = Array.isArray(payload?.kbArticleIds) ? payload.kbArticleIds.map((item) => String(item || "").trim()).filter(Boolean) : [];
+      if (mode !== "install" && mode !== "download") {
+        return {
+          status: 2,
+          message: "patch_install rejected: invalid mode"
+        };
+      }
+      ctx._patchInstallInProgress = true;
+      try {
+        const resp = await ctx.priv.call({
+          v: 1,
+          id: `patch-install-${jobId}-${Date.now()}`,
+          method: "patch.install",
+          params: {
+            mode,
+            kbArticleIds
+          },
+          meta: {
+            tenantId: ctx.enrollment.tenantId,
+            deviceId: ctx.enrollment.deviceId
+          }
+        });
+        if (!resp?.ok) {
+          return {
+            status: 2,
+            message: `patch_install failed: ${String(resp?.error?.message || "patch.install failed")}`
+          };
+        }
+        try {
+          await collectFactsSnapshot(ctx, `runJob:${jobId}:post_patch_install`, "patch");
+        } catch (err) {
+          ctx.logger?.warn?.("Post patch-install scan enqueue failed", { err, jobId });
+        }
+        const result2 = resp.result || {};
+        const resultStatus = String(result2?.status || "").trim().toLowerCase();
+        const installedCount = Number(result2?.installedCount ?? 0);
+        const failedCount = Number(result2?.failedCount ?? 0);
+        const rebootRequired = result2?.rebootRequired === true;
+        if (resultStatus === "success" || resultStatus === "no_updates") {
+          return {
+            status: 0,
+            message: `patch_install ${resultStatus}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
+          };
+        }
+        return {
+          status: 2,
+          message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
+        };
+      } finally {
+        ctx._patchInstallInProgress = false;
+      }
+    }
     case "agent_update": {
       const version = String(payload?.version || runJob?.version || "").trim();
       if (!version) {
@@ -24596,10 +25295,11 @@ async function executeRunJob(ctx, runJob) {
 }
 function startGrpcStream(ctx) {
   shutdownRequested = false;
+  reconnecting = false;
   let startDelayTimer = null;
   let retryTimer = null;
   let reconnectTimer = null;
-  let heartbeatInterval = null;
+  let heartbeatTimer = null;
   let unsubscribeOutbox = null;
   let draining = false;
   let drainScheduled = false;
@@ -24638,9 +25338,10 @@ function startGrpcStream(ctx) {
     } catch {
     }
     try {
-      if (heartbeatInterval) clearInterval(heartbeatInterval);
+      if (heartbeatTimer) clearTimeout(heartbeatTimer);
     } catch {
     }
+    heartbeatTimer = null;
     try {
       stream.removeAllListeners();
     } catch {
@@ -24657,11 +25358,54 @@ function startGrpcStream(ctx) {
       }
     }
   };
+  const armHeartbeat = () => {
+    if (stopped) return;
+    if (heartbeatTimer) {
+      clearTimeout(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+    heartbeatTimer = setTimeout(() => {
+      heartbeatTimer = null;
+      if (stopped) return;
+      try {
+        if (rotationInProgress) {
+          armHeartbeat();
+          return;
+        }
+        if (!stream || !client.isConnected?.()) {
+          return;
+        }
+        stream.write({
+          heartbeat: {
+            deviceId: ctx.enrollment.deviceId,
+            tenantId: ctx.enrollment.tenantId,
+            agentVersion: ctx.config.agentVersion,
+            ts: Date.now()
+          }
+        });
+        grpcMetrics.heartbeatSent += 1;
+      } catch (err) {
+        grpcMetrics.heartbeatFailed += 1;
+        ctx.logger?.error?.("Heartbeat send failed", err?.message || err);
+      } finally {
+        armHeartbeat();
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+  };
   const scheduleReconnect = (reason) => {
     if (shutdownRequested) return;
+    if (reconnecting) {
+      ctx.logger?.debug?.("gRPC stream: reconnect already scheduled, ignoring", { reason });
+      return;
+    }
+    reconnecting = true;
+    reconnectAttempts += 1;
+    grpcMetrics.reconnectCount += 1;
+    const delayMs = nextReconnectDelayMs();
     ctx.logger?.warn?.("gRPC stream: scheduling reconnect", {
       reason,
-      delayMs: RECONNECT_DELAY_MS
+      delayMs: Math.round(delayMs),
+      attempt: reconnectAttempts
     });
     try {
       if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -24671,7 +25415,7 @@ function startGrpcStream(ctx) {
       reconnectTimer = null;
       if (shutdownRequested) return;
       startGrpcStream(ctx);
-    }, RECONNECT_DELAY_MS);
+    }, delayMs);
   };
   try {
     outbox.recoverStaleInflight(60);
@@ -24689,15 +25433,25 @@ function startGrpcStream(ctx) {
     ]))
   });
   stream.on("data", (msg) => {
+    if (reconnectAttempts !== 0) {
+      ctx.logger?.info?.("gRPC stream: connected, resetting reconnect backoff", {
+        priorAttempts: reconnectAttempts
+      });
+      reconnectAttempts = 0;
+    }
     if (msg?.connected === true) {
       ctx.logger?.info?.("gRPC stream: bridge ready", msg);
+      grpcMetrics.connectedSinceUtc = (/* @__PURE__ */ new Date()).toISOString();
       rotationInProgress = false;
       requestDrain("bridge_connected");
+      armHeartbeat();
+      armMetricsFlush(ctx);
       return;
     }
     if (msg.ack) {
       const eventId = String(msg.ack.eventId ?? "").trim();
       if (!eventId) return;
+      grpcMetrics.ackReceived += 1;
       ctx.logger?.info?.("gRPC ACK received", {
         eventId,
         status: Number(msg.ack.status ?? 0),
@@ -24889,6 +25643,7 @@ function startGrpcStream(ctx) {
         armRetryTimer();
         return;
       }
+      grpcMetrics.outboxDrainLeases += 1;
       ctx.logger?.info?.("Sender loop leased events", { count: batch.length });
       for (const ev of batch) {
         const outboxId = Number(ev.id);
@@ -24985,22 +25740,6 @@ function startGrpcStream(ctx) {
         requestDrain("outbox_changed_fallback");
       }
       requestDrain("startup");
-      if (!heartbeatInterval) heartbeatInterval = setInterval(() => {
-        try {
-          if (rotationInProgress || stopped) return;
-          if (!stream || !client.isConnected?.()) return;
-          stream.write({
-            heartbeat: {
-              deviceId: ctx.enrollment.deviceId,
-              tenantId: ctx.enrollment.tenantId,
-              agentVersion: ctx.config.agentVersion,
-              ts: Date.now()
-            }
-          });
-        } catch (err) {
-          ctx.logger?.error?.("Heartbeat send failed", err?.message || err);
-        }
-      }, HEARTBEAT_INTERVAL_MS);
     }
   }, 1e3);
   return () => {
@@ -25078,26 +25817,56 @@ async function startService() {
         log.warn("Outbox cleanup failed", e?.message || e);
       }
     }, 12 * 60 * 60 * 1e3);
-    certRenewalTimer = setInterval(async () => {
-      if (!currentCtx || shuttingDown) return;
-      try {
-        const previousThumbprint = currentCtx.enrollment.mtls.clientCertThumbprint;
-        const renewed = await maybeRenewClientCertificate({
-          enrollment: currentCtx.enrollment,
-          store: currentCtx.store,
-          priv: currentCtx.priv,
-          logger: currentCtx.logger
-        });
-        currentCtx.enrollment = renewed;
-        if (renewed.mtls.clientCertThumbprint && renewed.mtls.clientCertThumbprint !== previousThumbprint) {
-          log.info("[cert-renewal] restarting gRPC bridge after certificate renewal");
-          if (stopGrpcStream) stopGrpcStream();
-          stopGrpcStream = startGrpcStream(currentCtx);
-        }
-      } catch (e) {
-        log.warn("[cert-renewal] periodic renewal failed", e?.message || e);
+    const CERT_RENEWAL_BASE_MS = Number(
+      process.env.CERT_RENEWAL_CHECK_INTERVAL_MS || 24 * 60 * 60 * 1e3
+    );
+    const CERT_RENEWAL_JITTER_MS = 60 * 60 * 1e3;
+    const armCertRenewal = () => {
+      if (shuttingDown) return;
+      if (certRenewalTimer) {
+        clearTimeout(certRenewalTimer);
+        certRenewalTimer = void 0;
       }
-    }, Number(process.env.CERT_RENEWAL_CHECK_INTERVAL_MS || 24 * 60 * 60 * 1e3));
+      const jitter = Math.floor(Math.random() * CERT_RENEWAL_JITTER_MS);
+      const delayMs = CERT_RENEWAL_BASE_MS + jitter;
+      certRenewalTimer = setTimeout(async () => {
+        certRenewalTimer = void 0;
+        if (!currentCtx || shuttingDown) return;
+        const enrollmentSnapshot = {
+          ...currentCtx.enrollment,
+          mtls: { ...currentCtx.enrollment.mtls }
+        };
+        const previousThumbprint = enrollmentSnapshot.mtls.clientCertThumbprint;
+        try {
+          const renewed = await maybeRenewClientCertificate({
+            enrollment: enrollmentSnapshot,
+            store: currentCtx.store,
+            priv: currentCtx.priv,
+            logger: currentCtx.logger
+          });
+          const liveThumbprint = currentCtx.enrollment.mtls.clientCertThumbprint;
+          if (liveThumbprint !== previousThumbprint) {
+            log.warn("[cert-renewal] enrollment mutated during renewal, discarding result", {
+              previousThumbprint,
+              liveThumbprint,
+              renewedThumbprint: renewed.mtls.clientCertThumbprint
+            });
+          } else {
+            currentCtx.enrollment = renewed;
+            if (renewed.mtls.clientCertThumbprint && renewed.mtls.clientCertThumbprint !== previousThumbprint) {
+              log.info("[cert-renewal] restarting gRPC bridge after certificate renewal");
+              if (stopGrpcStream) stopGrpcStream();
+              stopGrpcStream = startGrpcStream(currentCtx);
+            }
+          }
+        } catch (e) {
+          log.warn("[cert-renewal] periodic renewal failed", e?.message || e);
+        } finally {
+          armCertRenewal();
+        }
+      }, delayMs);
+    };
+    armCertRenewal();
     log.info("Agent Core started.");
   } catch (err) {
     logger.error("Fatal startup error:", err?.message || err);
@@ -25115,7 +25884,7 @@ process.on("SIGTERM", async () => {
       cleanupTimer = void 0;
     }
     if (certRenewalTimer) {
-      clearInterval(certRenewalTimer);
+      clearTimeout(certRenewalTimer);
       certRenewalTimer = void 0;
     }
     if (stopGrpcStream) {

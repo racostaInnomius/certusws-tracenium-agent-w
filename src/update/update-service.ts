@@ -16,6 +16,7 @@ import type {
 } from "./update-types";
 import { updateUpdateState } from "./update-state";
 import { runMacosPkgUpdate, runWindowsMsiUpdate } from "./updater-runner";
+import { compareSemver, looksLikeSemver } from "./semver";
 
 function resolveBaseDir() {
   if (process.platform === "win32") {
@@ -44,42 +45,29 @@ function sha256File(filePath: string): Promise<string> {
   });
 }
 
-function compareSemver(a: string, b: string): number {
-  const parse = (v: string): number[] =>
-    v
-      .split(".")
-      .map((x) => {
-        const n = Number(x);
-        return Number.isFinite(n) ? n : 0;
-      });
-
-  const av = parse(a);
-  const bv = parse(b);
-  const len = Math.max(av.length, bv.length);
-
-  for (let i = 0; i < len; i += 1) {
-    const ai = av[i] ?? 0;
-    const bi = bv[i] ?? 0;
-
-    if (ai !== bi) {
-      return ai > bi ? 1 : -1;
-    }
-  }
-
-  return 0;
-}
-
-function looksLikeSemver(v: string): boolean {
-  return /^\d+\.\d+\.\d+([.-][A-Za-z0-9]+)?$/.test(v);
-}
-
+/**
+ * Resolve the REST API base URL for update / metadata calls.
+ *
+ * Previously this function ran five fallback layers:
+ *
+ *   ctx.config.apiBaseUrl         // never set anywhere
+ *   ctx.config.serverBaseUrl      // the real one
+ *   process.env.TRACENIUM_API_BASE_URL
+ *   process.env.API_BASE_URL
+ *   process.env.SERVER_BASE_URL
+ *
+ * The env-var tiers were redundant with config.ts — which already reads
+ * SERVER_BASE_URL (and the Windows registry, and applies a fallback)
+ * at process start and bakes the result into `config.serverBaseUrl`.
+ * Having a second resolver that also reads env vars meant prod and dev
+ * could silently disagree if they happened to set different variables.
+ *
+ * Single source of truth: `ctx.config.serverBaseUrl`. If a tester
+ * really needs a one-off override, set `SERVER_BASE_URL` before the
+ * daemon starts — config.ts handles it.
+ */
 function getApiBaseUrl(ctx: AgentContext): string {
-  const url =
-    (ctx.config as any)?.apiBaseUrl ||
-    (ctx.config as any)?.serverBaseUrl ||
-    process.env.TRACENIUM_API_BASE_URL ||
-    process.env.API_BASE_URL ||
-    process.env.SERVER_BASE_URL;
+  const url = ctx.config?.serverBaseUrl;
 
   if (!url) {
     console.error("[update] api base url missing", {
@@ -223,7 +211,8 @@ function httpJson<T>(
 function downloadToFile(
   urlString: string,
   filePath: string,
-  timeoutMs = 5 * 60 * 1000
+  timeoutMs = 5 * 60 * 1000,
+  idleTimeoutMs = 60 * 1000
 ): Promise<{ size: number }> {
   return new Promise((resolve, reject) => {
     const url = new URL(urlString);
@@ -234,45 +223,97 @@ function downloadToFile(
     const tmpPath = `${filePath}.tmp`;
     const file = fs.createWriteStream(tmpPath);
 
+    let settled = false;
+    let idleTimer: NodeJS.Timeout | null = null;
+    let expectedBytes: number | null = null;
+    let bytes = 0;
+
+    const cleanup = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+      try { file.close(); } catch {}
+      try { fs.rmSync(tmpPath, { force: true }); } catch {}
+    };
+
+    const finish = (err: Error | null, size?: number) => {
+      if (settled) return;
+      settled = true;
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+      if (err) {
+        cleanup();
+        reject(err);
+      } else {
+        resolve({ size: size ?? 0 });
+      }
+    };
+
     const req = lib.get(url, { timeout: timeoutMs }, (res) => {
       if ((res.statusCode || 500) >= 400) {
-        file.close();
-        fs.rmSync(tmpPath, { force: true });
-        reject(new Error(`download_http_${res.statusCode || 500}`));
+        finish(new Error(`download_http_${res.statusCode || 500}`));
+        try { res.resume(); } catch {}
         return;
       }
 
-      let bytes = 0;
+      const cl = Number(res.headers["content-length"]);
+      if (Number.isFinite(cl) && cl > 0) {
+        expectedBytes = cl;
+      }
 
-      res.on("data", (chunk) => {
+      // Idle watchdog — if no bytes arrive for `idleTimeoutMs` we consider
+      // the TCP pipe stalled (common on flaky Wi-Fi, captive portals, or
+      // CDN edge flaps) and give up rather than wait out the 5 min total
+      // timeout for a download that will never finish.
+      const armIdle = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          try { req.destroy(new Error("download_idle_timeout")); } catch {}
+        }, idleTimeoutMs);
+      };
+      armIdle();
+
+      res.on("data", (chunk: Buffer) => {
         bytes += chunk.length;
+        armIdle();
+      });
+
+      // Server closed the socket mid-stream; pipe `finish` may still fire
+      // on the writable side, so we need to detect this explicitly.
+      res.on("aborted", () => {
+        finish(new Error("download_aborted"));
       });
 
       res.pipe(file);
 
+      file.on("error", (err) => finish(err));
+
       file.on("finish", () => {
-        file.close();
+        try { file.close(); } catch {}
+
+        // If the server advertised content-length, enforce it — catches
+        // truncated downloads that a middlebox passed through silently.
+        if (expectedBytes != null && bytes !== expectedBytes) {
+          finish(new Error(`download_truncated:${bytes}/${expectedBytes}`));
+          return;
+        }
 
         try {
           fs.renameSync(tmpPath, filePath);
-          resolve({ size: bytes });
-        } catch (err) {
-          fs.rmSync(tmpPath, { force: true });
-          reject(err);
+          finish(null, bytes);
+        } catch (err: any) {
+          finish(err);
         }
       });
     });
 
-    req.on("error", (err) => {
-      try {
-        file.close();
-      } catch {}
-      fs.rmSync(tmpPath, { force: true });
-      reject(err);
-    });
+    req.on("error", (err) => finish(err));
 
     req.on("timeout", () => {
-      req.destroy(new Error("download_timeout"));
+      try { req.destroy(new Error("download_timeout")); } catch {}
     });
   });
 }
@@ -295,6 +336,14 @@ export async function fetchAgentMetadata(
   let metadata: AgentMetadataResponse | null = null;
   let lastError: any;
 
+  // Exponential backoff with jitter. The metadata endpoint is polled by
+  // every agent in the fleet on a timer — if it goes down and comes back,
+  // a linear retry (`1s, 2s, 3s`) means hundreds of agents hit it within
+  // the same 6 s window. Exponential + uniform jitter spreads the herd
+  // across ~30 s. We keep the 3-attempt cap; if it's still failing after
+  // ~20 s the scheduler will try again on its next tick anyway.
+  const BASE_MS = 1_000;
+  const MAX_MS = 30_000;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       metadata = await httpJson<AgentMetadataResponse>(url, {
@@ -310,7 +359,9 @@ export async function fetchAgentMetadata(
       });
 
       if (attempt < 3) {
-        await new Promise((r) => setTimeout(r, 1000 * attempt));
+        const exp = Math.min(BASE_MS * Math.pow(2, attempt - 1), MAX_MS);
+        const delay = exp + Math.floor(Math.random() * exp);
+        await new Promise((r) => setTimeout(r, delay));
       }
     }
   }

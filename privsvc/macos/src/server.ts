@@ -77,10 +77,43 @@ export function startServer() {
   const server = net.createServer(handleClient);
 
   server.listen(SOCKET_PATH, () => {
+    // Lock the IPC socket down to the root user only. Methods like
+    // grpc.connect, crypto.cert.renew and patch.install must never be
+    // callable by anyone other than the agent-core daemon (which also
+    // runs as root via launchd). The socket mode + owner combination is
+    // enforced by the kernel on connect(), so no app-level auth is
+    // required, and we don't have to pull in a native FFI module to
+    // read SO_PEERCRED.
+    let ownerOk = false;
     try {
-      fs.chmodSync(SOCKET_PATH, 0o660);
-    } catch {}
-    logger.info("privsvc_macos_listening", { socket: SOCKET_PATH });
+      // chown before chmod — while the file is still group-writable by
+      // the process default group, flipping the owner/group first
+      // prevents a short window where a non-root process in wheel
+      // could connect.
+      if (typeof (fs as any).chownSync === "function") {
+        (fs as any).chownSync(SOCKET_PATH, 0, 0); // root:wheel
+        ownerOk = true;
+      }
+    } catch (err: any) {
+      logger.warn("socket_chown_failed", { error: err?.message || String(err) });
+    }
+
+    try {
+      fs.chmodSync(SOCKET_PATH, 0o600);
+    } catch (err: any) {
+      logger.warn("socket_chmod_failed", { error: err?.message || String(err) });
+    }
+
+    let stat: fs.Stats | null = null;
+    try { stat = fs.statSync(SOCKET_PATH); } catch {}
+
+    logger.info("privsvc_macos_listening", {
+      socket: SOCKET_PATH,
+      mode: stat ? (stat.mode & 0o777).toString(8) : "unknown",
+      uid: stat?.uid,
+      gid: stat?.gid,
+      ownerOk
+    });
   });
 
   server.on("error", (err) => {

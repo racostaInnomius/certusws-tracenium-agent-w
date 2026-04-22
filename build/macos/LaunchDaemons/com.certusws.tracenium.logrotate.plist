@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.certusws.tracenium.logrotate</string>
+
+  <!--
+    Tracenium log rotation.
+
+    launchd by default writes agent/privsvc stdout/stderr to the paths
+    declared in their plists and NEVER rotates them. Over time those
+    files grow unbounded. This job truncates-in-place any log file
+    under /Library/Application Support/Tracenium/Logs/ that exceeds
+    10 MB, keeping up to 5 gzipped historical copies.
+
+    Truncate-in-place (`: > file`) preserves the inode that the
+    daemon's stdout/stderr file descriptor is bound to, so we don't
+    have to restart the daemon or send HUP.
+  -->
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>LOG_DIR="/Library/Application Support/Tracenium/Logs"; MAX=10485760; [ -d "$LOG_DIR" ] || exit 0; for f in "$LOG_DIR"/*.log; do [ -f "$f" ] || continue; size=$(/usr/bin/stat -f%z "$f" 2>/dev/null || echo 0); [ "$size" -gt "$MAX" ] || continue; for i in 4 3 2 1; do [ -f "$f.$i.gz" ] &amp;&amp; /bin/mv -f "$f.$i.gz" "$f.$((i+1)).gz"; done; /bin/cp "$f" "$f.1" &amp;&amp; /usr/bin/gzip -f "$f.1"; : &gt; "$f"; done</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Run every 30 minutes -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Library/Application Support/Tracenium/Logs/logrotate.stdout.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Library/Application Support/Tracenium/Logs/logrotate.stderr.log</string>
+
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+</dict>
+</plist>

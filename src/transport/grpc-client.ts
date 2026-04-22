@@ -419,13 +419,45 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
             return;
           }
 
-          // Heartbeat is handled internally by PrivSvc on the gRPC stream.
-          ctx.logger?.info("[grpc-client] heartbeat (handled by PrivSvc stream)", {
-            //deviceId,
-            //uptimeSeconds,
-            //agentVersion,
-            //policyVersion
-          });
+          // Forward the heartbeat to PrivSvc so it reaches the gRPC stream
+          // and the server can refresh device_sessions.last_heartbeat. If
+          // the IPC call fails (bridge dead, stream down) we mark the
+          // connection broken so the reconnect loop kicks in — this is a
+          // cheap liveness check every HEARTBEAT_INTERVAL_MS.
+          try {
+            const resp = await (ctx.priv as any).call({
+              v: 1,
+              id: `hb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              method: "grpc.heartbeat",
+              params: {
+                deviceId,
+                uptimeSeconds,
+                agentVersion,
+                policyVersion
+              },
+              meta: { tenantId: ctx.enrollment.tenantId, deviceId }
+            });
+
+            if (!resp?.ok) {
+              const errorCode = String(resp?.error?.code || "");
+              const errorMessage = String(resp?.error?.message || resp?.error || "heartbeat failed");
+              ctx.logger?.warn("[grpc-client] heartbeat IPC rejected — marking connection broken", {
+                errorCode,
+                errorMessage
+              });
+              connected = false;
+              connectPromise = null;
+              // Surface to stream.on('error') so scheduleReconnect() runs.
+              stream.emit("error", new Error(`heartbeat_failed:${errorCode || errorMessage}`));
+            }
+          } catch (err: any) {
+            ctx.logger?.warn("[grpc-client] heartbeat IPC threw — marking connection broken", {
+              error: err?.message || String(err)
+            });
+            connected = false;
+            connectPromise = null;
+            stream.emit("error", err instanceof Error ? err : new Error(String(err)));
+          }
 
           return;
         }

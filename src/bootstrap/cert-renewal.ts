@@ -1,9 +1,54 @@
 import crypto from "crypto";
 import fs from "fs";
+import path from "path";
 import { EnrollmentState } from "./enrollment-state";
 import { EnrollmentStore } from "./enrollment-store";
 import { config } from "./config";
 import type { IPrivSvcClient } from "../core/agent-context";
+
+/**
+ * Write a file atomically: write to `<path>.tmp-<pid>-<rand>` with the
+ * desired permissions, fsync, then rename into place. On POSIX, rename is
+ * atomic, so a reader either sees the old file or the new file — never a
+ * partially-written one. This matters for mTLS material: if the process
+ * crashes mid-write, the daemon on next start would load a truncated PEM
+ * and fail to reconnect to gRPC, bricking the agent until manual recovery.
+ */
+function atomicWriteFileSync(targetPath: string, data: string, mode = 0o600) {
+  const dir = path.dirname(targetPath);
+  const tmp = path.join(
+    dir,
+    `.${path.basename(targetPath)}.tmp-${process.pid}-${crypto.randomBytes(6).toString("hex")}`
+  );
+
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(tmp, "w", mode);
+    fs.writeFileSync(fd, data, "utf8");
+    try {
+      fs.fsyncSync(fd);
+    } catch {
+      // fsync may fail on some filesystems (tmpfs); the rename still gives
+      // us atomicity within the filesystem journal, so don't abort.
+    }
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch {}
+    }
+  }
+
+  try {
+    fs.renameSync(tmp, targetPath);
+  } catch (err) {
+    // Best-effort cleanup of the tmp file if rename failed.
+    try { fs.unlinkSync(tmp); } catch {}
+    throw err;
+  }
+
+  // Make sure the permissions are what we asked for even if umask
+  // interfered during openSync.
+  try { fs.chmodSync(targetPath, mode); } catch {}
+}
 
 const DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
 
@@ -102,11 +147,13 @@ export async function maybeRenewClientCertificate(input: {
   };
 
   if (typeof result.clientCertPem === "string" && result.clientCertPem.includes("BEGIN CERTIFICATE")) {
-    fs.writeFileSync(enrollment.mtls.clientCertPath, result.clientCertPem, "utf8");
+    atomicWriteFileSync(enrollment.mtls.clientCertPath, result.clientCertPem, 0o600);
   }
 
   if (typeof result.caBundlePem === "string" && result.caBundlePem.includes("BEGIN CERTIFICATE")) {
-    fs.writeFileSync(enrollment.mtls.caBundlePath, result.caBundlePem, "utf8");
+    // CA bundle is public trust material, but keep it 0600 anyway — only
+    // root reads it, and we don't want tampering.
+    atomicWriteFileSync(enrollment.mtls.caBundlePath, result.caBundlePem, 0o600);
   }
 
   store.save(nextState);
