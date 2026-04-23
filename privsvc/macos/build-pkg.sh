@@ -15,7 +15,7 @@ RESOURCES_DIR="$ROOT_DIR/privsvc/macos/distribution/resources"
 ICON_PNG="$RESOURCES_DIR/tracenium.png"
 ICON_ICNS="$RESOURCES_DIR/tracenium.icns"
 
-VERSION="${TRACENIUM_AGENT_VERSION:-1.0.92}"
+VERSION="${TRACENIUM_AGENT_VERSION:-1.0.94}"
 ARCH="${TRACENIUM_AGENT_ARCH:-arm64}"
 IDENTIFIER="${TRACENIUM_PKG_IDENTIFIER:-com.certusws.tracenium.agent}"
 

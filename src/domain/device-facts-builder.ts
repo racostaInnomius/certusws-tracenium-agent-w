@@ -150,6 +150,20 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
   };
 }
 
+// Canonicalize Node's `os.arch()` to the string values the backend's
+// binaries metadata API accepts ("arm64" / "x64"). We don't filter
+// unknown values — if a new arch shows up (riscv64, etc.) it flows
+// through as-is so the backend can log it and we can decide whether
+// to ship binaries for it.
+function canonicalArch(): string {
+  const raw = os.arch();
+  if (raw === "x64") return "x64";
+  if (raw === "arm64") return "arm64";
+  // Legacy/edge values that modern Node can still emit.
+  if (raw === "ia32") return "x64";        // 32-bit Windows agent is rare, treat as x64 for blob lookup
+  return raw;
+}
+
 function buildAgentInfo(ctx: AgentContext) {
   const nodePlatform = os.platform();
   const platform: "windows" | "macos" | "linux" =
@@ -168,6 +182,7 @@ function buildAgentInfo(ctx: AgentContext) {
     agentVersion: ctx.config.agentVersion,
     coreVersion: ctx.config.coreVersion,
     osProvider: platform,
+    arch: canonicalArch(),
     capabilities,
     install: {
       // Nota v1: installId podría ser distinto a deviceId; lo dejamos así por ahora.

@@ -19742,6 +19742,9 @@ var init_software_baseline_repo = __esm({
 });
 
 // src/plugins/amp/providers/windows.ts
+function invDebug(...args) {
+  if (INVENTORY_DEBUG) console.log(...args);
+}
 async function collectWindowsDeviceAndHardware() {
   const [osInfo, system, cpu, mem, diskLayout, fsSize] = await Promise.all([
     import_systeminformation.default.osInfo(),
@@ -19813,7 +19816,7 @@ async function collectWindowsSoftwareInventory(ctx) {
     meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
   });
   const apps = resp.result?.items ?? resp.result?.apps ?? [];
-  console.log("[WINDOWS] RAW INVENTORY", {
+  invDebug("[WINDOWS] RAW INVENTORY", {
     hasItems: Array.isArray(resp.result?.items),
     hasApps: Array.isArray(resp.result?.apps),
     countItems: resp.result?.items?.length,
@@ -19834,7 +19837,7 @@ async function collectWindowsSoftwareInventory(ctx) {
       source: a.source ?? "win32-registry"
     })
   ).filter((x) => x && x.name);
-  console.log("[WINDOWS] NORMALIZED INVENTORY", {
+  invDebug("[WINDOWS] NORMALIZED INVENTORY", {
     inputCount: apps.length,
     normalizedCount: normalized.length
   });
@@ -19843,7 +19846,7 @@ async function collectWindowsSoftwareInventory(ctx) {
     apps: normalized
   };
 }
-var import_os8, import_systeminformation, windowsProvider;
+var import_os8, import_systeminformation, INVENTORY_DEBUG, windowsProvider;
 var init_windows = __esm({
   "src/plugins/amp/providers/windows.ts"() {
     "use strict";
@@ -19852,6 +19855,7 @@ var init_windows = __esm({
     init_normalize_app();
     init_software_inventory_delta();
     init_software_baseline_repo();
+    INVENTORY_DEBUG = process.env.DEBUG_INVENTORY === "1" || process.env.DEBUG_INVENTORY === "true";
     windowsProvider = {
       async collect(ctx) {
         if (import_os8.default.platform() !== "win32") {
@@ -19892,7 +19896,7 @@ var init_windows = __esm({
               }
             };
           }
-          console.log("[AGENT] INVENTORY BEFORE BASELINE", {
+          invDebug("[AGENT] INVENTORY BEFORE BASELINE", {
             count: apps.length
             //sample: apps.slice(0, 3)
           });
@@ -19902,7 +19906,7 @@ var init_windows = __esm({
           const previous = loadSoftwareBaseline() ?? [];
           const isFirstRun = previous.length === 0;
           if (isFirstRun) {
-            console.log("[AGENT] SOFTWARE BASELINE (first run)", {
+            invDebug("[AGENT] SOFTWARE BASELINE (first run)", {
               count: apps.length
             });
             software = {
@@ -19915,7 +19919,7 @@ var init_windows = __esm({
           } else {
             const deltaResult = computeSoftwareDelta(apps, previous);
             if (deltaResult.hasChanges) {
-              console.log("[AGENT] SOFTWARE DELTA", {
+              invDebug("[AGENT] SOFTWARE DELTA", {
                 added: deltaResult.delta?.added?.length ?? 0,
                 removed: deltaResult.delta?.removed?.length ?? 0,
                 updated: deltaResult.delta?.updated?.length ?? 0
@@ -19935,7 +19939,7 @@ var init_windows = __esm({
                 hasChanges: true
               };
             } else {
-              console.log("[AGENT] SOFTWARE NO CHANGES \u2014 SKIP PAYLOAD");
+              invDebug("[AGENT] SOFTWARE NO CHANGES \u2014 SKIP PAYLOAD");
               software = {
                 count: deltaResult.currentCount,
                 items: void 0,
@@ -19950,13 +19954,13 @@ var init_windows = __esm({
               };
             }
           }
-          console.log("[AGENT] software payload ready", {
+          invDebug("[AGENT] software payload ready", {
             count: software.count,
             hasItems: !!software.items,
             items: software.items?.length,
             hasDelta: !!software.delta
           });
-          console.log("[AGENT] payload size estimate (software only)", {
+          invDebug("[AGENT] payload size estimate (software only)", {
             approxBytes: JSON.stringify(software).length
           });
         } catch {
@@ -22470,8 +22474,8 @@ var config = {
   })(),
   agentId: process.env.AGENT_ID || "auto",
   enrollmentToken: process.env.ENROLLMENT_TOKEN || "",
-  agentVersion: process.env.AGENT_VERSION || "1.0.92",
-  coreVersion: process.env.CORE_VERSION || "1.0.92",
+  agentVersion: process.env.AGENT_VERSION || "1.0.94",
+  coreVersion: process.env.CORE_VERSION || "1.0.94",
   channel: process.env.CHANNEL || "stable"
 };
 
@@ -24138,6 +24142,13 @@ async function buildHardwareNamespace() {
     runtime: runtimePart
   };
 }
+function canonicalArch() {
+  const raw = import_os15.default.arch();
+  if (raw === "x64") return "x64";
+  if (raw === "arm64") return "arm64";
+  if (raw === "ia32") return "x64";
+  return raw;
+}
 function buildAgentInfo(ctx) {
   const nodePlatform = import_os15.default.platform();
   const platform = nodePlatform === "win32" ? "windows" : nodePlatform === "darwin" ? "macos" : "linux";
@@ -24149,6 +24160,7 @@ function buildAgentInfo(ctx) {
     agentVersion: ctx.config.agentVersion,
     coreVersion: ctx.config.coreVersion,
     osProvider: platform,
+    arch: canonicalArch(),
     capabilities,
     install: {
       // Nota v1: installId podría ser distinto a deviceId; lo dejamos así por ahora.
@@ -25832,8 +25844,9 @@ async function startService() {
     const ctx = await bootstrapContext();
     currentCtx = ctx;
     const log = ctx.logger;
+    const privsvcDebug = process.env.DEBUG_PRIVSVC === "1" || process.env.DEBUG_PRIVSVC === "true";
     try {
-      if (ctx.priv?.on) {
+      if (privsvcDebug && ctx.priv?.on) {
         ctx.priv.on("debug", (d) => {
           log.info("[PrivSvc DEBUG]", d);
         });

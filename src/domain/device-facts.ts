@@ -32,6 +32,12 @@ export interface AgentInfo {
   coreVersion: string;
 
   osProvider: "windows" | "macos" | "linux";
+  // CPU architecture the agent is running on — canonicalized to match
+  // the values the /binaries/agent/metadata endpoint accepts ("arm64",
+  // "x64"). The backend needs this to pick the right binary when the
+  // operator fires an agent_update job: an arm64 Windows box must NOT
+  // be offered an x64 MSI and vice versa.
+  arch: "arm64" | "x64" | string;
   capabilities: AgentCapability[];
 
   install: {

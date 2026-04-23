@@ -642,4 +642,41 @@ public static class IpcGrpcHandlers
             return PrivSvcResponse.Fail(req.Id, "grpc_ack_error", ex.Message);
         }
     }
+
+    /// <summary>
+    /// IPC entry-point for agent-core's periodic heartbeat. Parses the
+    /// shape the TS client sends (`grpc-client.ts:~430`):
+    ///   { deviceId, uptimeSeconds, agentVersion, policyVersion }
+    /// and forwards to the gRPC bridge. Errors bubble up as a
+    /// not_supported / grpc_heartbeat_error response so agent-core can
+    /// trigger its own reconnect loop.
+    /// </summary>
+    public static async Task<PrivSvcResponse> HandleHeartbeat(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+
+            var deviceId = GetString(p, "deviceId");
+            if (string.IsNullOrWhiteSpace(deviceId))
+                throw new Exception("deviceId required");
+
+            long uptimeSeconds = 0;
+            var uptimeStr = GetString(p, "uptimeSeconds");
+            if (!string.IsNullOrWhiteSpace(uptimeStr))
+                long.TryParse(uptimeStr, out uptimeSeconds);
+
+            var agentVersion = GetString(p, "agentVersion") ?? "";
+            var policyVersion = GetString(p, "policyVersion") ?? "";
+
+            await GrpcBridgeSingleton.Instance.SendHeartbeat(
+                deviceId, uptimeSeconds, agentVersion, policyVersion);
+
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_heartbeat_error", ex.Message);
+        }
+    }
 }

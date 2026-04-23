@@ -384,12 +384,12 @@ class Scheduler {
       // agentVersion differs from what was baked into the last shipped
       // snapshot. Prevents the degenerate case where:
       //   1. Agent at 1.0.87 sends a snapshot.
-      //   2. Agent auto-updates to 1.0.92 (restart, initial snapshot
+      //   2. Agent auto-updates to 1.0.94 (restart, initial snapshot
       //      fires, but gRPC/outbox were briefly down so it fails to
       //      ship).
       //   3. Subsequent ticks see `hasAnyChanges=false` (software is
       //      unchanged) and skip the enqueue. Backend is stuck with a
-      //      phantom "1.0.87" view of a device that's really on 1.0.92.
+      //      phantom "1.0.87" view of a device that's really on 1.0.94.
       //
       // The hash over the namespace intentionally excludes `agent.*`
       // (version, coreVersion, capabilities) because we want software

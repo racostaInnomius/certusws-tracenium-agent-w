@@ -1316,6 +1316,75 @@ private const int MaxPendingPushEvents = 50;
         throw new InvalidOperationException($"Issuing/Root CA cert not found in LocalMachine\\CA or LocalMachine\\Root: {normalized}");
     }
 
+    /// <summary>
+    /// Forward an agent heartbeat onto the open gRPC control-plane stream.
+    ///
+    /// Agent-core fires this every HEARTBEAT_INTERVAL_MS so the server can
+    /// refresh device_sessions.last_heartbeat. Without this the backend's
+    /// "online now" derivation (last_heartbeat within 90s) decays to
+    /// false and the device drops out of the Overview's online count even
+    /// when the agent is running fine.
+    ///
+    /// Mirrors SendAck in ordering: log + validate + build ControlMessage
+    /// + direct RequestStream.WriteAsync. If the stream disappeared mid-
+    /// send we swallow (the agent's IPC-level "no active call" response
+    /// already triggered its own reconnect path).
+    /// </summary>
+    public async Task SendHeartbeat(
+        string deviceId,
+        long uptimeSeconds,
+        string agentVersion,
+        string policyVersion,
+        CancellationToken ct = default)
+    {
+        if (_call is null)
+        {
+            Log($"SendHeartbeat skipped: no active call deviceId={deviceId}");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            Log("SendHeartbeat skipped: empty deviceId");
+            return;
+        }
+
+        try
+        {
+            var hbMsg = new ControlMessage
+            {
+                Heartbeat = new Heartbeat
+                {
+                    DeviceId = deviceId,
+                    UptimeSeconds = uptimeSeconds,
+                    AgentVersion = agentVersion ?? "",
+                    PolicyVersion = policyVersion ?? ""
+                }
+            };
+
+            var call = _call;
+            if (call != null)
+            {
+                await call.RequestStream.WriteAsync(hbMsg);
+            }
+            else
+            {
+                Log($"SendHeartbeat aborted: call became null during send deviceId={deviceId}");
+                return;
+            }
+
+            _lastSendUtc = DateTime.UtcNow;
+        }
+        catch (Exception ex)
+        {
+            Log($"SendHeartbeat error deviceId={deviceId} {ex}");
+            // Re-throw so HandleHeartbeat can surface the failure to the
+            // IPC caller — agent-core uses this signal to tear down and
+            // reconnect. Silencing would mask a broken stream.
+            throw;
+        }
+    }
+
     public async Task SendAck(string eventId, int status = 0, string? message = null, CancellationToken ct = default)
     {
         if (_call is null)

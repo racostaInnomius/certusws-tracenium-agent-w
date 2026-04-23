@@ -8,6 +8,16 @@ import { loadSoftwareBaseline, upsertSoftwareBaseline, deleteSoftwareByIds } fro
 import type { AmpNamespace } from "../../../domain/amp-types";
 import type { SoftwareApplication } from "../../../domain/normalize-app";
 
+// Verbose inventory diagnostics (raw counts, delta summaries, payload
+// size estimates) — useful during development, noisy in production.
+// Gate behind DEBUG_INVENTORY=1 so the default stdout stays readable.
+const INVENTORY_DEBUG =
+  process.env.DEBUG_INVENTORY === "1" || process.env.DEBUG_INVENTORY === "true";
+
+function invDebug(...args: any[]) {
+  if (INVENTORY_DEBUG) console.log(...args);
+}
+
 type RawApp = {
   name?: string | null;
   version?: string | null;
@@ -108,7 +118,7 @@ export async function collectWindowsSoftwareInventory(ctx: AgentContext) {
   // FIX: support both "apps" (old contract) and "items" (current PrivSvc contract)
   const apps = (resp.result?.items ?? resp.result?.apps ?? []) as RawApp[];
 
-  console.log("[WINDOWS] RAW INVENTORY", {
+  invDebug("[WINDOWS] RAW INVENTORY", {
     hasItems: Array.isArray(resp.result?.items),
     hasApps: Array.isArray(resp.result?.apps),
     countItems: resp.result?.items?.length,
@@ -134,7 +144,7 @@ export async function collectWindowsSoftwareInventory(ctx: AgentContext) {
     )
     .filter((x) => x && x.name);
 
-  console.log("[WINDOWS] NORMALIZED INVENTORY", {
+  invDebug("[WINDOWS] NORMALIZED INVENTORY", {
     inputCount: apps.length,
     normalizedCount: normalized.length
   });
@@ -200,7 +210,7 @@ export const windowsProvider = {
         };
       }
 
-      console.log("[AGENT] INVENTORY BEFORE BASELINE", {
+      invDebug("[AGENT] INVENTORY BEFORE BASELINE", {
         count: apps.length,
         //sample: apps.slice(0, 3)
       });
@@ -214,7 +224,7 @@ export const windowsProvider = {
       const isFirstRun = previous.length === 0;
 
       if (isFirstRun) {
-        console.log("[AGENT] SOFTWARE BASELINE (first run)", {
+        invDebug("[AGENT] SOFTWARE BASELINE (first run)", {
           count: apps.length
         });
 
@@ -231,7 +241,7 @@ export const windowsProvider = {
         const deltaResult = computeSoftwareDelta(apps, previous);
 
         if (deltaResult.hasChanges) {
-          console.log("[AGENT] SOFTWARE DELTA", {
+          invDebug("[AGENT] SOFTWARE DELTA", {
             added: deltaResult.delta?.added?.length ?? 0,
             removed: deltaResult.delta?.removed?.length ?? 0,
             updated: deltaResult.delta?.updated?.length ?? 0
@@ -254,7 +264,7 @@ export const windowsProvider = {
             hasChanges: true
           };
         } else {
-          console.log("[AGENT] SOFTWARE NO CHANGES — SKIP PAYLOAD");
+          invDebug("[AGENT] SOFTWARE NO CHANGES — SKIP PAYLOAD");
 
           software = {
             count: deltaResult.currentCount,
@@ -272,14 +282,14 @@ export const windowsProvider = {
         }
       }
 
-      console.log("[AGENT] software payload ready", {
+      invDebug("[AGENT] software payload ready", {
         count: software.count,
         hasItems: !!software.items,
         items: software.items?.length,
         hasDelta: !!software.delta
       });
 
-      console.log("[AGENT] payload size estimate (software only)", {
+      invDebug("[AGENT] payload size estimate (software only)", {
         approxBytes: JSON.stringify(software).length
       });
 

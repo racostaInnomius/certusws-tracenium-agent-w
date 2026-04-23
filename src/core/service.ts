@@ -20,9 +20,19 @@ export async function startService() {
     const ctx = await bootstrapContext();
     currentCtx = ctx;
     const log = ctx.logger;
-    // DEBUG: observe raw IPC messages from PrivSvc
+    // Gate the PrivSvc IPC DEBUG trace behind an env var. Every IPC
+    // round-trip emits ~5 debug stages (call_write, raw_chunk_full,
+    // ipc_raw_message, response_match / push_emit), so with heartbeats
+    // every 60s + facts + update/compliance ticks the stdout is >90%
+    // debug noise during normal operation — it drowns out the rare
+    // real errors operators actually need to see.
+    //
+    // Opt in with DEBUG_PRIVSVC=1 when diagnosing IPC issues. Default
+    // off mirrors the tenant-middleware silencing we did backend-side.
+    const privsvcDebug =
+      process.env.DEBUG_PRIVSVC === "1" || process.env.DEBUG_PRIVSVC === "true";
     try {
-      if (ctx.priv?.on) {
+      if (privsvcDebug && ctx.priv?.on) {
         ctx.priv.on("debug", (d: any) => {
           log.info("[PrivSvc DEBUG]", d);
         });
