@@ -56,14 +56,40 @@ async function collectFileVault() {
 }
 
 async function collectFirewall() {
-  const result = await run("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getglobalstate"]);
-  const output = result.output;
-  const enabled = /enabled/i.test(output);
-  const disabled = /disabled/i.test(output);
+  // Two separate queries: the `--getglobalstate` flag reports the ALF
+  // on/off state, and `--getstealthmode` reports whether the host
+  // answers to probe packets (ICMP / TCP SYN to closed ports). CIS
+  // 2.5.2.{1,2} treat them as independent controls, so we expose both
+  // top-level and the catalog references them via `firewall.status`
+  // and `firewall.stealthMode`.
+  const [globalResult, stealthResult] = await Promise.all([
+    run("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getglobalstate"]),
+    run("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getstealthmode"])
+  ]);
+
+  const globalOutput = globalResult.output;
+  const stealthOutput = stealthResult.output;
+
+  const enabled = /enabled/i.test(globalOutput);
+  const disabled = /disabled/i.test(globalOutput);
+
+  // The output of --getstealthmode is literally "Stealth mode
+  // enabled" or "Stealth mode disabled". We evaluate "enabled" via a
+  // positive match and only report `false` on a positive "disabled"
+  // match — absence of both signals `undefined` so the evaluator can
+  // differentiate "off" from "not reported".
+  let stealthMode: boolean | undefined;
+  if (/stealth mode enabled/i.test(stealthOutput)) {
+    stealthMode = true;
+  } else if (/stealth mode disabled/i.test(stealthOutput)) {
+    stealthMode = false;
+  }
 
   return {
     status: enabled ? "enabled" : disabled ? "disabled" : "unknown",
-    raw: output || undefined
+    stealthMode,
+    raw: globalOutput || undefined,
+    stealthRaw: stealthOutput || undefined
   };
 }
 
@@ -287,14 +313,194 @@ async function collectShares() {
 }
 
 async function collectSmb(shares: { smbEnabled?: boolean; raw?: string }) {
-  const launchctl = await run("/bin/launchctl", ["print", "system/com.apple.smbd"], 8000);
-  const running = /state = running/i.test(launchctl.output) || /active count = [1-9]/i.test(launchctl.output);
-  const disabled = /Could not find service|not found/i.test(launchctl.output);
+  // Three independent reads:
+  //   1. launchctl state → is the SMB daemon active right now?
+  //   2. /etc/nsmb.conf (client-side SMB config) — if present and
+  //      explicitly opts into SMB1 via `protocol_vers_map`, we flag it.
+  //   3. System-level SMB server defaults via `defaults read …smb.server
+  //      ProtocolVersionMap` — bitmask (1=SMB1, 2=SMB2, 4=SMB3). If
+  //      bit 1 is set, SMBv1 is enabled on the server side.
+  //
+  // Default when nothing opts in: `smb1.enabled = false`. macOS moderno
+  // ya no habilita SMB1 por default, pero cualquier opt-in explícito lo
+  // detectamos. Para no engañar al evaluator, si ambas fuentes están
+  // ausentes (no hay nsmb.conf y defaults no tiene la key) reportamos
+  // `false` — es la observación real, no un "no sé".
+  const [launchctl, nsmbConf, protocolMap] = await Promise.all([
+    run("/bin/launchctl", ["print", "system/com.apple.smbd"], 8000),
+    run("/bin/cat", ["/etc/nsmb.conf"], 5000),
+    run(
+      "/usr/bin/defaults",
+      ["read", "/Library/Preferences/SystemConfiguration/com.apple.smb.server", "ProtocolVersionMap"],
+      5000
+    )
+  ]);
+
+  const running =
+    /state = running/i.test(launchctl.output) ||
+    /active count = [1-9]/i.test(launchctl.output);
+  const serviceMissing = /Could not find service|not found/i.test(launchctl.output);
+
+  const nsmbSmb1 = nsmbConf.ok && /protocol_vers_map\s*=\s*(?:0x)?[0-9a-f]*[13579bdf]/i.test(nsmbConf.output);
+
+  const protocolMapValue = protocolMap.ok ? Number.parseInt(String(protocolMap.output).trim(), 10) : NaN;
+  // Bit 0 (value 1) → SMBv1 enabled. If bit is clear, SMBv1 is off.
+  const defaultsSmb1 = Number.isFinite(protocolMapValue) ? (protocolMapValue & 0x1) === 0x1 : false;
+
+  const smb1Enabled = Boolean(nsmbSmb1 || defaultsSmb1);
 
   return {
-    status: shares.smbEnabled || running ? "enabled" : disabled ? "disabled" : "unknown",
+    status: shares.smbEnabled || running ? "enabled" : serviceMissing ? "disabled" : "unknown",
     running,
-    raw: launchctl.output || shares.raw
+    smb1: {
+      // The catalog rule is `equals path=smb.smb1.enabled expected=false`,
+      // so this boolean is the load-bearing field. We keep the source
+      // flags alongside it for audit.
+      enabled: smb1Enabled,
+      nsmbOptIn: nsmbSmb1,
+      defaultsProtocolVersionMap: Number.isFinite(protocolMapValue) ? protocolMapValue : undefined
+    },
+    raw: launchctl.output || shares.raw,
+    nsmbRaw: nsmbConf.ok ? nsmbConf.output || undefined : undefined
+  };
+}
+
+/**
+ * Screen-saver password requirement. The relevant defaults key is
+ * `askForPassword` on `com.apple.screensaver`, but it's stored per-user
+ * (and per-host under `ByHost`). We read the `-currentHost` variant
+ * first (closest match to what the GUI toggles) and fall back to the
+ * global domain. If nothing is set, the attribute is left `undefined`
+ * so the evaluator marks the check not_applicable rather than failing.
+ */
+async function collectScreenLock() {
+  const [currentHost, global] = await Promise.all([
+    run("/usr/bin/defaults", ["-currentHost", "read", "com.apple.screensaver", "askForPassword"], 5000),
+    run("/usr/bin/defaults", ["read", "com.apple.screensaver", "askForPassword"], 5000)
+  ]);
+
+  const pickValue = (output: string): boolean | undefined => {
+    const trimmed = output.trim();
+    if (trimmed === "1") return true;
+    if (trimmed === "0") return false;
+    return undefined;
+  };
+
+  const resolved =
+    (currentHost.ok ? pickValue(currentHost.output) : undefined) ??
+    (global.ok ? pickValue(global.output) : undefined);
+
+  return {
+    passwordRequired: resolved,
+    source: currentHost.ok ? "currentHost" : global.ok ? "global" : "unavailable",
+    raw: {
+      currentHost: currentHost.ok ? currentHost.output : undefined,
+      global: global.ok ? global.output : undefined
+    }
+  };
+}
+
+/**
+ * Enumerate the sharing services CIS cares about (Remote Login,
+ * Remote Management, etc.). `systemsetup` requires root, which PrivSvc
+ * already provides. Output line is `Remote Login: On` / `Remote Login:
+ * Off`; we translate to a boolean so the catalog rule
+ * `equals path=services.remoteLogin expected=false` works directly.
+ */
+async function collectServices() {
+  const [remoteLogin, remoteAppleEvents] = await Promise.all([
+    run("/usr/sbin/systemsetup", ["-getremotelogin"], 8000),
+    run("/usr/sbin/systemsetup", ["-getremoteappleevents"], 8000)
+  ]);
+
+  const parseOnOff = (out: string): boolean | undefined => {
+    if (/:\s*On\b/i.test(out)) return true;
+    if (/:\s*Off\b/i.test(out)) return false;
+    return undefined;
+  };
+
+  return {
+    remoteLogin: parseOnOff(remoteLogin.output),
+    remoteAppleEvents: parseOnOff(remoteAppleEvents.output),
+    raw: {
+      remoteLogin: remoteLogin.output || undefined,
+      remoteAppleEvents: remoteAppleEvents.output || undefined
+    }
+  };
+}
+
+/**
+ * macOS Software Update preferences. The CIS control that uses this
+ * is `softwareUpdate.autoCheck` — mapped to the system-wide
+ * `AutomaticCheckEnabled` key under `/Library/Preferences`. We also
+ * read adjacent keys for audit (auto-download, config data install)
+ * but only the primary `autoCheck` feeds the catalog rule today.
+ */
+async function collectSoftwareUpdate() {
+  const keys = [
+    "AutomaticCheckEnabled",
+    "AutomaticDownload",
+    "ConfigDataInstall",
+    "CriticalUpdateInstall",
+    "AutomaticallyInstallMacOSUpdates"
+  ];
+
+  const reads = await Promise.all(
+    keys.map((key) =>
+      run(
+        "/usr/bin/defaults",
+        ["read", "/Library/Preferences/com.apple.SoftwareUpdate", key],
+        5000
+      )
+    )
+  );
+
+  const pick = (idx: number): boolean | undefined => {
+    const r = reads[idx];
+    if (!r.ok) return undefined;
+    const v = r.output.trim();
+    if (v === "1") return true;
+    if (v === "0") return false;
+    return undefined;
+  };
+
+  return {
+    autoCheck: pick(0),
+    autoDownload: pick(1),
+    configDataInstall: pick(2),
+    criticalUpdateInstall: pick(3),
+    autoInstallMacosUpdates: pick(4)
+  };
+}
+
+/**
+ * Guest account status. `GuestEnabled` is the load-bearing key; when
+ * the key is absent macOS treats it as off, so we normalize
+ * "key not found" to `false` rather than `undefined` — this matches
+ * the actual user-visible behavior and lets the CIS rule
+ * `equals path=accounts.guestEnabled expected=false` pass on a
+ * hardened default install.
+ */
+async function collectAccounts() {
+  const guest = await run(
+    "/usr/bin/defaults",
+    ["read", "/Library/Preferences/com.apple.loginwindow", "GuestEnabled"],
+    5000
+  );
+
+  let guestEnabled: boolean | undefined;
+  if (guest.ok) {
+    const v = guest.output.trim();
+    if (v === "1") guestEnabled = true;
+    else if (v === "0") guestEnabled = false;
+  } else {
+    // Key-not-present in loginwindow prefs → guest is off (macOS default).
+    guestEnabled = false;
+  }
+
+  return {
+    guestEnabled,
+    raw: guest.ok ? guest.output : undefined
   };
 }
 
@@ -351,7 +557,23 @@ async function collectDomain() {
 }
 
 export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSvcResponse> {
-  const [filevault, firewall, gatekeeper, sip, patches, antivirus, shares, domain] = await Promise.all([
+  // Kick off every independent collector in parallel. They each own a
+  // single shell call (or a small fixed set), so running them serially
+  // would add up to multi-second tail latency on slow disks.
+  const [
+    filevault,
+    firewall,
+    gatekeeper,
+    sip,
+    patches,
+    antivirus,
+    shares,
+    domain,
+    screenLock,
+    services,
+    softwareUpdate,
+    accounts
+  ] = await Promise.all([
     collectFileVault(),
     collectFirewall(),
     collectGatekeeper(),
@@ -359,7 +581,11 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
     collectPatches(),
     collectAntivirus(),
     collectShares(),
-    collectDomain()
+    collectDomain(),
+    collectScreenLock(),
+    collectServices(),
+    collectSoftwareUpdate(),
+    collectAccounts()
   ]);
 
   const smb = await collectSmb(shares);
@@ -374,6 +600,14 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
     shares,
     smb,
     domain,
+    // New evidence blocks introduced alongside the agent bump to
+    // collector 1.1.0. These are the paths the macOS catalog entries
+    // resolve against — the moment both the agent version and these
+    // fields land, the 10 gated macOS checks start evaluating for real.
+    screenLock,
+    services,
+    softwareUpdate,
+    accounts,
     crypto: {
       status: "unknown",
       source: "phase_2_pending_model_definition"

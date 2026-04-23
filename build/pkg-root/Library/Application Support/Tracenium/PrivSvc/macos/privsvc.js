@@ -24081,6 +24081,7 @@ function log(level, message, details) {
   }
 }
 var logger = {
+  debug: (message, details) => log("debug", message, details),
   info: (message, details) => log("info", message, details),
   warn: (message, details) => log("warn", message, details),
   error: (message, details) => log("error", message, details)
@@ -25137,13 +25138,25 @@ async function collectFileVault() {
   };
 }
 async function collectFirewall() {
-  const result = await run("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getglobalstate"]);
-  const output = result.output;
-  const enabled = /enabled/i.test(output);
-  const disabled = /disabled/i.test(output);
+  const [globalResult, stealthResult] = await Promise.all([
+    run("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getglobalstate"]),
+    run("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getstealthmode"])
+  ]);
+  const globalOutput = globalResult.output;
+  const stealthOutput = stealthResult.output;
+  const enabled = /enabled/i.test(globalOutput);
+  const disabled = /disabled/i.test(globalOutput);
+  let stealthMode;
+  if (/stealth mode enabled/i.test(stealthOutput)) {
+    stealthMode = true;
+  } else if (/stealth mode disabled/i.test(stealthOutput)) {
+    stealthMode = false;
+  }
   return {
     status: enabled ? "enabled" : disabled ? "disabled" : "unknown",
-    raw: output || void 0
+    stealthMode,
+    raw: globalOutput || void 0,
+    stealthRaw: stealthOutput || void 0
   };
 }
 async function collectGatekeeper() {
@@ -25322,13 +25335,126 @@ async function collectShares() {
   };
 }
 async function collectSmb(shares) {
-  const launchctl = await run("/bin/launchctl", ["print", "system/com.apple.smbd"], 8e3);
+  const [launchctl, nsmbConf, protocolMap] = await Promise.all([
+    run("/bin/launchctl", ["print", "system/com.apple.smbd"], 8e3),
+    run("/bin/cat", ["/etc/nsmb.conf"], 5e3),
+    run(
+      "/usr/bin/defaults",
+      ["read", "/Library/Preferences/SystemConfiguration/com.apple.smb.server", "ProtocolVersionMap"],
+      5e3
+    )
+  ]);
   const running = /state = running/i.test(launchctl.output) || /active count = [1-9]/i.test(launchctl.output);
-  const disabled = /Could not find service|not found/i.test(launchctl.output);
+  const serviceMissing = /Could not find service|not found/i.test(launchctl.output);
+  const nsmbSmb1 = nsmbConf.ok && /protocol_vers_map\s*=\s*(?:0x)?[0-9a-f]*[13579bdf]/i.test(nsmbConf.output);
+  const protocolMapValue = protocolMap.ok ? Number.parseInt(String(protocolMap.output).trim(), 10) : NaN;
+  const defaultsSmb1 = Number.isFinite(protocolMapValue) ? (protocolMapValue & 1) === 1 : false;
+  const smb1Enabled = Boolean(nsmbSmb1 || defaultsSmb1);
   return {
-    status: shares.smbEnabled || running ? "enabled" : disabled ? "disabled" : "unknown",
+    status: shares.smbEnabled || running ? "enabled" : serviceMissing ? "disabled" : "unknown",
     running,
-    raw: launchctl.output || shares.raw
+    smb1: {
+      // The catalog rule is `equals path=smb.smb1.enabled expected=false`,
+      // so this boolean is the load-bearing field. We keep the source
+      // flags alongside it for audit.
+      enabled: smb1Enabled,
+      nsmbOptIn: nsmbSmb1,
+      defaultsProtocolVersionMap: Number.isFinite(protocolMapValue) ? protocolMapValue : void 0
+    },
+    raw: launchctl.output || shares.raw,
+    nsmbRaw: nsmbConf.ok ? nsmbConf.output || void 0 : void 0
+  };
+}
+async function collectScreenLock() {
+  const [currentHost, global2] = await Promise.all([
+    run("/usr/bin/defaults", ["-currentHost", "read", "com.apple.screensaver", "askForPassword"], 5e3),
+    run("/usr/bin/defaults", ["read", "com.apple.screensaver", "askForPassword"], 5e3)
+  ]);
+  const pickValue = (output) => {
+    const trimmed = output.trim();
+    if (trimmed === "1") return true;
+    if (trimmed === "0") return false;
+    return void 0;
+  };
+  const resolved = (currentHost.ok ? pickValue(currentHost.output) : void 0) ?? (global2.ok ? pickValue(global2.output) : void 0);
+  return {
+    passwordRequired: resolved,
+    source: currentHost.ok ? "currentHost" : global2.ok ? "global" : "unavailable",
+    raw: {
+      currentHost: currentHost.ok ? currentHost.output : void 0,
+      global: global2.ok ? global2.output : void 0
+    }
+  };
+}
+async function collectServices() {
+  const [remoteLogin, remoteAppleEvents] = await Promise.all([
+    run("/usr/sbin/systemsetup", ["-getremotelogin"], 8e3),
+    run("/usr/sbin/systemsetup", ["-getremoteappleevents"], 8e3)
+  ]);
+  const parseOnOff = (out) => {
+    if (/:\s*On\b/i.test(out)) return true;
+    if (/:\s*Off\b/i.test(out)) return false;
+    return void 0;
+  };
+  return {
+    remoteLogin: parseOnOff(remoteLogin.output),
+    remoteAppleEvents: parseOnOff(remoteAppleEvents.output),
+    raw: {
+      remoteLogin: remoteLogin.output || void 0,
+      remoteAppleEvents: remoteAppleEvents.output || void 0
+    }
+  };
+}
+async function collectSoftwareUpdate() {
+  const keys = [
+    "AutomaticCheckEnabled",
+    "AutomaticDownload",
+    "ConfigDataInstall",
+    "CriticalUpdateInstall",
+    "AutomaticallyInstallMacOSUpdates"
+  ];
+  const reads = await Promise.all(
+    keys.map(
+      (key) => run(
+        "/usr/bin/defaults",
+        ["read", "/Library/Preferences/com.apple.SoftwareUpdate", key],
+        5e3
+      )
+    )
+  );
+  const pick = (idx) => {
+    const r = reads[idx];
+    if (!r.ok) return void 0;
+    const v = r.output.trim();
+    if (v === "1") return true;
+    if (v === "0") return false;
+    return void 0;
+  };
+  return {
+    autoCheck: pick(0),
+    autoDownload: pick(1),
+    configDataInstall: pick(2),
+    criticalUpdateInstall: pick(3),
+    autoInstallMacosUpdates: pick(4)
+  };
+}
+async function collectAccounts() {
+  const guest = await run(
+    "/usr/bin/defaults",
+    ["read", "/Library/Preferences/com.apple.loginwindow", "GuestEnabled"],
+    5e3
+  );
+  let guestEnabled;
+  if (guest.ok) {
+    const v = guest.output.trim();
+    if (v === "1") guestEnabled = true;
+    else if (v === "0") guestEnabled = false;
+  } else {
+    guestEnabled = false;
+  }
+  return {
+    guestEnabled,
+    raw: guest.ok ? guest.output : void 0
   };
 }
 async function collectProfiles() {
@@ -25374,7 +25500,20 @@ async function collectDomain() {
   };
 }
 async function handleSecurityPosture(req) {
-  const [filevault, firewall, gatekeeper, sip, patches, antivirus, shares, domain] = await Promise.all([
+  const [
+    filevault,
+    firewall,
+    gatekeeper,
+    sip,
+    patches,
+    antivirus,
+    shares,
+    domain,
+    screenLock,
+    services,
+    softwareUpdate,
+    accounts
+  ] = await Promise.all([
     collectFileVault(),
     collectFirewall(),
     collectGatekeeper(),
@@ -25382,7 +25521,11 @@ async function handleSecurityPosture(req) {
     collectPatches(),
     collectAntivirus(),
     collectShares(),
-    collectDomain()
+    collectDomain(),
+    collectScreenLock(),
+    collectServices(),
+    collectSoftwareUpdate(),
+    collectAccounts()
   ]);
   const smb = await collectSmb(shares);
   return success(req.id, {
@@ -25395,6 +25538,14 @@ async function handleSecurityPosture(req) {
     shares,
     smb,
     domain,
+    // New evidence blocks introduced alongside the agent bump to
+    // collector 1.1.0. These are the paths the macOS catalog entries
+    // resolve against — the moment both the agent version and these
+    // fields land, the 10 gated macOS checks start evaluating for real.
+    screenLock,
+    services,
+    softwareUpdate,
+    accounts,
     crypto: {
       status: "unknown",
       source: "phase_2_pending_model_definition"

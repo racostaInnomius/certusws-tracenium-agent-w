@@ -280,7 +280,7 @@ async function removeClientIdentityFromSystemKeychain(deviceId: string, labelOve
     logger.info("keychain_client_identity_removed", { label });
   } catch (err: any) {
     // delete-identity returns non-zero when nothing matches; that's fine.
-    logger.debug?.("keychain_client_identity_remove_noop", {
+    logger.debug("keychain_client_identity_remove_noop", {
       label,
       error: err?.message || String(err)
     });

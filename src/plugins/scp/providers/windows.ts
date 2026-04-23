@@ -1,47 +1,37 @@
 // src/plugins/scp/providers/windows.ts
+//
+// Schema 2.0 Windows SCP collector: gathers raw evidence via the
+// `security.compliance` PrivSvc method and forwards it verbatim. No
+// scoring, no per-check pass/fail decisions — those live server-side in
+// the catalog evaluator.
+//
+// The only "processing" we keep here is the cipher/protocol derivation
+// (weakCiphers[], tls1xEnabled booleans) because the catalog rules refer
+// to those flags by name and computing them requires understanding the
+// Windows-specific cipher inventory format. Doing it here means the
+// server-side evaluator stays a generic path/operator engine.
+
 import type { AgentContext } from "../../../core/agent-context";
-import type { ScpFinding, ScpNamespace, ScpStatus } from "../../../domain/scp-types";
+import type {
+  ScpCryptoEvidence,
+  ScpNamespace,
+  ScpPatchesEvidence
+} from "../../../domain/scp-types";
 
-const WEAK_CIPHER_PATTERNS = [/RC4/i, /\bDES\b/i, /3DES/i, /Triple DES/i, /NULL/i, /MD5/i, /EXPORT/i];
+const WEAK_CIPHER_PATTERNS = [
+  /RC4/i,
+  /\bDES\b/i,
+  /3DES/i,
+  /Triple DES/i,
+  /NULL/i,
+  /MD5/i,
+  /EXPORT/i
+];
 
-function statusFromEnabled(value: unknown): ScpStatus {
-  if (value === true || value === "enabled") return "pass";
-  if (value === false || value === "disabled") return "fail";
-  return "unknown";
-}
-
-function normalizeArray(value: unknown): any[] {
-  if (Array.isArray(value)) return value;
-  if (value && typeof value === "object") return [value];
+function normalizeArray<T = any>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+  if (value && typeof value === "object") return [value as T];
   return [];
-}
-
-function boolValue(value: unknown): boolean | undefined {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string") {
-    if (value.toLowerCase() === "true") return true;
-    if (value.toLowerCase() === "false") return false;
-  }
-  return undefined;
-}
-
-function scoreFromFindings(findings: ScpFinding[]): number {
-  if (findings.length === 0) return 100;
-
-  const weights: Record<string, number> = {
-    critical: 35,
-    high: 25,
-    medium: 15,
-    low: 5,
-    info: 0
-  };
-
-  const penalty = findings.reduce((sum, finding) => {
-    if (finding.status !== "fail") return sum;
-    return sum + (weights[finding.severity] ?? 0);
-  }, 0);
-
-  return Math.max(0, 100 - penalty);
 }
 
 async function readSecurityCompliance(ctx: AgentContext): Promise<any> {
@@ -71,221 +61,90 @@ async function readSecurityCompliance(ctx: AgentContext): Promise<any> {
   return resp.result || {};
 }
 
+/**
+ * Turn the SCHANNEL cipher inventory into a compact evidence block the
+ * catalog rules can evaluate with simple path/operator rules. Raw
+ * `cipherItems` and `protocolItems` are preserved untouched for audit.
+ */
+function buildCryptoEvidence(posture: any): ScpCryptoEvidence {
+  const cipherItems = normalizeArray(posture?.ciphers?.items);
+  const protocolItems = normalizeArray(posture?.protocols?.items);
+
+  const weakCiphers = cipherItems
+    .filter((cipher: any) =>
+      cipher?.enabled === true &&
+      WEAK_CIPHER_PATTERNS.some((pattern) => pattern.test(String(cipher?.name || "")))
+    )
+    .map((cipher: any) => String(cipher.name));
+
+  const protocolEnabled = (protocol: string) =>
+    protocolItems.some(
+      (item: any) => item?.protocol === protocol && item?.enabled === true
+    );
+
+  return {
+    tls10Enabled: protocolEnabled("TLS 1.0"),
+    tls11Enabled: protocolEnabled("TLS 1.1"),
+    tls12Enabled: protocolEnabled("TLS 1.2"),
+    tls13Enabled: protocolEnabled("TLS 1.3"),
+    weakCiphers,
+    ciphers: cipherItems,
+    protocols: protocolItems
+  };
+}
+
+function buildPatchesEvidence(posture: any): ScpPatchesEvidence {
+  const items = normalizeArray(posture?.patches?.items);
+
+  return {
+    items,
+    count: Number(posture?.patches?.count ?? items.length) || items.length,
+    lastScanUtc: posture?.patches?.lastScanUtc ?? undefined
+  };
+}
+
 export async function collectWindowsScp(ctx: AgentContext): Promise<ScpNamespace> {
   let posture: any = {};
-  const findings: ScpFinding[] = [];
+  let collectorError: ScpNamespace["collectorError"] | undefined;
 
   try {
     posture = await readSecurityCompliance(ctx);
   } catch (err: any) {
-    findings.push({
-      checkId: "windows.security.compliance.available",
-      category: "collector",
-      severity: "high",
-      status: "fail",
-      title: "Windows security compliance could not be collected",
-      evidence: { error: err?.message || String(err) },
-      remediation: {
-        type: "manual",
-        summary: "Verify Tracenium PrivSvc is running and can execute security compliance checks."
-      }
-    });
+    // Report the failure as a diagnostic block instead of fabricating
+    // evidence blocks. The catalog evaluator will correctly mark
+    // downstream rules as `not_applicable` because the relevant paths
+    // (firewall.*, defender.*, …) simply won't be present.
+    collectorError = {
+      message: err?.message || String(err),
+      phase: "security.compliance"
+    };
   }
 
-  const firewallStatus = statusFromEnabled(posture?.firewall?.status);
-  findings.push({
-    checkId: "windows.firewall.enabled",
-    category: "firewall",
-    severity: "high",
-    status: firewallStatus,
-    title: "Windows Firewall should be enabled",
-    evidence: posture?.firewall ?? {},
-    remediation: {
-      type: firewallStatus === "pass" ? "none" : "manual",
-      summary: firewallStatus === "pass" ? "No remediation required." : "Enable Windows Firewall for all applicable profiles."
-    }
-  });
-
-  const defenderStatus = statusFromEnabled(posture?.defender?.status);
-  findings.push({
-    checkId: "windows.defender.enabled",
-    category: "antimalware",
-    severity: "high",
-    status: defenderStatus,
-    title: "Microsoft Defender should be enabled",
-    evidence: posture?.defender ?? {},
-    remediation: {
-      type: defenderStatus === "pass" ? "none" : "manual",
-      summary: defenderStatus === "pass" ? "No remediation required." : "Enable Microsoft Defender or verify an approved AV provider is active."
-    }
-  });
-
-  const bitlockerStatus = statusFromEnabled(posture?.bitlocker?.status);
-  findings.push({
-    checkId: "windows.bitlocker.enabled",
-    category: "disk_encryption",
-    severity: "medium",
-    status: bitlockerStatus,
-    title: "BitLocker should be enabled on fixed drives",
-    evidence: posture?.bitlocker ?? {},
-    remediation: {
-      type: bitlockerStatus === "pass" ? "none" : "manual",
-      summary: bitlockerStatus === "pass" ? "No remediation required." : "Enable BitLocker according to the organization's encryption policy."
-    }
-  });
-
-  const smb1Status = posture?.smb?.smb1?.status === "disabled"
-    ? "pass"
-    : posture?.smb?.smb1?.status === "enabled"
-      ? "fail"
-      : "unknown";
-  findings.push({
-    checkId: "windows.smbv1.disabled",
-    category: "network_sharing",
-    severity: "high",
-    status: smb1Status,
-    title: "SMBv1 should be disabled",
-    evidence: posture?.smb ?? {},
-    remediation: {
-      type: smb1Status === "pass" ? "none" : "manual",
-      summary: smb1Status === "pass" ? "No remediation required." : "Disable SMBv1 through Windows Features or security baseline policy."
-    }
-  });
-
-  const riskyShareCount = Number(posture?.shares?.riskyCount ?? 0);
-  findings.push({
-    checkId: "windows.shares.everyone_full_control_absent",
-    category: "network_sharing",
-    severity: "critical",
-    status: riskyShareCount > 0 ? "fail" : "pass",
-    title: "Shares should not grant Everyone full control",
-    evidence: posture?.shares ?? {},
-    remediation: {
-      type: riskyShareCount > 0 ? "manual" : "none",
-      summary: riskyShareCount > 0 ? "Review share ACLs and remove Everyone full-control grants." : "No remediation required."
-    }
-  });
-
-  const antivirusEvidence = posture?.antivirus ?? posture?.defender ?? {};
-  const avEnabled = boolValue(posture?.defender?.antivirusEnabled) ?? posture?.defender?.status === "enabled";
-  const hasSignature = Boolean(posture?.defender?.signatureVersion || posture?.defender?.engineVersion);
-  findings.push({
-    checkId: "windows.antivirus.current",
-    category: "antimalware",
-    severity: "high",
-    status: avEnabled && hasSignature ? "pass" : avEnabled ? "warning" : "fail",
-    title: "Antivirus should be enabled and report engine/signature versions",
-    evidence: antivirusEvidence,
-    remediation: {
-      type: avEnabled && hasSignature ? "none" : "manual",
-      summary: avEnabled && hasSignature ? "No remediation required." : "Verify AV health, engine version, signatures, and scan telemetry."
-    }
-  });
-
-  const computerGpos = normalizeArray(posture?.domain?.appliedComputerGpos);
-  const userGpos = normalizeArray(posture?.domain?.appliedUserGpos);
-  const isDomainJoined = posture?.domain?.partOfDomain === true;
-  findings.push({
-    checkId: "windows.domain.gpo_inventory_available",
-    category: "identity_policy",
-    severity: "medium",
-    status: isDomainJoined && computerGpos.length === 0 && userGpos.length === 0 ? "warning" : "pass",
-    title: "Applied GPO inventory should be available for domain-joined devices",
-    evidence: posture?.domain ?? {},
-    remediation: {
-      type: isDomainJoined && computerGpos.length === 0 && userGpos.length === 0 ? "manual" : "none",
-      summary: isDomainJoined && computerGpos.length === 0 && userGpos.length === 0 ? "Run gpresult under an account/session that can read applied GPOs." : "No remediation required."
-    }
-  });
-
-  const cipherItems = normalizeArray(posture?.ciphers?.items);
-  const weakCiphers = cipherItems
-    .filter((cipher: any) => cipher?.enabled === true && WEAK_CIPHER_PATTERNS.some(pattern => pattern.test(String(cipher?.name || ""))))
-    .map((cipher: any) => String(cipher.name));
-  findings.push({
-    checkId: "windows.crypto.weak_ciphers_disabled",
-    category: "cryptography",
-    severity: "high",
-    status: weakCiphers.length > 0 ? "fail" : "pass",
-    title: "Weak SCHANNEL ciphers should be disabled",
-    evidence: { weakCiphers, ciphers: cipherItems },
-    remediation: {
-      type: weakCiphers.length > 0 ? "manual" : "none",
-      summary: weakCiphers.length > 0 ? "Disable weak ciphers such as RC4, DES, 3DES, NULL, MD5, and EXPORT suites." : "No remediation required."
-    }
-  });
-
-  const protocolItems = normalizeArray(posture?.protocols?.items);
-  const protocolEnabled = (protocol: string) =>
-    protocolItems.some((item: any) => item?.protocol === protocol && item?.enabled === true);
-  const tls10Enabled = protocolEnabled("TLS 1.0");
-  const tls11Enabled = protocolEnabled("TLS 1.1");
-  const tls12Enabled = protocolEnabled("TLS 1.2");
-  const tls13Enabled = protocolEnabled("TLS 1.3");
-  findings.push({
-    checkId: "windows.crypto.legacy_tls_disabled",
-    category: "cryptography",
-    severity: "high",
-    status: tls10Enabled || tls11Enabled ? "fail" : "pass",
-    title: "TLS 1.0 and TLS 1.1 should be disabled",
-    evidence: { tls10Enabled, tls11Enabled, tls12Enabled, tls13Enabled, protocols: protocolItems },
-    remediation: {
-      type: tls10Enabled || tls11Enabled ? "manual" : "none",
-      summary: tls10Enabled || tls11Enabled ? "Disable TLS 1.0 and TLS 1.1 in SCHANNEL client and server protocol keys." : "No remediation required."
-    }
-  });
-
-  const patchItems = normalizeArray(posture?.patches?.items);
-  findings.push({
-    checkId: "windows.security_patches.inventory_available",
-    category: "patching",
-    severity: "medium",
-    status: patchItems.length > 0 ? "pass" : "unknown",
-    title: "Installed security patches should be reported",
-    evidence: posture?.patches ?? {},
-    remediation: {
-      type: patchItems.length > 0 ? "none" : "manual",
-      summary: patchItems.length > 0 ? "No remediation required." : "Verify Windows Update / Get-HotFix access from PrivSvc."
-    }
-  });
-
-  const score = scoreFromFindings(findings);
-  const hasFailures = findings.some(f => f.status === "fail");
-  const hasUnknown = findings.some(f => f.status === "unknown");
-  const hasWarnings = findings.some(f => f.status === "warning");
-
   return {
-    schemaVersion: "1.0",
+    schemaVersion: "2.0",
     collector: {
       plugin: "scp",
       version: ctx.config.agentVersion
     },
-    hasChanges: true,
-    overall: {
-      status: hasFailures ? "fail" : hasUnknown ? "unknown" : hasWarnings ? "warning" : "pass",
-      score
-    },
-    checks: findings,
-    patches: {
-      status: patchItems.length > 0 ? "pass" : "unknown",
-      installedCount: Number(posture?.patches?.count ?? patchItems.length),
-      missingCount: undefined,
-      lastScanUtc: undefined,
-      items: patchItems
-    },
-    crypto: {
-      status: weakCiphers.length > 0 || tls10Enabled || tls11Enabled ? "fail" : hasWarnings ? "warning" : "pass",
-      tls10Enabled,
-      tls11Enabled,
-      tls12Enabled,
-      tls13Enabled,
-      weakCiphers,
-      ciphers: cipherItems,
-      protocols: protocolItems
-    },
+    hasChanges: true, // scheduler will overwrite after the hash diff
+
+    // Raw evidence, passed through verbatim. These shapes match the
+    // paths referenced by the catalog (`firewall.profiles.*`,
+    // `defender.serviceEnabled`, `bitlocker.status`, …). If PrivSvc is
+    // ever extended with richer output, the evaluator picks it up
+    // automatically — no agent change required.
+    firewall: posture?.firewall,
+    defender: posture?.defender,
+    bitlocker: posture?.bitlocker,
     smb: posture?.smb,
     shares: posture?.shares,
     antivirus: posture?.antivirus ?? posture?.defender,
-    domain: posture?.domain
+    domain: posture?.domain,
+
+    // Derived crypto + patches blocks (see helpers above).
+    crypto: buildCryptoEvidence(posture),
+    patches: buildPatchesEvidence(posture),
+
+    ...(collectorError ? { collectorError } : {})
   };
 }

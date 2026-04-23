@@ -384,12 +384,12 @@ class Scheduler {
       // agentVersion differs from what was baked into the last shipped
       // snapshot. Prevents the degenerate case where:
       //   1. Agent at 1.0.87 sends a snapshot.
-      //   2. Agent auto-updates to 1.0.94 (restart, initial snapshot
+      //   2. Agent auto-updates to 1.1.0 (restart, initial snapshot
       //      fires, but gRPC/outbox were briefly down so it fails to
       //      ship).
       //   3. Subsequent ticks see `hasAnyChanges=false` (software is
       //      unchanged) and skip the enqueue. Backend is stuck with a
-      //      phantom "1.0.87" view of a device that's really on 1.0.94.
+      //      phantom "1.0.87" view of a device that's really on 1.1.0.
       //
       // The hash over the namespace intentionally excludes `agent.*`
       // (version, coreVersion, capabilities) because we want software
@@ -533,13 +533,21 @@ class Scheduler {
       });
       outbox.setState("namespaceHash:scp", currentHash);
 
+      // Schema 2.0: the agent no longer emits a checks[] array — the
+      // server-side catalog evaluator produces findings. We log the
+      // evidence blocks present instead so we can trace what reached the
+      // backend without needing to re-parse the payload.
+      const scpEvidenceKeys = Object.keys(namespaces.scp).filter(
+        (k) => k !== "schemaVersion" && k !== "collector" && k !== "hasChanges"
+      );
+
       logger.info("FACTS_SNAPSHOT enqueued", {
         deviceId: ctx.enrollment.deviceId,
         modules: Object.keys(namespaces),
         hasAnyChanges: hasChanges,
-        scpChecks: Array.isArray(namespaces.scp.checks)
-          ? namespaces.scp.checks.length
-          : 0
+        scpSchemaVersion: namespaces.scp.schemaVersion,
+        scpCollectorVersion: namespaces.scp.collector?.version ?? null,
+        scpEvidenceKeys
       });
 
     } catch (err) {

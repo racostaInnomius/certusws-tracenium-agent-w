@@ -20626,32 +20626,6 @@ var init_amp = __esm({
 });
 
 // src/plugins/scp/providers/macos.ts
-function scoreFromFindings(findings) {
-  if (findings.length === 0) return 100;
-  const weights = {
-    critical: 35,
-    high: 25,
-    medium: 15,
-    low: 5,
-    info: 0
-  };
-  const penalty = findings.reduce((sum, finding) => {
-    if (finding.status !== "fail") return sum;
-    return sum + (weights[finding.severity] ?? 0);
-  }, 0);
-  return Math.max(0, 100 - penalty);
-}
-function complianceStatus(value) {
-  if (value === "enabled" || value === true) return "pass";
-  if (value === "disabled" || value === false) return "fail";
-  return "unknown";
-}
-function remediation(status, summary) {
-  return {
-    type: status === "pass" ? "none" : "manual",
-    summary: status === "pass" ? "No remediation required." : summary
-  };
-}
 function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -20668,187 +20642,54 @@ async function readSecurityCompliance(ctx) {
   }
   return resp.result || {};
 }
+function buildPatchesEvidence(posture) {
+  const items = asArray(posture?.patches?.items);
+  return {
+    items,
+    count: Number(posture?.patches?.securityCount ?? items.length) || items.length,
+    lastScanUtc: posture?.patches?.lastScanUtc ?? posture?.collectedAtUtc ?? void 0
+  };
+}
 async function collectMacosScp(ctx) {
   let posture = {};
-  const findings = [];
+  let collectorError;
   try {
     posture = await readSecurityCompliance(ctx);
-    findings.push({
-      checkId: "macos.security.compliance.available",
-      category: "collector",
-      severity: "info",
-      status: "pass",
-      title: "macOS security compliance data was collected successfully",
-      evidence: {
-        collectedAtUtc: posture?.collectedAtUtc
-      },
-      remediation: {
-        type: "none",
-        summary: "No remediation required."
-      }
-    });
   } catch (err) {
-    findings.push({
-      checkId: "macos.security.compliance.available",
-      category: "collector",
-      severity: "high",
-      status: "fail",
-      title: "macOS security compliance could not be collected",
-      evidence: { error: err?.message || String(err) },
-      remediation: {
-        type: "manual",
-        summary: "Verify Tracenium PrivSvc is running and can execute security compliance checks on macOS."
-      }
-    });
+    collectorError = {
+      message: err?.message || String(err),
+      phase: "security.compliance"
+    };
   }
-  const fileVaultStatus = complianceStatus(posture?.filevault?.status);
-  findings.push({
-    checkId: "macos.filevault.enabled",
-    category: "disk_encryption",
-    severity: "high",
-    status: fileVaultStatus,
-    title: "FileVault should be enabled",
-    evidence: posture?.filevault ?? {},
-    remediation: remediation(fileVaultStatus, "Enable FileVault according to the organization's disk encryption policy.")
-  });
-  const firewallStatus = complianceStatus(posture?.firewall?.status);
-  findings.push({
-    checkId: "macos.firewall.enabled",
-    category: "firewall",
-    severity: "high",
-    status: firewallStatus,
-    title: "macOS Application Firewall should be enabled",
-    evidence: posture?.firewall ?? {},
-    remediation: remediation(firewallStatus, "Enable the macOS Application Firewall.")
-  });
-  const gatekeeperStatus = complianceStatus(posture?.gatekeeper?.status);
-  findings.push({
-    checkId: "macos.gatekeeper.enabled",
-    category: "application_control",
-    severity: "medium",
-    status: gatekeeperStatus,
-    title: "Gatekeeper should be enabled",
-    evidence: posture?.gatekeeper ?? {},
-    remediation: remediation(gatekeeperStatus, "Enable Gatekeeper to restrict unsigned or untrusted applications.")
-  });
-  const sipStatus = complianceStatus(posture?.sip?.status);
-  findings.push({
-    checkId: "macos.sip.enabled",
-    category: "platform_integrity",
-    severity: "high",
-    status: sipStatus,
-    title: "System Integrity Protection should be enabled",
-    evidence: posture?.sip ?? {},
-    remediation: remediation(sipStatus, "Re-enable System Integrity Protection from macOS Recovery.")
-  });
-  const patchItems = asArray(posture?.patches?.items);
-  const patchInventoryStatus = patchItems.length > 0 ? "pass" : "unknown";
-  findings.push({
-    checkId: "macos.security_patches.inventory_available",
-    category: "patching",
-    severity: "medium",
-    status: patchInventoryStatus,
-    title: "Installed security updates should be reported on macOS",
-    evidence: posture?.patches ?? {},
-    remediation: remediation(patchInventoryStatus, "Verify software update history can be read from PrivSvc on macOS.")
-  });
-  const avInstalledCount = Number(posture?.antivirus?.installedCount ?? 0);
-  const antivirusStatus = avInstalledCount > 0 ? "pass" : "unknown";
-  findings.push({
-    checkId: "macos.antivirus.inventory_available",
-    category: "antimalware",
-    severity: "medium",
-    status: antivirusStatus,
-    title: "Built-in macOS malware protections should report update metadata",
-    evidence: posture?.antivirus ?? {},
-    remediation: remediation(antivirusStatus, "Verify XProtect and MRT package receipts are available on the endpoint.")
-  });
-  const riskyShareCount = Number(posture?.shares?.riskyCount ?? 0);
-  const shareInventoryKnown = posture?.shares?.status === "available";
-  findings.push({
-    checkId: "macos.shares.everyone_write_absent",
-    category: "network_sharing",
-    severity: "high",
-    status: !shareInventoryKnown ? "unknown" : riskyShareCount > 0 ? "fail" : "pass",
-    title: "Shared paths should not expose broad write access",
-    evidence: posture?.shares ?? {},
-    remediation: {
-      type: !shareInventoryKnown || riskyShareCount > 0 ? "manual" : "none",
-      summary: !shareInventoryKnown ? "Verify local share inventory can be collected on macOS." : riskyShareCount > 0 ? "Review shared path ACLs and remove Everyone-style write access." : "No remediation required."
-    }
-  });
-  const smbKnown = posture?.smb?.status === "enabled" || posture?.smb?.status === "disabled";
-  findings.push({
-    checkId: "macos.smb.inventory_available",
-    category: "network_sharing",
-    severity: "medium",
-    status: smbKnown ? "pass" : "unknown",
-    title: "SMB service state should be reported on macOS",
-    evidence: posture?.smb ?? {},
-    remediation: remediation(smbKnown ? "pass" : "unknown", "Verify SMB service status can be inspected from PrivSvc.")
-  });
-  const profileInventoryKnown = posture?.domain?.profiles?.status === "available";
-  findings.push({
-    checkId: "macos.identity_policy.inventory_available",
-    category: "identity_policy",
-    severity: "low",
-    status: profileInventoryKnown ? "pass" : "unknown",
-    title: "Directory binding and profile inventory should be available on macOS",
-    evidence: posture?.domain ?? {},
-    remediation: remediation(profileInventoryKnown ? "pass" : "unknown", "Verify profiles and directory binding inspection can run on macOS.")
-  });
-  findings.push({
-    checkId: "macos.crypto.inventory_pending",
-    category: "cryptography",
-    severity: "medium",
-    status: "unknown",
-    title: "TLS protocol and cipher inventory model is still pending for macOS",
-    evidence: {
-      phase: "phase_2",
-      collector: "pending_model_definition"
-    },
-    remediation: {
-      type: "manual",
-      summary: "Define the supported macOS cryptography inventory model before collecting TLS/cipher data."
-    }
-  });
-  const score = scoreFromFindings(findings);
-  const hasFailures = findings.some((f) => f.status === "fail");
-  const hasUnknown = findings.some((f) => f.status === "unknown");
-  const hasWarnings = findings.some((f) => f.status === "warning");
   return {
-    schemaVersion: "1.0",
+    schemaVersion: "2.0",
     collector: {
       plugin: "scp",
       version: ctx.config.agentVersion
     },
     hasChanges: true,
-    overall: {
-      status: hasFailures ? "fail" : hasUnknown ? "unknown" : hasWarnings ? "warning" : "pass",
-      score
-    },
-    checks: findings,
-    patches: {
-      status: patchItems.length > 0 ? "pass" : "unknown",
-      installedCount: Number(posture?.patches?.securityCount ?? patchItems.length),
-      missingCount: void 0,
-      lastScanUtc: posture?.patches?.lastScanUtc ?? posture?.collectedAtUtc,
-      items: patchItems
-    },
-    crypto: {
-      status: "unknown",
-      tls10Enabled: void 0,
-      tls11Enabled: void 0,
-      tls12Enabled: void 0,
-      tls13Enabled: void 0,
-      weakCiphers: [],
-      ciphers: [],
-      protocols: []
-    },
+    // Raw evidence blocks — paths chosen to match the macOS catalog
+    // entries in certusws-tracenium/db/migrations/20260422_compliance_catalog_seed.sql
+    // (filevault.status, gatekeeper.status, sip.status, screenLock.*,
+    //  services.remoteLogin, smb.smb1.enabled, softwareUpdate.autoCheck,
+    //  accounts.guestEnabled). Those catalog rows are gated by
+    //  collector_version_min so they stay not_applicable until PrivSvc
+    //  actually ships the evidence — the type signature is forward-
+    //  compatible for that rollout.
+    firewall: posture?.firewall,
+    filevault: posture?.filevault,
+    gatekeeper: posture?.gatekeeper,
+    sip: posture?.sip,
+    screenLock: posture?.screenLock,
+    services: posture?.services,
     smb: posture?.smb,
     shares: posture?.shares,
     antivirus: posture?.antivirus,
-    domain: posture?.domain
+    softwareUpdate: posture?.softwareUpdate,
+    accounts: posture?.accounts,
+    domain: posture?.domain,
+    patches: buildPatchesEvidence(posture),
+    ...collectorError ? { collectorError } : {}
   };
 }
 var init_macos2 = __esm({
@@ -20858,38 +20699,10 @@ var init_macos2 = __esm({
 });
 
 // src/plugins/scp/providers/windows.ts
-function statusFromEnabled(value) {
-  if (value === true || value === "enabled") return "pass";
-  if (value === false || value === "disabled") return "fail";
-  return "unknown";
-}
 function normalizeArray(value) {
   if (Array.isArray(value)) return value;
   if (value && typeof value === "object") return [value];
   return [];
-}
-function boolValue(value) {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string") {
-    if (value.toLowerCase() === "true") return true;
-    if (value.toLowerCase() === "false") return false;
-  }
-  return void 0;
-}
-function scoreFromFindings2(findings) {
-  if (findings.length === 0) return 100;
-  const weights = {
-    critical: 35,
-    high: 25,
-    medium: 15,
-    low: 5,
-    info: 0
-  };
-  const penalty = findings.reduce((sum, finding) => {
-    if (finding.status !== "fail") return sum;
-    return sum + (weights[finding.severity] ?? 0);
-  }, 0);
-  return Math.max(0, 100 - penalty);
 }
 async function readSecurityCompliance2(ctx) {
   const resp = await ctx.priv.call({
@@ -20915,209 +20728,83 @@ async function readSecurityCompliance2(ctx) {
   }
   return resp.result || {};
 }
+function buildCryptoEvidence(posture) {
+  const cipherItems = normalizeArray(posture?.ciphers?.items);
+  const protocolItems = normalizeArray(posture?.protocols?.items);
+  const weakCiphers = cipherItems.filter(
+    (cipher) => cipher?.enabled === true && WEAK_CIPHER_PATTERNS.some((pattern) => pattern.test(String(cipher?.name || "")))
+  ).map((cipher) => String(cipher.name));
+  const protocolEnabled = (protocol) => protocolItems.some(
+    (item) => item?.protocol === protocol && item?.enabled === true
+  );
+  return {
+    tls10Enabled: protocolEnabled("TLS 1.0"),
+    tls11Enabled: protocolEnabled("TLS 1.1"),
+    tls12Enabled: protocolEnabled("TLS 1.2"),
+    tls13Enabled: protocolEnabled("TLS 1.3"),
+    weakCiphers,
+    ciphers: cipherItems,
+    protocols: protocolItems
+  };
+}
+function buildPatchesEvidence2(posture) {
+  const items = normalizeArray(posture?.patches?.items);
+  return {
+    items,
+    count: Number(posture?.patches?.count ?? items.length) || items.length,
+    lastScanUtc: posture?.patches?.lastScanUtc ?? void 0
+  };
+}
 async function collectWindowsScp(ctx) {
   let posture = {};
-  const findings = [];
+  let collectorError;
   try {
     posture = await readSecurityCompliance2(ctx);
   } catch (err) {
-    findings.push({
-      checkId: "windows.security.compliance.available",
-      category: "collector",
-      severity: "high",
-      status: "fail",
-      title: "Windows security compliance could not be collected",
-      evidence: { error: err?.message || String(err) },
-      remediation: {
-        type: "manual",
-        summary: "Verify Tracenium PrivSvc is running and can execute security compliance checks."
-      }
-    });
+    collectorError = {
+      message: err?.message || String(err),
+      phase: "security.compliance"
+    };
   }
-  const firewallStatus = statusFromEnabled(posture?.firewall?.status);
-  findings.push({
-    checkId: "windows.firewall.enabled",
-    category: "firewall",
-    severity: "high",
-    status: firewallStatus,
-    title: "Windows Firewall should be enabled",
-    evidence: posture?.firewall ?? {},
-    remediation: {
-      type: firewallStatus === "pass" ? "none" : "manual",
-      summary: firewallStatus === "pass" ? "No remediation required." : "Enable Windows Firewall for all applicable profiles."
-    }
-  });
-  const defenderStatus = statusFromEnabled(posture?.defender?.status);
-  findings.push({
-    checkId: "windows.defender.enabled",
-    category: "antimalware",
-    severity: "high",
-    status: defenderStatus,
-    title: "Microsoft Defender should be enabled",
-    evidence: posture?.defender ?? {},
-    remediation: {
-      type: defenderStatus === "pass" ? "none" : "manual",
-      summary: defenderStatus === "pass" ? "No remediation required." : "Enable Microsoft Defender or verify an approved AV provider is active."
-    }
-  });
-  const bitlockerStatus = statusFromEnabled(posture?.bitlocker?.status);
-  findings.push({
-    checkId: "windows.bitlocker.enabled",
-    category: "disk_encryption",
-    severity: "medium",
-    status: bitlockerStatus,
-    title: "BitLocker should be enabled on fixed drives",
-    evidence: posture?.bitlocker ?? {},
-    remediation: {
-      type: bitlockerStatus === "pass" ? "none" : "manual",
-      summary: bitlockerStatus === "pass" ? "No remediation required." : "Enable BitLocker according to the organization's encryption policy."
-    }
-  });
-  const smb1Status = posture?.smb?.smb1?.status === "disabled" ? "pass" : posture?.smb?.smb1?.status === "enabled" ? "fail" : "unknown";
-  findings.push({
-    checkId: "windows.smbv1.disabled",
-    category: "network_sharing",
-    severity: "high",
-    status: smb1Status,
-    title: "SMBv1 should be disabled",
-    evidence: posture?.smb ?? {},
-    remediation: {
-      type: smb1Status === "pass" ? "none" : "manual",
-      summary: smb1Status === "pass" ? "No remediation required." : "Disable SMBv1 through Windows Features or security baseline policy."
-    }
-  });
-  const riskyShareCount = Number(posture?.shares?.riskyCount ?? 0);
-  findings.push({
-    checkId: "windows.shares.everyone_full_control_absent",
-    category: "network_sharing",
-    severity: "critical",
-    status: riskyShareCount > 0 ? "fail" : "pass",
-    title: "Shares should not grant Everyone full control",
-    evidence: posture?.shares ?? {},
-    remediation: {
-      type: riskyShareCount > 0 ? "manual" : "none",
-      summary: riskyShareCount > 0 ? "Review share ACLs and remove Everyone full-control grants." : "No remediation required."
-    }
-  });
-  const antivirusEvidence = posture?.antivirus ?? posture?.defender ?? {};
-  const avEnabled = boolValue(posture?.defender?.antivirusEnabled) ?? posture?.defender?.status === "enabled";
-  const hasSignature = Boolean(posture?.defender?.signatureVersion || posture?.defender?.engineVersion);
-  findings.push({
-    checkId: "windows.antivirus.current",
-    category: "antimalware",
-    severity: "high",
-    status: avEnabled && hasSignature ? "pass" : avEnabled ? "warning" : "fail",
-    title: "Antivirus should be enabled and report engine/signature versions",
-    evidence: antivirusEvidence,
-    remediation: {
-      type: avEnabled && hasSignature ? "none" : "manual",
-      summary: avEnabled && hasSignature ? "No remediation required." : "Verify AV health, engine version, signatures, and scan telemetry."
-    }
-  });
-  const computerGpos = normalizeArray(posture?.domain?.appliedComputerGpos);
-  const userGpos = normalizeArray(posture?.domain?.appliedUserGpos);
-  const isDomainJoined = posture?.domain?.partOfDomain === true;
-  findings.push({
-    checkId: "windows.domain.gpo_inventory_available",
-    category: "identity_policy",
-    severity: "medium",
-    status: isDomainJoined && computerGpos.length === 0 && userGpos.length === 0 ? "warning" : "pass",
-    title: "Applied GPO inventory should be available for domain-joined devices",
-    evidence: posture?.domain ?? {},
-    remediation: {
-      type: isDomainJoined && computerGpos.length === 0 && userGpos.length === 0 ? "manual" : "none",
-      summary: isDomainJoined && computerGpos.length === 0 && userGpos.length === 0 ? "Run gpresult under an account/session that can read applied GPOs." : "No remediation required."
-    }
-  });
-  const cipherItems = normalizeArray(posture?.ciphers?.items);
-  const weakCiphers = cipherItems.filter((cipher) => cipher?.enabled === true && WEAK_CIPHER_PATTERNS.some((pattern) => pattern.test(String(cipher?.name || "")))).map((cipher) => String(cipher.name));
-  findings.push({
-    checkId: "windows.crypto.weak_ciphers_disabled",
-    category: "cryptography",
-    severity: "high",
-    status: weakCiphers.length > 0 ? "fail" : "pass",
-    title: "Weak SCHANNEL ciphers should be disabled",
-    evidence: { weakCiphers, ciphers: cipherItems },
-    remediation: {
-      type: weakCiphers.length > 0 ? "manual" : "none",
-      summary: weakCiphers.length > 0 ? "Disable weak ciphers such as RC4, DES, 3DES, NULL, MD5, and EXPORT suites." : "No remediation required."
-    }
-  });
-  const protocolItems = normalizeArray(posture?.protocols?.items);
-  const protocolEnabled = (protocol) => protocolItems.some((item) => item?.protocol === protocol && item?.enabled === true);
-  const tls10Enabled = protocolEnabled("TLS 1.0");
-  const tls11Enabled = protocolEnabled("TLS 1.1");
-  const tls12Enabled = protocolEnabled("TLS 1.2");
-  const tls13Enabled = protocolEnabled("TLS 1.3");
-  findings.push({
-    checkId: "windows.crypto.legacy_tls_disabled",
-    category: "cryptography",
-    severity: "high",
-    status: tls10Enabled || tls11Enabled ? "fail" : "pass",
-    title: "TLS 1.0 and TLS 1.1 should be disabled",
-    evidence: { tls10Enabled, tls11Enabled, tls12Enabled, tls13Enabled, protocols: protocolItems },
-    remediation: {
-      type: tls10Enabled || tls11Enabled ? "manual" : "none",
-      summary: tls10Enabled || tls11Enabled ? "Disable TLS 1.0 and TLS 1.1 in SCHANNEL client and server protocol keys." : "No remediation required."
-    }
-  });
-  const patchItems = normalizeArray(posture?.patches?.items);
-  findings.push({
-    checkId: "windows.security_patches.inventory_available",
-    category: "patching",
-    severity: "medium",
-    status: patchItems.length > 0 ? "pass" : "unknown",
-    title: "Installed security patches should be reported",
-    evidence: posture?.patches ?? {},
-    remediation: {
-      type: patchItems.length > 0 ? "none" : "manual",
-      summary: patchItems.length > 0 ? "No remediation required." : "Verify Windows Update / Get-HotFix access from PrivSvc."
-    }
-  });
-  const score = scoreFromFindings2(findings);
-  const hasFailures = findings.some((f) => f.status === "fail");
-  const hasUnknown = findings.some((f) => f.status === "unknown");
-  const hasWarnings = findings.some((f) => f.status === "warning");
   return {
-    schemaVersion: "1.0",
+    schemaVersion: "2.0",
     collector: {
       plugin: "scp",
       version: ctx.config.agentVersion
     },
     hasChanges: true,
-    overall: {
-      status: hasFailures ? "fail" : hasUnknown ? "unknown" : hasWarnings ? "warning" : "pass",
-      score
-    },
-    checks: findings,
-    patches: {
-      status: patchItems.length > 0 ? "pass" : "unknown",
-      installedCount: Number(posture?.patches?.count ?? patchItems.length),
-      missingCount: void 0,
-      lastScanUtc: void 0,
-      items: patchItems
-    },
-    crypto: {
-      status: weakCiphers.length > 0 || tls10Enabled || tls11Enabled ? "fail" : hasWarnings ? "warning" : "pass",
-      tls10Enabled,
-      tls11Enabled,
-      tls12Enabled,
-      tls13Enabled,
-      weakCiphers,
-      ciphers: cipherItems,
-      protocols: protocolItems
-    },
+    // scheduler will overwrite after the hash diff
+    // Raw evidence, passed through verbatim. These shapes match the
+    // paths referenced by the catalog (`firewall.profiles.*`,
+    // `defender.serviceEnabled`, `bitlocker.status`, …). If PrivSvc is
+    // ever extended with richer output, the evaluator picks it up
+    // automatically — no agent change required.
+    firewall: posture?.firewall,
+    defender: posture?.defender,
+    bitlocker: posture?.bitlocker,
     smb: posture?.smb,
     shares: posture?.shares,
     antivirus: posture?.antivirus ?? posture?.defender,
-    domain: posture?.domain
+    domain: posture?.domain,
+    // Derived crypto + patches blocks (see helpers above).
+    crypto: buildCryptoEvidence(posture),
+    patches: buildPatchesEvidence2(posture),
+    ...collectorError ? { collectorError } : {}
   };
 }
 var WEAK_CIPHER_PATTERNS;
 var init_windows2 = __esm({
   "src/plugins/scp/providers/windows.ts"() {
     "use strict";
-    WEAK_CIPHER_PATTERNS = [/RC4/i, /\bDES\b/i, /3DES/i, /Triple DES/i, /NULL/i, /MD5/i, /EXPORT/i];
+    WEAK_CIPHER_PATTERNS = [
+      /RC4/i,
+      /\bDES\b/i,
+      /3DES/i,
+      /Triple DES/i,
+      /NULL/i,
+      /MD5/i,
+      /EXPORT/i
+    ];
   }
 });
 
@@ -21135,29 +20822,16 @@ async function collectSCP(ctx) {
     return collectMacosScp(ctx);
   }
   return {
-    schemaVersion: "1.0",
+    schemaVersion: "2.0",
     collector: {
       plugin: "scp",
       version: ctx.config.agentVersion
     },
     hasChanges: true,
-    overall: {
-      status: "unknown",
-      score: 0
-    },
-    checks: [
-      {
-        checkId: "scp.platform.unsupported",
-        category: "collector",
-        severity: "info",
-        status: "unknown",
-        title: `SCP collector is not implemented for platform ${platform}`,
-        remediation: {
-          type: "none",
-          summary: "No remediation available until the platform collector is implemented."
-        }
-      }
-    ]
+    collectorError: {
+      message: `SCP collector is not implemented for platform ${platform}`,
+      phase: "platform_unsupported"
+    }
   };
 }
 var import_os12;
@@ -22474,8 +22148,8 @@ var config = {
   })(),
   agentId: process.env.AGENT_ID || "auto",
   enrollmentToken: process.env.ENROLLMENT_TOKEN || "",
-  agentVersion: process.env.AGENT_VERSION || "1.0.94",
-  coreVersion: process.env.CORE_VERSION || "1.0.94",
+  agentVersion: process.env.AGENT_VERSION || "1.1.0",
+  coreVersion: process.env.CORE_VERSION || "1.1.0",
   channel: process.env.CHANNEL || "stable"
 };
 
@@ -24597,11 +24271,16 @@ var Scheduler = class {
         payload: facts
       });
       outbox.setState("namespaceHash:scp", currentHash);
+      const scpEvidenceKeys = Object.keys(namespaces.scp).filter(
+        (k) => k !== "schemaVersion" && k !== "collector" && k !== "hasChanges"
+      );
       logger.info("FACTS_SNAPSHOT enqueued", {
         deviceId: ctx.enrollment.deviceId,
         modules: Object.keys(namespaces),
         hasAnyChanges: hasChanges,
-        scpChecks: Array.isArray(namespaces.scp.checks) ? namespaces.scp.checks.length : 0
+        scpSchemaVersion: namespaces.scp.schemaVersion,
+        scpCollectorVersion: namespaces.scp.collector?.version ?? null,
+        scpEvidenceKeys
       });
     } catch (err) {
       logger.error("Compliance pipeline failed", { err });

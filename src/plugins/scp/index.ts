@@ -16,29 +16,19 @@ export async function collectSCP(ctx: AgentContext): Promise<ScpNamespace> {
     return collectMacosScp(ctx);
   }
 
+  // Schema 2.0 fallback for unsupported platforms. No synthetic findings:
+  // the backend evaluator will produce not_applicable for every catalog
+  // entry because none of the evidence paths exist.
   return {
-    schemaVersion: "1.0",
+    schemaVersion: "2.0",
     collector: {
       plugin: "scp",
       version: ctx.config.agentVersion
     },
     hasChanges: true,
-    overall: {
-      status: "unknown",
-      score: 0
-    },
-    checks: [
-      {
-        checkId: "scp.platform.unsupported",
-        category: "collector",
-        severity: "info",
-        status: "unknown",
-        title: `SCP collector is not implemented for platform ${platform}`,
-        remediation: {
-          type: "none",
-          summary: "No remediation available until the platform collector is implemented."
-        }
-      }
-    ]
+    collectorError: {
+      message: `SCP collector is not implemented for platform ${platform}`,
+      phase: "platform_unsupported"
+    }
   };
 }
