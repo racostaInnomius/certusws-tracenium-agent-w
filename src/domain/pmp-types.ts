@@ -10,6 +10,7 @@ export type PmpOverallStatus =
 
 export type PmpRemediationStatus =
   | "idle"
+  | "in_progress"
   | "success"
   | "partial"
   | "failed";
@@ -35,7 +36,7 @@ export type PmpNamespace = {
   };
   scan?: {
     scannedAtUtc?: string;
-    source: "windows_security_compliance_inventory" | "windows_update_agent";
+    source: "windows_update_agent" | "apple_software_update" | "patch_management_unavailable";
     mode: "inventory_only";
     installedPatchCount: number;
     securityPatchCount: number;
@@ -43,9 +44,14 @@ export type PmpNamespace = {
   };
   remediation?: {
     status: PmpRemediationStatus;
+    mode?: "download" | "install";
+    startedAtUtc?: string;
+    finishedAtUtc?: string;
     rebootRequired?: boolean;
     installedCount?: number;
     failedCount?: number;
+    selectedCount?: number;
+    lastError?: string;
     results?: Array<{
       updateId?: string;
       kb?: string;

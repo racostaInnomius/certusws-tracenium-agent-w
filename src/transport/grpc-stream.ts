@@ -5,6 +5,8 @@ import { outbox } from "../queue/sqlite-outbox";
 import { PolicyStore } from "../core/policy-store";
 import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { Namespaces, DeviceFacts } from "../domain/device-facts";
+import type { PmpNamespace } from "../domain/pmp-types";
+import { updatePmpState } from "../plugins/pmp/state";
 import { runUpdateTask } from "../update/update-task";
 
 const ACK_TIMEOUT_MS = 60_000;
@@ -79,6 +81,8 @@ const grpcMetrics = {
   connectedSinceUtc: null as string | null
 };
 
+type PmpRemediationResult = NonNullable<NonNullable<PmpNamespace["remediation"]>["results"]>[number];
+
 let metricsFlushTimer: NodeJS.Timeout | null = null;
 
 function armMetricsFlush(ctx: AgentContext) {
@@ -96,6 +100,30 @@ function armMetricsFlush(ctx: AgentContext) {
 
 function buildEventId(deviceId: string, outboxId: number) {
   return `${deviceId}:${outboxId}`;
+}
+
+function normalizePmpResults(results: unknown): NonNullable<PmpNamespace["remediation"]>["results"] {
+  if (!Array.isArray(results)) {
+    return [];
+  }
+
+  return results.map((entry) => {
+    const item = (entry && typeof entry === "object") ? entry as Record<string, unknown> : {};
+    const rawResult = String(item.result || "failed").trim().toLowerCase();
+    const result: PmpRemediationResult["result"] =
+      rawResult === "installed" || rawResult === "downloaded" || rawResult === "skipped"
+        ? rawResult
+        : "failed";
+
+    return {
+      updateId: item.updateId ? String(item.updateId) : undefined,
+      kb: item.kb ? String(item.kb) : undefined,
+      title: item.title ? String(item.title) : undefined,
+      result,
+      hresult: item.hresult ? String(item.hresult) : undefined,
+      message: item.message ? String(item.message) : undefined
+    };
+  });
 }
 
 async function collectFactsSnapshot(
@@ -310,50 +338,101 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       }
 
       (ctx as any)._patchInstallInProgress = true;
-      try {
-        const resp = await ctx.priv.call({
-          v: 1,
-          id: `patch-install-${jobId}-${Date.now()}`,
-          method: "patch.install",
-          params: {
-            mode,
-            kbArticleIds
-          },
-          meta: {
-            tenantId: ctx.enrollment.tenantId,
-            deviceId: ctx.enrollment.deviceId
-          }
-        });
+      updatePmpState({
+        status: "in_progress",
+        mode,
+        startedAtUtc: new Date().toISOString(),
+        selectedCount: kbArticleIds.length || undefined,
+        installedCount: 0,
+        failedCount: 0,
+        rebootRequired: false,
+        results: [],
+        lastError: undefined
+      });
 
-        if (!resp?.ok) {
+      try {
+        try {
+          const resp = await ctx.priv.call({
+            v: 1,
+            id: `patch-install-${jobId}-${Date.now()}`,
+            method: "patch.install",
+            params: {
+              mode,
+              kbArticleIds
+            },
+            meta: {
+              tenantId: ctx.enrollment.tenantId,
+              deviceId: ctx.enrollment.deviceId
+            }
+          });
+
+          if (!resp?.ok) {
+            updatePmpState({
+              status: "failed",
+              mode,
+              finishedAtUtc: new Date().toISOString(),
+              lastError: String(resp?.error?.message || "patch.install failed"),
+              rebootRequired: false,
+              results: []
+            });
+            return {
+              status: 2,
+              message: `patch_install failed: ${String(resp?.error?.message || "patch.install failed")}`
+            };
+          }
+
+          const result = resp.result || {};
+          const resultStatus = String(result?.status || "").trim().toLowerCase();
+          const installedCount = Number(result?.installedCount ?? 0);
+          const failedCount = Number(result?.failedCount ?? 0);
+          const rebootRequired = result?.rebootRequired === true;
+          const results = normalizePmpResults(result?.results);
+
+          updatePmpState({
+            status: resultStatus === "success" || resultStatus === "no_updates"
+              ? "success"
+              : resultStatus === "partial"
+                ? "partial"
+                : "failed",
+            mode,
+            finishedAtUtc: new Date().toISOString(),
+            rebootRequired,
+            selectedCount: Number(result?.selectedCount ?? kbArticleIds.length ?? 0),
+            installedCount,
+            failedCount,
+            results,
+            lastError: resultStatus === "success" || resultStatus === "no_updates"
+              ? undefined
+              : `patch_install ${resultStatus || "failed"}`
+          });
+
+          try {
+            await collectFactsSnapshot(ctx, `runJob:${jobId}:post_patch_install`, "patch");
+          } catch (err) {
+            ctx.logger?.warn?.("Post patch-install scan enqueue failed", { err, jobId });
+          }
+
+          if (resultStatus === "success" || resultStatus === "no_updates") {
+            return {
+              status: 0,
+              message: `patch_install ${resultStatus}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
+            };
+          }
+
           return {
             status: 2,
-            message: `patch_install failed: ${String(resp?.error?.message || "patch.install failed")}`
+            message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
           };
-        }
-
-        try {
-          await collectFactsSnapshot(ctx, `runJob:${jobId}:post_patch_install`, "patch");
-        } catch (err) {
-          ctx.logger?.warn?.("Post patch-install scan enqueue failed", { err, jobId });
-        }
-
-        const result = resp.result || {};
-        const resultStatus = String(result?.status || "").trim().toLowerCase();
-        const installedCount = Number(result?.installedCount ?? 0);
-        const failedCount = Number(result?.failedCount ?? 0);
-        const rebootRequired = result?.rebootRequired === true;
-
-        if (resultStatus === "success" || resultStatus === "no_updates") {
-          return {
-            status: 0,
-            message: `patch_install ${resultStatus}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
-          };
-        }
-
-        return {
-          status: 2,
-          message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
+        } catch (err: any) {
+          updatePmpState({
+            status: "failed",
+            mode,
+            finishedAtUtc: new Date().toISOString(),
+            lastError: err?.message || String(err),
+            rebootRequired: false,
+            results: []
+          });
+          throw err;
         };
       } finally {
         (ctx as any)._patchInstallInProgress = false;

@@ -8,7 +8,7 @@ function normalizeArray(value: unknown): any[] {
   return [];
 }
 
-async function readSecurityCompliance(ctx: AgentContext): Promise<any> {
+async function readPatchScan(ctx: AgentContext): Promise<any> {
   const resp = await ctx.priv.call({
     v: 1,
     id: `pmp_${Date.now()}`,
@@ -29,13 +29,11 @@ async function readSecurityCompliance(ctx: AgentContext): Promise<any> {
 
 function normalizePatchItems(items: any[]): PmpScanItem[] {
   return items.map((item) => ({
-    hotFixId: Array.isArray(item?.kbArticleIds) && item.kbArticleIds.length > 0
-      ? String(item.kbArticleIds[0])
-      : undefined,
+    hotFixId: item?.label ? String(item.label) : undefined,
     title: item?.title ? String(item.title) : undefined,
     installedBy: undefined,
     installedOn: undefined,
-    source: "windows_update_agent"
+    source: "apple_software_update"
   }));
 }
 
@@ -75,7 +73,7 @@ function deriveOverallScore(status: PmpNamespace["overall"]["status"]): number {
   }
 }
 
-export async function collectWindowsPmp(ctx: AgentContext): Promise<PmpNamespace> {
+export async function collectMacosPmp(ctx: AgentContext): Promise<PmpNamespace> {
   const remediationState = loadPmpState();
   const remediation: NonNullable<PmpNamespace["remediation"]> = {
     status: remediationState.status || "idle",
@@ -95,7 +93,7 @@ export async function collectWindowsPmp(ctx: AgentContext): Promise<PmpNamespace
   let scanStatus: "healthy" | "updates_available" | "inventory_only" | "error" = "inventory_only";
 
   try {
-    posture = await readSecurityCompliance(ctx);
+    posture = await readPatchScan(ctx);
     scanItems = normalizePatchItems(normalizeArray(posture?.items));
     scanStatus = posture?.status === "updates_available"
       ? "updates_available"
@@ -117,7 +115,7 @@ export async function collectWindowsPmp(ctx: AgentContext): Promise<PmpNamespace
       },
       scan: {
         scannedAtUtc: new Date().toISOString(),
-        source: "windows_update_agent",
+        source: "apple_software_update",
         mode: "inventory_only",
         installedPatchCount: 0,
         securityPatchCount: 0,
@@ -153,7 +151,7 @@ export async function collectWindowsPmp(ctx: AgentContext): Promise<PmpNamespace
     },
     scan: {
       scannedAtUtc: posture?.scannedAtUtc ?? new Date().toISOString(),
-      source: "windows_update_agent",
+      source: "apple_software_update",
       mode: "inventory_only",
       installedPatchCount: Number(posture?.updateCount ?? scanItems.length),
       securityPatchCount: Number(posture?.securityUpdateCount ?? scanItems.length),

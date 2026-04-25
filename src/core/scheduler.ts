@@ -121,17 +121,22 @@ class Scheduler {
 
     this.addPolicyListener(ctx, "pluginsChanged", (plugins: string[]) => {
       logger.info("[scheduler] plugins updated", { plugins });
-
-      // rebuild pipelines safely
       this.startPipelines(ctx);
     });
 
     this.addPolicyListener(ctx, "modulesChanged", (modules: string[]) => {
       logger.info("[scheduler] modules updated", { modules });
+      this.startPipelines(ctx);
+    });
+
+    this.addPolicyListener(ctx, "patchIntervalChanged", (interval: number) => {
+      logger.info("[scheduler] patch interval updated", { interval });
+      this.startPipelines(ctx);
     });
 
     this.addPolicyListener(ctx, "featuresChanged", (features: any) => {
       logger.info("[scheduler] features updated", { features });
+      this.startPipelines(ctx);
     });
   }
 
@@ -283,7 +288,7 @@ class Scheduler {
     // patch pipeline (future)
     if (ctx.policyRuntime.isPatchEnabled()) {
 
-      const intervalSeconds = 24 * 60 * 60; // 24h default
+      const intervalSeconds = ctx.policyRuntime.getPatchInterval();
 
       logger.info("Patch pipeline enabled", { intervalSeconds });
 

@@ -10,6 +10,9 @@ export type RuntimePolicy = {
   compliance?: {
     intervalSeconds?: number;
   };
+  patch?: {
+    intervalSeconds?: number;
+  };
   plugins?: {
     enabled?: string[];
   };
@@ -35,6 +38,9 @@ const DEFAULT_POLICY: RuntimePolicy = {
   },
   compliance: {
     intervalSeconds: 28800 // 8h
+  },
+  patch: {
+    intervalSeconds: 86400 // 24h
   },
   plugins: {
     enabled: ["amp"]
@@ -95,6 +101,10 @@ export class PolicyRuntime extends EventEmitter {
     return this.policy.compliance?.intervalSeconds || DEFAULT_POLICY.compliance!.intervalSeconds!;
   }
 
+  getPatchInterval(): number {
+    return this.policy.patch?.intervalSeconds || DEFAULT_POLICY.patch!.intervalSeconds!;
+  }
+
   getEnabledPlugins(): string[] {
     return this.policy.plugins?.enabled || DEFAULT_POLICY.plugins!.enabled!;
   }
@@ -150,6 +160,7 @@ export class PolicyRuntime extends EventEmitter {
 
     // notify specialized listeners
     this.emit("inventoryIntervalChanged", this.getInventoryInterval());
+    this.emit("patchIntervalChanged", this.getPatchInterval());
     this.emit("pluginsChanged", this.getEnabledPlugins());
     this.emit("modulesChanged", this.listEnabledModules());
     this.emit("featuresChanged", this.policy.features);
@@ -172,6 +183,10 @@ export class PolicyRuntime extends EventEmitter {
       compliance: {
         ...DEFAULT_POLICY.compliance,
         ...policy.compliance
+      },
+      patch: {
+        ...DEFAULT_POLICY.patch,
+        ...policy.patch
       },
       plugins: {
         ...DEFAULT_POLICY.plugins,
@@ -204,6 +219,14 @@ export class PolicyRuntime extends EventEmitter {
       validated.compliance!.intervalSeconds = DEFAULT_POLICY.compliance!.intervalSeconds;
     }
 
+    if (
+      validated.patch?.intervalSeconds &&
+      (validated.patch.intervalSeconds < 300 || validated.patch.intervalSeconds > 604800)
+    ) {
+      this.logger?.warn?.("Invalid patch interval in policy, reverting to default");
+      validated.patch!.intervalSeconds = DEFAULT_POLICY.patch!.intervalSeconds;
+    }
+
     // validate plugins
     if (!Array.isArray(validated.plugins?.enabled)) {
       validated.plugins = { enabled: DEFAULT_POLICY.plugins!.enabled };
@@ -234,6 +257,7 @@ export class PolicyRuntime extends EventEmitter {
       version: this.store.getVersion(),
       inventoryInterval: this.getInventoryInterval(),
       complianceInterval: this.getComplianceInterval(),
+      patchInterval: this.getPatchInterval(),
       plugins: this.getEnabledPlugins(),
       modules: this.listEnabledModules(),
       features: this.policy.features

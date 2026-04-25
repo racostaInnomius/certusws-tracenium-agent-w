@@ -10,6 +10,7 @@ import {
   handleGrpcConnect,
   handleHeartbeat
 } from "./grpc-bridge";
+import { handlePatchInstall, handlePatchScan } from "./patch-management";
 import { handleSecurityPosture } from "./security-posture";
 import { logger } from "./logger";
 
@@ -18,7 +19,7 @@ function isRoot() {
 }
 
 function requiresRoot(method: string) {
-  return method.startsWith("crypto.") || method.startsWith("grpc.");
+  return method.startsWith("crypto.") || method.startsWith("grpc.") || method === "patch.install";
 }
 
 export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise<PrivSvcResponse> {
@@ -88,6 +89,12 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     case "security.compliance":
     case "security.posture":
       return handleSecurityPosture(req);
+
+    case "patch.scan":
+      return handlePatchScan(req);
+
+    case "patch.install":
+      return handlePatchInstall(req);
 
     default:
       return fail(req.id, "not_supported", `Unsupported method: ${req.method}`);
