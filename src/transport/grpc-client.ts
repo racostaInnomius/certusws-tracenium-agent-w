@@ -227,6 +227,17 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         if (!clientCertThumbprint) throw new Error("Missing mtls.clientCertThumbprint in enrollment");
         if (!issuingCaThumbprint) throw new Error("Missing mtls.issuingCaThumbprint in enrollment");
 
+        // PrivSvc owns the gRPC stream and emits HELLO on its own. Without
+        // this field, PrivSvc fills `policyVersion: ""` in HELLO and the
+        // server flags every reconnect as policy drift — re-shipping the
+        // full policyJson, writing two `policy_*` rows + an
+        // `policy_hello_drift_detected` audit event per connect, and
+        // drowning real drift events in noise. Forwarding the locally
+        // persisted version closes the loop: server compares, finds them
+        // equal on healthy reconnects, and only ships an update when the
+        // operator actually changed the policy while the agent was offline.
+        const policyVersion = String(ctx.policy.getVersion() || "");
+
         ctx.logger?.info("[grpc-client] requesting PrivSvc gRPC connect");
 
         const resp = await (ctx.priv as any).call({
@@ -240,7 +251,8 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
             tenantId,
             deviceId,
             agentVersion,
-            capabilities
+            capabilities,
+            policyVersion
           },
           meta: { tenantId, deviceId }
         });
