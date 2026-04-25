@@ -1,5 +1,6 @@
 // src/bootstrap/config.ts
 import dotenv from "dotenv";
+import pkg from "../../package.json";
 dotenv.config();
 
 function required(name: string, value?: string): string {
@@ -83,9 +84,23 @@ export const config = {
 
     return undefined;
   })(),
-  agentId: process.env.AGENT_ID || "auto", 
+  agentId: process.env.AGENT_ID || "auto",
   enrollmentToken: process.env.ENROLLMENT_TOKEN || "",
-  agentVersion: process.env.AGENT_VERSION || "1.1.4",
-  coreVersion: process.env.CORE_VERSION || "1.1.4",
+  // Single source of truth for agent / core versions: the repo's
+  // package.json. Previously hardcoded as a fallback string ("1.1.4"
+  // / "1.1.2" / etc.), which silently desynced from package.json
+  // whenever a release bumped one but not the other. Net effect:
+  // operators saw 1.1.3 advertised in the binary metadata, an agent
+  // installed it, but the running agent self-reported the OLD
+  // hardcoded version after restart (the .pkg I built carried a
+  // bundle whose agentVersion fallback was still pointing at the
+  // previous release because nobody had edited config.ts).
+  //
+  // Reading from package.json fixes it: bumping `version` in
+  // package.json is the only change needed for a release. esbuild
+  // inlines the JSON import at bundle time, so there's no runtime
+  // file-read cost or path-resolution surprise on different platforms.
+  agentVersion: process.env.AGENT_VERSION || pkg.version,
+  coreVersion: process.env.CORE_VERSION || pkg.version,
   channel: (process.env.CHANNEL as "stable" | "beta" | "pilot") || "stable",
 };

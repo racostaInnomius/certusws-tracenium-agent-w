@@ -15,9 +15,21 @@ export type PmpRemediationStatus =
   | "partial"
   | "failed";
 
+// Severity bucket for an available patch. We canonicalize to four
+// values + "unknown" for cross-platform consistency:
+//   - critical / important / moderate / low: the set Microsoft uses
+//     for `IUpdate.MsrcSeverity` (also matches CVSS bucketing well
+//     enough for ops triage). Apple's `softwareupdate --list` does
+//     not expose severity at all, so macOS items default to
+//     "unknown" until we cross-reference against a CVE feed.
+//   - unknown: provider couldn't determine it (Apple today; future
+//     Linux distros without a clear severity field).
+export type PmpSeverity = "critical" | "important" | "moderate" | "low" | "unknown";
+
 export type PmpScanItem = {
   hotFixId?: string;
   title?: string;
+  severity?: PmpSeverity;
   installedBy?: string;
   installedOn?: string;
   source?: string;

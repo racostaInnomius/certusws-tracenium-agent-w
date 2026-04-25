@@ -31,6 +31,14 @@ function normalizePatchItems(items: any[]): PmpScanItem[] {
   return items.map((item) => ({
     hotFixId: item?.label ? String(item.label) : undefined,
     title: item?.title ? String(item.title) : undefined,
+    // `softwareupdate --list` does not expose a severity field. We
+    // emit "unknown" explicitly (rather than leaving it undefined) so
+    // the cross-platform schema stays uniform — backend/UI can render
+    // "Unknown severity" as a distinct bucket instead of treating
+    // the absence as "no field shipped". Future enhancement: cross-
+    // reference each label against an external CVE feed (NVD/MSRC)
+    // to enrich macOS items with a real severity.
+    severity: "unknown",
     installedBy: undefined,
     installedOn: undefined,
     source: "apple_software_update"

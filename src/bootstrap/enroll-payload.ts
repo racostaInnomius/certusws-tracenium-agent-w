@@ -1,6 +1,7 @@
 // src/bootstrap/enroll-payload.ts
 import os from "os";
 import si from "systeminformation";
+import pkg from "../../package.json";
 
 export async function buildEnrollmentPayload() {
   const osInfo = await si.osInfo();
@@ -8,8 +9,13 @@ export async function buildEnrollmentPayload() {
 
   return {
     agent: {
-      agentVersion: "1.1.4",
-      coreVersion: "1.1.4",
+      // Read from package.json so a release-version bump is a
+      // single-file change. See bootstrap/config.ts for the full
+      // rationale (avoids the silent desync that produced agents
+      // self-reporting the previous version after a successful
+      // self-update).
+      agentVersion: pkg.version,
+      coreVersion: pkg.version,
       platform: os.platform(),
       arch: os.arch(),
     },
