@@ -22518,22 +22518,22 @@ var config = {
   })(),
   agentId: process.env.AGENT_ID || "auto",
   enrollmentToken: process.env.ENROLLMENT_TOKEN || "",
-  // Single source of truth for agent / core versions: the repo's
-  // package.json. Previously hardcoded as a fallback string ("1.1.4"
-  // / "1.1.2" / etc.), which silently desynced from package.json
-  // whenever a release bumped one but not the other. Net effect:
-  // operators saw 1.1.3 advertised in the binary metadata, an agent
-  // installed it, but the running agent self-reported the OLD
-  // hardcoded version after restart (the .pkg I built carried a
-  // bundle whose agentVersion fallback was still pointing at the
-  // previous release because nobody had edited config.ts).
+  // Hard-coded to package.json. NO env-var override:
   //
-  // Reading from package.json fixes it: bumping `version` in
-  // package.json is the only change needed for a release. esbuild
-  // inlines the JSON import at bundle time, so there's no runtime
-  // file-read cost or path-resolution surprise on different platforms.
-  agentVersion: process.env.AGENT_VERSION || package_default.version,
-  coreVersion: process.env.CORE_VERSION || package_default.version,
+  // The macOS installer's old postinstall used to write
+  // `AGENT_VERSION=1.1.2` into /Library/Application Support/Tracenium/
+  // Agent/.env, and dotenv loaded it at boot. Even after we replaced
+  // the bundle on disk via self-update, that stale .env shadowed
+  // pkg.version and the agent kept self-reporting 1.1.2 forever.
+  //
+  // We now (a) stopped writing AGENT_VERSION to .env in postinstall
+  // and (b) ignore process.env.AGENT_VERSION entirely. The bundled
+  // package.json is the only source. esbuild inlines the JSON
+  // import at bundle time, so a release is `bump package.json,
+  // build, ship` — no other file to keep in sync. Dev override is
+  // still possible by editing package.json before bundling.
+  agentVersion: package_default.version,
+  coreVersion: package_default.version,
   channel: process.env.CHANNEL || "stable"
 };
 
