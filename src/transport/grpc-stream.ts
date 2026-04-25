@@ -126,11 +126,69 @@ function normalizePmpResults(results: unknown): NonNullable<PmpNamespace["remedi
   });
 }
 
+// Minimum gap between scheduler-emitted and control-forced facts of
+// the same factType. The scheduler ticks slowly (hourly+), so 60s is
+// a comfortable window: any control message that lands inside this
+// window is overwhelmingly a duplicate (the backend's job dispatcher
+// re-asks for a snapshot moments after a regular send) and we'd be
+// shipping a near-identical fact for no operator benefit. The
+// observed failure mode without this guard was a paired empty-twin
+// fact 4s after every full snapshot — see the JPR-MacBookPro tenant
+// DB inspection that motivated the fix.
+const CONTROL_FACTS_COOLDOWN_MS = 60_000;
+
+const FACT_TYPE_COOLDOWN_KEYS: Record<string, string> = {
+  inventory:  "lastSentFactsAt:inventory",
+  compliance: "lastSentFactsAt:compliance",
+  patch:      "lastSentFactsAt:patch"
+};
+
+function isOnCooldown(factType: string): { skip: boolean; ageMs: number | null } {
+  const key = FACT_TYPE_COOLDOWN_KEYS[factType];
+  if (!key) return { skip: false, ageMs: null };
+  try {
+    const raw = outbox.getState(key);
+    if (!raw) return { skip: false, ageMs: null };
+    const ts = Number(raw);
+    if (!Number.isFinite(ts)) return { skip: false, ageMs: null };
+    const ageMs = Date.now() - ts;
+    return { skip: ageMs < CONTROL_FACTS_COOLDOWN_MS && ageMs >= 0, ageMs };
+  } catch {
+    return { skip: false, ageMs: null };
+  }
+}
+
 async function collectFactsSnapshot(
   ctx: AgentContext,
   source: string,
   factType = "inventory"
 ) {
+  // Cooldown guard: if the scheduler already shipped a fact of this
+  // type within CONTROL_FACTS_COOLDOWN_MS, skip the redundant collect.
+  // Returns a sentinel `outboxId: 0` and `cooldown: true` so the
+  // runJob handler can ACK back as a no-op success rather than a
+  // failure — the backend asked for fresh data, we just shipped it.
+  // factType "all" still goes through (rare, only when explicitly
+  // requested) since at least one of its components is always due.
+  if (factType !== "all") {
+    const { skip, ageMs } = isOnCooldown(factType);
+    if (skip) {
+      ctx.logger?.info?.("FACTS_SNAPSHOT skipped — cooldown active", {
+        source,
+        factType,
+        ageMs,
+        cooldownMs: CONTROL_FACTS_COOLDOWN_MS
+      });
+      return {
+        outboxId: 0,
+        modules: [],
+        softwareCount: 0,
+        cooldown: true,
+        ageMs
+      };
+    }
+  }
+
   const namespaces = {} as Namespaces;
 
   if ((factType === "inventory" || factType === "all") && ctx.policyRuntime.isInventoryEnabled() && ctx.policyRuntime.pluginEnabled("amp")) {
@@ -161,11 +219,46 @@ async function collectFactsSnapshot(
     throw new Error(`${source}: no plugin namespaces collected`);
   }
 
+  // Rehydrate software items from the persisted baseline when the AMP
+  // collector returned `items: undefined` (its delta-detection path
+  // returns no items when nothing changed since the last scan). A
+  // control-message-driven snapshot is supposed to be a *complete*
+  // picture of the device — without rehydration the backend gets a
+  // partial fact (count present, items missing) and the recent
+  // tenant-DB inspection on JPR-MacBookPro showed exactly this
+  // pathology: every full snapshot was followed ~4s later by a paired
+  // empty snapshot from this control path. Mirroring the scheduler's
+  // `needsRehydrate` logic eliminates the empty-twin sends.
+  if (namespaces.amp?.software && namespaces.amp.software.items == null) {
+    try {
+      const { loadSoftwareBaseline } = await import("../domain/software-baseline-repo");
+      const baseline = loadSoftwareBaseline() ?? [];
+      if (baseline.length > 0) {
+        namespaces.amp.software.items = baseline as any;
+        namespaces.amp.software.count = baseline.length;
+      }
+    } catch (err) {
+      ctx.logger?.warn?.("Failed to rehydrate AMP software baseline for control-forced snapshot", { err });
+    }
+  }
+
   const facts = await buildDeviceFacts(ctx, namespaces);
   const outboxId = outbox.enqueue({
     type: "FACTS_SNAPSHOT",
     payload: facts
   });
+
+  // Stamp the cooldown so a backend retry of this same job (or a
+  // separate scheduler tick that lands in the next minute) is treated
+  // as redundant. Symmetric with the scheduler's own stamping.
+  const cooldownKey = FACT_TYPE_COOLDOWN_KEYS[factType];
+  if (cooldownKey) {
+    try {
+      outbox.setState(cooldownKey, String(Date.now()));
+    } catch (err) {
+      ctx.logger?.warn?.("Failed to stamp cooldown after control-forced send", { factType, err });
+    }
+  }
 
   const softwareCount = Number(namespaces.amp?.software?.count ?? 0);
 
@@ -275,6 +368,16 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
     case "facts_snapshot": {
       const factType = String(payload?.factType || "inventory");
       const result = await collectFactsSnapshot(ctx, `runJob:${jobId}`, factType);
+      // Cooldown hit → ACK as success with a recognizable message so
+      // the backend's job dispatcher records the job as completed
+      // without thinking we lost it. The "fresh" message is a hint to
+      // operators that the data they're about to look at is current.
+      if ((result as any).cooldown) {
+        return {
+          status: 0,
+          message: `facts_fresh:cooldown_${(result as any).ageMs}ms`
+        };
+      }
       return {
         status: 0,
         message: `facts_enqueued:${result.outboxId}`
@@ -297,6 +400,12 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       }
 
       const result = await collectFactsSnapshot(ctx, `runJob:${jobId}`, "patch");
+      if ((result as any).cooldown) {
+        return {
+          status: 0,
+          message: `patch_scan_fresh:cooldown_${(result as any).ageMs}ms`
+        };
+      }
       return {
         status: 0,
         message: `patch_scan_enqueued:${result.outboxId}`

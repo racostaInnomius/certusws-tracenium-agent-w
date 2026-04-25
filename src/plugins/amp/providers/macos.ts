@@ -61,12 +61,80 @@ const APPLE_PKGUTIL_NOISE_PREFIXES = [
   "com.apple.pkg.XcodeExtensionSupport"    // Xcode internal receipt
 ];
 
+/**
+ * Suffix patterns for arch-tagged sub-component receipts. macOS pkg-based
+ * SDKs (notably .NET, but the same shape shows up for the JDK and a few
+ * VS components) install each runtime piece as its own pkgutil receipt
+ * carrying the version + target arch in the bundle id, e.g.
+ *   com.microsoft.dotnet.hostfxr.10.0.3.component.osx.arm64
+ *   com.microsoft.dotnet.aspnetcore.10.0.3.component.osx.arm64
+ *   com.microsoft.dotnet.runtime.10.0.3.component.osx.arm64
+ *   com.microsoft.dotnet.targetingpacks.10.0.3.component.osx.arm64
+ *   ...one entry per shared library, per version still on disk
+ *
+ * These are NEVER user-installed apps — they're internal artifacts of
+ * the SDK installer. They:
+ *   1. drown the legitimate inventory (a single .NET install adds
+ *      15-20 receipts; old versions accumulate forever);
+ *   2. churn on every Microsoft patch so the software delta sees
+ *      `added/removed` entries that aren't real installs and trigger
+ *      spurious FACTS_SNAPSHOT sends;
+ *   3. cause the visible package count to fluctuate (137↔138 in our
+ *      test fleet) because a partial scan of `/usr/local/share/dotnet`
+ *      sometimes catches a stale receipt mid-deletion.
+ *
+ * Matching by suffix instead of prefix is intentional — Microsoft,
+ * Oracle, and a few open-source projects all use the `.component.<arch>`
+ * convention, so one rule covers all of them.
+ */
+const PKGUTIL_NOISE_SUFFIX_PATTERNS = [
+  /\.component\.osx\.(arm64|x86_64)$/i,    // .NET SDK component receipts
+  /\.component\.(arm64|x86_64)$/i,         // legacy variant without ".osx."
+  /\.component\.universal2?$/i             // universal binary component receipts
+];
+
 function isApplePkgutilNoise(pkgId: string): boolean {
   if (!pkgId) return false;
   for (const prefix of APPLE_PKGUTIL_NOISE_PREFIXES) {
     if (pkgId.startsWith(prefix)) return true;
   }
+  for (const re of PKGUTIL_NOISE_SUFFIX_PATTERNS) {
+    if (re.test(pkgId)) return true;
+  }
   return false;
+}
+
+/**
+ * Strip a version-shaped segment out of a pkgutil bundle id and return
+ * both the canonical id (without the version) and the extracted
+ * version. Some installers bake the version into the bundle id, e.g.
+ *   com.docker.docker.4.32.1               →  com.docker.docker         + 4.32.1
+ *   com.zoom.pkg.Zoom.5.18.10               →  com.zoom.pkg.Zoom         + 5.18.10
+ *   com.microsoft.dotnet.runtime.10.0.3    →  com.microsoft.dotnet.runtime + 10.0.3
+ *
+ * Without canonicalization, the next vendor patch produces a new
+ * `installId` (because installId hashes the pkgId), and the delta
+ * detector reports "uninstalled old + installed new" instead of
+ * "updated". Operators see add/remove churn and the FACTS_SNAPSHOT
+ * dedup misfires.
+ *
+ * The match is conservative: 2+ dot-separated numeric components,
+ * possibly followed by a non-numeric suffix (e.g. "10.0.3.component.osx.arm64"
+ * — the noise filter usually drops these, but the canonicalization
+ * still helps for the rare receipt that escapes the filter). We avoid
+ * single-segment numerics ("com.foo.123") because those can be
+ * legitimate non-version segments.
+ */
+function canonicalizePkgutilId(pkgId: string): { canonical: string; version: string | null } {
+  if (!pkgId) return { canonical: pkgId, version: null };
+  // Match: optional ".<non-numeric-suffix>" then capture .<num>(.<num>)+
+  // anywhere from the middle to the end.
+  const re = /\.(\d+(?:\.\d+){1,3})(?=\.|$)/;
+  const m = pkgId.match(re);
+  if (!m) return { canonical: pkgId, version: null };
+  const version = m[1];
+  const canonical = pkgId.slice(0, m.index) + pkgId.slice((m.index ?? 0) + m[0].length);
+  return { canonical: canonical.replace(/\.{2,}/g, ".").replace(/\.$/, ""), version };
 }
 
 /**
@@ -199,31 +267,115 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
         timeout: 5000
       });
 
-      const pkgs = stdout.split("\n").map(p => p.trim()).filter(Boolean);
+      const allPkgs = stdout.split("\n").map(p => p.trim()).filter(Boolean);
 
-      for (const pkg of pkgs) {
-        // Filter Apple system noise. `pkgutil --pkgs` on any normal Mac
-        // returns hundreds of `com.apple.pkg.MAContent10_AssetPack_*`
-        // entries (GarageBand/Logic sample libraries), dozens of
-        // `com.apple.pkg.XProtectPlistConfigData_*` and XProtectPayloads
-        // entries (system security updates), and a lot of
-        // `com.apple.pkg.CLTools_*` (Xcode CLT components). None of
-        // these are user-installed software, they have no meaningful
-        // name, and they drown the legitimate inventory 10:1.
-        //
-        // The prefixes below are all system-internal packages that an
-        // admin viewing the inventory does NOT want to see. Legitimate
-        // Apple user-facing apps (Keynote, Numbers, Pages, iMovie,
-        // GarageBand proper, Xcode.app) come through the .app bundle
-        // collector above, so dropping all of these here is safe.
-        if (isApplePkgutilNoise(pkg)) continue;
+      // Filter Apple system noise + arch-tagged sub-component receipts
+      // BEFORE the orphan-receipt check so we don't burn execs on
+      // entries we'd drop anyway. `pkgutil --pkgs` on any normal Mac
+      // returns hundreds of `com.apple.pkg.MAContent10_AssetPack_*`
+      // (GarageBand/Logic samples), `com.apple.pkg.XProtect*` (security
+      // updates), `com.apple.pkg.CLTools_*` (Xcode CLT components),
+      // and `*.component.<arch>` (.NET/JDK SDK sub-receipts). Apple's
+      // user-facing apps come in via the .app bundle collector above,
+      // so dropping these here is safe.
+      const candidates = allPkgs.filter(pkg => !isApplePkgutilNoise(pkg));
+
+      // Orphan-receipt check: pkgutil keeps a record of every package
+      // ever installed, even after the files are removed manually
+      // (rm -rf /Applications/Foo.app, rm /usr/local/bin/foo, etc.).
+      // The receipt lingers and the package shows up in the inventory
+      // forever as "installed" until somebody runs `pkgutil --forget`.
+      // To weed those out we resolve `volume + location` from
+      // `pkgutil --pkg-info` and check the path on disk; if it's
+      // gone, the receipt is stale and we drop it.
+      //
+      // Apple's own receipts almost universally use `location: /`
+      // (root) so the existence check is a no-op for them — but we
+      // still want the metadata read because `pkg-info` returns the
+      // proper version string, which is more accurate than the
+      // version we can extract from the bundle id alone.
+      //
+      // Concurrency 10 keeps total time under ~1.5s on a fleet
+      // baseline of ~100 receipts after noise filtering.
+      type PkgRecord = {
+        pkgId: string;
+        location: string | null;
+        volume: string | null;
+        version: string | null;
+        installLocationExists: boolean;
+      };
+
+      async function readPkgInfo(pkgId: string): Promise<PkgRecord | null> {
+        try {
+          const { stdout: info } = await execFileAsync(
+            "/usr/sbin/pkgutil",
+            ["--pkg-info", pkgId],
+            { timeout: 3000 }
+          );
+          // Parse simple "key: value" lines.
+          let location: string | null = null;
+          let volume: string | null = null;
+          let version: string | null = null;
+          for (const line of info.split("\n")) {
+            const m = line.match(/^([a-z-]+):\s*(.*)$/i);
+            if (!m) continue;
+            const k = m[1].toLowerCase();
+            const v = m[2].trim();
+            if (k === "location") location = v;
+            else if (k === "volume") volume = v;
+            else if (k === "version") version = v;
+          }
+          // Resolve absolute install path. `volume` is often "/" and
+          // `location` is the relative path under it. Empty location
+          // for system packages means root install — always exists.
+          let installLocationExists = true;
+          if (location && location !== "/" && location !== "") {
+            const root = volume && volume !== "/" ? volume : "";
+            const abs = `${root}/${location}`.replace(/\/+/g, "/");
+            installLocationExists = await fs.promises
+              .access(abs, fs.constants.F_OK)
+              .then(() => true)
+              .catch(() => false);
+          }
+          return { pkgId, location, volume, version, installLocationExists };
+        } catch {
+          // pkg-info itself failed — receipt is corrupt or vanished
+          // between --pkgs and --pkg-info. Treat as orphan.
+          return null;
+        }
+      }
+
+      const pkgRecords: PkgRecord[] = [];
+      const PKG_INFO_CONCURRENCY = 10;
+      for (let i = 0; i < candidates.length; i += PKG_INFO_CONCURRENCY) {
+        const batch = candidates.slice(i, i + PKG_INFO_CONCURRENCY);
+        const records = await Promise.all(batch.map(readPkgInfo));
+        for (const r of records) if (r) pkgRecords.push(r);
+      }
+
+      const orphans = pkgRecords.filter(r => !r.installLocationExists).length;
+      if (orphans > 0) {
+        console.warn(`[MACOS] dropped ${orphans} orphan pkgutil receipts (install location missing)`);
+      }
+
+      for (const rec of pkgRecords) {
+        if (!rec.installLocationExists) continue;
+
+        // Use the canonicalized id (without the embedded version) for
+        // both `name` and `packageFamilyName` so a future patch — same
+        // package, new version — produces the same `installId` and is
+        // reported as `updated` instead of `removed+added`. Prefer the
+        // version from `pkg-info` over what we can extract from the
+        // bundle id; the receipt's recorded version is authoritative.
+        const { canonical, version: idVersion } = canonicalizePkgutilId(rec.pkgId);
+        const version = rec.version || idVersion;
 
         const normalized = normalizeApp({
-          name: pkg,
-          version: null,
+          name: canonical,
+          version,
           publisher: "pkgutil",
-          installLocation: "/",
-          packageFamilyName: pkg,
+          installLocation: rec.location || "/",
+          packageFamilyName: canonical,
           source: "pkgutil"
         });
 

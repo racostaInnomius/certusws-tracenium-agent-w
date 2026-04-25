@@ -456,6 +456,18 @@ class Scheduler {
         logger.warn("Failed to persist lastSentAgentVersion", { err });
       }
 
+      // Stamp the wall-clock time the inventory snapshot just shipped.
+      // The control-message path (`collectFactsSnapshot` over gRPC)
+      // reads this to skip a redundant collect when the backend asks
+      // for a snapshot moments after the scheduler already sent one —
+      // the pathology that produced 4-second-paired sends with one
+      // empty twin (see grpc-stream.ts cooldown check).
+      try {
+        outbox.setState("lastSentFactsAt:inventory", String(Date.now()));
+      } catch (err) {
+        logger.warn("Failed to persist lastSentFactsAt:inventory", { err });
+      }
+
       this.initialInventorySent = true;
 
       logger.info("FACTS_SNAPSHOT enqueued", {
@@ -537,6 +549,11 @@ class Scheduler {
         payload: facts
       });
       outbox.setState("namespaceHash:scp", currentHash);
+      try {
+        outbox.setState("lastSentFactsAt:compliance", String(Date.now()));
+      } catch (err) {
+        logger.warn("Failed to persist lastSentFactsAt:compliance", { err });
+      }
 
       // Schema 2.0: the agent no longer emits a checks[] array — the
       // server-side catalog evaluator produces findings. We log the
@@ -664,6 +681,11 @@ class Scheduler {
         payload: facts
       });
       outbox.setState("namespaceHash:pmp", currentHash);
+      try {
+        outbox.setState("lastSentFactsAt:patch", String(Date.now()));
+      } catch (err) {
+        logger.warn("Failed to persist lastSentFactsAt:patch", { err });
+      }
 
       logger.info("FACTS_SNAPSHOT enqueued", {
         deviceId: ctx.enrollment.deviceId,
