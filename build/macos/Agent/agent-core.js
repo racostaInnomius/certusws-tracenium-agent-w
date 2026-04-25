@@ -145,8 +145,8 @@ var require_package = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs15 = require("fs");
-    var path11 = require("path");
+    var fs16 = require("fs");
+    var path12 = require("path");
     var os16 = require("os");
     var crypto10 = require("crypto");
     var packageJson = require_package();
@@ -254,7 +254,7 @@ var require_main = __commonJS({
       if (options && options.path && options.path.length > 0) {
         if (Array.isArray(options.path)) {
           for (const filepath of options.path) {
-            if (fs15.existsSync(filepath)) {
+            if (fs16.existsSync(filepath)) {
               possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
             }
           }
@@ -262,15 +262,15 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path11.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path12.resolve(process.cwd(), ".env.vault");
       }
-      if (fs15.existsSync(possibleVaultPath)) {
+      if (fs16.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
       }
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path11.join(os16.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path12.join(os16.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = Boolean(options && options.debug);
@@ -287,7 +287,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path11.resolve(process.cwd(), ".env");
+      const dotenvPath = path12.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       const debug = Boolean(options && options.debug);
       const quiet = options && "quiet" in options ? options.quiet : true;
@@ -311,13 +311,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path12 of optionPaths) {
+      for (const path13 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs15.readFileSync(path12, { encoding }));
+          const parsed = DotenvModule.parse(fs16.readFileSync(path13, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e) {
           if (debug) {
-            _debug(`Failed to load ${path12} ${e.message}`);
+            _debug(`Failed to load ${path13} ${e.message}`);
           }
           lastError = e;
         }
@@ -332,7 +332,7 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative = path11.relative(process.cwd(), filePath);
+            const relative = path12.relative(process.cwd(), filePath);
             shortPaths.push(relative);
           } catch (e) {
             if (debug) {
@@ -1428,8 +1428,8 @@ var require_util = __commonJS({
   "node_modules/systeminformation/lib/util.js"(exports2) {
     "use strict";
     var os16 = require("os");
-    var fs15 = require("fs");
-    var path11 = require("path");
+    var fs16 = require("fs");
+    var path12 = require("path");
     var spawn2 = require("child_process").spawn;
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
@@ -1725,7 +1725,7 @@ var require_util = __commonJS({
       _powerShell = "powershell.exe";
       if (_windows) {
         const defaultPath = `${WINDIR}\\system32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-        if (fs15.existsSync(defaultPath)) {
+        if (fs16.existsSync(defaultPath)) {
           _powerShell = defaultPath;
         }
       }
@@ -1981,7 +1981,7 @@ var require_util = __commonJS({
         cpuinfo = _rpi_cpuinfo;
       } else if (cpuinfo === void 0) {
         try {
-          cpuinfo = fs15.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
+          cpuinfo = fs16.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
           _rpi_cpuinfo = cpuinfo;
         } catch {
           return false;
@@ -1994,7 +1994,7 @@ var require_util = __commonJS({
     function isRaspbian() {
       let osrelease = [];
       try {
-        osrelease = fs15.readFileSync("/etc/os-release", { encoding: "utf8" }).toString().split("\n");
+        osrelease = fs16.readFileSync("/etc/os-release", { encoding: "utf8" }).toString().split("\n");
       } catch {
         return false;
       }
@@ -2012,9 +2012,9 @@ var require_util = __commonJS({
       });
     }
     function darwinXcodeExists() {
-      const cmdLineToolsExists = fs15.existsSync("/Library/Developer/CommandLineTools/usr/bin/");
-      const xcodeAppExists = fs15.existsSync("/Applications/Xcode.app/Contents/Developer/Tools");
-      const xcodeExists = fs15.existsSync("/Library/Developer/Xcode/");
+      const cmdLineToolsExists = fs16.existsSync("/Library/Developer/CommandLineTools/usr/bin/");
+      const xcodeAppExists = fs16.existsSync("/Applications/Xcode.app/Contents/Developer/Tools");
+      const xcodeExists = fs16.existsSync("/Library/Developer/Xcode/");
       return cmdLineToolsExists || xcodeExists || xcodeAppExists;
     }
     function nanoSeconds() {
@@ -2132,9 +2132,9 @@ var require_util = __commonJS({
       return ("00000000" + parseInt(hex, 16).toString(2)).substr(-8);
     }
     function getFilesInPath(source) {
-      const lstatSync = fs15.lstatSync;
-      const readdirSync = fs15.readdirSync;
-      const join = path11.join;
+      const lstatSync = fs16.lstatSync;
+      const readdirSync = fs16.readdirSync;
+      const join = path12.join;
       function isDirectory(source2) {
         return lstatSync(source2).isDirectory();
       }
@@ -2164,7 +2164,7 @@ var require_util = __commonJS({
           return [];
         }
       }
-      if (fs15.existsSync(source)) {
+      if (fs16.existsSync(source)) {
         return getFilesRecursively(source);
       } else {
         return [];
@@ -2367,7 +2367,7 @@ var require_util = __commonJS({
         cpuinfo = _rpi_cpuinfo;
       } else {
         try {
-          cpuinfo = fs15.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
+          cpuinfo = fs16.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
           _rpi_cpuinfo = cpuinfo;
         } catch {
           return false;
@@ -3936,7 +3936,7 @@ var require_osinfo = __commonJS({
   "node_modules/systeminformation/lib/osinfo.js"(exports2) {
     "use strict";
     var os16 = require("os");
-    var fs15 = require("fs");
+    var fs16 = require("fs");
     var util = require_util();
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
@@ -4297,7 +4297,7 @@ var require_osinfo = __commonJS({
     function isUefiLinux() {
       return new Promise((resolve) => {
         process.nextTick(() => {
-          fs15.stat("/sys/firmware/efi", (err) => {
+          fs16.stat("/sys/firmware/efi", (err) => {
             if (!err) {
               return resolve(true);
             } else {
@@ -4537,7 +4537,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "git")) {
               if (_darwin) {
-                const gitHomebrewExists = fs15.existsSync("/usr/local/Cellar/git") || fs15.existsSync("/opt/homebrew/bin/git");
+                const gitHomebrewExists = fs16.existsSync("/usr/local/Cellar/git") || fs16.existsSync("/opt/homebrew/bin/git");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
                   exec2("git --version", (error, stdout) => {
                     if (!error) {
@@ -4733,8 +4733,8 @@ var require_osinfo = __commonJS({
                   const stdout = execSync3("sw_vers");
                   const lines = stdout.toString().split("\n");
                   const osVersion = util.getValue(lines, "ProductVersion", ":");
-                  const gitHomebrewExists1 = fs15.existsSync("/usr/local/Cellar/python");
-                  const gitHomebrewExists2 = fs15.existsSync("/opt/homebrew/bin/python");
+                  const gitHomebrewExists1 = fs16.existsSync("/usr/local/Cellar/python");
+                  const gitHomebrewExists2 = fs16.existsSync("/opt/homebrew/bin/python");
                   if (util.darwinXcodeExists() && util.semverCompare("12.0.1", osVersion) < 0 || gitHomebrewExists1 || gitHomebrewExists2) {
                     const cmd2 = gitHomebrewExists1 ? "/usr/local/Cellar/python -V 2>&1" : gitHomebrewExists2 ? "/opt/homebrew/bin/python -V 2>&1" : "python -V 2>&1";
                     exec2(cmd2, (error, stdout2) => {
@@ -4762,7 +4762,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "python3")) {
               if (_darwin) {
-                const gitHomebrewExists = fs15.existsSync("/usr/local/Cellar/python3") || fs15.existsSync("/opt/homebrew/bin/python3");
+                const gitHomebrewExists = fs16.existsSync("/usr/local/Cellar/python3") || fs16.existsSync("/opt/homebrew/bin/python3");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
                   exec2("python3 -V 2>&1", (error, stdout) => {
                     if (!error) {
@@ -4786,7 +4786,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "pip")) {
               if (_darwin) {
-                const gitHomebrewExists = fs15.existsSync("/usr/local/Cellar/pip") || fs15.existsSync("/opt/homebrew/bin/pip");
+                const gitHomebrewExists = fs16.existsSync("/usr/local/Cellar/pip") || fs16.existsSync("/opt/homebrew/bin/pip");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
                   exec2("pip -V 2>&1", (error, stdout) => {
                     if (!error) {
@@ -4812,7 +4812,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "pip3")) {
               if (_darwin) {
-                const gitHomebrewExists = fs15.existsSync("/usr/local/Cellar/pip3") || fs15.existsSync("/opt/homebrew/bin/pip3");
+                const gitHomebrewExists = fs16.existsSync("/usr/local/Cellar/pip3") || fs16.existsSync("/opt/homebrew/bin/pip3");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
                   exec2("pip3 -V 2>&1", (error, stdout) => {
                     if (!error) {
@@ -5115,7 +5115,7 @@ echo -n "hardware: "; cat /sys/class/dmi/id/product_uuid 2> /dev/null; echo;`;
               result2.os = util.getValue(lines, "os").toLowerCase();
               result2.hardware = util.getValue(lines, "hardware").toLowerCase();
               if (!result2.hardware) {
-                const lines2 = fs15.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
+                const lines2 = fs16.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
                 const serial = util.getValue(lines2, "serial");
                 result2.hardware = serial || "";
               }
@@ -5171,7 +5171,7 @@ echo -n "hardware: "; cat /sys/class/dmi/id/product_uuid 2> /dev/null; echo;`;
 var require_system = __commonJS({
   "node_modules/systeminformation/lib/system.js"(exports2) {
     "use strict";
-    var fs15 = require("fs");
+    var fs16 = require("fs");
     var os16 = require("os");
     var util = require_util();
     var { uuid } = require_osinfo();
@@ -5326,7 +5326,7 @@ var require_system = __commonJS({
                   util.noop();
                 }
               }
-              if (fs15.existsSync("/.dockerenv") || fs15.existsSync("/.dockerinit")) {
+              if (fs16.existsSync("/.dockerenv") || fs16.existsSync("/.dockerinit")) {
                 result2.model = "Docker Container";
               }
               try {
@@ -5354,7 +5354,7 @@ var require_system = __commonJS({
                 util.noop();
               }
               if (result2.manufacturer === "" && result2.model === "Computer" && result2.version === "") {
-                fs15.readFile("/proc/cpuinfo", (error2, stdout2) => {
+                fs16.readFile("/proc/cpuinfo", (error2, stdout2) => {
                   if (!error2) {
                     let lines2 = stdout2.toString().split("\n");
                     result2.model = util.getValue(lines2, "hardware", ":", true).toUpperCase();
@@ -5951,7 +5951,7 @@ var require_cpu = __commonJS({
     var os16 = require("os");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
-    var fs15 = require("fs");
+    var fs16 = require("fs");
     var util = require_util();
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
@@ -6908,7 +6908,7 @@ var require_cpu = __commonJS({
                   result2.socket = "SOC";
                 }
                 if (util.getValue(lines, "architecture") === "riscv64") {
-                  const linesRiscV = fs15.readFileSync("/proc/cpuinfo").toString().split("\n");
+                  const linesRiscV = fs16.readFileSync("/proc/cpuinfo").toString().split("\n");
                   const uarch = util.getValue(linesRiscV, "uarch") || "";
                   if (uarch.indexOf(",") > -1) {
                     const split = uarch.split(",");
@@ -7307,9 +7307,9 @@ var require_cpu = __commonJS({
                       return;
                     }
                   }
-                  fs15.stat("/sys/class/thermal/thermal_zone0/temp", (err) => {
+                  fs16.stat("/sys/class/thermal/thermal_zone0/temp", (err) => {
                     if (err === null) {
-                      fs15.readFile("/sys/class/thermal/thermal_zone0/temp", (error3, stdout3) => {
+                      fs16.readFile("/sys/class/thermal/thermal_zone0/temp", (error3, stdout3) => {
                         if (!error3) {
                           const lines2 = stdout3.toString().split("\n");
                           if (lines2.length > 0) {
@@ -7532,7 +7532,7 @@ var require_cpu = __commonJS({
                   });
                 }
                 if (!result2) {
-                  fs15.readFile("/proc/cpuinfo", (error2, stdout2) => {
+                  fs16.readFile("/proc/cpuinfo", (error2, stdout2) => {
                     if (!error2) {
                       let lines = stdout2.toString().split("\n");
                       result2 = util.getValue(lines, "features", ":", true).toLowerCase();
@@ -8034,7 +8034,7 @@ var require_memory = __commonJS({
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
-    var fs15 = require("fs");
+    var fs16 = require("fs");
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
     var _darwin = _platform === "darwin";
@@ -8096,7 +8096,7 @@ var require_memory = __commonJS({
           };
           if (_linux) {
             try {
-              fs15.readFile("/proc/meminfo", (error, stdout) => {
+              fs16.readFile("/proc/meminfo", (error, stdout) => {
                 if (!error) {
                   const lines = stdout.toString().split("\n");
                   result2.total = parseInt(util.getValue(lines, "memtotal"), 10);
@@ -8526,7 +8526,7 @@ var require_battery = __commonJS({
   "node_modules/systeminformation/lib/battery.js"(exports2, module2) {
     "use strict";
     var exec2 = require("child_process").exec;
-    var fs15 = require("fs");
+    var fs16 = require("fs");
     var util = require_util();
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
@@ -8578,24 +8578,24 @@ var require_battery = __commonJS({
         };
         if (_linux) {
           let battery_path = "";
-          if (fs15.existsSync("/sys/class/power_supply/BAT1/uevent")) {
+          if (fs16.existsSync("/sys/class/power_supply/BAT1/uevent")) {
             battery_path = "/sys/class/power_supply/BAT1/";
-          } else if (fs15.existsSync("/sys/class/power_supply/BAT0/uevent")) {
+          } else if (fs16.existsSync("/sys/class/power_supply/BAT0/uevent")) {
             battery_path = "/sys/class/power_supply/BAT0/";
           }
           let acConnected = false;
           let acPath = "";
-          if (fs15.existsSync("/sys/class/power_supply/AC/online")) {
+          if (fs16.existsSync("/sys/class/power_supply/AC/online")) {
             acPath = "/sys/class/power_supply/AC/online";
-          } else if (fs15.existsSync("/sys/class/power_supply/AC0/online")) {
+          } else if (fs16.existsSync("/sys/class/power_supply/AC0/online")) {
             acPath = "/sys/class/power_supply/AC0/online";
           }
           if (acPath) {
-            const file = fs15.readFileSync(acPath);
+            const file = fs16.readFileSync(acPath);
             acConnected = file.toString().trim() === "1";
           }
           if (battery_path) {
-            fs15.readFile(battery_path + "uevent", (error, stdout) => {
+            fs16.readFile(battery_path + "uevent", (error, stdout) => {
               if (!error) {
                 let lines = stdout.toString().split("\n");
                 result2.isCharging = util.getValue(lines, "POWER_SUPPLY_STATUS", "=").toLowerCase() === "charging";
@@ -8817,8 +8817,8 @@ var require_battery = __commonJS({
 var require_graphics = __commonJS({
   "node_modules/systeminformation/lib/graphics.js"(exports2) {
     "use strict";
-    var fs15 = require("fs");
-    var path11 = require("path");
+    var fs16 = require("fs");
+    var path12 = require("path");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
@@ -9179,11 +9179,11 @@ var require_graphics = __commonJS({
         }
         if (_windows) {
           try {
-            const basePath = path11.join(util.WINDIR, "System32", "DriverStore", "FileRepository");
-            const candidates = fs15.readdirSync(basePath, { withFileTypes: true }).filter((dir) => dir.isDirectory()).map((dir) => {
-              const nvidiaSmiPath = path11.join(basePath, dir.name, "nvidia-smi.exe");
+            const basePath = path12.join(util.WINDIR, "System32", "DriverStore", "FileRepository");
+            const candidates = fs16.readdirSync(basePath, { withFileTypes: true }).filter((dir) => dir.isDirectory()).map((dir) => {
+              const nvidiaSmiPath = path12.join(basePath, dir.name, "nvidia-smi.exe");
               try {
-                const stats = fs15.statSync(nvidiaSmiPath);
+                const stats = fs16.statSync(nvidiaSmiPath);
                 return { path: nvidiaSmiPath, ctime: stats.ctimeMs };
               } catch {
                 return null;
@@ -9898,7 +9898,7 @@ var require_filesystem = __commonJS({
   "node_modules/systeminformation/lib/filesystem.js"(exports2) {
     "use strict";
     var util = require_util();
-    var fs15 = require("fs");
+    var fs16 = require("fs");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var execPromiseSave = util.promisifySave(require("child_process").exec);
@@ -9919,11 +9919,11 @@ var require_filesystem = __commonJS({
       }
       let macOsDisks = [];
       let osMounts = [];
-      function getmacOsFsType(fs16) {
-        if (!fs16.startsWith("/")) {
+      function getmacOsFsType(fs17) {
+        if (!fs17.startsWith("/")) {
           return "NFS";
         }
-        const parts = fs16.split("/");
+        const parts = fs17.split("/");
         const fsShort = parts[parts.length - 1];
         const macOsDisksSingle = macOsDisks.filter((item) => item.indexOf(fsShort) >= 0);
         if (macOsDisksSingle.length === 1 && macOsDisksSingle[0].indexOf("APFS") >= 0) {
@@ -9931,11 +9931,11 @@ var require_filesystem = __commonJS({
         }
         return "HFS";
       }
-      function isLinuxTmpFs(fs16) {
+      function isLinuxTmpFs(fs17) {
         const linuxTmpFileSystems = ["rootfs", "unionfs", "squashfs", "cramfs", "initrd", "initramfs", "devtmpfs", "tmpfs", "udev", "devfs", "specfs", "type", "appimaged"];
         let result2 = false;
         linuxTmpFileSystems.forEach((linuxFs) => {
-          if (fs16.toLowerCase().indexOf(linuxFs) >= 0) {
+          if (fs17.toLowerCase().indexOf(linuxFs) >= 0) {
             result2 = true;
           }
         });
@@ -9963,18 +9963,18 @@ var require_filesystem = __commonJS({
           if (line !== "") {
             line = line.replace(/ +/g, " ").split(" ");
             if (line && (line[0].startsWith("/") || line[6] && line[6] === "/" || line[0].indexOf("/") > 0 || line[0].indexOf(":") === 1 || !_darwin && !isLinuxTmpFs(line[1]))) {
-              const fs16 = line[0];
+              const fs17 = line[0];
               const fsType = _linux || _freebsd || _openbsd || _netbsd ? line[1] : getmacOsFsType(line[0]);
               const size = parseInt(_linux || _freebsd || _openbsd || _netbsd ? line[2] : line[1], 10) * 1024;
               const used = parseInt(_linux || _freebsd || _openbsd || _netbsd ? line[3] : line[2], 10) * 1024;
               const available = parseInt(_linux || _freebsd || _openbsd || _netbsd ? line[4] : line[3], 10) * 1024;
               const use = parseFloat((100 * (used / (used + available))).toFixed(2));
-              const rw = osMounts && Object.keys(osMounts).length > 0 ? osMounts[fs16] || false : null;
+              const rw = osMounts && Object.keys(osMounts).length > 0 ? osMounts[fs17] || false : null;
               line.splice(0, _linux || _freebsd || _openbsd || _netbsd ? 6 : 5);
               const mount = line.join(" ");
-              if (!data.find((el) => el.fs === fs16 && el.type === fsType && el.mount === mount)) {
+              if (!data.find((el) => el.fs === fs17 && el.type === fsType && el.mount === mount)) {
                 data.push({
-                  fs: fs16,
+                  fs: fs17,
                   type: fsType,
                   size,
                   used,
@@ -10135,7 +10135,7 @@ var require_filesystem = __commonJS({
             });
           }
           if (_linux) {
-            fs15.readFile("/proc/sys/fs/file-nr", (error, stdout) => {
+            fs16.readFile("/proc/sys/fs/file-nr", (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().split("\n");
                 if (lines[0]) {
@@ -10154,7 +10154,7 @@ var require_filesystem = __commonJS({
                 }
                 resolve(result2);
               } else {
-                fs15.readFile("/proc/sys/fs/file-max", (error2, stdout2) => {
+                fs16.readFile("/proc/sys/fs/file-max", (error2, stdout2) => {
                   if (!error2) {
                     const lines = stdout2.toString().split("\n");
                     if (lines[0]) {
@@ -11475,7 +11475,7 @@ var require_network = __commonJS({
     var os16 = require("os");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
-    var fs15 = require("fs");
+    var fs16 = require("fs");
     var util = require_util();
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
@@ -12726,7 +12726,7 @@ var require_network = __commonJS({
           let cmd, lines, stats;
           if (!_network[ifaceSanitized] || _network[ifaceSanitized] && !_network[ifaceSanitized].ms || _network[ifaceSanitized] && _network[ifaceSanitized].ms && Date.now() - _network[ifaceSanitized].ms >= 500) {
             if (_linux) {
-              if (fs15.existsSync("/sys/class/net/" + ifaceSanitized)) {
+              if (fs16.existsSync("/sys/class/net/" + ifaceSanitized)) {
                 cmd = "cat /sys/class/net/" + ifaceSanitized + "/operstate; cat /sys/class/net/" + ifaceSanitized + "/statistics/rx_bytes; cat /sys/class/net/" + ifaceSanitized + "/statistics/tx_bytes; cat /sys/class/net/" + ifaceSanitized + "/statistics/rx_dropped; cat /sys/class/net/" + ifaceSanitized + "/statistics/rx_errors; cat /sys/class/net/" + ifaceSanitized + "/statistics/tx_dropped; cat /sys/class/net/" + ifaceSanitized + "/statistics/tx_errors; ";
                 exec2(cmd, (error, stdout) => {
                   if (!error) {
@@ -14044,8 +14044,8 @@ var require_processes = __commonJS({
   "node_modules/systeminformation/lib/processes.js"(exports2) {
     "use strict";
     var os16 = require("os");
-    var fs15 = require("fs");
-    var path11 = require("path");
+    var fs16 = require("fs");
+    var path12 = require("path");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
@@ -14615,7 +14615,7 @@ var require_processes = __commonJS({
               }
               if (firstPos === 1e4 && tmpCommand.indexOf(" ") > -1) {
                 const parts = tmpCommand.split(" ");
-                if (fs15.existsSync(path11.join(cmdPath, parts[0]))) {
+                if (fs16.existsSync(path12.join(cmdPath, parts[0]))) {
                   command = parts.shift();
                   params = (parts.join(" ") + " " + tmpParams).trim();
                 } else {
@@ -18751,10 +18751,10 @@ var require_bluetooth = __commonJS({
     "use strict";
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
-    var path11 = require("path");
+    var path12 = require("path");
     var util = require_util();
     var bluetoothVendors = require_bluetoothVendors();
-    var fs15 = require("fs");
+    var fs16 = require("fs");
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
     var _darwin = _platform === "darwin";
@@ -18883,12 +18883,12 @@ var require_bluetooth = __commonJS({
           if (_linux) {
             const btFiles = util.getFilesInPath("/var/lib/bluetooth/");
             btFiles.forEach((element) => {
-              const filename = path11.basename(element);
+              const filename = path12.basename(element);
               const pathParts = element.split("/");
               const macAddr1 = pathParts.length >= 6 ? pathParts[pathParts.length - 2] : null;
               const macAddr2 = pathParts.length >= 7 ? pathParts[pathParts.length - 3] : null;
               if (filename === "info") {
-                const infoFile = fs15.readFileSync(element, { encoding: "utf8" }).split("\n");
+                const infoFile = fs16.readFileSync(element, { encoding: "utf8" }).split("\n");
                 result2.push(parseLinuxBluetoothInfo(infoFile, macAddr1, macAddr2));
               }
             });
@@ -19981,7 +19981,19 @@ function isApplePkgutilNoise(pkgId) {
   for (const prefix of APPLE_PKGUTIL_NOISE_PREFIXES) {
     if (pkgId.startsWith(prefix)) return true;
   }
+  for (const re of PKGUTIL_NOISE_SUFFIX_PATTERNS) {
+    if (re.test(pkgId)) return true;
+  }
   return false;
+}
+function canonicalizePkgutilId(pkgId) {
+  if (!pkgId) return { canonical: pkgId, version: null };
+  const re = /\.(\d+(?:\.\d+){1,3})(?=\.|$)/;
+  const m = pkgId.match(re);
+  if (!m) return { canonical: pkgId, version: null };
+  const version = m[1];
+  const canonical = pkgId.slice(0, m.index) + pkgId.slice((m.index ?? 0) + m[0].length);
+  return { canonical: canonical.replace(/\.{2,}/g, ".").replace(/\.$/, ""), version };
 }
 async function collectMacSoftware() {
   try {
@@ -20069,15 +20081,59 @@ async function collectMacSoftware() {
         maxBuffer: 1024 * 1024 * 5,
         timeout: 5e3
       });
-      const pkgs = stdout.split("\n").map((p) => p.trim()).filter(Boolean);
-      for (const pkg of pkgs) {
-        if (isApplePkgutilNoise(pkg)) continue;
+      const allPkgs = stdout.split("\n").map((p) => p.trim()).filter(Boolean);
+      const candidates = allPkgs.filter((pkg) => !isApplePkgutilNoise(pkg));
+      async function readPkgInfo(pkgId) {
+        try {
+          const { stdout: info } = await execFileAsync(
+            "/usr/sbin/pkgutil",
+            ["--pkg-info", pkgId],
+            { timeout: 3e3 }
+          );
+          let location = null;
+          let volume = null;
+          let version = null;
+          for (const line of info.split("\n")) {
+            const m = line.match(/^([a-z-]+):\s*(.*)$/i);
+            if (!m) continue;
+            const k = m[1].toLowerCase();
+            const v = m[2].trim();
+            if (k === "location") location = v;
+            else if (k === "volume") volume = v;
+            else if (k === "version") version = v;
+          }
+          let installLocationExists = true;
+          if (location && location !== "/" && location !== "") {
+            const root = volume && volume !== "/" ? volume : "";
+            const abs = `${root}/${location}`.replace(/\/+/g, "/");
+            installLocationExists = await import_fs10.default.promises.access(abs, import_fs10.default.constants.F_OK).then(() => true).catch(() => false);
+          }
+          return { pkgId, location, volume, version, installLocationExists };
+        } catch {
+          return null;
+        }
+      }
+      const pkgRecords = [];
+      const PKG_INFO_CONCURRENCY = 10;
+      for (let i = 0; i < candidates.length; i += PKG_INFO_CONCURRENCY) {
+        const batch = candidates.slice(i, i + PKG_INFO_CONCURRENCY);
+        const records = await Promise.all(batch.map(readPkgInfo));
+        for (const r of records) if (r) pkgRecords.push(r);
+      }
+      const orphans = pkgRecords.filter((r) => !r.installLocationExists).length;
+      if (orphans > 0) {
+        console.warn(`[MACOS] dropped ${orphans} orphan pkgutil receipts (install location missing)`);
+      }
+      for (const rec of pkgRecords) {
+        if (!rec.installLocationExists) continue;
+        const { canonical, version: idVersion } = canonicalizePkgutilId(rec.pkgId);
+        const version = rec.version || idVersion;
         const normalized = normalizeApp({
-          name: pkg,
-          version: null,
+          name: canonical,
+          version,
           publisher: "pkgutil",
-          installLocation: "/",
-          packageFamilyName: pkg,
+          installLocation: rec.location || "/",
+          packageFamilyName: canonical,
           source: "pkgutil"
         });
         if (normalized && normalized.name) {
@@ -20189,7 +20245,7 @@ async function collectMacSecurity(ctx) {
     return unknown;
   }
 }
-var import_os9, import_systeminformation2, import_child_process4, import_util, import_fs10, execFileAsync, APPLE_PKGUTIL_NOISE_PREFIXES, macProvider;
+var import_os9, import_systeminformation2, import_child_process4, import_util, import_fs10, execFileAsync, APPLE_PKGUTIL_NOISE_PREFIXES, PKGUTIL_NOISE_SUFFIX_PATTERNS, macProvider;
 var init_macos = __esm({
   "src/plugins/amp/providers/macos.ts"() {
     "use strict";
@@ -20227,6 +20283,14 @@ var init_macos = __esm({
       // Xcode internal receipt
       "com.apple.pkg.XcodeExtensionSupport"
       // Xcode internal receipt
+    ];
+    PKGUTIL_NOISE_SUFFIX_PATTERNS = [
+      /\.component\.osx\.(arm64|x86_64)$/i,
+      // .NET SDK component receipts
+      /\.component\.(arm64|x86_64)$/i,
+      // legacy variant without ".osx."
+      /\.component\.universal2?$/i
+      // universal binary component receipts
     ];
     macProvider = {
       async collect(ctx) {
@@ -20844,8 +20908,213 @@ var init_scp = __esm({
   }
 });
 
-// src/plugins/pmp/providers/windows.ts
+// src/plugins/pmp/state.ts
+function ensureDir(dir) {
+  import_fs11.default.mkdirSync(dir, { recursive: true });
+}
+function resolveBaseDir() {
+  if (process.platform === "win32") {
+    return import_path8.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
+  }
+  if (process.platform === "darwin") {
+    return "/Library/Application Support/Tracenium";
+  }
+  return "/var/lib/tracenium";
+}
+function getStatePath() {
+  const dir = import_path8.default.join(resolveBaseDir(), "state");
+  ensureDir(dir);
+  return import_path8.default.join(dir, "pmp-state.json");
+}
+function loadPmpState() {
+  const file = getStatePath();
+  if (!import_fs11.default.existsSync(file)) {
+    return {};
+  }
+  try {
+    return JSON.parse(import_fs11.default.readFileSync(file, "utf8"));
+  } catch (err) {
+    console.error("[pmp-state] corrupted state file", err);
+    return {};
+  }
+}
+function savePmpState(next) {
+  const file = getStatePath();
+  const tmp = `${file}.tmp`;
+  import_fs11.default.writeFileSync(tmp, JSON.stringify(next, null, 2), "utf8");
+  import_fs11.default.renameSync(tmp, file);
+}
+function updatePmpState(patch) {
+  const current = loadPmpState();
+  const next = {
+    ...current,
+    ...patch
+  };
+  if (patch.status === "in_progress") {
+    next.finishedAtUtc = void 0;
+    next.lastError = void 0;
+  }
+  if (patch.lastError) {
+    next.status = "failed";
+  }
+  savePmpState(next);
+  return next;
+}
+var import_fs11, import_path8;
+var init_state = __esm({
+  "src/plugins/pmp/state.ts"() {
+    "use strict";
+    import_fs11 = __toESM(require("fs"));
+    import_path8 = __toESM(require("path"));
+  }
+});
+
+// src/plugins/pmp/providers/macos.ts
 function normalizeArray2(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") return [value];
+  return [];
+}
+async function readPatchScan(ctx) {
+  const resp = await ctx.priv.call({
+    v: 1,
+    id: `pmp_${Date.now()}`,
+    method: "patch.scan",
+    params: {},
+    meta: {
+      tenantId: ctx.enrollment.tenantId,
+      deviceId: ctx.enrollment.deviceId
+    }
+  });
+  if (!resp?.ok) {
+    throw new Error(resp?.error?.message || "patch.scan failed");
+  }
+  return resp.result || {};
+}
+function normalizePatchItems(items) {
+  return items.map((item) => ({
+    hotFixId: item?.label ? String(item.label) : void 0,
+    title: item?.title ? String(item.title) : void 0,
+    installedBy: void 0,
+    installedOn: void 0,
+    source: "apple_software_update"
+  }));
+}
+function deriveOverallStatus(scanStatus, remediation) {
+  if (remediation?.status === "in_progress") {
+    return "installing";
+  }
+  if (remediation?.rebootRequired) {
+    return "reboot_required";
+  }
+  return scanStatus;
+}
+function deriveOverallScore(status) {
+  switch (status) {
+    case "healthy":
+      return 100;
+    case "reboot_required":
+      return 60;
+    case "updates_available":
+      return 40;
+    case "inventory_only":
+      return 20;
+    case "installing":
+      return 30;
+    case "scan_pending":
+    case "idle":
+      return 10;
+    case "error":
+    default:
+      return 0;
+  }
+}
+async function collectMacosPmp(ctx) {
+  const remediationState = loadPmpState();
+  const remediation = {
+    status: remediationState.status || "idle",
+    mode: remediationState.mode,
+    startedAtUtc: remediationState.startedAtUtc,
+    finishedAtUtc: remediationState.finishedAtUtc,
+    rebootRequired: remediationState.rebootRequired === true,
+    installedCount: Number(remediationState.installedCount ?? 0),
+    failedCount: Number(remediationState.failedCount ?? 0),
+    selectedCount: Number(remediationState.selectedCount ?? 0),
+    lastError: remediationState.lastError,
+    results: remediationState.results || []
+  };
+  let posture = {};
+  let scanItems = [];
+  let scanStatus = "inventory_only";
+  try {
+    posture = await readPatchScan(ctx);
+    scanItems = normalizePatchItems(normalizeArray2(posture?.items));
+    scanStatus = posture?.status === "updates_available" ? "updates_available" : posture?.status === "healthy" ? "healthy" : "inventory_only";
+  } catch (err) {
+    const message = err?.message || String(err);
+    return {
+      schemaVersion: "1.0",
+      collector: {
+        plugin: "pmp",
+        version: ctx.config.agentVersion
+      },
+      hasChanges: true,
+      overall: {
+        status: "error",
+        score: 0
+      },
+      scan: {
+        scannedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+        source: "apple_software_update",
+        mode: "inventory_only",
+        installedPatchCount: 0,
+        securityPatchCount: 0,
+        items: []
+      },
+      remediation: remediation.status === "idle" && !(remediation.results || []).length ? {
+        ...remediation,
+        lastError: message,
+        results: [
+          {
+            result: "failed",
+            message
+          }
+        ]
+      } : remediation
+    };
+  }
+  const overallStatus = deriveOverallStatus(scanStatus, remediation);
+  return {
+    schemaVersion: "1.0",
+    collector: {
+      plugin: "pmp",
+      version: ctx.config.agentVersion
+    },
+    hasChanges: true,
+    overall: {
+      status: overallStatus,
+      score: deriveOverallScore(overallStatus)
+    },
+    scan: {
+      scannedAtUtc: posture?.scannedAtUtc ?? (/* @__PURE__ */ new Date()).toISOString(),
+      source: "apple_software_update",
+      mode: "inventory_only",
+      installedPatchCount: Number(posture?.updateCount ?? scanItems.length),
+      securityPatchCount: Number(posture?.securityUpdateCount ?? scanItems.length),
+      items: scanItems
+    },
+    remediation
+  };
+}
+var init_macos3 = __esm({
+  "src/plugins/pmp/providers/macos.ts"() {
+    "use strict";
+    init_state();
+  }
+});
+
+// src/plugins/pmp/providers/windows.ts
+function normalizeArray3(value) {
   if (Array.isArray(value)) return value;
   if (value && typeof value === "object") return [value];
   return [];
@@ -20866,7 +21135,7 @@ async function readSecurityCompliance3(ctx) {
   }
   return resp.result || {};
 }
-function normalizePatchItems(items) {
+function normalizePatchItems2(items) {
   return items.map((item) => ({
     hotFixId: Array.isArray(item?.kbArticleIds) && item.kbArticleIds.length > 0 ? String(item.kbArticleIds[0]) : void 0,
     title: item?.title ? String(item.title) : void 0,
@@ -20875,16 +21144,58 @@ function normalizePatchItems(items) {
     source: "windows_update_agent"
   }));
 }
+function deriveOverallStatus2(scanStatus, remediation) {
+  if (remediation?.status === "in_progress") {
+    return "installing";
+  }
+  if (remediation?.rebootRequired) {
+    return "reboot_required";
+  }
+  return scanStatus;
+}
+function deriveOverallScore2(status) {
+  switch (status) {
+    case "healthy":
+      return 100;
+    case "reboot_required":
+      return 60;
+    case "updates_available":
+      return 40;
+    case "inventory_only":
+      return 20;
+    case "installing":
+      return 30;
+    case "scan_pending":
+    case "idle":
+      return 10;
+    case "error":
+    default:
+      return 0;
+  }
+}
 async function collectWindowsPmp(ctx) {
+  const remediationState = loadPmpState();
+  const remediation = {
+    status: remediationState.status || "idle",
+    mode: remediationState.mode,
+    startedAtUtc: remediationState.startedAtUtc,
+    finishedAtUtc: remediationState.finishedAtUtc,
+    rebootRequired: remediationState.rebootRequired === true,
+    installedCount: Number(remediationState.installedCount ?? 0),
+    failedCount: Number(remediationState.failedCount ?? 0),
+    selectedCount: Number(remediationState.selectedCount ?? 0),
+    lastError: remediationState.lastError,
+    results: remediationState.results || []
+  };
   let posture = {};
   let scanItems = [];
-  let overallStatus = "inventory_only";
+  let scanStatus = "inventory_only";
   try {
     posture = await readSecurityCompliance3(ctx);
-    scanItems = normalizePatchItems(normalizeArray2(posture?.items));
-    overallStatus = posture?.status === "updates_available" ? "updates_available" : posture?.status === "healthy" ? "healthy" : "inventory_only";
+    scanItems = normalizePatchItems2(normalizeArray3(posture?.items));
+    scanStatus = posture?.status === "updates_available" ? "updates_available" : posture?.status === "healthy" ? "healthy" : "inventory_only";
   } catch (err) {
-    overallStatus = "error";
+    const message = err?.message || String(err);
     return {
       schemaVersion: "1.0",
       collector: {
@@ -20893,7 +21204,7 @@ async function collectWindowsPmp(ctx) {
       },
       hasChanges: true,
       overall: {
-        status: overallStatus,
+        status: "error",
         score: 0
       },
       scan: {
@@ -20904,20 +21215,19 @@ async function collectWindowsPmp(ctx) {
         securityPatchCount: 0,
         items: []
       },
-      remediation: {
-        status: "idle",
-        rebootRequired: false,
-        installedCount: 0,
-        failedCount: 0,
+      remediation: remediation.status === "idle" && !(remediation.results || []).length ? {
+        ...remediation,
+        lastError: message,
         results: [
           {
             result: "failed",
-            message: err?.message || String(err)
+            message
           }
         ]
-      }
+      } : remediation
     };
   }
+  const overallStatus = deriveOverallStatus2(scanStatus, remediation);
   return {
     schemaVersion: "1.0",
     collector: {
@@ -20927,7 +21237,7 @@ async function collectWindowsPmp(ctx) {
     hasChanges: true,
     overall: {
       status: overallStatus,
-      score: scanItems.length > 0 ? 100 : 0
+      score: deriveOverallScore2(overallStatus)
     },
     scan: {
       scannedAtUtc: posture?.scannedAtUtc ?? (/* @__PURE__ */ new Date()).toISOString(),
@@ -20937,18 +21247,13 @@ async function collectWindowsPmp(ctx) {
       securityPatchCount: Number(posture?.securityUpdateCount ?? scanItems.length),
       items: scanItems
     },
-    remediation: {
-      status: "idle",
-      rebootRequired: false,
-      installedCount: 0,
-      failedCount: 0,
-      results: []
-    }
+    remediation
   };
 }
 var init_windows3 = __esm({
   "src/plugins/pmp/providers/windows.ts"() {
     "use strict";
+    init_state();
   }
 });
 
@@ -20962,20 +21267,23 @@ async function collectPMP(ctx) {
   if (platform === "win32") {
     return collectWindowsPmp(ctx);
   }
+  if (platform === "darwin") {
+    return collectMacosPmp(ctx);
+  }
   return {
     schemaVersion: "1.0",
     collector: {
       plugin: "pmp",
       version: ctx.config.agentVersion
     },
-    hasChanges: true,
+    hasChanges: false,
     overall: {
       status: "error",
       score: 0
     },
     scan: {
       scannedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
-      source: "windows_security_compliance_inventory",
+      source: "patch_management_unavailable",
       mode: "inventory_only",
       installedPatchCount: 0,
       securityPatchCount: 0,
@@ -20995,45 +21303,46 @@ var init_pmp = __esm({
   "src/plugins/pmp/index.ts"() {
     "use strict";
     import_os13 = __toESM(require("os"));
+    init_macos3();
     init_windows3();
   }
 });
 
 // src/update/update-state.ts
-function ensureDir(dir) {
-  import_fs12.default.mkdirSync(dir, { recursive: true });
+function ensureDir2(dir) {
+  import_fs13.default.mkdirSync(dir, { recursive: true });
 }
-function resolveBaseDir() {
+function resolveBaseDir2() {
   if (process.platform === "win32") {
-    return import_path9.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
+    return import_path10.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
   }
   if (process.platform === "darwin") {
     return "/Library/Application Support/Tracenium";
   }
   return "/var/lib/tracenium";
 }
-function getStatePath() {
-  const dir = import_path9.default.join(resolveBaseDir(), "state");
-  ensureDir(dir);
-  return import_path9.default.join(dir, "update-state.json");
+function getStatePath2() {
+  const dir = import_path10.default.join(resolveBaseDir2(), "state");
+  ensureDir2(dir);
+  return import_path10.default.join(dir, "update-state.json");
 }
 function loadUpdateState() {
-  const file = getStatePath();
-  if (!import_fs12.default.existsSync(file)) {
+  const file = getStatePath2();
+  if (!import_fs13.default.existsSync(file)) {
     return {};
   }
   try {
-    return JSON.parse(import_fs12.default.readFileSync(file, "utf8"));
+    return JSON.parse(import_fs13.default.readFileSync(file, "utf8"));
   } catch (err) {
     console.error("[update-state] corrupted state file", err);
     return {};
   }
 }
 function saveUpdateState(next) {
-  const file = getStatePath();
+  const file = getStatePath2();
   const tmp = `${file}.tmp`;
-  import_fs12.default.writeFileSync(tmp, JSON.stringify(next, null, 2), "utf8");
-  import_fs12.default.renameSync(tmp, file);
+  import_fs13.default.writeFileSync(tmp, JSON.stringify(next, null, 2), "utf8");
+  import_fs13.default.renameSync(tmp, file);
 }
 function updateUpdateState(patch) {
   const current = loadUpdateState();
@@ -21078,18 +21387,18 @@ function markUpdateFailed(error) {
     installStartedAtUtc: void 0
   });
 }
-var import_fs12, import_path9;
+var import_fs13, import_path10;
 var init_update_state = __esm({
   "src/update/update-state.ts"() {
     "use strict";
-    import_fs12 = __toESM(require("fs"));
-    import_path9 = __toESM(require("path"));
+    import_fs13 = __toESM(require("fs"));
+    import_path10 = __toESM(require("path"));
   }
 });
 
 // src/update/updater-runner.ts
 function runWindowsMsiUpdate(msiPath) {
-  if (!import_fs13.default.existsSync(msiPath)) {
+  if (!import_fs14.default.existsSync(msiPath)) {
     throw new Error(`msi_not_found: ${msiPath}`);
   }
   const args = ["/i", msiPath, "/qn", "/norestart"];
@@ -21124,7 +21433,7 @@ function runWindowsMsiUpdate(msiPath) {
   }
 }
 function runMacosPkgUpdate(pkgPath) {
-  if (!import_fs13.default.existsSync(pkgPath)) {
+  if (!import_fs14.default.existsSync(pkgPath)) {
     throw new Error(`pkg_not_found: ${pkgPath}`);
   }
   const args = ["-pkg", pkgPath, "-target", "/"];
@@ -21201,12 +21510,12 @@ function runMacosPkgUpdate(pkgPath) {
     throw err;
   }
 }
-var import_child_process6, import_fs13;
+var import_child_process6, import_fs14;
 var init_updater_runner = __esm({
   "src/update/updater-runner.ts"() {
     "use strict";
     import_child_process6 = require("child_process");
-    import_fs13 = __toESM(require("fs"));
+    import_fs14 = __toESM(require("fs"));
     init_update_state();
   }
 });
@@ -21239,22 +21548,22 @@ var init_semver = __esm({
 });
 
 // src/update/update-service.ts
-function resolveBaseDir2() {
+function resolveBaseDir3() {
   if (process.platform === "win32") {
-    return import_path10.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
+    return import_path11.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
   }
   if (process.platform === "darwin") {
     return "/Library/Application Support/Tracenium";
   }
   return "/var/lib/tracenium";
 }
-function ensureDir2(dir) {
-  import_fs14.default.mkdirSync(dir, { recursive: true });
+function ensureDir3(dir) {
+  import_fs15.default.mkdirSync(dir, { recursive: true });
 }
 function sha256File(filePath) {
   return new Promise((resolve, reject) => {
     const hash = import_crypto11.default.createHash("sha256");
-    const stream = import_fs14.default.createReadStream(filePath);
+    const stream = import_fs15.default.createReadStream(filePath);
     stream.on("data", (chunk) => hash.update(chunk));
     stream.on("error", reject);
     stream.on("end", () => resolve(hash.digest("hex")));
@@ -21360,9 +21669,9 @@ function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3, idleTimeo
   return new Promise((resolve, reject) => {
     const url = new URL(urlString);
     const lib = url.protocol === "https:" ? import_https.default : import_http.default;
-    ensureDir2(import_path10.default.dirname(filePath));
+    ensureDir3(import_path11.default.dirname(filePath));
     const tmpPath = `${filePath}.tmp`;
-    const file = import_fs14.default.createWriteStream(tmpPath);
+    const file = import_fs15.default.createWriteStream(tmpPath);
     let settled = false;
     let idleTimer = null;
     let expectedBytes = null;
@@ -21377,7 +21686,7 @@ function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3, idleTimeo
       } catch {
       }
       try {
-        import_fs14.default.rmSync(tmpPath, { force: true });
+        import_fs15.default.rmSync(tmpPath, { force: true });
       } catch {
       }
     };
@@ -21437,7 +21746,7 @@ function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3, idleTimeo
           return;
         }
         try {
-          import_fs14.default.renameSync(tmpPath, filePath);
+          import_fs15.default.renameSync(tmpPath, filePath);
           finish(null, bytes);
         } catch (err) {
           finish(err);
@@ -21624,18 +21933,18 @@ async function downloadWindowsMsi(ctx, latestVersion, expectedHash) {
   if (!dl?.downloadUrl) {
     throw new Error("update_download_url_missing");
   }
-  const dir = import_path10.default.join(resolveBaseDir2(), "updates");
-  ensureDir2(dir);
+  const dir = import_path11.default.join(resolveBaseDir3(), "updates");
+  ensureDir3(dir);
   const arch = getArch();
   const fileName = `Tracenium-Agent-${latestVersion}-${arch}.msi`;
-  const filePath = import_path10.default.join(dir, fileName);
+  const filePath = import_path11.default.join(dir, fileName);
   const { size } = await downloadToFile(dl.downloadUrl, filePath);
   const sha256 = await sha256File(filePath);
   if (!expectedHash) {
     console.warn("[update] expected hash missing for arch", { arch });
   }
   if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
-    import_fs14.default.rmSync(filePath, { force: true });
+    import_fs15.default.rmSync(filePath, { force: true });
     throw new Error("update_hash_mismatch");
   }
   updateUpdateState({
@@ -21656,18 +21965,18 @@ async function downloadMacosPkg(ctx, latestVersion, expectedHash) {
   if (!dl?.downloadUrl) {
     throw new Error("update_download_url_missing");
   }
-  const dir = import_path10.default.join(resolveBaseDir2(), "updates");
-  ensureDir2(dir);
+  const dir = import_path11.default.join(resolveBaseDir3(), "updates");
+  ensureDir3(dir);
   const arch = getArch();
   const fileName = `Tracenium-Agent-${latestVersion}-${arch}.pkg`;
-  const filePath = import_path10.default.join(dir, fileName);
+  const filePath = import_path11.default.join(dir, fileName);
   const { size } = await downloadToFile(dl.downloadUrl, filePath);
   const sha256 = await sha256File(filePath);
   if (!expectedHash) {
     console.warn("[update] expected hash missing for arch", { arch });
   }
   if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
-    import_fs14.default.rmSync(filePath, { force: true });
+    import_fs15.default.rmSync(filePath, { force: true });
     throw new Error("update_hash_mismatch");
   }
   updateUpdateState({
@@ -21686,11 +21995,11 @@ async function downloadMacosPkg(ctx, latestVersion, expectedHash) {
 async function performWindowsMsiUpdate(ctx, latestVersion, expectedHash, downloadUrlOverride) {
   let downloaded;
   if (downloadUrlOverride) {
-    const dir = import_path10.default.join(resolveBaseDir2(), "updates");
-    ensureDir2(dir);
+    const dir = import_path11.default.join(resolveBaseDir3(), "updates");
+    ensureDir3(dir);
     const arch = getArch();
     const fileName = `Tracenium-Agent-${latestVersion}-${arch}.msi`;
-    const filePath = import_path10.default.join(dir, fileName);
+    const filePath = import_path11.default.join(dir, fileName);
     console.log("[update] downloading from override url", {
       url: downloadUrlOverride,
       version: latestVersion
@@ -21698,7 +22007,7 @@ async function performWindowsMsiUpdate(ctx, latestVersion, expectedHash, downloa
     const { size } = await downloadToFile(downloadUrlOverride, filePath);
     const sha256 = await sha256File(filePath);
     if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
-      import_fs14.default.rmSync(filePath, { force: true });
+      import_fs15.default.rmSync(filePath, { force: true });
       throw new Error("update_hash_mismatch");
     }
     downloaded = {
@@ -21736,11 +22045,11 @@ async function performWindowsMsiUpdate(ctx, latestVersion, expectedHash, downloa
 async function performMacosPkgUpdate(ctx, latestVersion, expectedHash, downloadUrlOverride) {
   let downloaded;
   if (downloadUrlOverride) {
-    const dir = import_path10.default.join(resolveBaseDir2(), "updates");
-    ensureDir2(dir);
+    const dir = import_path11.default.join(resolveBaseDir3(), "updates");
+    ensureDir3(dir);
     const arch = getArch();
     const fileName = `Tracenium-Agent-${latestVersion}-${arch}.pkg`;
-    const filePath = import_path10.default.join(dir, fileName);
+    const filePath = import_path11.default.join(dir, fileName);
     console.log("[update] downloading pkg from override url", {
       url: downloadUrlOverride,
       version: latestVersion
@@ -21748,7 +22057,7 @@ async function performMacosPkgUpdate(ctx, latestVersion, expectedHash, downloadU
     const { size } = await downloadToFile(downloadUrlOverride, filePath);
     const sha256 = await sha256File(filePath);
     if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
-      import_fs14.default.rmSync(filePath, { force: true });
+      import_fs15.default.rmSync(filePath, { force: true });
       throw new Error("update_hash_mismatch");
     }
     downloaded = {
@@ -21783,12 +22092,12 @@ async function performMacosPkgUpdate(ctx, latestVersion, expectedHash, downloadU
   const result2 = await runMacosPkgUpdate(downloaded.filePath);
   return result2;
 }
-var import_fs14, import_path10, import_crypto11, import_http, import_https;
+var import_fs15, import_path11, import_crypto11, import_http, import_https;
 var init_update_service = __esm({
   "src/update/update-service.ts"() {
     "use strict";
-    import_fs14 = __toESM(require("fs"));
-    import_path10 = __toESM(require("path"));
+    import_fs15 = __toESM(require("fs"));
+    import_path11 = __toESM(require("path"));
     import_crypto11 = __toESM(require("crypto"));
     import_http = __toESM(require("http"));
     import_https = __toESM(require("https"));
@@ -22977,6 +23286,10 @@ var DEFAULT_POLICY = {
     intervalSeconds: 28800
     // 8h
   },
+  patch: {
+    intervalSeconds: 86400
+    // 24h
+  },
   plugins: {
     enabled: ["amp"]
   },
@@ -23026,6 +23339,9 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
   getComplianceInterval() {
     return this.policy.compliance?.intervalSeconds || DEFAULT_POLICY.compliance.intervalSeconds;
   }
+  getPatchInterval() {
+    return this.policy.patch?.intervalSeconds || DEFAULT_POLICY.patch.intervalSeconds;
+  }
   getEnabledPlugins() {
     return this.policy.plugins?.enabled || DEFAULT_POLICY.plugins.enabled;
   }
@@ -23064,6 +23380,7 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
     });
     this.emit("policyChanged", this.policy);
     this.emit("inventoryIntervalChanged", this.getInventoryInterval());
+    this.emit("patchIntervalChanged", this.getPatchInterval());
     this.emit("pluginsChanged", this.getEnabledPlugins());
     this.emit("modulesChanged", this.listEnabledModules());
     this.emit("featuresChanged", this.policy.features);
@@ -23083,6 +23400,10 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
       compliance: {
         ...DEFAULT_POLICY.compliance,
         ...policy.compliance
+      },
+      patch: {
+        ...DEFAULT_POLICY.patch,
+        ...policy.patch
       },
       plugins: {
         ...DEFAULT_POLICY.plugins,
@@ -23104,6 +23425,10 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
     if (validated.compliance?.intervalSeconds && (validated.compliance.intervalSeconds < 300 || validated.compliance.intervalSeconds > 86400)) {
       this.logger?.warn?.("Invalid compliance interval in policy, reverting to default");
       validated.compliance.intervalSeconds = DEFAULT_POLICY.compliance.intervalSeconds;
+    }
+    if (validated.patch?.intervalSeconds && (validated.patch.intervalSeconds < 300 || validated.patch.intervalSeconds > 604800)) {
+      this.logger?.warn?.("Invalid patch interval in policy, reverting to default");
+      validated.patch.intervalSeconds = DEFAULT_POLICY.patch.intervalSeconds;
     }
     if (!Array.isArray(validated.plugins?.enabled)) {
       validated.plugins = { enabled: DEFAULT_POLICY.plugins.enabled };
@@ -23127,6 +23452,7 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
       version: this.store.getVersion(),
       inventoryInterval: this.getInventoryInterval(),
       complianceInterval: this.getComplianceInterval(),
+      patchInterval: this.getPatchInterval(),
       plugins: this.getEnabledPlugins(),
       modules: this.listEnabledModules(),
       features: this.policy.features
@@ -23293,8 +23619,8 @@ async function bootstrapContext() {
 
 // src/queue/sqlite-outbox.ts
 var import_os14 = __toESM(require("os"));
-var import_path8 = __toESM(require("path"));
-var import_fs11 = __toESM(require("fs"));
+var import_path9 = __toESM(require("path"));
+var import_fs12 = __toESM(require("fs"));
 var import_better_sqlite32 = __toESM(require("better-sqlite3"));
 var import_zlib = __toESM(require("zlib"));
 var MAX_ATTEMPTS = 20;
@@ -23337,16 +23663,16 @@ function maybeDecompressPayload(value) {
 function defaultDbPath() {
   if (import_os14.default.platform() === "win32") {
     const programData = process.env.PROGRAMDATA || process.env.ProgramData || "C:\\ProgramData";
-    return import_path8.default.join(programData, "Tracenium", "Agent", "outbox.db");
+    return import_path9.default.join(programData, "Tracenium", "Agent", "outbox.db");
   }
-  return import_path8.default.join(import_os14.default.homedir(), ".tracenium", "agent", "outbox.db");
+  return import_path9.default.join(import_os14.default.homedir(), ".tracenium", "agent", "outbox.db");
 }
 var SqliteOutbox = class {
   constructor(dbPath = defaultDbPath()) {
     this.dbPath = dbPath;
     this.lockOwner = `agentcore:${import_os14.default.hostname()}:${process.pid}`;
-    const dir = import_path8.default.dirname(dbPath);
-    import_fs11.default.mkdirSync(dir, { recursive: true });
+    const dir = import_path9.default.dirname(dbPath);
+    import_fs12.default.mkdirSync(dir, { recursive: true });
     this.db = new import_better_sqlite32.default(dbPath);
     logger.info("[outbox] initialized", { dbPath: this.dbPath });
     this.initialize();
@@ -24002,9 +24328,15 @@ var Scheduler = class {
     });
     this.addPolicyListener(ctx, "modulesChanged", (modules) => {
       logger.info("[scheduler] modules updated", { modules });
+      this.startPipelines(ctx);
+    });
+    this.addPolicyListener(ctx, "patchIntervalChanged", (interval) => {
+      logger.info("[scheduler] patch interval updated", { interval });
+      this.startPipelines(ctx);
     });
     this.addPolicyListener(ctx, "featuresChanged", (features) => {
       logger.info("[scheduler] features updated", { features });
+      this.startPipelines(ctx);
     });
   }
   async stop(_ctx) {
@@ -24113,7 +24445,7 @@ var Scheduler = class {
       });
     }
     if (ctx.policyRuntime.isPatchEnabled()) {
-      const intervalSeconds = 24 * 60 * 60;
+      const intervalSeconds = ctx.policyRuntime.getPatchInterval();
       logger.info("Patch pipeline enabled", { intervalSeconds });
       this.runPatch(ctx).catch(
         (err) => logger.error("Patch pipeline initial run error", { err })
@@ -24212,6 +24544,11 @@ var Scheduler = class {
       } catch (err) {
         logger.warn("Failed to persist lastSentAgentVersion", { err });
       }
+      try {
+        outbox.setState("lastSentFactsAt:inventory", String(Date.now()));
+      } catch (err) {
+        logger.warn("Failed to persist lastSentFactsAt:inventory", { err });
+      }
       this.initialInventorySent = true;
       logger.info("FACTS_SNAPSHOT enqueued", {
         deviceId: ctx.enrollment.deviceId,
@@ -24271,6 +24608,11 @@ var Scheduler = class {
         payload: facts
       });
       outbox.setState("namespaceHash:scp", currentHash);
+      try {
+        outbox.setState("lastSentFactsAt:compliance", String(Date.now()));
+      } catch (err) {
+        logger.warn("Failed to persist lastSentFactsAt:compliance", { err });
+      }
       const scpEvidenceKeys = Object.keys(namespaces.scp).filter(
         (k) => k !== "schemaVersion" && k !== "collector" && k !== "hasChanges"
       );
@@ -24355,6 +24697,11 @@ var Scheduler = class {
         payload: facts
       });
       outbox.setState("namespaceHash:pmp", currentHash);
+      try {
+        outbox.setState("lastSentFactsAt:patch", String(Date.now()));
+      } catch (err) {
+        logger.warn("Failed to persist lastSentFactsAt:patch", { err });
+      }
       logger.info("FACTS_SNAPSHOT enqueued", {
         deviceId: ctx.enrollment.deviceId,
         modules: Object.keys(namespaces),
@@ -24769,6 +25116,7 @@ function createGrpcClient(ctx) {
 }
 
 // src/transport/grpc-stream.ts
+init_state();
 init_update_task();
 var MAX_IN_FLIGHT = 3;
 var HEARTBEAT_INTERVAL_MS = 6e4;
@@ -24808,7 +25156,63 @@ function armMetricsFlush(ctx) {
 function buildEventId(deviceId, outboxId) {
   return `${deviceId}:${outboxId}`;
 }
+function normalizePmpResults(results) {
+  if (!Array.isArray(results)) {
+    return [];
+  }
+  return results.map((entry) => {
+    const item = entry && typeof entry === "object" ? entry : {};
+    const rawResult = String(item.result || "failed").trim().toLowerCase();
+    const result2 = rawResult === "installed" || rawResult === "downloaded" || rawResult === "skipped" ? rawResult : "failed";
+    return {
+      updateId: item.updateId ? String(item.updateId) : void 0,
+      kb: item.kb ? String(item.kb) : void 0,
+      title: item.title ? String(item.title) : void 0,
+      result: result2,
+      hresult: item.hresult ? String(item.hresult) : void 0,
+      message: item.message ? String(item.message) : void 0
+    };
+  });
+}
+var CONTROL_FACTS_COOLDOWN_MS = 6e4;
+var FACT_TYPE_COOLDOWN_KEYS = {
+  inventory: "lastSentFactsAt:inventory",
+  compliance: "lastSentFactsAt:compliance",
+  patch: "lastSentFactsAt:patch"
+};
+function isOnCooldown(factType) {
+  const key = FACT_TYPE_COOLDOWN_KEYS[factType];
+  if (!key) return { skip: false, ageMs: null };
+  try {
+    const raw = outbox.getState(key);
+    if (!raw) return { skip: false, ageMs: null };
+    const ts = Number(raw);
+    if (!Number.isFinite(ts)) return { skip: false, ageMs: null };
+    const ageMs = Date.now() - ts;
+    return { skip: ageMs < CONTROL_FACTS_COOLDOWN_MS && ageMs >= 0, ageMs };
+  } catch {
+    return { skip: false, ageMs: null };
+  }
+}
 async function collectFactsSnapshot(ctx, source, factType = "inventory") {
+  if (factType !== "all") {
+    const { skip, ageMs } = isOnCooldown(factType);
+    if (skip) {
+      ctx.logger?.info?.("FACTS_SNAPSHOT skipped \u2014 cooldown active", {
+        source,
+        factType,
+        ageMs,
+        cooldownMs: CONTROL_FACTS_COOLDOWN_MS
+      });
+      return {
+        outboxId: 0,
+        modules: [],
+        softwareCount: 0,
+        cooldown: true,
+        ageMs
+      };
+    }
+  }
   const namespaces = {};
   if ((factType === "inventory" || factType === "all") && ctx.policyRuntime.isInventoryEnabled() && ctx.policyRuntime.pluginEnabled("amp")) {
     try {
@@ -24834,11 +25238,31 @@ async function collectFactsSnapshot(ctx, source, factType = "inventory") {
   if (Object.keys(namespaces).length === 0) {
     throw new Error(`${source}: no plugin namespaces collected`);
   }
+  if (namespaces.amp?.software && namespaces.amp.software.items == null) {
+    try {
+      const { loadSoftwareBaseline: loadSoftwareBaseline2 } = await Promise.resolve().then(() => (init_software_baseline_repo(), software_baseline_repo_exports));
+      const baseline = loadSoftwareBaseline2() ?? [];
+      if (baseline.length > 0) {
+        namespaces.amp.software.items = baseline;
+        namespaces.amp.software.count = baseline.length;
+      }
+    } catch (err) {
+      ctx.logger?.warn?.("Failed to rehydrate AMP software baseline for control-forced snapshot", { err });
+    }
+  }
   const facts = await buildDeviceFacts(ctx, namespaces);
   const outboxId = outbox.enqueue({
     type: "FACTS_SNAPSHOT",
     payload: facts
   });
+  const cooldownKey = FACT_TYPE_COOLDOWN_KEYS[factType];
+  if (cooldownKey) {
+    try {
+      outbox.setState(cooldownKey, String(Date.now()));
+    } catch (err) {
+      ctx.logger?.warn?.("Failed to stamp cooldown after control-forced send", { factType, err });
+    }
+  }
   const softwareCount = Number(namespaces.amp?.software?.count ?? 0);
   ctx.logger?.info?.("FACTS_SNAPSHOT enqueued from control message", {
     source,
@@ -24925,6 +25349,12 @@ async function executeRunJob(ctx, runJob) {
     case "facts_snapshot": {
       const factType = String(payload?.factType || "inventory");
       const result2 = await collectFactsSnapshot(ctx, `runJob:${jobId}`, factType);
+      if (result2.cooldown) {
+        return {
+          status: 0,
+          message: `facts_fresh:cooldown_${result2.ageMs}ms`
+        };
+      }
       return {
         status: 0,
         message: `facts_enqueued:${result2.outboxId}`
@@ -24944,6 +25374,12 @@ async function executeRunJob(ctx, runJob) {
         };
       }
       const result2 = await collectFactsSnapshot(ctx, `runJob:${jobId}`, "patch");
+      if (result2.cooldown) {
+        return {
+          status: 0,
+          message: `patch_scan_fresh:cooldown_${result2.ageMs}ms`
+        };
+      }
       return {
         status: 0,
         message: `patch_scan_enqueued:${result2.outboxId}`
@@ -24977,46 +25413,90 @@ async function executeRunJob(ctx, runJob) {
         };
       }
       ctx._patchInstallInProgress = true;
+      updatePmpState({
+        status: "in_progress",
+        mode,
+        startedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+        selectedCount: kbArticleIds.length || void 0,
+        installedCount: 0,
+        failedCount: 0,
+        rebootRequired: false,
+        results: [],
+        lastError: void 0
+      });
       try {
-        const resp = await ctx.priv.call({
-          v: 1,
-          id: `patch-install-${jobId}-${Date.now()}`,
-          method: "patch.install",
-          params: {
-            mode,
-            kbArticleIds
-          },
-          meta: {
-            tenantId: ctx.enrollment.tenantId,
-            deviceId: ctx.enrollment.deviceId
+        try {
+          const resp = await ctx.priv.call({
+            v: 1,
+            id: `patch-install-${jobId}-${Date.now()}`,
+            method: "patch.install",
+            params: {
+              mode,
+              kbArticleIds
+            },
+            meta: {
+              tenantId: ctx.enrollment.tenantId,
+              deviceId: ctx.enrollment.deviceId
+            }
+          });
+          if (!resp?.ok) {
+            updatePmpState({
+              status: "failed",
+              mode,
+              finishedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+              lastError: String(resp?.error?.message || "patch.install failed"),
+              rebootRequired: false,
+              results: []
+            });
+            return {
+              status: 2,
+              message: `patch_install failed: ${String(resp?.error?.message || "patch.install failed")}`
+            };
           }
-        });
-        if (!resp?.ok) {
+          const result2 = resp.result || {};
+          const resultStatus = String(result2?.status || "").trim().toLowerCase();
+          const installedCount = Number(result2?.installedCount ?? 0);
+          const failedCount = Number(result2?.failedCount ?? 0);
+          const rebootRequired = result2?.rebootRequired === true;
+          const results = normalizePmpResults(result2?.results);
+          updatePmpState({
+            status: resultStatus === "success" || resultStatus === "no_updates" ? "success" : resultStatus === "partial" ? "partial" : "failed",
+            mode,
+            finishedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+            rebootRequired,
+            selectedCount: Number(result2?.selectedCount ?? kbArticleIds.length ?? 0),
+            installedCount,
+            failedCount,
+            results,
+            lastError: resultStatus === "success" || resultStatus === "no_updates" ? void 0 : `patch_install ${resultStatus || "failed"}`
+          });
+          try {
+            await collectFactsSnapshot(ctx, `runJob:${jobId}:post_patch_install`, "patch");
+          } catch (err) {
+            ctx.logger?.warn?.("Post patch-install scan enqueue failed", { err, jobId });
+          }
+          if (resultStatus === "success" || resultStatus === "no_updates") {
+            return {
+              status: 0,
+              message: `patch_install ${resultStatus}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
+            };
+          }
           return {
             status: 2,
-            message: `patch_install failed: ${String(resp?.error?.message || "patch.install failed")}`
+            message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
           };
-        }
-        try {
-          await collectFactsSnapshot(ctx, `runJob:${jobId}:post_patch_install`, "patch");
         } catch (err) {
-          ctx.logger?.warn?.("Post patch-install scan enqueue failed", { err, jobId });
+          updatePmpState({
+            status: "failed",
+            mode,
+            finishedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+            lastError: err?.message || String(err),
+            rebootRequired: false,
+            results: []
+          });
+          throw err;
         }
-        const result2 = resp.result || {};
-        const resultStatus = String(result2?.status || "").trim().toLowerCase();
-        const installedCount = Number(result2?.installedCount ?? 0);
-        const failedCount = Number(result2?.failedCount ?? 0);
-        const rebootRequired = result2?.rebootRequired === true;
-        if (resultStatus === "success" || resultStatus === "no_updates") {
-          return {
-            status: 0,
-            message: `patch_install ${resultStatus}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
-          };
-        }
-        return {
-          status: 2,
-          message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
-        };
+        ;
       } finally {
         ctx._patchInstallInProgress = false;
       }

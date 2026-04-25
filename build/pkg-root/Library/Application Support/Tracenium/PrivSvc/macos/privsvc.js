@@ -25094,13 +25094,290 @@ async function handleClose(req) {
   }
 }
 
-// privsvc/macos/src/security-posture.ts
+// privsvc/macos/src/patch-management.ts
 var import_child_process2 = require("child_process");
 var import_util2 = require("util");
 var execFileAsync2 = (0, import_util2.promisify)(import_child_process2.execFile);
-async function run(command, args, timeout = 5e3) {
+async function run(command, args, timeout = 3e4) {
+  logger.info("patch.command.start", { command, args, timeout });
   try {
-    const { stdout, stderr } = await execFileAsync2(command, args, { timeout, maxBuffer: 8 * 1024 * 1024 });
+    const { stdout, stderr } = await execFileAsync2(command, args, {
+      timeout,
+      maxBuffer: 8 * 1024 * 1024
+    });
+    const result = {
+      stdout: stdout || "",
+      stderr: stderr || "",
+      output: `${stdout || ""}${stderr || ""}`.trim(),
+      ok: true,
+      code: 0
+    };
+    logger.info("patch.command.finish", {
+      command,
+      args,
+      ok: true,
+      code: 0,
+      stdoutPreview: preview(result.stdout),
+      stderrPreview: preview(result.stderr)
+    });
+    return result;
+  } catch (err) {
+    const result = {
+      stdout: String(err?.stdout || ""),
+      stderr: String(err?.stderr || ""),
+      output: String(err?.stdout || err?.stderr || err?.message || err || "").trim(),
+      ok: false,
+      code: Number.isFinite(Number(err?.code)) ? Number(err.code) : void 0,
+      signal: err?.signal ? String(err.signal) : void 0
+    };
+    logger.warn("patch.command.finish", {
+      command,
+      args,
+      ok: false,
+      code: result.code,
+      signal: result.signal,
+      stdoutPreview: preview(result.stdout),
+      stderrPreview: preview(result.stderr),
+      outputPreview: preview(result.output)
+    });
+    return result;
+  }
+}
+function preview(value, max = 1200) {
+  const text = String(value || "").trim();
+  if (!text) return void 0;
+  return text.length > max ? `${text.slice(0, max)}\u2026` : text;
+}
+function parseAction(raw) {
+  const value = String(raw || "").trim().toLowerCase();
+  if (!value) return void 0;
+  if (value.includes("restart")) return "restart";
+  if (value.includes("shut")) return "shutdown";
+  return value;
+}
+function isSecurityLike(item) {
+  const value = `${item.label} ${item.title || ""}`.toLowerCase();
+  return /security|rapid security response|xprotect|gatekeeper|mrt/.test(value);
+}
+function parseYesNo(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "yes") return true;
+  if (normalized === "no") return false;
+  return void 0;
+}
+function extractField(block, field) {
+  const match = block.match(new RegExp(`${field}:\\s*([^\\n,]+?)(?=,\\s*[A-Za-z][A-Za-z ]*:|\\n\\s*[A-Za-z][A-Za-z ]*:|$)`, "i"));
+  return match?.[1]?.trim();
+}
+function finalizeItem(current, items) {
+  if (!current?.label) {
+    return;
+  }
+  const block = (current.rawLines || []).join("\n");
+  const title = extractField(block, "Title");
+  const version = extractField(block, "Version");
+  const size = extractField(block, "Size");
+  const recommended = parseYesNo(extractField(block, "Recommended"));
+  const action = parseAction(extractField(block, "Action"));
+  items.push({
+    label: current.label,
+    title: title || current.title,
+    version: version || current.version,
+    size: size || current.size,
+    recommended: recommended ?? current.recommended,
+    action: action || current.action,
+    requiresRestart: action === "restart" || action === "shutdown" || current.requiresRestart === true
+  });
+}
+function parseSoftwareUpdateList(output) {
+  const lines = output.split(/\r?\n/);
+  const items = [];
+  let current = null;
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) continue;
+    const labelMatch = trimmed.match(/^\*?\s*Label:\s*(.+)$/i);
+    if (labelMatch) {
+      finalizeItem(current, items);
+      current = { label: labelMatch[1].trim(), rawLines: [] };
+      continue;
+    }
+    if (current) {
+      current.rawLines = current.rawLines || [];
+      current.rawLines.push(trimmed);
+    }
+  }
+  finalizeItem(current, items);
+  return items;
+}
+function parseInstallOutput(items, output) {
+  const normalizedOutput = output.toLowerCase();
+  const results = items.map((item) => {
+    const titleOrLabel = (item.title || item.label).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const labelPattern = new RegExp(`(install(ed|ing)|done with).*${titleOrLabel}|${titleOrLabel}.*(install(ed|ing)|done)`, "i");
+    const downloadedPattern = new RegExp(`download(ed|ing).*${titleOrLabel}|${titleOrLabel}.*download(ed|ing)`, "i");
+    const failedPattern = new RegExp(`(failed|error).*${titleOrLabel}|${titleOrLabel}.*(failed|error)`, "i");
+    let result = "skipped";
+    if (failedPattern.test(output)) {
+      result = "failed";
+    } else if (downloadedPattern.test(output)) {
+      result = "downloaded";
+    } else if (labelPattern.test(output)) {
+      result = "installed";
+    }
+    return {
+      updateId: item.label,
+      kb: item.label,
+      title: item.title || item.label,
+      result,
+      message: result === "failed" ? "softwareupdate reported an install failure" : void 0
+    };
+  });
+  const installedCount = results.filter((item) => item.result === "installed" || item.result === "downloaded").length;
+  const failedCount = results.filter((item) => item.result === "failed").length;
+  const rebootRequired = items.some((item) => item.requiresRestart) || /restart/i.test(normalizedOutput);
+  let status = "success";
+  if (items.length === 0) {
+    status = "no_updates";
+  } else if (installedCount === 0 && failedCount > 0) {
+    status = "failed";
+  } else if (failedCount > 0 || installedCount < items.length) {
+    status = "partial";
+  }
+  return {
+    status,
+    installedCount,
+    failedCount,
+    rebootRequired,
+    results
+  };
+}
+async function listAvailableUpdates() {
+  const result = await run("/usr/sbin/softwareupdate", ["--list"], 12e4);
+  const output = result.output;
+  if (!output) {
+    logger.info("patch.scan.empty_output", {});
+    return {
+      status: "healthy",
+      scannedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+      updateCount: 0,
+      securityUpdateCount: 0,
+      items: []
+    };
+  }
+  if (!result.ok && !/No new software available/i.test(output)) {
+    throw new Error(output || "softwareupdate --list failed");
+  }
+  const items = parseSoftwareUpdateList(output);
+  logger.info("patch.scan.parsed", {
+    status: items.length > 0 ? "updates_available" : "healthy",
+    itemCount: items.length,
+    labels: items.map((item) => item.label).slice(0, 20),
+    rawOutputPreview: preview(output)
+  });
+  return {
+    status: items.length > 0 ? "updates_available" : "healthy",
+    scannedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+    updateCount: items.length,
+    securityUpdateCount: items.filter(isSecurityLike).length,
+    items
+  };
+}
+async function handlePatchScan(req) {
+  try {
+    logger.info("patch.scan.request", {
+      id: req.id,
+      tenantId: req.meta?.tenantId,
+      deviceId: req.meta?.deviceId
+    });
+    const scan = await listAvailableUpdates();
+    return success(req.id, scan);
+  } catch (err) {
+    logger.error("patch.scan.failed", {
+      id: req.id,
+      error: err?.message || String(err)
+    });
+    return fail(req.id, "patch_scan_failed", err?.message || String(err));
+  }
+}
+async function handlePatchInstall(req) {
+  try {
+    const mode = String(req.params?.mode || "install").trim().toLowerCase();
+    if (mode !== "install" && mode !== "download") {
+      return fail(req.id, "bad_request", "patch.install mode must be install or download");
+    }
+    const kbArticleIds = Array.isArray(req.params?.kbArticleIds) ? req.params.kbArticleIds.map((item) => String(item || "").trim()).filter(Boolean) : [];
+    logger.info("patch.install.request", {
+      id: req.id,
+      tenantId: req.meta?.tenantId,
+      deviceId: req.meta?.deviceId,
+      mode,
+      requestedLabels: kbArticleIds
+    });
+    const available = await listAvailableUpdates();
+    const selectedItems = kbArticleIds.length > 0 ? available.items.filter((item) => kbArticleIds.includes(item.label)) : available.items;
+    logger.info("patch.install.selection", {
+      id: req.id,
+      availableCount: available.items.length,
+      selectedCount: selectedItems.length,
+      selectedLabels: selectedItems.map((item) => item.label).slice(0, 20)
+    });
+    if (selectedItems.length === 0) {
+      return success(req.id, {
+        status: "no_updates",
+        mode,
+        selectedCount: 0,
+        installedCount: 0,
+        failedCount: 0,
+        rebootRequired: false,
+        results: []
+      });
+    }
+    const args = mode === "download" ? ["--download"] : ["--install"];
+    if (kbArticleIds.length > 0) {
+      args.push(...selectedItems.map((item) => item.label));
+    } else {
+      args.push("--all");
+    }
+    const install = await run("/usr/sbin/softwareupdate", args, 60 * 60 * 1e3);
+    if (!install.ok && !install.output) {
+      return fail(req.id, "patch_install_failed", "softwareupdate returned no output");
+    }
+    const parsed = parseInstallOutput(selectedItems, install.output);
+    logger.info("patch.install.parsed", {
+      id: req.id,
+      mode,
+      status: parsed.status,
+      installedCount: parsed.installedCount,
+      failedCount: parsed.failedCount,
+      rebootRequired: parsed.rebootRequired,
+      rawOutputPreview: preview(install.output)
+    });
+    return success(req.id, {
+      status: parsed.status,
+      mode,
+      selectedCount: selectedItems.length,
+      installedCount: parsed.installedCount,
+      failedCount: parsed.failedCount,
+      rebootRequired: parsed.rebootRequired,
+      results: parsed.results
+    });
+  } catch (err) {
+    logger.error("patch.install.failed", {
+      id: req.id,
+      error: err?.message || String(err)
+    });
+    return fail(req.id, "patch_install_failed", err?.message || String(err));
+  }
+}
+
+// privsvc/macos/src/security-posture.ts
+var import_child_process3 = require("child_process");
+var import_util3 = require("util");
+var execFileAsync3 = (0, import_util3.promisify)(import_child_process3.execFile);
+async function run2(command, args, timeout = 5e3) {
+  try {
+    const { stdout, stderr } = await execFileAsync3(command, args, { timeout, maxBuffer: 8 * 1024 * 1024 });
     return {
       output: `${stdout || ""}${stderr || ""}`.trim(),
       ok: true
@@ -25113,7 +25390,7 @@ async function run(command, args, timeout = 5e3) {
   }
 }
 async function runJson(command, args, timeout = 1e4) {
-  const result = await run(command, args, timeout);
+  const result = await run2(command, args, timeout);
   if (!result.output) return null;
   try {
     return JSON.parse(result.output);
@@ -25128,7 +25405,7 @@ function parseDate(value) {
   return dt.toISOString();
 }
 async function collectFileVault() {
-  const result = await run("/usr/bin/fdesetup", ["status"]);
+  const result = await run2("/usr/bin/fdesetup", ["status"]);
   const output = result.output;
   const enabled = /FileVault is On/i.test(output);
   const disabled = /FileVault is Off/i.test(output);
@@ -25139,8 +25416,8 @@ async function collectFileVault() {
 }
 async function collectFirewall() {
   const [globalResult, stealthResult] = await Promise.all([
-    run("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getglobalstate"]),
-    run("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getstealthmode"])
+    run2("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getglobalstate"]),
+    run2("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getstealthmode"])
   ]);
   const globalOutput = globalResult.output;
   const stealthOutput = stealthResult.output;
@@ -25160,7 +25437,7 @@ async function collectFirewall() {
   };
 }
 async function collectGatekeeper() {
-  const result = await run("/usr/sbin/spctl", ["--status"]);
+  const result = await run2("/usr/sbin/spctl", ["--status"]);
   const output = result.output;
   const enabled = /assessments enabled/i.test(output);
   const disabled = /assessments disabled/i.test(output);
@@ -25170,7 +25447,7 @@ async function collectGatekeeper() {
   };
 }
 async function collectSip() {
-  const result = await run("/usr/bin/csrutil", ["status"]);
+  const result = await run2("/usr/bin/csrutil", ["status"]);
   const output = result.output;
   const enabled = /enabled/i.test(output);
   const disabled = /disabled/i.test(output);
@@ -25209,7 +25486,7 @@ async function collectPatches() {
   };
 }
 async function readPkgInfo(packageId) {
-  const result = await run("/usr/sbin/pkgutil", ["--pkg-info", packageId], 8e3);
+  const result = await run2("/usr/sbin/pkgutil", ["--pkg-info", packageId], 8e3);
   const output = result.output;
   if (!output) {
     return {
@@ -25299,7 +25576,7 @@ function parseSharingBlocks(output) {
   return items;
 }
 async function inspectShareRisk(path4) {
-  const result = await run("/bin/ls", ["-lde", path4], 8e3);
+  const result = await run2("/bin/ls", ["-lde", path4], 8e3);
   const output = result.output;
   const hasEveryoneWriteAcl = /everyone allow .*?(write|delete|add_file|add_subdirectory|writeattr|writeextattr|chown)/i.test(output);
   const worldWritable = /^[\-d].{7}w/.test(output);
@@ -25311,7 +25588,7 @@ async function inspectShareRisk(path4) {
   };
 }
 async function collectShares() {
-  const result = await run("/usr/sbin/sharing", ["-l"], 12e3);
+  const result = await run2("/usr/sbin/sharing", ["-l"], 12e3);
   const items = parseSharingBlocks(result.output);
   const detailed = await Promise.all(items.map(async (item) => {
     const path4 = typeof item.path === "string" ? item.path : void 0;
@@ -25336,9 +25613,9 @@ async function collectShares() {
 }
 async function collectSmb(shares) {
   const [launchctl, nsmbConf, protocolMap] = await Promise.all([
-    run("/bin/launchctl", ["print", "system/com.apple.smbd"], 8e3),
-    run("/bin/cat", ["/etc/nsmb.conf"], 5e3),
-    run(
+    run2("/bin/launchctl", ["print", "system/com.apple.smbd"], 8e3),
+    run2("/bin/cat", ["/etc/nsmb.conf"], 5e3),
+    run2(
       "/usr/bin/defaults",
       ["read", "/Library/Preferences/SystemConfiguration/com.apple.smb.server", "ProtocolVersionMap"],
       5e3
@@ -25367,8 +25644,8 @@ async function collectSmb(shares) {
 }
 async function collectScreenLock() {
   const [currentHost, global2] = await Promise.all([
-    run("/usr/bin/defaults", ["-currentHost", "read", "com.apple.screensaver", "askForPassword"], 5e3),
-    run("/usr/bin/defaults", ["read", "com.apple.screensaver", "askForPassword"], 5e3)
+    run2("/usr/bin/defaults", ["-currentHost", "read", "com.apple.screensaver", "askForPassword"], 5e3),
+    run2("/usr/bin/defaults", ["read", "com.apple.screensaver", "askForPassword"], 5e3)
   ]);
   const pickValue = (output) => {
     const trimmed = output.trim();
@@ -25388,8 +25665,8 @@ async function collectScreenLock() {
 }
 async function collectServices() {
   const [remoteLogin, remoteAppleEvents] = await Promise.all([
-    run("/usr/sbin/systemsetup", ["-getremotelogin"], 8e3),
-    run("/usr/sbin/systemsetup", ["-getremoteappleevents"], 8e3)
+    run2("/usr/sbin/systemsetup", ["-getremotelogin"], 8e3),
+    run2("/usr/sbin/systemsetup", ["-getremoteappleevents"], 8e3)
   ]);
   const parseOnOff = (out) => {
     if (/:\s*On\b/i.test(out)) return true;
@@ -25415,7 +25692,7 @@ async function collectSoftwareUpdate() {
   ];
   const reads = await Promise.all(
     keys.map(
-      (key) => run(
+      (key) => run2(
         "/usr/bin/defaults",
         ["read", "/Library/Preferences/com.apple.SoftwareUpdate", key],
         5e3
@@ -25439,7 +25716,7 @@ async function collectSoftwareUpdate() {
   };
 }
 async function collectAccounts() {
-  const guest = await run(
+  const guest = await run2(
     "/usr/bin/defaults",
     ["read", "/Library/Preferences/com.apple.loginwindow", "GuestEnabled"],
     5e3
@@ -25459,8 +25736,8 @@ async function collectAccounts() {
 }
 async function collectProfiles() {
   const [enrollmentResult, listResult] = await Promise.all([
-    run("/usr/bin/profiles", ["status", "-type", "enrollment"], 12e3),
-    run("/usr/bin/profiles", ["list", "-all"], 15e3)
+    run2("/usr/bin/profiles", ["status", "-type", "enrollment"], 12e3),
+    run2("/usr/bin/profiles", ["list", "-all"], 15e3)
   ]);
   const enrollmentOutput = enrollmentResult.output;
   const listOutput = listResult.output;
@@ -25475,7 +25752,7 @@ async function collectProfiles() {
   };
 }
 async function collectDirectoryBinding() {
-  const result = await run("/usr/sbin/dsconfigad", ["-show"], 1e4);
+  const result = await run2("/usr/sbin/dsconfigad", ["-show"], 1e4);
   const output = result.output;
   const bound = result.ok && /Active Directory Domain/i.test(output);
   const domainName = output.match(/Active Directory Domain\s*=\s*(.+)$/im)?.[1]?.trim();
@@ -25559,7 +25836,7 @@ function isRoot() {
   return typeof process.getuid === "function" ? process.getuid() === 0 : false;
 }
 function requiresRoot(method) {
-  return method.startsWith("crypto.") || method.startsWith("grpc.");
+  return method.startsWith("crypto.") || method.startsWith("grpc.") || method === "patch.install";
 }
 async function routeRequest(req, push2) {
   if (req.v !== 1) return fail(req.id, "bad_version", "Unsupported protocol version");
@@ -25613,6 +25890,10 @@ async function routeRequest(req, push2) {
     case "security.compliance":
     case "security.posture":
       return handleSecurityPosture(req);
+    case "patch.scan":
+      return handlePatchScan(req);
+    case "patch.install":
+      return handlePatchInstall(req);
     default:
       return fail(req.id, "not_supported", `Unsupported method: ${req.method}`);
   }
