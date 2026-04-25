@@ -20995,6 +20995,14 @@ function normalizePatchItems(items) {
   return items.map((item) => ({
     hotFixId: item?.label ? String(item.label) : void 0,
     title: item?.title ? String(item.title) : void 0,
+    // `softwareupdate --list` does not expose a severity field. We
+    // emit "unknown" explicitly (rather than leaving it undefined) so
+    // the cross-platform schema stays uniform — backend/UI can render
+    // "Unknown severity" as a distinct bucket instead of treating
+    // the absence as "no field shipped". Future enhancement: cross-
+    // reference each label against an external CVE feed (NVD/MSRC)
+    // to enrich macOS items with a real severity.
+    severity: "unknown",
     installedBy: void 0,
     installedOn: void 0,
     source: "apple_software_update"
@@ -21114,6 +21122,14 @@ var init_macos3 = __esm({
 });
 
 // src/plugins/pmp/providers/windows.ts
+function normalizeMsrcSeverity(raw) {
+  const s = String(raw || "").trim().toLowerCase();
+  if (s === "critical") return "critical";
+  if (s === "important") return "important";
+  if (s === "moderate") return "moderate";
+  if (s === "low") return "low";
+  return "unknown";
+}
 function normalizeArray3(value) {
   if (Array.isArray(value)) return value;
   if (value && typeof value === "object") return [value];
@@ -21139,6 +21155,11 @@ function normalizePatchItems2(items) {
   return items.map((item) => ({
     hotFixId: Array.isArray(item?.kbArticleIds) && item.kbArticleIds.length > 0 ? String(item.kbArticleIds[0]) : void 0,
     title: item?.title ? String(item.title) : void 0,
+    // PrivSvc reads `IUpdate.MsrcSeverity` and forwards it as a string
+    // in the `msrcSeverity` field. Older PrivSvc builds may omit it —
+    // fall through to `unknown` in that case so the schema stays
+    // consistent across deployments mid-rollout.
+    severity: normalizeMsrcSeverity(item?.msrcSeverity),
     installedBy: void 0,
     installedOn: void 0,
     source: "windows_update_agent"
@@ -22385,6 +22406,46 @@ var EnrollmentStore = class {
 
 // src/bootstrap/config.ts
 var import_dotenv = __toESM(require_main());
+
+// package.json
+var package_default = {
+  name: "certusws-tracenium-agent",
+  version: "1.1.4",
+  description: "Tracenium Agent - Hardware & Software inventory collector",
+  license: "MIT",
+  author: {
+    name: "Certus",
+    email: "support@certusitm.com"
+  },
+  type: "commonjs",
+  main: "main.js",
+  dependencies: {
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.8.0",
+    "better-sqlite3": "^12.6.2",
+    child_process: "^1.0.2",
+    crypto: "^1.0.1",
+    dotenv: "^16.4.5",
+    "node-wmi": "^0.0.5",
+    os: "^0.1.2",
+    path: "^0.12.7",
+    postject: "^1.0.0-alpha.6",
+    systeminformation: "^5.27.11",
+    util: "^0.12.5"
+  },
+  devDependencies: {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.3.0",
+    copyfiles: "^2.4.1",
+    esbuild: "^0.28.0",
+    typescript: "^5.9.3"
+  },
+  scripts: {
+    build: "tsc"
+  }
+};
+
+// src/bootstrap/config.ts
 import_dotenv.default.config();
 function required(name, value) {
   if (!value) {
@@ -22457,8 +22518,22 @@ var config = {
   })(),
   agentId: process.env.AGENT_ID || "auto",
   enrollmentToken: process.env.ENROLLMENT_TOKEN || "",
-  agentVersion: process.env.AGENT_VERSION || "1.1.4",
-  coreVersion: process.env.CORE_VERSION || "1.1.4",
+  // Single source of truth for agent / core versions: the repo's
+  // package.json. Previously hardcoded as a fallback string ("1.1.4"
+  // / "1.1.2" / etc.), which silently desynced from package.json
+  // whenever a release bumped one but not the other. Net effect:
+  // operators saw 1.1.3 advertised in the binary metadata, an agent
+  // installed it, but the running agent self-reported the OLD
+  // hardcoded version after restart (the .pkg I built carried a
+  // bundle whose agentVersion fallback was still pointing at the
+  // previous release because nobody had edited config.ts).
+  //
+  // Reading from package.json fixes it: bumping `version` in
+  // package.json is the only change needed for a release. esbuild
+  // inlines the JSON import at bundle time, so there's no runtime
+  // file-read cost or path-resolution surprise on different platforms.
+  agentVersion: process.env.AGENT_VERSION || package_default.version,
+  coreVersion: process.env.CORE_VERSION || package_default.version,
   channel: process.env.CHANNEL || "stable"
 };
 
@@ -24882,6 +24957,7 @@ function createGrpcClient(ctx) {
         if (!tenantId || !deviceId) throw new Error("Missing enrollment tenantId/deviceId");
         if (!clientCertThumbprint) throw new Error("Missing mtls.clientCertThumbprint in enrollment");
         if (!issuingCaThumbprint) throw new Error("Missing mtls.issuingCaThumbprint in enrollment");
+        const policyVersion = String(ctx.policy.getVersion() || "");
         ctx.logger?.info("[grpc-client] requesting PrivSvc gRPC connect");
         const resp = await ctx.priv.call({
           v: 1,
@@ -24894,7 +24970,8 @@ function createGrpcClient(ctx) {
             tenantId,
             deviceId,
             agentVersion,
-            capabilities
+            capabilities,
+            policyVersion
           },
           meta: { tenantId, deviceId }
         });
