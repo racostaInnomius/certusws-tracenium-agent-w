@@ -25,8 +25,22 @@ LEGACY_AGENT_DIR="/var/root/.tracenium/agent"
 SERVER_BASE_URL="${TRACENIUM_SERVER_BASE_URL:-https://api.tracenium.com}"
 CERT_RENEWAL_BASE_URL="${TRACENIUM_CERT_RENEWAL_BASE_URL:-$SERVER_BASE_URL}"
 GRPC_ENDPOINT="${TRACENIUM_GRPC_ENDPOINT:-grpc.tracenium.com:50051}"
-AGENT_VERSION="${TRACENIUM_AGENT_VERSION:-1.1.2}"
-CORE_VERSION="${TRACENIUM_CORE_VERSION:-1.1.2}"
+# AGENT_VERSION / CORE_VERSION are intentionally NOT written to the
+# .env file. Previously this script wrote them ("AGENT_VERSION=1.1.2")
+# which dotenv would then load into process.env at boot, and the
+# agent's config.ts (process.env.AGENT_VERSION || pkg.version) would
+# pick the persisted file value over the bundled pkg.version. Net
+# effect: every successful self-update wrote new agent-core.js with
+# the new pkg.version, but the .env stayed pinned to whatever string
+# this hardcoded fallback had at install time — so an installed
+# 1.1.4 .pkg ran the new bundle and STILL self-reported 1.1.2 over
+# gRPC because the .env never got rewritten.
+#
+# The agent now uses package.json's `version` (inlined by esbuild)
+# as the only source of truth. Operators can still override at run
+# time by setting process.env.AGENT_VERSION before launchd starts
+# the daemon (e.g. in the LaunchDaemon plist's EnvironmentVariables
+# block) — but the installer no longer persists a stale value.
 CHANNEL="${TRACENIUM_CHANNEL:-stable}"
 
 mkdir -p "$BASE/Runtime"
@@ -51,8 +65,6 @@ cat > "$ENV_FILE" <<EOF
 SERVER_BASE_URL=$SERVER_BASE_URL
 CERT_RENEWAL_BASE_URL=$CERT_RENEWAL_BASE_URL
 GRPC_ENDPOINT=$GRPC_ENDPOINT
-AGENT_VERSION=$AGENT_VERSION
-CORE_VERSION=$CORE_VERSION
 CHANNEL=$CHANNEL
 TRACENIUM_ENROLLMENT_TOKEN_FILE=$TOKEN_FILE
 EOF
