@@ -22148,8 +22148,8 @@ var config = {
   })(),
   agentId: process.env.AGENT_ID || "auto",
   enrollmentToken: process.env.ENROLLMENT_TOKEN || "",
-  agentVersion: process.env.AGENT_VERSION || "1.1.2",
-  coreVersion: process.env.CORE_VERSION || "1.1.2",
+  agentVersion: process.env.AGENT_VERSION || "1.1.3",
+  coreVersion: process.env.CORE_VERSION || "1.1.3",
   channel: process.env.CHANNEL || "stable"
 };
 

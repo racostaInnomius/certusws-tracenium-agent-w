@@ -60,7 +60,7 @@ public sealed class Router
             "ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 service = "TraceniumPrivSvc",
-                version = "1.1.2",
+                version = "1.1.3",
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
