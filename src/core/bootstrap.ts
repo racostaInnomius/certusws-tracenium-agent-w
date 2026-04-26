@@ -9,6 +9,7 @@ import { PolicyStore } from "./policy-store";
 import { PolicyRuntime } from "./policy-runtime";
 import { PluginManager } from "./plugin-manager";
 import { logger } from "../bootstrap/logger";
+import { TrayStatusStore } from "../status/tray-status-store";
 
 export async function bootstrapContext(): Promise<AgentContext> {
 
@@ -34,6 +35,7 @@ export async function bootstrapContext(): Promise<AgentContext> {
   await policyRuntime.init();
 
   const pluginManager = new PluginManager();
+  const trayStatus = new TrayStatusStore();
 
   const agent = {
     version: config.agentVersion,
@@ -49,6 +51,7 @@ export async function bootstrapContext(): Promise<AgentContext> {
     policy,
     policyRuntime,
     plugins: pluginManager,
+    trayStatus,
     logger
   };
 

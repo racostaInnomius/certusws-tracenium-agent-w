@@ -153,6 +153,9 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
         connected = true;
         ctx.logger?.info("[grpc-client] PrivSvc confirmed gRPC connected (READY)");
+        try {
+          ctx.trayStatus.markGrpcConnected();
+        } catch {}
         stream.emit("data", { connected: true });
         return;
       }
@@ -187,6 +190,9 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         connected = false;
         connectPromise = null;
         ended = false;
+        try {
+          ctx.trayStatus.markGrpcDisconnected();
+        } catch {}
 
         // Remote disconnect: notify listeners, but do NOT mark this stream as locally ended
         // and do NOT send grpc.close back to PrivSvc.
@@ -266,6 +272,9 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         if (result.connected === true && result.ready === true) {
         connected = true;
         ctx.logger?.info("[grpc-client] PrivSvc bridge READY (from connect response)");
+        try {
+          ctx.trayStatus.markGrpcConnected();
+        } catch {}
 
         stream.emit("data", {
           connected: true,
@@ -462,12 +471,18 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               // Surface to stream.on('error') so scheduleReconnect() runs.
               stream.emit("error", new Error(`heartbeat_failed:${errorCode || errorMessage}`));
             }
+            try {
+              ctx.trayStatus.markHeartbeat();
+            } catch {}
           } catch (err: any) {
             ctx.logger?.warn("[grpc-client] heartbeat IPC threw — marking connection broken", {
               error: err?.message || String(err)
             });
             connected = false;
             connectPromise = null;
+            try {
+              ctx.trayStatus.markGrpcDisconnected();
+            } catch {}
             stream.emit("error", err instanceof Error ? err : new Error(String(err)));
           }
 
@@ -488,6 +503,9 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
           });
           connected = false;
           connectPromise = null;
+          try {
+            ctx.trayStatus.markGrpcDisconnected();
+          } catch {}
         }
         // release in-flight on failure
         if (msg?.facts?.eventId) {
@@ -504,6 +522,9 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
     localClose = true;
     connected = false;
     connectPromise = null;
+    try {
+      ctx.trayStatus.markGrpcDisconnected();
+    } catch {}
 
     (ctx.priv as any)
       .call({

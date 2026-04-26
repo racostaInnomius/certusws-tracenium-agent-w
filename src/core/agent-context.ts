@@ -5,6 +5,7 @@ import { EnrollmentStore } from "../bootstrap/enrollment-store";
 import { PolicyStore } from "./policy-store";
 import { PolicyRuntime } from "./policy-runtime";
 import { PluginManager } from "./plugin-manager";
+import { TrayStatusStore } from "../status/tray-status-store";
 
 export interface IPrivSvcClient {
   call(req: any): Promise<any>;
@@ -24,5 +25,6 @@ export type AgentContext = {
   policy: PolicyStore;
   policyRuntime: PolicyRuntime;
   plugins: PluginManager;
+  trayStatus: TrayStatusStore;
   logger: any;
 };

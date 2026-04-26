@@ -60,6 +60,18 @@ export async function startService() {
     } catch (e: any) {
       log.warn("Failed to read policy runtime snapshot", e?.message || e);
     }
+
+    try {
+      const traySnapshot = ctx.trayStatus.writeStartupSnapshot(ctx);
+      log.info("Tray status snapshot initialized", {
+        file: ctx.trayStatus.getPath(),
+        grpcConnected: traySnapshot.grpc.connected,
+        policyVersion: traySnapshot.policy.version,
+        plugins: traySnapshot.policy.plugins
+      });
+    } catch (e: any) {
+      log.warn("Failed to initialize tray status snapshot", e?.message || e);
+    }
     
     // Ping PrivSvc (best-effort)
     if (ctx.priv) {

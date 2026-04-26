@@ -801,10 +801,11 @@ stream = client.Connect();
     if (msg.runJob) {
       const jobId = String(msg.runJob?.jobId || "").trim();
       const eventId = jobId || `runJob-${Date.now()}`;
+      const jobType = String(msg.runJob?.jobType || msg.runJob?.type || msg.runJob?.task || "").trim();
 
       ctx.logger?.info?.("gRPC control message: runJob received", {
         jobId,
-        jobType: msg.runJob?.jobType || msg.runJob?.type || msg.runJob?.task || null
+        jobType: jobType || null
       });
 
       if (jobId && runningJobIds.has(jobId)) {
@@ -817,14 +818,36 @@ stream = client.Connect();
         runningJobIds.add(jobId);
       }
 
+      try {
+        if (jobType) {
+          ctx.trayStatus.markJobStarted(jobType);
+        }
+      } catch {}
+
       setImmediate(() => {
         executeRunJob(ctx, msg.runJob)
-          .then((result) => sendControlAck(ctx, eventId, result.status, result.message))
+          .then((result) => {
+            try {
+              if (jobType) {
+                const normalizedStatus =
+                  result.status === 0 ? "success" :
+                  result.status === 1 ? "retry" :
+                  "failed";
+                ctx.trayStatus.markJobFinished(jobType, normalizedStatus);
+              }
+            } catch {}
+            return sendControlAck(ctx, eventId, result.status, result.message);
+          })
           .catch((err: any) => {
             ctx.logger?.error?.("runJob execution failed", {
               jobId,
               err: err?.message || err
             });
+            try {
+              if (jobType) {
+                ctx.trayStatus.markJobFinished(jobType, "failed");
+              }
+            } catch {}
             return sendControlAck(ctx, eventId, 2, err?.message || "job_failed");
           })
           .finally(() => {
@@ -884,12 +907,15 @@ stream = client.Connect();
           return;
         }
 
-        ctx.policy
+            ctx.policy
           .save(policyVersion, computedHash, parsed)
           .then(async () => {
             ctx.logger?.info?.("Policy successfully updated", { eventId, policyVersion });
             await ctx.policyRuntime.applyUpdate();
             ctx.logger?.info?.("Policy runtime reloaded", ctx.policyRuntime.snapshot());
+            try {
+              ctx.trayStatus.markPolicyApplied(ctx);
+            } catch {}
             await sendControlAck(ctx, eventId, 0, "policy_applied");
           })
           .catch(async (err: any) => {
