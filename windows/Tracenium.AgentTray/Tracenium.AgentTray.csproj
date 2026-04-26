@@ -6,4 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\Tracenium_tryicon.png" Link="Resources\Tracenium_tryicon.png" />
+  </ItemGroup>
 </Project>

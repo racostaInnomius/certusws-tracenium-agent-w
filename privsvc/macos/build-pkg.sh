@@ -14,11 +14,14 @@ DIST_BUILD="$ROOT_DIR/build/pkg-distribution/Distribution.xml"
 RESOURCES_DIR="$ROOT_DIR/privsvc/macos/distribution/resources"
 ICON_PNG="$RESOURCES_DIR/tracenium.png"
 ICON_ICNS="$RESOURCES_DIR/tracenium.icns"
+STATUS_ICON_PNG="$ROOT_DIR/Tracenium_tryicon.png"
 STATUS_APP_DIR="$ROOT_DIR/macos/TraceniumAgentStatus"
 STATUS_APP_INFO_TEMPLATE="$STATUS_APP_DIR/Resources/Info.plist"
 STATUS_APP_BUILD_DIR="$BUILD_DIR/AgentStatus"
 STATUS_APP_BUNDLE_NAME="Tracenium Agent Status.app"
 STATUS_APP_BUNDLE_DIR="$STATUS_APP_BUILD_DIR/$STATUS_APP_BUNDLE_NAME"
+STATUS_APP_ICONSET_DIR="$BUILD_DIR/AgentStatus/icon.iconset"
+STATUS_APP_ICON_ICNS="$STATUS_APP_BUILD_DIR/TraceniumAgentStatus.icns"
 
 VERSION="${TRACENIUM_AGENT_VERSION:-1.1.2}"
 ARCH="${TRACENIUM_AGENT_ARCH:-arm64}"
@@ -102,11 +105,50 @@ build_status_app_bundle() {
   fi
 
   rm -rf "$STATUS_APP_BUNDLE_DIR"
+  rm -rf "$STATUS_APP_ICONSET_DIR"
   mkdir -p "$STATUS_APP_BUNDLE_DIR/Contents/MacOS"
   mkdir -p "$STATUS_APP_BUNDLE_DIR/Contents/Resources"
+  mkdir -p "$STATUS_APP_ICONSET_DIR"
+
+  sips -z 16 16 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_16x16.png" >/dev/null
+  sips -z 32 32 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_16x16@2x.png" >/dev/null
+  sips -z 32 32 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_32x32.png" >/dev/null
+  sips -z 64 64 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_32x32@2x.png" >/dev/null
+  sips -z 128 128 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_128x128.png" >/dev/null
+  sips -z 256 256 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_128x128@2x.png" >/dev/null
+  sips -z 256 256 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_256x256.png" >/dev/null
+  sips -z 512 512 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_256x256@2x.png" >/dev/null
+  sips -z 512 512 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_512x512.png" >/dev/null
+  sips -z 1024 1024 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_512x512@2x.png" >/dev/null
+  if ! iconutil --convert icns "$STATUS_APP_ICONSET_DIR" --output "$STATUS_APP_ICON_ICNS" 2>/dev/null; then
+    STATUS_APP_ICONSET_DIR="$STATUS_APP_ICONSET_DIR" STATUS_APP_ICON_ICNS="$STATUS_APP_ICON_ICNS" python3 - <<'PY'
+from pathlib import Path
+import os
+import struct
+
+iconset = Path(os.environ["STATUS_APP_ICONSET_DIR"])
+out = Path(os.environ["STATUS_APP_ICON_ICNS"])
+mapping = [
+    ("icp4", "icon_16x16.png"),
+    ("icp5", "icon_32x32.png"),
+    ("icp6", "icon_32x32@2x.png"),
+    ("ic07", "icon_128x128.png"),
+    ("ic08", "icon_256x256.png"),
+    ("ic09", "icon_512x512.png"),
+    ("ic10", "icon_512x512@2x.png"),
+]
+chunks = []
+for kind, name in mapping:
+    data = (iconset / name).read_bytes()
+    chunks.append(kind.encode("ascii") + struct.pack(">I", len(data) + 8) + data)
+body = b"".join(chunks)
+out.write_bytes(b"icns" + struct.pack(">I", len(body) + 8) + body)
+PY
+  fi
 
   cp "$executable_path" "$STATUS_APP_BUNDLE_DIR/Contents/MacOS/TraceniumAgentStatus"
-  cp "$ICON_ICNS" "$STATUS_APP_BUNDLE_DIR/Contents/Resources/tracenium.icns"
+  cp "$STATUS_APP_ICON_ICNS" "$STATUS_APP_BUNDLE_DIR/Contents/Resources/tracenium.icns"
+  cp "$STATUS_ICON_PNG" "$STATUS_APP_BUNDLE_DIR/Contents/Resources/Tracenium_tryicon.png"
   sed \
     -e "s/@TRACENIUM_AGENT_VERSION@/$VERSION/g" \
     "$STATUS_APP_INFO_TEMPLATE" > "$STATUS_APP_BUNDLE_DIR/Contents/Info.plist"
@@ -175,6 +217,11 @@ fi
 
 if [ ! -f "$ICON_PNG" ]; then
   echo "Missing installer icon source: $ICON_PNG" >&2
+  exit 1
+fi
+
+if [ ! -f "$STATUS_ICON_PNG" ]; then
+  echo "Missing status app icon source: $STATUS_ICON_PNG" >&2
   exit 1
 fi
 

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Tracenium.AgentTray")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0f7b3c86db189356f886c89c5fe3da497ecc5754")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+07e355da111c2537fec115616a531857faf4e4b9")]
 [assembly: System.Reflection.AssemblyProductAttribute("Tracenium.AgentTray")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Tracenium.AgentTray")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

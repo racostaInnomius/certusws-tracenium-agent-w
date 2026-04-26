@@ -8,13 +8,28 @@ final class StatusBarController {
     private var timer: Timer?
     private var lastPresenceState: Bool?
     private var lastConnectivityState: Bool?
+    private lazy var statusImage: NSImage? = {
+        guard let url = Bundle.main.url(forResource: "Tracenium_tryicon", withExtension: "png"),
+              let image = NSImage(contentsOf: url) else {
+            return nil
+        }
+        image.size = NSSize(width: 18, height: 18)
+        image.isTemplate = false
+        return image
+    }()
 
     func start() {
         popover.behavior = .transient
         popover.contentViewController = contentController
 
         if let button = statusItem.button {
-            button.title = "Tracenium"
+            if let image = statusImage {
+                button.image = image
+                button.imagePosition = .imageOnly
+                button.title = ""
+            } else {
+                button.title = "Tracenium"
+            }
             button.target = self
             button.action = #selector(togglePopover(_:))
         }

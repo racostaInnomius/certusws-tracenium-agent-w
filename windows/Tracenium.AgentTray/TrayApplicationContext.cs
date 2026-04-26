@@ -9,9 +9,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly StatusForm _statusForm = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly System.Windows.Forms.Timer _timer;
+    private readonly Icon _trayIcon;
 
     public TrayApplicationContext()
     {
+        _trayIcon = TrayIconLoader.LoadOrFallback();
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open Status", null, (_, _) => ShowStatus());
         menu.Items.Add("Open Agent Data Folder", null, (_, _) => OpenAgentFolder());
@@ -21,11 +23,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon = new NotifyIcon
         {
             Text = "Tracenium Agent",
-            Icon = SystemIcons.Application,
+            Icon = _trayIcon,
             Visible = true,
             ContextMenuStrip = menu
         };
         _notifyIcon.DoubleClick += (_, _) => ShowStatus();
+        _statusForm.Icon = _trayIcon;
 
         _statusForm.FormClosing += (_, e) =>
         {
@@ -58,6 +61,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _timer.Stop();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
+        _trayIcon.Dispose();
         _timer.Dispose();
         _statusForm.Dispose();
         base.ExitThreadCore();
@@ -70,12 +74,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         if (status is null)
         {
-            _notifyIcon.Icon = SystemIcons.Warning;
+            _notifyIcon.Icon = _trayIcon;
             _notifyIcon.Text = "Tracenium Agent - No local status";
             return;
         }
 
-        _notifyIcon.Icon = status.Grpc.Connected ? SystemIcons.Information : SystemIcons.Warning;
+        _notifyIcon.Icon = _trayIcon;
         _notifyIcon.Text = status.Grpc.Connected
             ? $"Tracenium Agent - Online ({status.AgentVersion})"
             : $"Tracenium Agent - Offline ({status.AgentVersion})";
