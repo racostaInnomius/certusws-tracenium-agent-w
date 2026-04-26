@@ -32,6 +32,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/Logger.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/Models/TrayStatus.swift"
         },
         {
@@ -65,6 +69,7 @@
       "objects" : [
         "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/AgentStatusPaths.swift.o",
         "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/AppDelegate.swift.o",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/Logger.swift.o",
         "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/TrayStatus.swift.o",
         "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/StatusBarController.swift.o",
         "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/StatusPopoverViewController.swift.o",
@@ -138,6 +143,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/Logger.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/TrayStatus.swift.o"
         },
         {
@@ -165,6 +174,7 @@
       "sources" : [
         "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/AgentStatusPaths.swift",
         "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/AppDelegate.swift",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/Logger.swift",
         "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/Models/TrayStatus.swift",
         "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusBarController.swift",
         "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusPopoverViewController.swift",
@@ -188,6 +198,7 @@
       "-c",
       "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/AgentStatusPaths.swift",
       "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/AppDelegate.swift",
+      "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/Logger.swift",
       "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/Models/TrayStatus.swift",
       "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusBarController.swift",
       "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusPopoverViewController.swift",
@@ -300,6 +311,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/Logger.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/Models/TrayStatus.swift"
         },
         {
@@ -335,6 +350,10 @@
         {
           "kind" : "file",
           "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/AppDelegate.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/Logger.swift.o"
         },
         {
           "kind" : "file",

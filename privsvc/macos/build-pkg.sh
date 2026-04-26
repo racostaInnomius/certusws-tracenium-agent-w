@@ -14,6 +14,11 @@ DIST_BUILD="$ROOT_DIR/build/pkg-distribution/Distribution.xml"
 RESOURCES_DIR="$ROOT_DIR/privsvc/macos/distribution/resources"
 ICON_PNG="$RESOURCES_DIR/tracenium.png"
 ICON_ICNS="$RESOURCES_DIR/tracenium.icns"
+STATUS_APP_DIR="$ROOT_DIR/macos/TraceniumAgentStatus"
+STATUS_APP_INFO_TEMPLATE="$STATUS_APP_DIR/Resources/Info.plist"
+STATUS_APP_BUILD_DIR="$BUILD_DIR/AgentStatus"
+STATUS_APP_BUNDLE_NAME="Tracenium Agent Status.app"
+STATUS_APP_BUNDLE_DIR="$STATUS_APP_BUILD_DIR/$STATUS_APP_BUNDLE_NAME"
 
 VERSION="${TRACENIUM_AGENT_VERSION:-1.1.2}"
 ARCH="${TRACENIUM_AGENT_ARCH:-arm64}"
@@ -73,6 +78,42 @@ build_privsvc_bundle() {
   fi
 }
 
+build_status_app_bundle() {
+  if [ ! -d "$STATUS_APP_DIR" ]; then
+    echo "Missing status app source directory: $STATUS_APP_DIR" >&2
+    exit 1
+  fi
+
+  if [ ! -f "$STATUS_APP_INFO_TEMPLATE" ]; then
+    echo "Missing status app Info.plist template: $STATUS_APP_INFO_TEMPLATE" >&2
+    exit 1
+  fi
+
+  (
+    cd "$STATUS_APP_DIR"
+    swift build -c release
+  )
+
+  local executable_path
+  executable_path="$STATUS_APP_DIR/.build/release/TraceniumAgentStatus"
+  if [ ! -x "$executable_path" ]; then
+    echo "Missing built status app executable: $executable_path" >&2
+    exit 1
+  fi
+
+  rm -rf "$STATUS_APP_BUNDLE_DIR"
+  mkdir -p "$STATUS_APP_BUNDLE_DIR/Contents/MacOS"
+  mkdir -p "$STATUS_APP_BUNDLE_DIR/Contents/Resources"
+
+  cp "$executable_path" "$STATUS_APP_BUNDLE_DIR/Contents/MacOS/TraceniumAgentStatus"
+  cp "$ICON_ICNS" "$STATUS_APP_BUNDLE_DIR/Contents/Resources/tracenium.icns"
+  sed \
+    -e "s/@TRACENIUM_AGENT_VERSION@/$VERSION/g" \
+    "$STATUS_APP_INFO_TEMPLATE" > "$STATUS_APP_BUNDLE_DIR/Contents/Info.plist"
+
+  /bin/chmod 755 "$STATUS_APP_BUNDLE_DIR/Contents/MacOS/TraceniumAgentStatus"
+}
+
 rebuild_better_sqlite3() {
   local target_node_version
   target_node_version="$("$BUILD_DIR/Runtime/node" -p 'process.versions.node')"
@@ -105,6 +146,7 @@ fi
 
 build_agent_bundle
 build_privsvc_bundle
+build_status_app_bundle
 
 if [ ! -f "$BUILD_DIR/PrivSvc/macos/privsvc.js" ]; then
   echo "Missing PrivSvc bundle: $BUILD_DIR/PrivSvc/macos/privsvc.js" >&2
@@ -139,6 +181,8 @@ fi
 rm -rf "$PKG_ROOT" "$COMPONENT_OUT" "$PKG_OUT" "$ROOT_DIR/build/pkg-distribution"
 mkdir -p "$PKG_ROOT/Library/Application Support/Tracenium"
 mkdir -p "$PKG_ROOT/Library/LaunchDaemons"
+mkdir -p "$PKG_ROOT/Library/LaunchAgents"
+mkdir -p "$PKG_ROOT/Applications"
 mkdir -p "$COMPONENT_OUT"
 mkdir -p "$PKG_OUT"
 mkdir -p "$(dirname "$DIST_BUILD")"
@@ -147,6 +191,8 @@ rsync -a --exclude ".DS_Store" "$BUILD_DIR/Runtime/" "$PKG_ROOT/Library/Applicat
 rsync -a --exclude ".DS_Store" "$BUILD_DIR/PrivSvc/" "$PKG_ROOT/Library/Application Support/Tracenium/PrivSvc/"
 rsync -a --exclude ".DS_Store" "$BUILD_DIR/Agent/" "$PKG_ROOT/Library/Application Support/Tracenium/Agent/"
 rsync -a --exclude ".DS_Store" "$BUILD_DIR/LaunchDaemons/" "$PKG_ROOT/Library/LaunchDaemons/"
+rsync -a --exclude ".DS_Store" "$ROOT_DIR/privsvc/macos/launchd/com.certusws.tracenium.agentstatus.plist" "$PKG_ROOT/Library/LaunchAgents/"
+rsync -a --exclude ".DS_Store" "$STATUS_APP_BUNDLE_DIR/" "$PKG_ROOT/Applications/$STATUS_APP_BUNDLE_NAME/"
 
 rm -f "$PKG_ROOT/Library/Application Support/Tracenium/Agent/.env"
 find "$PKG_ROOT" -name ".DS_Store" -delete

@@ -48,6 +48,7 @@ mkdir -p "$AGENT_DIR"
 mkdir -p "$PRIVSVC_DIR/macos"
 mkdir -p "$PRIVSVC_DIR/certs"
 mkdir -p "$LOG_DIR"
+mkdir -p "/Library/LaunchAgents"
 mkdir -p "/var/run/tracenium"
 
 /bin/ls -la "/Library/Application Support" || true
@@ -143,13 +144,16 @@ fi
 chown root:wheel /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
 chown root:wheel /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
 chown root:wheel /Library/LaunchDaemons/com.certusws.tracenium.logrotate.plist
+chown root:wheel /Library/LaunchAgents/com.certusws.tracenium.agentstatus.plist
 chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
 chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
 chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.logrotate.plist
+chmod 644 /Library/LaunchAgents/com.certusws.tracenium.agentstatus.plist
 
 /usr/bin/plutil -lint /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
 /usr/bin/plutil -lint /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
 /usr/bin/plutil -lint /Library/LaunchDaemons/com.certusws.tracenium.logrotate.plist
+/usr/bin/plutil -lint /Library/LaunchAgents/com.certusws.tracenium.agentstatus.plist
 
 /bin/launchctl bootout system/com.certusws.tracenium.agent >/dev/null 2>&1 || true
 /bin/launchctl bootout system/com.certusws.tracenium.privsvc >/dev/null 2>&1 || true
@@ -169,5 +173,21 @@ chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.logrotate.plist
 /bin/launchctl print system/com.certusws.tracenium.privsvc || true
 /bin/launchctl print system/com.certusws.tracenium.agent || true
 /bin/launchctl print system/com.certusws.tracenium.logrotate || true
+
+CONSOLE_USER="$(/usr/bin/stat -f %Su /dev/console 2>/dev/null || true)"
+if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
+  CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER" 2>/dev/null || true)"
+  if [ -n "$CONSOLE_UID" ]; then
+    /bin/launchctl bootout "gui/$CONSOLE_UID/com.certusws.tracenium.agentstatus" >/dev/null 2>&1 || true
+    /bin/launchctl bootstrap "gui/$CONSOLE_UID" /Library/LaunchAgents/com.certusws.tracenium.agentstatus.plist
+    /bin/launchctl enable "gui/$CONSOLE_UID/com.certusws.tracenium.agentstatus"
+    /bin/launchctl kickstart -k "gui/$CONSOLE_UID/com.certusws.tracenium.agentstatus" || true
+    /bin/launchctl print "gui/$CONSOLE_UID/com.certusws.tracenium.agentstatus" || true
+  else
+    echo "Skipping agent status LaunchAgent bootstrap: unable to resolve console UID"
+  fi
+else
+  echo "Skipping agent status LaunchAgent bootstrap: no interactive console user"
+fi
 
 exit 0
