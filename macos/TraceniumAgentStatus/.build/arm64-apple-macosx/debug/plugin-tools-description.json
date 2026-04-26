@@ -1,0 +1,358 @@
+{
+  "builtTestProducts" : [
+
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.TraceniumAgentStatus-arm64-apple-macosx26.0-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/sources",
+      "importPath" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/AppDelegate.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/Models/TrayStatus.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusBarController.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusPopoverViewController.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusSnapshotReader.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/main.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "TraceniumAgentStatus",
+      "moduleOutputPath" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/Modules/TraceniumAgentStatus.swiftmodule",
+      "objects" : [
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/AppDelegate.swift.o",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/TrayStatus.swift.o",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/StatusBarController.swift.o",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/StatusPopoverViewController.swift.o",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/StatusSnapshotReader.swift.o",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/main.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j12",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "TraceniumAgentStatus_main",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "traceniumagentstatus"
+      ],
+      "outputFileMapPath" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/AppDelegate.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/TrayStatus.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/StatusBarController.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/StatusPopoverViewController.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/StatusSnapshotReader.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/main.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/Modules/TraceniumAgentStatus.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/AppDelegate.swift",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/Models/TrayStatus.swift",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusBarController.swift",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusPopoverViewController.swift",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusSnapshotReader.swift",
+        "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/main.swift"
+      ],
+      "tempsPath" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build",
+      "wholeModuleOptimization" : false
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "TraceniumAgentStatus" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "TraceniumAgentStatus",
+      "-package-name",
+      "traceniumagentstatus",
+      "-c",
+      "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/AppDelegate.swift",
+      "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/Models/TrayStatus.swift",
+      "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusBarController.swift",
+      "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusPopoverViewController.swift",
+      "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusSnapshotReader.swift",
+      "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/main.swift",
+      "-I",
+      "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx13.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j12",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "TraceniumAgentStatus_main",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "traceniumagentstatus",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "TraceniumAgentStatus" : [
+
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus-entitlement.plist" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<entitlement-plist>"
+        },
+        {
+          "kind" : "virtual",
+          "name" : "<com.apple.security.get-task-allow>"
+        }
+      ],
+      "outputFilePath" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus-entitlement.plist"
+    },
+    "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/AppDelegate.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/Models/TrayStatus.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusBarController.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusPopoverViewController.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/StatusSnapshotReader.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/Sources/main.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/sources"
+    },
+    "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/AppDelegate.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/StatusBarController.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/StatusPopoverViewController.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/StatusSnapshotReader.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/TrayStatus.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.build/main.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/TraceniumAgentStatus.product/Objects.LinkFileList"
+    },
+    "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/macos/TraceniumAgentStatus/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+    }
+  }
+}
