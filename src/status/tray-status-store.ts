@@ -1,8 +1,7 @@
 import fs from "fs";
 import os from "os";
-import path from "path";
 import type { AgentContext } from "../core/agent-context";
-import { ensureAgentDataDir } from "../bootstrap/paths";
+import { ensureAgentStatusDir, getTrayStatusFilePath } from "../bootstrap/paths";
 import { loadPmpState } from "../plugins/pmp/state";
 import { loadUpdateState } from "../update/update-state";
 import type { TrayStatusSnapshot } from "./tray-status-types";
@@ -11,13 +10,9 @@ function ensureDir(dir: string) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-function resolveStatusDir() {
-  return path.join(ensureAgentDataDir(), "status");
-}
-
 export class TrayStatusStore {
-  private dir = resolveStatusDir();
-  private filePath = path.join(this.dir, "tray-status.json");
+  private dir = ensureAgentStatusDir();
+  private filePath = getTrayStatusFilePath();
 
   constructor() {
     ensureDir(this.dir);

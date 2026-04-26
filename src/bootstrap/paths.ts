@@ -4,6 +4,8 @@ import path from "path";
 import fs from "fs";
 
 const MACOS_AGENT_DATA_DIR = "/Library/Application Support/Tracenium/Agent";
+const AGENT_STATUS_DIR_NAME = "status";
+const TRAY_STATUS_FILE_NAME = "tray-status.json";
 
 function resolveProgramData(): string {
   return (
@@ -46,4 +48,18 @@ export function getSoftwareBaselineDbPath(): string {
 
 export function getLegacySoftwareBaselineDbPath(): string {
   return path.join(process.cwd(), "data", "agent.db");
+}
+
+export function getAgentStatusDir(): string {
+  return path.join(agentDataDir(), AGENT_STATUS_DIR_NAME);
+}
+
+export function ensureAgentStatusDir(): string {
+  const dir = getAgentStatusDir();
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+export function getTrayStatusFilePath(): string {
+  return path.join(getAgentStatusDir(), TRAY_STATUS_FILE_NAME);
 }
