@@ -1,23 +1,17 @@
 {
   "version": 2,
-  "dgSpecHash": "bC2lpvwvmDY=",
+  "dgSpecHash": "Fn+nV/BHWyI=",
   "success": true,
-  "projectFilePath": "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj",
+  "projectFilePath": "/Users/javierpacheco/devprojects/tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj",
   "expectedPackageFiles": [
+    "/Users/javierpacheco/.nuget/packages/microsoft.net.illink.tasks/8.0.24/microsoft.net.illink.tasks.8.0.24.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/microsoft.netcore.app.ref/8.0.24/microsoft.netcore.app.ref.8.0.24.nupkg.sha512",
+    "/Users/javierpacheco/.nuget/packages/microsoft.netcore.app.runtime.win-arm64/8.0.24/microsoft.netcore.app.runtime.win-arm64.8.0.24.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/microsoft.windowsdesktop.app.ref/8.0.24/microsoft.windowsdesktop.app.ref.8.0.24.nupkg.sha512",
+    "/Users/javierpacheco/.nuget/packages/microsoft.windowsdesktop.app.runtime.win-arm64/8.0.24/microsoft.windowsdesktop.app.runtime.win-arm64.8.0.24.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/microsoft.aspnetcore.app.ref/8.0.24/microsoft.aspnetcore.app.ref.8.0.24.nupkg.sha512",
-    "/Users/javierpacheco/.nuget/packages/microsoft.netcore.app.host.osx-arm64/8.0.24/microsoft.netcore.app.host.osx-arm64.8.0.24.nupkg.sha512"
+    "/Users/javierpacheco/.nuget/packages/microsoft.aspnetcore.app.runtime.win-arm64/8.0.24/microsoft.aspnetcore.app.runtime.win-arm64.8.0.24.nupkg.sha512",
+    "/Users/javierpacheco/.nuget/packages/microsoft.netcore.app.host.win-arm64/8.0.24/microsoft.netcore.app.host.win-arm64.8.0.24.nupkg.sha512"
   ],
-  "logs": [
-    {
-      "code": "NU1900",
-      "level": "Warning",
-      "message": "Error occurred while getting package vulnerability data: Unable to load the service index for source https://api.nuget.org/v3/index.json.",
-      "projectPath": "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj",
-      "warningLevel": 1,
-      "filePath": "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj",
-      "targetGraphs": []
-    }
-  ]
+  "logs": []
 }

@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj": {}
+    "/Users/javierpacheco/devprojects/tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj": {}
   },
   "projects": {
-    "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj": {
+    "/Users/javierpacheco/devprojects/tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj",
+        "projectUniqueName": "/Users/javierpacheco/devprojects/tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj",
         "projectName": "Tracenium.AgentTray",
-        "projectPath": "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj",
+        "projectPath": "/Users/javierpacheco/devprojects/tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj",
         "packagesPath": "/Users/javierpacheco/.nuget/packages/",
-        "outputPath": "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/obj/",
+        "outputPath": "/Users/javierpacheco/devprojects/tracenium/certusws-tracenium-agent-w/windows/Tracenium.AgentTray/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/Users/javierpacheco/.nuget/NuGet/NuGet.Config"
@@ -43,6 +43,14 @@
       "frameworks": {
         "net8.0-windows7.0": {
           "targetAlias": "net8.0-windows",
+          "dependencies": {
+            "Microsoft.NET.ILLink.Tasks": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[8.0.24, )",
+              "autoReferenced": true
+            }
+          },
           "imports": [
             "net461",
             "net462",
@@ -60,7 +68,11 @@
               "version": "[8.0.24, 8.0.24]"
             },
             {
-              "name": "Microsoft.NETCore.App.Host.osx-arm64",
+              "name": "Microsoft.AspNetCore.App.Runtime.win-arm64",
+              "version": "[8.0.24, 8.0.24]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Host.win-arm64",
               "version": "[8.0.24, 8.0.24]"
             },
             {
@@ -68,7 +80,15 @@
               "version": "[8.0.24, 8.0.24]"
             },
             {
+              "name": "Microsoft.NETCore.App.Runtime.win-arm64",
+              "version": "[8.0.24, 8.0.24]"
+            },
+            {
               "name": "Microsoft.WindowsDesktop.App.Ref",
+              "version": "[8.0.24, 8.0.24]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Runtime.win-arm64",
               "version": "[8.0.24, 8.0.24]"
             }
           ],
@@ -81,6 +101,11 @@
             }
           },
           "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/10.0.103/PortableRuntimeIdentifierGraph.json"
+        }
+      },
+      "runtimes": {
+        "win-arm64": {
+          "#import": []
         }
       }
     }

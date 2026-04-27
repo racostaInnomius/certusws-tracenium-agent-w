@@ -9,6 +9,11 @@
     <UseWindowsService>true</UseWindowsService>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>false</SelfContained>
+
+    <!-- Permite ejecutar `dotnet publish -r win-x64` desde macOS/Linux.
+         Sin esto el SDK rechaza el TargetFramework net8.0-windows fuera
+         de Windows con NETSDK1100. Solo afecta al build, no al runtime. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
 
   <ItemGroup>

@@ -63,7 +63,18 @@ function getSoftwareBaselineDbPath() {
 function getLegacySoftwareBaselineDbPath() {
   return import_path.default.join(process.cwd(), "data", "agent.db");
 }
-var import_os, import_path, import_fs, MACOS_AGENT_DATA_DIR;
+function getAgentStatusDir() {
+  return import_path.default.join(agentDataDir(), AGENT_STATUS_DIR_NAME);
+}
+function ensureAgentStatusDir() {
+  const dir = getAgentStatusDir();
+  import_fs.default.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+function getTrayStatusFilePath() {
+  return import_path.default.join(getAgentStatusDir(), TRAY_STATUS_FILE_NAME);
+}
+var import_os, import_path, import_fs, MACOS_AGENT_DATA_DIR, AGENT_STATUS_DIR_NAME, TRAY_STATUS_FILE_NAME;
 var init_paths = __esm({
   "src/bootstrap/paths.ts"() {
     "use strict";
@@ -71,6 +82,8 @@ var init_paths = __esm({
     import_path = __toESM(require("path"));
     import_fs = __toESM(require("fs"));
     MACOS_AGENT_DATA_DIR = "/Library/Application Support/Tracenium/Agent";
+    AGENT_STATUS_DIR_NAME = "status";
+    TRAY_STATUS_FILE_NAME = "tray-status.json";
   }
 });
 
@@ -145,9 +158,9 @@ var require_package = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var path12 = require("path");
-    var os16 = require("os");
+    var os17 = require("os");
     var crypto10 = require("crypto");
     var packageJson = require_package();
     var version = packageJson.version;
@@ -254,7 +267,7 @@ var require_main = __commonJS({
       if (options && options.path && options.path.length > 0) {
         if (Array.isArray(options.path)) {
           for (const filepath of options.path) {
-            if (fs16.existsSync(filepath)) {
+            if (fs17.existsSync(filepath)) {
               possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
             }
           }
@@ -264,13 +277,13 @@ var require_main = __commonJS({
       } else {
         possibleVaultPath = path12.resolve(process.cwd(), ".env.vault");
       }
-      if (fs16.existsSync(possibleVaultPath)) {
+      if (fs17.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
       }
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path12.join(os16.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path12.join(os17.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = Boolean(options && options.debug);
@@ -313,7 +326,7 @@ var require_main = __commonJS({
       const parsedAll = {};
       for (const path13 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs16.readFileSync(path13, { encoding }));
+          const parsed = DotenvModule.parse(fs17.readFileSync(path13, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e) {
           if (debug) {
@@ -1427,8 +1440,8 @@ var require_package2 = __commonJS({
 var require_util = __commonJS({
   "node_modules/systeminformation/lib/util.js"(exports2) {
     "use strict";
-    var os16 = require("os");
-    var fs16 = require("fs");
+    var os17 = require("os");
+    var fs17 = require("fs");
     var path12 = require("path");
     var spawn2 = require("child_process").spawn;
     var exec2 = require("child_process").exec;
@@ -1534,7 +1547,7 @@ var require_util = __commonJS({
     }
     function cores() {
       if (_cores === 0) {
-        _cores = os16.cpus().length;
+        _cores = os17.cpus().length;
       }
       return _cores;
     }
@@ -1725,7 +1738,7 @@ var require_util = __commonJS({
       _powerShell = "powershell.exe";
       if (_windows) {
         const defaultPath = `${WINDIR}\\system32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-        if (fs16.existsSync(defaultPath)) {
+        if (fs17.existsSync(defaultPath)) {
           _powerShell = defaultPath;
         }
       }
@@ -1795,7 +1808,7 @@ var require_util = __commonJS({
     function powerShellRelease() {
       try {
         if (_psChild) {
-          _psChild.stdin.write("exit" + os16.EOL);
+          _psChild.stdin.write("exit" + os17.EOL);
           _psChild.stdin.end();
         }
       } catch {
@@ -1822,7 +1835,7 @@ var require_util = __commonJS({
             });
             try {
               if (_psChild && _psChild.pid) {
-                _psChild.stdin.write(_psToUTF8 + "echo " + _psCmdStart + id + _psIdSeperator + "; " + os16.EOL + cmd + os16.EOL + "echo " + _psCmdSeperator + os16.EOL);
+                _psChild.stdin.write(_psToUTF8 + "echo " + _psCmdStart + id + _psIdSeperator + "; " + os17.EOL + cmd + os17.EOL + "echo " + _psCmdSeperator + os17.EOL);
               }
             } catch {
               resolve("");
@@ -1834,7 +1847,7 @@ var require_util = __commonJS({
         return new Promise((resolve) => {
           process.nextTick(() => {
             try {
-              const osVersion = os16.release().split(".").map(Number);
+              const osVersion = os17.release().split(".").map(Number);
               const spanOptions = osVersion[0] < 10 ? ["-NoProfile", "-NoLogo", "-InputFormat", "Text", "-NoExit", "-ExecutionPolicy", "Unrestricted", "-Command", "-"] : ["-NoProfile", "-NoLogo", "-InputFormat", "Text", "-ExecutionPolicy", "Unrestricted", "-Command", _psToUTF8 + cmd];
               const child = spawn2(_powerShell, spanOptions, {
                 stdio: "pipe",
@@ -1866,8 +1879,8 @@ var require_util = __commonJS({
                 });
                 if (osVersion[0] < 10) {
                   try {
-                    child.stdin.write(_psToUTF8 + cmd + os16.EOL);
-                    child.stdin.write("exit" + os16.EOL);
+                    child.stdin.write(_psToUTF8 + cmd + os17.EOL);
+                    child.stdin.write("exit" + os17.EOL);
                     child.stdin.end();
                   } catch {
                     child.kill();
@@ -1981,7 +1994,7 @@ var require_util = __commonJS({
         cpuinfo = _rpi_cpuinfo;
       } else if (cpuinfo === void 0) {
         try {
-          cpuinfo = fs16.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
+          cpuinfo = fs17.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
           _rpi_cpuinfo = cpuinfo;
         } catch {
           return false;
@@ -1994,7 +2007,7 @@ var require_util = __commonJS({
     function isRaspbian() {
       let osrelease = [];
       try {
-        osrelease = fs16.readFileSync("/etc/os-release", { encoding: "utf8" }).toString().split("\n");
+        osrelease = fs17.readFileSync("/etc/os-release", { encoding: "utf8" }).toString().split("\n");
       } catch {
         return false;
       }
@@ -2012,9 +2025,9 @@ var require_util = __commonJS({
       });
     }
     function darwinXcodeExists() {
-      const cmdLineToolsExists = fs16.existsSync("/Library/Developer/CommandLineTools/usr/bin/");
-      const xcodeAppExists = fs16.existsSync("/Applications/Xcode.app/Contents/Developer/Tools");
-      const xcodeExists = fs16.existsSync("/Library/Developer/Xcode/");
+      const cmdLineToolsExists = fs17.existsSync("/Library/Developer/CommandLineTools/usr/bin/");
+      const xcodeAppExists = fs17.existsSync("/Applications/Xcode.app/Contents/Developer/Tools");
+      const xcodeExists = fs17.existsSync("/Library/Developer/Xcode/");
       return cmdLineToolsExists || xcodeExists || xcodeAppExists;
     }
     function nanoSeconds() {
@@ -2132,8 +2145,8 @@ var require_util = __commonJS({
       return ("00000000" + parseInt(hex, 16).toString(2)).substr(-8);
     }
     function getFilesInPath(source) {
-      const lstatSync = fs16.lstatSync;
-      const readdirSync = fs16.readdirSync;
+      const lstatSync = fs17.lstatSync;
+      const readdirSync = fs17.readdirSync;
       const join = path12.join;
       function isDirectory(source2) {
         return lstatSync(source2).isDirectory();
@@ -2164,7 +2177,7 @@ var require_util = __commonJS({
           return [];
         }
       }
-      if (fs16.existsSync(source)) {
+      if (fs17.existsSync(source)) {
         return getFilesRecursively(source);
       } else {
         return [];
@@ -2367,7 +2380,7 @@ var require_util = __commonJS({
         cpuinfo = _rpi_cpuinfo;
       } else {
         try {
-          cpuinfo = fs16.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
+          cpuinfo = fs17.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
           _rpi_cpuinfo = cpuinfo;
         } catch {
           return false;
@@ -3935,8 +3948,8 @@ var require_util = __commonJS({
 var require_osinfo = __commonJS({
   "node_modules/systeminformation/lib/osinfo.js"(exports2) {
     "use strict";
-    var os16 = require("os");
-    var fs16 = require("fs");
+    var os17 = require("os");
+    var fs17 = require("fs");
     var util = require_util();
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
@@ -3958,14 +3971,14 @@ var require_osinfo = __commonJS({
       }
       const result2 = {
         current: Date.now(),
-        uptime: os16.uptime(),
+        uptime: os17.uptime(),
         timezone: t.length >= 7 ? t[5] : "",
         timezoneName
       };
       if (_darwin || _linux) {
         try {
           const stdout = execSync3("date +%Z && date +%z && ls -l /etc/localtime 2>/dev/null", util.execOptsLinux);
-          const lines = stdout.toString().split(os16.EOL);
+          const lines = stdout.toString().split(os17.EOL);
           if (lines.length > 3 && !lines[0]) {
             lines.shift();
           }
@@ -3975,7 +3988,7 @@ var require_osinfo = __commonJS({
           }
           return {
             current: Date.now(),
-            uptime: os16.uptime(),
+            uptime: os17.uptime(),
             timezone: lines[1] ? timezone + lines[1] : timezone,
             timezoneName: lines[2] && lines[2].indexOf("/zoneinfo/") > 0 ? lines[2].split("/zoneinfo/")[1] || "" : ""
           };
@@ -4094,11 +4107,11 @@ var require_osinfo = __commonJS({
       return "";
     }
     function getFQDN() {
-      let fqdn = os16.hostname;
+      let fqdn = os17.hostname;
       if (_linux || _darwin) {
         try {
           const stdout = execSync3("hostname -f 2>/dev/null", util.execOptsLinux);
-          fqdn = stdout.toString().split(os16.EOL)[0];
+          fqdn = stdout.toString().split(os17.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4106,7 +4119,7 @@ var require_osinfo = __commonJS({
       if (_freebsd || _openbsd || _netbsd) {
         try {
           const stdout = execSync3("hostname 2>/dev/null");
-          fqdn = stdout.toString().split(os16.EOL)[0];
+          fqdn = stdout.toString().split(os17.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4114,7 +4127,7 @@ var require_osinfo = __commonJS({
       if (_windows) {
         try {
           const stdout = execSync3("echo %COMPUTERNAME%.%USERDNSDOMAIN%", util.execOptsWin);
-          fqdn = stdout.toString().replace(".%USERDNSDOMAIN%", "").split(os16.EOL)[0];
+          fqdn = stdout.toString().replace(".%USERDNSDOMAIN%", "").split(os17.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4129,9 +4142,9 @@ var require_osinfo = __commonJS({
             distro: "unknown",
             release: "unknown",
             codename: "",
-            kernel: os16.release(),
-            arch: os16.arch(),
-            hostname: os16.hostname(),
+            kernel: os17.release(),
+            arch: os17.arch(),
+            hostname: os17.hostname(),
             fqdn: getFQDN(),
             codepage: "",
             logofile: "",
@@ -4297,7 +4310,7 @@ var require_osinfo = __commonJS({
     function isUefiLinux() {
       return new Promise((resolve) => {
         process.nextTick(() => {
-          fs16.stat("/sys/firmware/efi", (err) => {
+          fs17.stat("/sys/firmware/efi", (err) => {
             if (!err) {
               return resolve(true);
             } else {
@@ -4340,7 +4353,7 @@ var require_osinfo = __commonJS({
     }
     function versions(apps, callback) {
       let versionObject = {
-        kernel: os16.release(),
+        kernel: os17.release(),
         apache: "",
         bash: "",
         bun: "",
@@ -4537,7 +4550,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "git")) {
               if (_darwin) {
-                const gitHomebrewExists = fs16.existsSync("/usr/local/Cellar/git") || fs16.existsSync("/opt/homebrew/bin/git");
+                const gitHomebrewExists = fs17.existsSync("/usr/local/Cellar/git") || fs17.existsSync("/opt/homebrew/bin/git");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
                   exec2("git --version", (error, stdout) => {
                     if (!error) {
@@ -4733,8 +4746,8 @@ var require_osinfo = __commonJS({
                   const stdout = execSync3("sw_vers");
                   const lines = stdout.toString().split("\n");
                   const osVersion = util.getValue(lines, "ProductVersion", ":");
-                  const gitHomebrewExists1 = fs16.existsSync("/usr/local/Cellar/python");
-                  const gitHomebrewExists2 = fs16.existsSync("/opt/homebrew/bin/python");
+                  const gitHomebrewExists1 = fs17.existsSync("/usr/local/Cellar/python");
+                  const gitHomebrewExists2 = fs17.existsSync("/opt/homebrew/bin/python");
                   if (util.darwinXcodeExists() && util.semverCompare("12.0.1", osVersion) < 0 || gitHomebrewExists1 || gitHomebrewExists2) {
                     const cmd2 = gitHomebrewExists1 ? "/usr/local/Cellar/python -V 2>&1" : gitHomebrewExists2 ? "/opt/homebrew/bin/python -V 2>&1" : "python -V 2>&1";
                     exec2(cmd2, (error, stdout2) => {
@@ -4762,7 +4775,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "python3")) {
               if (_darwin) {
-                const gitHomebrewExists = fs16.existsSync("/usr/local/Cellar/python3") || fs16.existsSync("/opt/homebrew/bin/python3");
+                const gitHomebrewExists = fs17.existsSync("/usr/local/Cellar/python3") || fs17.existsSync("/opt/homebrew/bin/python3");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
                   exec2("python3 -V 2>&1", (error, stdout) => {
                     if (!error) {
@@ -4786,7 +4799,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "pip")) {
               if (_darwin) {
-                const gitHomebrewExists = fs16.existsSync("/usr/local/Cellar/pip") || fs16.existsSync("/opt/homebrew/bin/pip");
+                const gitHomebrewExists = fs17.existsSync("/usr/local/Cellar/pip") || fs17.existsSync("/opt/homebrew/bin/pip");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
                   exec2("pip -V 2>&1", (error, stdout) => {
                     if (!error) {
@@ -4812,7 +4825,7 @@ var require_osinfo = __commonJS({
             }
             if ({}.hasOwnProperty.call(appsObj.versions, "pip3")) {
               if (_darwin) {
-                const gitHomebrewExists = fs16.existsSync("/usr/local/Cellar/pip3") || fs16.existsSync("/opt/homebrew/bin/pip3");
+                const gitHomebrewExists = fs17.existsSync("/usr/local/Cellar/pip3") || fs17.existsSync("/opt/homebrew/bin/pip3");
                 if (util.darwinXcodeExists() || gitHomebrewExists) {
                   exec2("pip3 -V 2>&1", (error, stdout) => {
                     if (!error) {
@@ -5050,7 +5063,7 @@ var require_osinfo = __commonJS({
     function getUniqueMacAdresses() {
       let macs = [];
       try {
-        const ifaces = os16.networkInterfaces();
+        const ifaces = os17.networkInterfaces();
         for (let dev in ifaces) {
           if ({}.hasOwnProperty.call(ifaces, dev)) {
             ifaces[dev].forEach((details) => {
@@ -5115,7 +5128,7 @@ echo -n "hardware: "; cat /sys/class/dmi/id/product_uuid 2> /dev/null; echo;`;
               result2.os = util.getValue(lines, "os").toLowerCase();
               result2.hardware = util.getValue(lines, "hardware").toLowerCase();
               if (!result2.hardware) {
-                const lines2 = fs16.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
+                const lines2 = fs17.readFileSync("/proc/cpuinfo", { encoding: "utf8" }).toString().split("\n");
                 const serial = util.getValue(lines2, "serial");
                 result2.hardware = serial || "";
               }
@@ -5171,8 +5184,8 @@ echo -n "hardware: "; cat /sys/class/dmi/id/product_uuid 2> /dev/null; echo;`;
 var require_system = __commonJS({
   "node_modules/systeminformation/lib/system.js"(exports2) {
     "use strict";
-    var fs16 = require("fs");
-    var os16 = require("os");
+    var fs17 = require("fs");
+    var os17 = require("os");
     var util = require_util();
     var { uuid } = require_osinfo();
     var exec2 = require("child_process").exec;
@@ -5296,8 +5309,8 @@ var require_system = __commonJS({
                   util.noop();
                 }
               }
-              if (!result2.virtual && (os16.release().toLowerCase().indexOf("microsoft") >= 0 || os16.release().toLowerCase().endsWith("wsl2"))) {
-                const kernelVersion = parseFloat(os16.release().toLowerCase());
+              if (!result2.virtual && (os17.release().toLowerCase().indexOf("microsoft") >= 0 || os17.release().toLowerCase().endsWith("wsl2"))) {
+                const kernelVersion = parseFloat(os17.release().toLowerCase());
                 result2.virtual = true;
                 result2.manufacturer = "Microsoft";
                 result2.model = "WSL";
@@ -5326,7 +5339,7 @@ var require_system = __commonJS({
                   util.noop();
                 }
               }
-              if (fs16.existsSync("/.dockerenv") || fs16.existsSync("/.dockerinit")) {
+              if (fs17.existsSync("/.dockerenv") || fs17.existsSync("/.dockerinit")) {
                 result2.model = "Docker Container";
               }
               try {
@@ -5354,7 +5367,7 @@ var require_system = __commonJS({
                 util.noop();
               }
               if (result2.manufacturer === "" && result2.model === "Computer" && result2.version === "") {
-                fs16.readFile("/proc/cpuinfo", (error2, stdout2) => {
+                fs17.readFile("/proc/cpuinfo", (error2, stdout2) => {
                   if (!error2) {
                     let lines2 = stdout2.toString().split("\n");
                     result2.model = util.getValue(lines2, "hardware", ":", true).toUpperCase();
@@ -5707,7 +5720,7 @@ var require_system = __commonJS({
                 result2.model = "Raspberry Pi";
                 result2.serial = rpi.serial;
                 result2.version = rpi.type + " - " + rpi.revision;
-                result2.memMax = os16.totalmem();
+                result2.memMax = os17.totalmem();
                 result2.memSlots = 0;
               }
               if (callback) {
@@ -5733,9 +5746,9 @@ var require_system = __commonJS({
               }
               devices.shift();
               result2.memSlots = devices.length;
-              if (os16.arch() === "arm64") {
+              if (os17.arch() === "arm64") {
                 result2.memSlots = 0;
-                result2.memMax = os16.totalmem();
+                result2.memMax = os17.totalmem();
               }
               if (callback) {
                 callback(result2);
@@ -5752,7 +5765,7 @@ var require_system = __commonJS({
           if (_windows) {
             try {
               const workload = [];
-              const win10plus = parseInt(os16.release()) >= 10;
+              const win10plus = parseInt(os17.release()) >= 10;
               const maxCapacityAttribute = win10plus ? "MaxCapacityEx" : "MaxCapacity";
               workload.push(util.powerShell("Get-CimInstance Win32_baseboard | select Model,Manufacturer,Product,Version,SerialNumber,PartNumber,SKU | fl"));
               workload.push(util.powerShell(`Get-CimInstance Win32_physicalmemoryarray | select ${maxCapacityAttribute}, MemoryDevices | fl`));
@@ -5948,10 +5961,10 @@ var require_system = __commonJS({
 var require_cpu = __commonJS({
   "node_modules/systeminformation/lib/cpu.js"(exports2) {
     "use strict";
-    var os16 = require("os");
+    var os17 = require("os");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var util = require_util();
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
@@ -6811,7 +6824,7 @@ var require_cpu = __commonJS({
                 const countProcessors = util.getValue(lines, "hw.packages");
                 const countCores = util.getValue(lines, "hw.physicalcpu_max");
                 const countThreads = util.getValue(lines, "hw.ncpu");
-                if (os16.arch() === "arm64") {
+                if (os17.arch() === "arm64") {
                   result2.socket = "SOC";
                   try {
                     const clusters = execSync3("ioreg -c IOPlatformDevice -d 3 -r | grep cluster-type").toString().split("\n");
@@ -6839,8 +6852,8 @@ var require_cpu = __commonJS({
             if (_linux) {
               let modelline = "";
               let lines = [];
-              if (os16.cpus()[0] && os16.cpus()[0].model) {
-                modelline = os16.cpus()[0].model;
+              if (os17.cpus()[0] && os17.cpus()[0].model) {
+                modelline = os17.cpus()[0].model;
               }
               exec2('export LC_ALL=C; lscpu; echo -n "Governor: "; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null; echo; unset LC_ALL', (error, stdout) => {
                 if (!error) {
@@ -6908,7 +6921,7 @@ var require_cpu = __commonJS({
                   result2.socket = "SOC";
                 }
                 if (util.getValue(lines, "architecture") === "riscv64") {
-                  const linesRiscV = fs16.readFileSync("/proc/cpuinfo").toString().split("\n");
+                  const linesRiscV = fs17.readFileSync("/proc/cpuinfo").toString().split("\n");
                   const uarch = util.getValue(linesRiscV, "uarch") || "";
                   if (uarch.indexOf(",") > -1) {
                     const split = uarch.split(",");
@@ -6929,8 +6942,8 @@ var require_cpu = __commonJS({
             if (_freebsd || _openbsd || _netbsd) {
               let modelline = "";
               let lines = [];
-              if (os16.cpus()[0] && os16.cpus()[0].model) {
-                modelline = os16.cpus()[0].model;
+              if (os17.cpus()[0] && os17.cpus()[0].model) {
+                modelline = os17.cpus()[0].model;
               }
               exec2("export LC_ALL=C; dmidecode -t 4; dmidecode -t 7 unset LC_ALL", (error, stdout) => {
                 let cache = [];
@@ -7090,7 +7103,7 @@ var require_cpu = __commonJS({
     }
     exports2.cpu = cpu;
     function getCpuCurrentSpeedSync() {
-      const cpus = os16.cpus();
+      const cpus = os17.cpus();
       let minFreq = 999999999;
       let maxFreq = 0;
       let avgFreq = 0;
@@ -7307,9 +7320,9 @@ var require_cpu = __commonJS({
                       return;
                     }
                   }
-                  fs16.stat("/sys/class/thermal/thermal_zone0/temp", (err) => {
+                  fs17.stat("/sys/class/thermal/thermal_zone0/temp", (err) => {
                     if (err === null) {
-                      fs16.readFile("/sys/class/thermal/thermal_zone0/temp", (error3, stdout3) => {
+                      fs17.readFile("/sys/class/thermal/thermal_zone0/temp", (error3, stdout3) => {
                         if (!error3) {
                           const lines2 = stdout3.toString().split("\n");
                           if (lines2.length > 0) {
@@ -7532,7 +7545,7 @@ var require_cpu = __commonJS({
                   });
                 }
                 if (!result2) {
-                  fs16.readFile("/proc/cpuinfo", (error2, stdout2) => {
+                  fs17.readFile("/proc/cpuinfo", (error2, stdout2) => {
                     if (!error2) {
                       let lines = stdout2.toString().split("\n");
                       result2 = util.getValue(lines, "features", ":", true).toLowerCase();
@@ -7785,7 +7798,7 @@ var require_cpu = __commonJS({
     function getLoad() {
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const loads = os16.loadavg().map((x) => {
+          const loads = os17.loadavg().map((x) => {
             return x / util.cores();
           });
           const avgLoad = parseFloat(Math.max.apply(Math, loads).toFixed(2));
@@ -7793,7 +7806,7 @@ var require_cpu = __commonJS({
           const now = Date.now() - _current_cpu.ms;
           if (now >= 200) {
             _current_cpu.ms = Date.now();
-            const cpus = os16.cpus().map((cpu2) => {
+            const cpus = os17.cpus().map((cpu2) => {
               cpu2.times.steal = 0;
               cpu2.times.guest = 0;
               return cpu2;
@@ -7987,7 +8000,7 @@ var require_cpu = __commonJS({
     function getFullLoad() {
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const cpus = os16.cpus();
+          const cpus = os17.cpus();
           let totalUser = 0;
           let totalSystem = 0;
           let totalNice = 0;
@@ -8030,11 +8043,11 @@ var require_cpu = __commonJS({
 var require_memory = __commonJS({
   "node_modules/systeminformation/lib/memory.js"(exports2) {
     "use strict";
-    var os16 = require("os");
+    var os17 = require("os");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
     var _darwin = _platform === "darwin";
@@ -8076,12 +8089,12 @@ var require_memory = __commonJS({
       return new Promise((resolve) => {
         process.nextTick(() => {
           let result2 = {
-            total: os16.totalmem(),
-            free: os16.freemem(),
-            used: os16.totalmem() - os16.freemem(),
-            active: os16.totalmem() - os16.freemem(),
+            total: os17.totalmem(),
+            free: os17.freemem(),
+            used: os17.totalmem() - os17.freemem(),
+            active: os17.totalmem() - os17.freemem(),
             // temporarily (fallback)
-            available: os16.freemem(),
+            available: os17.freemem(),
             // temporarily (fallback)
             buffers: 0,
             cached: 0,
@@ -8096,13 +8109,13 @@ var require_memory = __commonJS({
           };
           if (_linux) {
             try {
-              fs16.readFile("/proc/meminfo", (error, stdout) => {
+              fs17.readFile("/proc/meminfo", (error, stdout) => {
                 if (!error) {
                   const lines = stdout.toString().split("\n");
                   result2.total = parseInt(util.getValue(lines, "memtotal"), 10);
-                  result2.total = result2.total ? result2.total * 1024 : os16.totalmem();
+                  result2.total = result2.total ? result2.total * 1024 : os17.totalmem();
                   result2.free = parseInt(util.getValue(lines, "memfree"), 10);
-                  result2.free = result2.free ? result2.free * 1024 : os16.freemem();
+                  result2.free = result2.free ? result2.free * 1024 : os17.freemem();
                   result2.used = result2.total - result2.free;
                   result2.buffers = parseInt(util.getValue(lines, "buffers"), 10);
                   result2.buffers = result2.buffers ? result2.buffers * 1024 : 0;
@@ -8324,7 +8337,7 @@ var require_memory = __commonJS({
                 }
                 if (!result2.length) {
                   result2.push({
-                    size: os16.totalmem(),
+                    size: os17.totalmem(),
                     bank: "",
                     type: "",
                     ecc: null,
@@ -8526,7 +8539,7 @@ var require_battery = __commonJS({
   "node_modules/systeminformation/lib/battery.js"(exports2, module2) {
     "use strict";
     var exec2 = require("child_process").exec;
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var util = require_util();
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
@@ -8578,24 +8591,24 @@ var require_battery = __commonJS({
         };
         if (_linux) {
           let battery_path = "";
-          if (fs16.existsSync("/sys/class/power_supply/BAT1/uevent")) {
+          if (fs17.existsSync("/sys/class/power_supply/BAT1/uevent")) {
             battery_path = "/sys/class/power_supply/BAT1/";
-          } else if (fs16.existsSync("/sys/class/power_supply/BAT0/uevent")) {
+          } else if (fs17.existsSync("/sys/class/power_supply/BAT0/uevent")) {
             battery_path = "/sys/class/power_supply/BAT0/";
           }
           let acConnected = false;
           let acPath = "";
-          if (fs16.existsSync("/sys/class/power_supply/AC/online")) {
+          if (fs17.existsSync("/sys/class/power_supply/AC/online")) {
             acPath = "/sys/class/power_supply/AC/online";
-          } else if (fs16.existsSync("/sys/class/power_supply/AC0/online")) {
+          } else if (fs17.existsSync("/sys/class/power_supply/AC0/online")) {
             acPath = "/sys/class/power_supply/AC0/online";
           }
           if (acPath) {
-            const file = fs16.readFileSync(acPath);
+            const file = fs17.readFileSync(acPath);
             acConnected = file.toString().trim() === "1";
           }
           if (battery_path) {
-            fs16.readFile(battery_path + "uevent", (error, stdout) => {
+            fs17.readFile(battery_path + "uevent", (error, stdout) => {
               if (!error) {
                 let lines = stdout.toString().split("\n");
                 result2.isCharging = util.getValue(lines, "POWER_SUPPLY_STATUS", "=").toLowerCase() === "charging";
@@ -8817,7 +8830,7 @@ var require_battery = __commonJS({
 var require_graphics = __commonJS({
   "node_modules/systeminformation/lib/graphics.js"(exports2) {
     "use strict";
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var path12 = require("path");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
@@ -9180,10 +9193,10 @@ var require_graphics = __commonJS({
         if (_windows) {
           try {
             const basePath = path12.join(util.WINDIR, "System32", "DriverStore", "FileRepository");
-            const candidates = fs16.readdirSync(basePath, { withFileTypes: true }).filter((dir) => dir.isDirectory()).map((dir) => {
+            const candidates = fs17.readdirSync(basePath, { withFileTypes: true }).filter((dir) => dir.isDirectory()).map((dir) => {
               const nvidiaSmiPath = path12.join(basePath, dir.name, "nvidia-smi.exe");
               try {
-                const stats = fs16.statSync(nvidiaSmiPath);
+                const stats = fs17.statSync(nvidiaSmiPath);
                 return { path: nvidiaSmiPath, ctime: stats.ctimeMs };
               } catch {
                 return null;
@@ -9898,7 +9911,7 @@ var require_filesystem = __commonJS({
   "node_modules/systeminformation/lib/filesystem.js"(exports2) {
     "use strict";
     var util = require_util();
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var execPromiseSave = util.promisifySave(require("child_process").exec);
@@ -9919,11 +9932,11 @@ var require_filesystem = __commonJS({
       }
       let macOsDisks = [];
       let osMounts = [];
-      function getmacOsFsType(fs17) {
-        if (!fs17.startsWith("/")) {
+      function getmacOsFsType(fs18) {
+        if (!fs18.startsWith("/")) {
           return "NFS";
         }
-        const parts = fs17.split("/");
+        const parts = fs18.split("/");
         const fsShort = parts[parts.length - 1];
         const macOsDisksSingle = macOsDisks.filter((item) => item.indexOf(fsShort) >= 0);
         if (macOsDisksSingle.length === 1 && macOsDisksSingle[0].indexOf("APFS") >= 0) {
@@ -9931,11 +9944,11 @@ var require_filesystem = __commonJS({
         }
         return "HFS";
       }
-      function isLinuxTmpFs(fs17) {
+      function isLinuxTmpFs(fs18) {
         const linuxTmpFileSystems = ["rootfs", "unionfs", "squashfs", "cramfs", "initrd", "initramfs", "devtmpfs", "tmpfs", "udev", "devfs", "specfs", "type", "appimaged"];
         let result2 = false;
         linuxTmpFileSystems.forEach((linuxFs) => {
-          if (fs17.toLowerCase().indexOf(linuxFs) >= 0) {
+          if (fs18.toLowerCase().indexOf(linuxFs) >= 0) {
             result2 = true;
           }
         });
@@ -9963,18 +9976,18 @@ var require_filesystem = __commonJS({
           if (line !== "") {
             line = line.replace(/ +/g, " ").split(" ");
             if (line && (line[0].startsWith("/") || line[6] && line[6] === "/" || line[0].indexOf("/") > 0 || line[0].indexOf(":") === 1 || !_darwin && !isLinuxTmpFs(line[1]))) {
-              const fs17 = line[0];
+              const fs18 = line[0];
               const fsType = _linux || _freebsd || _openbsd || _netbsd ? line[1] : getmacOsFsType(line[0]);
               const size = parseInt(_linux || _freebsd || _openbsd || _netbsd ? line[2] : line[1], 10) * 1024;
               const used = parseInt(_linux || _freebsd || _openbsd || _netbsd ? line[3] : line[2], 10) * 1024;
               const available = parseInt(_linux || _freebsd || _openbsd || _netbsd ? line[4] : line[3], 10) * 1024;
               const use = parseFloat((100 * (used / (used + available))).toFixed(2));
-              const rw = osMounts && Object.keys(osMounts).length > 0 ? osMounts[fs17] || false : null;
+              const rw = osMounts && Object.keys(osMounts).length > 0 ? osMounts[fs18] || false : null;
               line.splice(0, _linux || _freebsd || _openbsd || _netbsd ? 6 : 5);
               const mount = line.join(" ");
-              if (!data.find((el) => el.fs === fs17 && el.type === fsType && el.mount === mount)) {
+              if (!data.find((el) => el.fs === fs18 && el.type === fsType && el.mount === mount)) {
                 data.push({
-                  fs: fs17,
+                  fs: fs18,
                   type: fsType,
                   size,
                   used,
@@ -10135,7 +10148,7 @@ var require_filesystem = __commonJS({
             });
           }
           if (_linux) {
-            fs16.readFile("/proc/sys/fs/file-nr", (error, stdout) => {
+            fs17.readFile("/proc/sys/fs/file-nr", (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().split("\n");
                 if (lines[0]) {
@@ -10154,7 +10167,7 @@ var require_filesystem = __commonJS({
                 }
                 resolve(result2);
               } else {
-                fs16.readFile("/proc/sys/fs/file-max", (error2, stdout2) => {
+                fs17.readFile("/proc/sys/fs/file-max", (error2, stdout2) => {
                   if (!error2) {
                     const lines = stdout2.toString().split("\n");
                     if (lines[0]) {
@@ -11472,10 +11485,10 @@ ${BSDName}|"; diskutil info /dev/${BSDName} | grep SMART;`;
 var require_network = __commonJS({
   "node_modules/systeminformation/lib/network.js"(exports2) {
     "use strict";
-    var os16 = require("os");
+    var os17 = require("os");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var util = require_util();
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
@@ -11496,7 +11509,7 @@ var require_network = __commonJS({
       let ifacename = "";
       let ifacenameFirst = "";
       try {
-        const ifaces = os16.networkInterfaces();
+        const ifaces = os17.networkInterfaces();
         let scopeid = 9999;
         for (let dev in ifaces) {
           if ({}.hasOwnProperty.call(ifaces, dev)) {
@@ -11516,7 +11529,7 @@ var require_network = __commonJS({
           let defaultIp = "";
           const cmd = "netstat -r";
           const result2 = execSync3(cmd, util.execOptsWin);
-          const lines = result2.toString().split(os16.EOL);
+          const lines = result2.toString().split(os17.EOL);
           lines.forEach((line) => {
             line = line.replace(/\s+/g, " ").trim();
             if (line.indexOf("0.0.0.0 0.0.0.0") > -1 && !/[a-zA-Z]/.test(line)) {
@@ -12149,7 +12162,7 @@ var require_network = __commonJS({
       defaultString = "" + defaultString;
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const ifaces = os16.networkInterfaces();
+          const ifaces = os17.networkInterfaces();
           let result2 = [];
           let nics = [];
           let dnsSuffixes = [];
@@ -12726,7 +12739,7 @@ var require_network = __commonJS({
           let cmd, lines, stats;
           if (!_network[ifaceSanitized] || _network[ifaceSanitized] && !_network[ifaceSanitized].ms || _network[ifaceSanitized] && _network[ifaceSanitized].ms && Date.now() - _network[ifaceSanitized].ms >= 500) {
             if (_linux) {
-              if (fs16.existsSync("/sys/class/net/" + ifaceSanitized)) {
+              if (fs17.existsSync("/sys/class/net/" + ifaceSanitized)) {
                 cmd = "cat /sys/class/net/" + ifaceSanitized + "/operstate; cat /sys/class/net/" + ifaceSanitized + "/statistics/rx_bytes; cat /sys/class/net/" + ifaceSanitized + "/statistics/tx_bytes; cat /sys/class/net/" + ifaceSanitized + "/statistics/rx_dropped; cat /sys/class/net/" + ifaceSanitized + "/statistics/rx_errors; cat /sys/class/net/" + ifaceSanitized + "/statistics/tx_dropped; cat /sys/class/net/" + ifaceSanitized + "/statistics/tx_errors; ";
                 exec2(cmd, (error, stdout) => {
                   if (!error) {
@@ -13219,7 +13232,7 @@ var require_network = __commonJS({
           if (_windows) {
             try {
               exec2("netstat -r", util.execOptsWin, (error, stdout) => {
-                const lines = stdout.toString().split(os16.EOL);
+                const lines = stdout.toString().split(os17.EOL);
                 lines.forEach((line) => {
                   line = line.replace(/\s+/g, " ").trim();
                   if (line.indexOf("0.0.0.0 0.0.0.0") > -1 && !/[a-zA-Z]/.test(line)) {
@@ -13265,7 +13278,7 @@ var require_network = __commonJS({
 var require_wifi = __commonJS({
   "node_modules/systeminformation/lib/wifi.js"(exports2) {
     "use strict";
-    var os16 = require("os");
+    var os17 = require("os");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
@@ -13487,7 +13500,7 @@ var require_wifi = __commonJS({
         parts.shift();
         parts.forEach((part) => {
           part = "ACTIVE:" + part;
-          const lines = part.split(os16.EOL);
+          const lines = part.split(os17.EOL);
           const channel = util.getValue(lines, "CHAN");
           const frequency = util.getValue(lines, "FREQ").toLowerCase().replace("mhz", "").trim();
           const security = util.getValue(lines, "SECURITY").replace("(", "").replace(")", "");
@@ -13711,15 +13724,15 @@ var require_wifi = __commonJS({
           } else if (_windows) {
             const cmd = "netsh wlan show networks mode=Bssid";
             util.powerShell(cmd).then((stdout) => {
-              const ssidParts = stdout.toString("utf8").split(os16.EOL + os16.EOL + "SSID ");
+              const ssidParts = stdout.toString("utf8").split(os17.EOL + os17.EOL + "SSID ");
               ssidParts.shift();
               ssidParts.forEach((ssidPart) => {
-                const ssidLines = ssidPart.split(os16.EOL);
+                const ssidLines = ssidPart.split(os17.EOL);
                 if (ssidLines && ssidLines.length >= 8 && ssidLines[0].indexOf(":") >= 0) {
                   const bssidsParts = ssidPart.split(" BSSID");
                   bssidsParts.shift();
                   bssidsParts.forEach((bssidPart) => {
-                    const bssidLines = bssidPart.split(os16.EOL);
+                    const bssidLines = bssidPart.split(os17.EOL);
                     const bssidLine = bssidLines[0].split(":");
                     bssidLine.shift();
                     const bssid = bssidLine.join(":").trim().toLowerCase();
@@ -14043,8 +14056,8 @@ var require_wifi = __commonJS({
 var require_processes = __commonJS({
   "node_modules/systeminformation/lib/processes.js"(exports2) {
     "use strict";
-    var os16 = require("os");
-    var fs16 = require("fs");
+    var os17 = require("os");
+    var fs17 = require("fs");
     var path12 = require("path");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
@@ -14615,7 +14628,7 @@ var require_processes = __commonJS({
               }
               if (firstPos === 1e4 && tmpCommand.indexOf(" ") > -1) {
                 const parts = tmpCommand.split(" ");
-                if (fs16.existsSync(path12.join(cmdPath, parts[0]))) {
+                if (fs17.existsSync(path12.join(cmdPath, parts[0]))) {
                   command = parts.shift();
                   params = (parts.join(" ") + " " + tmpParams).trim();
                 } else {
@@ -14694,7 +14707,7 @@ var require_processes = __commonJS({
             line = line.trim().replace(/ +/g, " ").replace(/,+/g, ".");
             const parts = line.split(" ");
             const command = parts.slice(9).join(" ");
-            const pmem = parseFloat((1 * parseInt(parts[3]) * 1024 / os16.totalmem()).toFixed(1));
+            const pmem = parseFloat((1 * parseInt(parts[3]) * 1024 / os17.totalmem()).toFixed(1));
             const started = parseElapsed(parts[5]);
             result2.push({
               pid: parseInt(parts[0]),
@@ -14897,7 +14910,7 @@ var require_processes = __commonJS({
                         cpu: 0,
                         cpuu: 0,
                         cpus: 0,
-                        mem: memw / os16.totalmem() * 100,
+                        mem: memw / os17.totalmem() * 100,
                         priority: element.Priority | null,
                         memVsz: element.PageFileUsage || null,
                         memRss: Math.floor((element.WorkingSetSize || 0) / 1024),
@@ -15051,7 +15064,7 @@ var require_processes = __commonJS({
                         result2.forEach((item) => {
                           if (item.proc.toLowerCase() === pname.toLowerCase()) {
                             item.pids.push(pid);
-                            item.mem += mem / os16.totalmem() * 100;
+                            item.mem += mem / os17.totalmem() * 100;
                             processFound = true;
                           }
                         });
@@ -15061,7 +15074,7 @@ var require_processes = __commonJS({
                             pid,
                             pids: [pid],
                             cpu: 0,
-                            mem: mem / os16.totalmem() * 100
+                            mem: mem / os17.totalmem() * 100
                           });
                         }
                       }
@@ -16802,7 +16815,7 @@ var require_docker = __commonJS({
 var require_virtualbox = __commonJS({
   "node_modules/systeminformation/lib/virtualbox.js"(exports2) {
     "use strict";
-    var os16 = require("os");
+    var os17 = require("os");
     var exec2 = require("child_process").exec;
     var util = require_util();
     function vboxInfo(callback) {
@@ -16811,10 +16824,10 @@ var require_virtualbox = __commonJS({
         process.nextTick(() => {
           try {
             exec2(util.getVboxmanage() + " list vms --long", (error, stdout) => {
-              let parts = (os16.EOL + stdout.toString()).split(os16.EOL + "Name:");
+              let parts = (os17.EOL + stdout.toString()).split(os17.EOL + "Name:");
               parts.shift();
               parts.forEach((part) => {
-                const lines = ("Name:" + part).split(os16.EOL);
+                const lines = ("Name:" + part).split(os17.EOL);
                 const state = util.getValue(lines, "State");
                 const running = state.startsWith("running");
                 const runningSinceString = running ? state.replace("running (since ", "").replace(")", "").trim() : "";
@@ -18754,7 +18767,7 @@ var require_bluetooth = __commonJS({
     var path12 = require("path");
     var util = require_util();
     var bluetoothVendors = require_bluetoothVendors();
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
     var _darwin = _platform === "darwin";
@@ -18888,7 +18901,7 @@ var require_bluetooth = __commonJS({
               const macAddr1 = pathParts.length >= 6 ? pathParts[pathParts.length - 2] : null;
               const macAddr2 = pathParts.length >= 7 ? pathParts[pathParts.length - 3] : null;
               if (filename === "info") {
-                const infoFile = fs16.readFileSync(element, { encoding: "utf8" }).split("\n");
+                const infoFile = fs17.readFileSync(element, { encoding: "utf8" }).split("\n");
                 result2.push(parseLinuxBluetoothInfo(infoFile, macAddr1, macAddr2));
               }
             });
@@ -21331,11 +21344,11 @@ var init_pmp = __esm({
 
 // src/update/update-state.ts
 function ensureDir2(dir) {
-  import_fs13.default.mkdirSync(dir, { recursive: true });
+  import_fs12.default.mkdirSync(dir, { recursive: true });
 }
 function resolveBaseDir2() {
   if (process.platform === "win32") {
-    return import_path10.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
+    return import_path9.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
   }
   if (process.platform === "darwin") {
     return "/Library/Application Support/Tracenium";
@@ -21343,17 +21356,17 @@ function resolveBaseDir2() {
   return "/var/lib/tracenium";
 }
 function getStatePath2() {
-  const dir = import_path10.default.join(resolveBaseDir2(), "state");
+  const dir = import_path9.default.join(resolveBaseDir2(), "state");
   ensureDir2(dir);
-  return import_path10.default.join(dir, "update-state.json");
+  return import_path9.default.join(dir, "update-state.json");
 }
 function loadUpdateState() {
   const file = getStatePath2();
-  if (!import_fs13.default.existsSync(file)) {
+  if (!import_fs12.default.existsSync(file)) {
     return {};
   }
   try {
-    return JSON.parse(import_fs13.default.readFileSync(file, "utf8"));
+    return JSON.parse(import_fs12.default.readFileSync(file, "utf8"));
   } catch (err) {
     console.error("[update-state] corrupted state file", err);
     return {};
@@ -21362,8 +21375,8 @@ function loadUpdateState() {
 function saveUpdateState(next) {
   const file = getStatePath2();
   const tmp = `${file}.tmp`;
-  import_fs13.default.writeFileSync(tmp, JSON.stringify(next, null, 2), "utf8");
-  import_fs13.default.renameSync(tmp, file);
+  import_fs12.default.writeFileSync(tmp, JSON.stringify(next, null, 2), "utf8");
+  import_fs12.default.renameSync(tmp, file);
 }
 function updateUpdateState(patch) {
   const current = loadUpdateState();
@@ -21408,18 +21421,18 @@ function markUpdateFailed(error) {
     installStartedAtUtc: void 0
   });
 }
-var import_fs13, import_path10;
+var import_fs12, import_path9;
 var init_update_state = __esm({
   "src/update/update-state.ts"() {
     "use strict";
-    import_fs13 = __toESM(require("fs"));
-    import_path10 = __toESM(require("path"));
+    import_fs12 = __toESM(require("fs"));
+    import_path9 = __toESM(require("path"));
   }
 });
 
 // src/update/updater-runner.ts
 function runWindowsMsiUpdate(msiPath) {
-  if (!import_fs14.default.existsSync(msiPath)) {
+  if (!import_fs15.default.existsSync(msiPath)) {
     throw new Error(`msi_not_found: ${msiPath}`);
   }
   const args = ["/i", msiPath, "/qn", "/norestart"];
@@ -21454,7 +21467,7 @@ function runWindowsMsiUpdate(msiPath) {
   }
 }
 function runMacosPkgUpdate(pkgPath) {
-  if (!import_fs14.default.existsSync(pkgPath)) {
+  if (!import_fs15.default.existsSync(pkgPath)) {
     throw new Error(`pkg_not_found: ${pkgPath}`);
   }
   const args = ["-pkg", pkgPath, "-target", "/"];
@@ -21531,12 +21544,12 @@ function runMacosPkgUpdate(pkgPath) {
     throw err;
   }
 }
-var import_child_process6, import_fs14;
+var import_child_process6, import_fs15;
 var init_updater_runner = __esm({
   "src/update/updater-runner.ts"() {
     "use strict";
     import_child_process6 = require("child_process");
-    import_fs14 = __toESM(require("fs"));
+    import_fs15 = __toESM(require("fs"));
     init_update_state();
   }
 });
@@ -21578,13 +21591,13 @@ function resolveBaseDir3() {
   }
   return "/var/lib/tracenium";
 }
-function ensureDir3(dir) {
-  import_fs15.default.mkdirSync(dir, { recursive: true });
+function ensureDir4(dir) {
+  import_fs16.default.mkdirSync(dir, { recursive: true });
 }
 function sha256File(filePath) {
   return new Promise((resolve, reject) => {
     const hash = import_crypto11.default.createHash("sha256");
-    const stream = import_fs15.default.createReadStream(filePath);
+    const stream = import_fs16.default.createReadStream(filePath);
     stream.on("data", (chunk) => hash.update(chunk));
     stream.on("error", reject);
     stream.on("end", () => resolve(hash.digest("hex")));
@@ -21690,9 +21703,9 @@ function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3, idleTimeo
   return new Promise((resolve, reject) => {
     const url = new URL(urlString);
     const lib = url.protocol === "https:" ? import_https.default : import_http.default;
-    ensureDir3(import_path11.default.dirname(filePath));
+    ensureDir4(import_path11.default.dirname(filePath));
     const tmpPath = `${filePath}.tmp`;
-    const file = import_fs15.default.createWriteStream(tmpPath);
+    const file = import_fs16.default.createWriteStream(tmpPath);
     let settled = false;
     let idleTimer = null;
     let expectedBytes = null;
@@ -21707,7 +21720,7 @@ function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3, idleTimeo
       } catch {
       }
       try {
-        import_fs15.default.rmSync(tmpPath, { force: true });
+        import_fs16.default.rmSync(tmpPath, { force: true });
       } catch {
       }
     };
@@ -21767,7 +21780,7 @@ function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3, idleTimeo
           return;
         }
         try {
-          import_fs15.default.renameSync(tmpPath, filePath);
+          import_fs16.default.renameSync(tmpPath, filePath);
           finish(null, bytes);
         } catch (err) {
           finish(err);
@@ -21955,7 +21968,7 @@ async function downloadWindowsMsi(ctx, latestVersion, expectedHash) {
     throw new Error("update_download_url_missing");
   }
   const dir = import_path11.default.join(resolveBaseDir3(), "updates");
-  ensureDir3(dir);
+  ensureDir4(dir);
   const arch = getArch();
   const fileName = `Tracenium-Agent-${latestVersion}-${arch}.msi`;
   const filePath = import_path11.default.join(dir, fileName);
@@ -21965,7 +21978,7 @@ async function downloadWindowsMsi(ctx, latestVersion, expectedHash) {
     console.warn("[update] expected hash missing for arch", { arch });
   }
   if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
-    import_fs15.default.rmSync(filePath, { force: true });
+    import_fs16.default.rmSync(filePath, { force: true });
     throw new Error("update_hash_mismatch");
   }
   updateUpdateState({
@@ -21987,7 +22000,7 @@ async function downloadMacosPkg(ctx, latestVersion, expectedHash) {
     throw new Error("update_download_url_missing");
   }
   const dir = import_path11.default.join(resolveBaseDir3(), "updates");
-  ensureDir3(dir);
+  ensureDir4(dir);
   const arch = getArch();
   const fileName = `Tracenium-Agent-${latestVersion}-${arch}.pkg`;
   const filePath = import_path11.default.join(dir, fileName);
@@ -21997,7 +22010,7 @@ async function downloadMacosPkg(ctx, latestVersion, expectedHash) {
     console.warn("[update] expected hash missing for arch", { arch });
   }
   if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
-    import_fs15.default.rmSync(filePath, { force: true });
+    import_fs16.default.rmSync(filePath, { force: true });
     throw new Error("update_hash_mismatch");
   }
   updateUpdateState({
@@ -22017,7 +22030,7 @@ async function performWindowsMsiUpdate(ctx, latestVersion, expectedHash, downloa
   let downloaded;
   if (downloadUrlOverride) {
     const dir = import_path11.default.join(resolveBaseDir3(), "updates");
-    ensureDir3(dir);
+    ensureDir4(dir);
     const arch = getArch();
     const fileName = `Tracenium-Agent-${latestVersion}-${arch}.msi`;
     const filePath = import_path11.default.join(dir, fileName);
@@ -22028,7 +22041,7 @@ async function performWindowsMsiUpdate(ctx, latestVersion, expectedHash, downloa
     const { size } = await downloadToFile(downloadUrlOverride, filePath);
     const sha256 = await sha256File(filePath);
     if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
-      import_fs15.default.rmSync(filePath, { force: true });
+      import_fs16.default.rmSync(filePath, { force: true });
       throw new Error("update_hash_mismatch");
     }
     downloaded = {
@@ -22067,7 +22080,7 @@ async function performMacosPkgUpdate(ctx, latestVersion, expectedHash, downloadU
   let downloaded;
   if (downloadUrlOverride) {
     const dir = import_path11.default.join(resolveBaseDir3(), "updates");
-    ensureDir3(dir);
+    ensureDir4(dir);
     const arch = getArch();
     const fileName = `Tracenium-Agent-${latestVersion}-${arch}.pkg`;
     const filePath = import_path11.default.join(dir, fileName);
@@ -22078,7 +22091,7 @@ async function performMacosPkgUpdate(ctx, latestVersion, expectedHash, downloadU
     const { size } = await downloadToFile(downloadUrlOverride, filePath);
     const sha256 = await sha256File(filePath);
     if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
-      import_fs15.default.rmSync(filePath, { force: true });
+      import_fs16.default.rmSync(filePath, { force: true });
       throw new Error("update_hash_mismatch");
     }
     downloaded = {
@@ -22113,11 +22126,11 @@ async function performMacosPkgUpdate(ctx, latestVersion, expectedHash, downloadU
   const result2 = await runMacosPkgUpdate(downloaded.filePath);
   return result2;
 }
-var import_fs15, import_path11, import_crypto11, import_http, import_https;
+var import_fs16, import_path11, import_crypto11, import_http, import_https;
 var init_update_service = __esm({
   "src/update/update-service.ts"() {
     "use strict";
-    import_fs15 = __toESM(require("fs"));
+    import_fs16 = __toESM(require("fs"));
     import_path11 = __toESM(require("path"));
     import_crypto11 = __toESM(require("crypto"));
     import_http = __toESM(require("http"));
@@ -22410,7 +22423,7 @@ var import_dotenv = __toESM(require_main());
 // package.json
 var package_default = {
   name: "certusws-tracenium-agent",
-  version: "1.1.4",
+  version: "1.1.5",
   description: "Tracenium Agent - Hardware & Software inventory collector",
   license: "MIT",
   author: {
@@ -23653,6 +23666,175 @@ var logger = {
   warn: (...args) => console.warn("[WARN]", ...args)
 };
 
+// src/status/tray-status-store.ts
+var import_fs13 = __toESM(require("fs"));
+var import_os14 = __toESM(require("os"));
+init_paths();
+init_state();
+init_update_state();
+function ensureDir3(dir) {
+  import_fs13.default.mkdirSync(dir, { recursive: true });
+}
+var TrayStatusStore = class {
+  dir = ensureAgentStatusDir();
+  filePath = getTrayStatusFilePath();
+  constructor() {
+    ensureDir3(this.dir);
+  }
+  getPath() {
+    return this.filePath;
+  }
+  load() {
+    if (!import_fs13.default.existsSync(this.filePath)) {
+      return null;
+    }
+    try {
+      return JSON.parse(import_fs13.default.readFileSync(this.filePath, "utf8"));
+    } catch {
+      return null;
+    }
+  }
+  save(snapshot) {
+    ensureDir3(this.dir);
+    const tmp = `${this.filePath}.tmp`;
+    import_fs13.default.writeFileSync(tmp, JSON.stringify(snapshot, null, 2), { encoding: "utf8", mode: 384 });
+    import_fs13.default.renameSync(tmp, this.filePath);
+  }
+  update(updater) {
+    const current = this.load();
+    const next = updater(current);
+    next.updatedAtUtc = (/* @__PURE__ */ new Date()).toISOString();
+    this.save(next);
+    return next;
+  }
+  writeStartupSnapshot(ctx) {
+    const updateState = loadUpdateState();
+    const patchState = loadPmpState();
+    const policySnapshot = ctx.policyRuntime.snapshot();
+    const snapshot = {
+      updatedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+      agentVersion: ctx.config.agentVersion,
+      coreVersion: ctx.config.coreVersion,
+      deviceId: ctx.enrollment.deviceId,
+      tenantId: ctx.enrollment.tenantId,
+      hostname: import_os14.default.hostname(),
+      grpc: {
+        connected: false
+      },
+      policy: {
+        version: ctx.policy.getVersion(),
+        hash: ctx.policy.getHash(),
+        plugins: Array.isArray(policySnapshot?.plugins) ? policySnapshot.plugins : [],
+        modules: Array.isArray(policySnapshot?.modules) ? policySnapshot.modules : []
+      },
+      jobs: {},
+      update: {
+        status: updateState.status,
+        lastCheckedAtUtc: updateState.lastCheckedAtUtc,
+        lastCompletedAtUtc: updateState.lastCompletedAtUtc,
+        lastError: updateState.lastError
+      },
+      patch: {
+        status: patchState.status,
+        lastScanAtUtc: void 0,
+        rebootRequired: patchState.rebootRequired,
+        lastError: patchState.lastError
+      }
+    };
+    this.save(snapshot);
+    return snapshot;
+  }
+  markGrpcConnected() {
+    return this.update((current) => ({
+      ...current || this.emptySnapshot(),
+      grpc: {
+        ...current?.grpc || { connected: false },
+        connected: true,
+        lastConnectedAtUtc: (/* @__PURE__ */ new Date()).toISOString()
+      }
+    }));
+  }
+  markGrpcDisconnected() {
+    return this.update((current) => ({
+      ...current || this.emptySnapshot(),
+      grpc: {
+        ...current?.grpc || { connected: false },
+        connected: false,
+        lastDisconnectedAtUtc: (/* @__PURE__ */ new Date()).toISOString()
+      }
+    }));
+  }
+  markHeartbeat() {
+    return this.update((current) => ({
+      ...current || this.emptySnapshot(),
+      grpc: {
+        ...current?.grpc || { connected: false },
+        lastHeartbeatAtUtc: (/* @__PURE__ */ new Date()).toISOString()
+      }
+    }));
+  }
+  markPolicyApplied(ctx) {
+    const policySnapshot = ctx.policyRuntime.snapshot();
+    return this.update((current) => ({
+      ...current || this.emptySnapshot(),
+      policy: {
+        version: ctx.policy.getVersion(),
+        hash: ctx.policy.getHash(),
+        plugins: Array.isArray(policySnapshot?.plugins) ? policySnapshot.plugins : [],
+        modules: Array.isArray(policySnapshot?.modules) ? policySnapshot.modules : []
+      }
+    }));
+  }
+  markJobStarted(jobType) {
+    return this.update((current) => ({
+      ...current || this.emptySnapshot(),
+      jobs: {
+        ...current?.jobs || {},
+        lastJobType: jobType,
+        lastJobStatus: "in_progress",
+        lastJobAtUtc: (/* @__PURE__ */ new Date()).toISOString()
+      }
+    }));
+  }
+  markJobFinished(jobType, status, patch) {
+    return this.update((current) => ({
+      ...current || this.emptySnapshot(),
+      jobs: {
+        ...current?.jobs || {},
+        lastJobType: jobType,
+        lastJobStatus: status,
+        lastJobAtUtc: (/* @__PURE__ */ new Date()).toISOString()
+      },
+      patch: {
+        ...current?.patch || {},
+        ...patch || {}
+      }
+    }));
+  }
+  emptySnapshot() {
+    return {
+      updatedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+      agentVersion: "",
+      coreVersion: "",
+      deviceId: "",
+      tenantId: "",
+      hostname: import_os14.default.hostname(),
+      grpc: {
+        connected: false
+      },
+      policy: {
+        version: "none",
+        hash: null,
+        plugins: [],
+        modules: []
+      },
+      jobs: {},
+      update: {},
+      patch: {}
+    };
+  }
+};
+
 // src/core/bootstrap.ts
 async function bootstrapContext() {
   const store = new EnrollmentStore();
@@ -23673,6 +23855,7 @@ async function bootstrapContext() {
   const policyRuntime = new PolicyRuntime(policy, logger);
   await policyRuntime.init();
   const pluginManager = new PluginManager();
+  const trayStatus = new TrayStatusStore();
   const agent = {
     version: config.agentVersion,
     platform: process.platform === "win32" ? "windows" : process.platform
@@ -23686,6 +23869,7 @@ async function bootstrapContext() {
     policy,
     policyRuntime,
     plugins: pluginManager,
+    trayStatus,
     logger
   };
   await pluginManager.init(ctx);
@@ -23693,9 +23877,9 @@ async function bootstrapContext() {
 }
 
 // src/queue/sqlite-outbox.ts
-var import_os14 = __toESM(require("os"));
-var import_path9 = __toESM(require("path"));
-var import_fs12 = __toESM(require("fs"));
+var import_os15 = __toESM(require("os"));
+var import_path10 = __toESM(require("path"));
+var import_fs14 = __toESM(require("fs"));
 var import_better_sqlite32 = __toESM(require("better-sqlite3"));
 var import_zlib = __toESM(require("zlib"));
 var MAX_ATTEMPTS = 20;
@@ -23736,18 +23920,18 @@ function maybeDecompressPayload(value) {
   }
 }
 function defaultDbPath() {
-  if (import_os14.default.platform() === "win32") {
+  if (import_os15.default.platform() === "win32") {
     const programData = process.env.PROGRAMDATA || process.env.ProgramData || "C:\\ProgramData";
-    return import_path9.default.join(programData, "Tracenium", "Agent", "outbox.db");
+    return import_path10.default.join(programData, "Tracenium", "Agent", "outbox.db");
   }
-  return import_path9.default.join(import_os14.default.homedir(), ".tracenium", "agent", "outbox.db");
+  return import_path10.default.join(import_os15.default.homedir(), ".tracenium", "agent", "outbox.db");
 }
 var SqliteOutbox = class {
   constructor(dbPath = defaultDbPath()) {
     this.dbPath = dbPath;
-    this.lockOwner = `agentcore:${import_os14.default.hostname()}:${process.pid}`;
-    const dir = import_path9.default.dirname(dbPath);
-    import_fs12.default.mkdirSync(dir, { recursive: true });
+    this.lockOwner = `agentcore:${import_os15.default.hostname()}:${process.pid}`;
+    const dir = import_path10.default.dirname(dbPath);
+    import_fs14.default.mkdirSync(dir, { recursive: true });
     this.db = new import_better_sqlite32.default(dbPath);
     logger.info("[outbox] initialized", { dbPath: this.dbPath });
     this.initialize();
@@ -24097,17 +24281,17 @@ var SqliteOutbox = class {
 var outbox = new SqliteOutbox();
 
 // src/domain/device-facts-builder.ts
-var import_os15 = __toESM(require("os"));
+var import_os16 = __toESM(require("os"));
 var import_systeminformation4 = __toESM(require_lib());
 var import_crypto10 = __toESM(require("crypto"));
 function buildDeviceIdentity(ctx) {
-  const nodePlatform = import_os15.default.platform();
+  const nodePlatform = import_os16.default.platform();
   const platform = nodePlatform === "win32" ? "windows" : nodePlatform === "darwin" ? "macos" : "linux";
   return {
     deviceId: ctx.enrollment.deviceId,
     tenantId: ctx.enrollment.tenantId,
-    hostname: import_os15.default.hostname(),
-    fqdn: import_os15.default.hostname(),
+    hostname: import_os16.default.hostname(),
+    fqdn: import_os16.default.hostname(),
     domain: platform === "windows" ? process.env.USERDOMAIN || void 0 : void 0,
     platform
   };
@@ -24178,7 +24362,7 @@ async function buildHardwareNamespace() {
     bios: [bios],
     os: {
       platform: (() => {
-        const p = import_os15.default.platform();
+        const p = import_os16.default.platform();
         return p === "win32" ? "windows" : p === "darwin" ? "macos" : "linux";
       })(),
       distro: osInfo.distro,
@@ -24218,14 +24402,14 @@ async function buildHardwareNamespace() {
   };
 }
 function canonicalArch() {
-  const raw = import_os15.default.arch();
+  const raw = import_os16.default.arch();
   if (raw === "x64") return "x64";
   if (raw === "arm64") return "arm64";
   if (raw === "ia32") return "x64";
   return raw;
 }
 function buildAgentInfo(ctx) {
-  const nodePlatform = import_os15.default.platform();
+  const nodePlatform = import_os16.default.platform();
   const platform = nodePlatform === "win32" ? "windows" : nodePlatform === "darwin" ? "macos" : "linux";
   const capabilities = Array.from(/* @__PURE__ */ new Set([
     ...ctx.enrollment.bootstrap.capabilities || [],
@@ -24901,6 +25085,10 @@ function createGrpcClient(ctx) {
         connectedEmitted = true;
         connected = true;
         ctx.logger?.info("[grpc-client] PrivSvc confirmed gRPC connected (READY)");
+        try {
+          ctx.trayStatus.markGrpcConnected();
+        } catch {
+        }
         stream.emit("data", { connected: true });
         return;
       }
@@ -24929,6 +25117,10 @@ function createGrpcClient(ctx) {
         connected = false;
         connectPromise = null;
         ended = false;
+        try {
+          ctx.trayStatus.markGrpcDisconnected();
+        } catch {
+        }
         stream.emit("end");
         return;
       }
@@ -24982,6 +25174,10 @@ function createGrpcClient(ctx) {
         if (result2.connected === true && result2.ready === true) {
           connected = true;
           ctx.logger?.info("[grpc-client] PrivSvc bridge READY (from connect response)");
+          try {
+            ctx.trayStatus.markGrpcConnected();
+          } catch {
+          }
           stream.emit("data", {
             connected: true,
             source: "connect_response"
@@ -25132,12 +25328,20 @@ function createGrpcClient(ctx) {
             connectPromise = null;
             stream.emit("error", new Error(`heartbeat_failed:${errorCode || errorMessage}`));
           }
+          try {
+            ctx.trayStatus.markHeartbeat();
+          } catch {
+          }
         } catch (err) {
           ctx.logger?.warn("[grpc-client] heartbeat IPC threw \u2014 marking connection broken", {
             error: err?.message || String(err)
           });
           connected = false;
           connectPromise = null;
+          try {
+            ctx.trayStatus.markGrpcDisconnected();
+          } catch {
+          }
           stream.emit("error", err instanceof Error ? err : new Error(String(err)));
         }
         return;
@@ -25155,6 +25359,10 @@ function createGrpcClient(ctx) {
         });
         connected = false;
         connectPromise = null;
+        try {
+          ctx.trayStatus.markGrpcDisconnected();
+        } catch {
+        }
       }
       if (msg?.facts?.eventId) {
         inFlightEvents.delete(String(msg.facts.eventId));
@@ -25168,6 +25376,10 @@ function createGrpcClient(ctx) {
     localClose = true;
     connected = false;
     connectPromise = null;
+    try {
+      ctx.trayStatus.markGrpcDisconnected();
+    } catch {
+    }
     ctx.priv.call({
       v: 1,
       id: "grpc-close",
@@ -25786,9 +25998,10 @@ function startGrpcStream(ctx) {
     if (msg.runJob) {
       const jobId = String(msg.runJob?.jobId || "").trim();
       const eventId = jobId || `runJob-${Date.now()}`;
+      const jobType = String(msg.runJob?.jobType || msg.runJob?.type || msg.runJob?.task || "").trim();
       ctx.logger?.info?.("gRPC control message: runJob received", {
         jobId,
-        jobType: msg.runJob?.jobType || msg.runJob?.type || msg.runJob?.task || null
+        jobType: jobType || null
       });
       if (jobId && runningJobIds.has(jobId)) {
         ctx.logger?.warn?.("runJob ignored: job already in progress", { jobId });
@@ -25799,12 +26012,33 @@ function startGrpcStream(ctx) {
       if (jobId) {
         runningJobIds.add(jobId);
       }
+      try {
+        if (jobType) {
+          ctx.trayStatus.markJobStarted(jobType);
+        }
+      } catch {
+      }
       setImmediate(() => {
-        executeRunJob(ctx, msg.runJob).then((result2) => sendControlAck(ctx, eventId, result2.status, result2.message)).catch((err) => {
+        executeRunJob(ctx, msg.runJob).then((result2) => {
+          try {
+            if (jobType) {
+              const normalizedStatus = result2.status === 0 ? "success" : result2.status === 1 ? "retry" : "failed";
+              ctx.trayStatus.markJobFinished(jobType, normalizedStatus);
+            }
+          } catch {
+          }
+          return sendControlAck(ctx, eventId, result2.status, result2.message);
+        }).catch((err) => {
           ctx.logger?.error?.("runJob execution failed", {
             jobId,
             err: err?.message || err
           });
+          try {
+            if (jobType) {
+              ctx.trayStatus.markJobFinished(jobType, "failed");
+            }
+          } catch {
+          }
           return sendControlAck(ctx, eventId, 2, err?.message || "job_failed");
         }).finally(() => {
           if (jobId) {
@@ -25858,6 +26092,10 @@ function startGrpcStream(ctx) {
           ctx.logger?.info?.("Policy successfully updated", { eventId, policyVersion });
           await ctx.policyRuntime.applyUpdate();
           ctx.logger?.info?.("Policy runtime reloaded", ctx.policyRuntime.snapshot());
+          try {
+            ctx.trayStatus.markPolicyApplied(ctx);
+          } catch {
+          }
           await sendControlAck(ctx, eventId, 0, "policy_applied");
         }).catch(async (err) => {
           const message = String(err?.message || err || "policy_apply_failed");
@@ -26107,6 +26345,17 @@ async function startService() {
       }
     } catch (e) {
       log.warn("Failed to read policy runtime snapshot", e?.message || e);
+    }
+    try {
+      const traySnapshot = ctx.trayStatus.writeStartupSnapshot(ctx);
+      log.info("Tray status snapshot initialized", {
+        file: ctx.trayStatus.getPath(),
+        grpcConnected: traySnapshot.grpc.connected,
+        policyVersion: traySnapshot.policy.version,
+        plugins: traySnapshot.policy.plugins
+      });
+    } catch (e) {
+      log.warn("Failed to initialize tray status snapshot", e?.message || e);
     }
     if (ctx.priv) {
       try {

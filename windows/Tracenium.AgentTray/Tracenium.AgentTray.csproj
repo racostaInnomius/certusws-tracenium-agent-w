@@ -5,8 +5,91 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Permite ejecutar `dotnet publish -r win-x64` desde macOS/Linux.
+         Sin esto el SDK rechaza el TargetFramework net8.0-windows fuera
+         de Windows con NETSDK1100. Solo afecta al build, no al runtime. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <TrayIconSourcePath>$(MSBuildThisFileDirectory)..\..\Tracenium_tryicon.png</TrayIconSourcePath>
+    <TrayIconResourceName>Tracenium.AgentTray.Resources.Tracenium_tryicon.png</TrayIconResourceName>
+
+    <!--
+      Single-file self-contained publish con compresión.
+      Resultado: ~25 MB en disco vs ~70 MB sin comprimir.
+      Mantenemos self-contained porque los endpoints no tienen .NET 8
+      Desktop Runtime, y compartir con PrivSvc no es viable: PrivSvc
+      ya es single-file y extrae su runtime a %TEMP% solo mientras
+      corre — no expone una carpeta on-disk que el AgentTray pueda
+      apuntar vía DOTNET_ROOT. Si en el futuro se decide bundlear el
+      runtime separado en un Runtime\dotnet\ común, cambiar:
+        SelfContained=false
+      y dejar que apphost lo encuentre vía la env var DOTNET_ROOT.
+    -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="..\..\Tracenium_tryicon.png" Link="Resources\Tracenium_tryicon.png" />
   </ItemGroup>
+
+  <!--
+    ===========================================================================
+    Pre-build: assert the tray icon source PNG is present and non-empty.
+
+    Without this guard, a missing/zero-byte file would silently produce a
+    build where TrayIconLoader.LoadOrFallback() returns SystemIcons.Application
+    at runtime and the user sees the generic Windows icon instead of the
+    Tracenium one. We fail loud and early.
+    ===========================================================================
+  -->
+  <Target Name="ValidateTrayIconSource" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(TrayIconSourcePath)')"
+           Text="Tray icon source PNG missing: $(TrayIconSourcePath). Build aborted." />
+    <Message Importance="high"
+             Text="Tray icon source OK: $(TrayIconSourcePath)" />
+    <!--
+      Zero-byte detection es responsabilidad del post-build target
+      (VerifyTrayIconEmbedded) — la API de MSBuild property functions
+      no permite invocar constructores de instancia (`::new`) y los
+      atajos disponibles para tamaño de archivo no son portables entre
+      versiones del SDK. La verificación post-build carga el assembly
+      por reflection, abre el resource stream del recurso embebido y
+      asegura `stream != null && stream.Length > 0` — eso cubre tanto
+      el caso "Link roto" como el caso "PNG cero bytes" en un solo
+      checkpoint, sin truchadas en MSBuild.
+    -->
+  </Target>
+
+  <!--
+    ===========================================================================
+    Post-build: load the produced assembly via reflection in a separate
+    PowerShell process (so it is GC'd and not locked) and assert that the
+    manifest contains the expected embedded resource name. If the Link
+    attribute on <EmbeddedResource> ever drifts from the constant in
+    TrayIconLoader.cs (Tracenium.AgentTray.Resources.Tracenium_tryicon.png),
+    this target fails the build before the MSI can pick up a broken EXE.
+    ===========================================================================
+  -->
+  <Target Name="VerifyTrayIconEmbedded" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$ErrorActionPreference='Stop'; $asm=[System.Reflection.Assembly]::LoadFile((Resolve-Path '$(TargetPath)').Path); $names=$asm.GetManifestResourceNames(); $expected='$(TrayIconResourceName)'; if ($names -notcontains $expected) { Write-Host ('Embedded resources found: ' + ($names -join ', ')); throw ('Expected embedded resource missing: ' + $expected) }; $stream=$asm.GetManifestResourceStream($expected); if ($stream -eq $null) { throw ('Resource stream null for: ' + $expected) }; if ($stream.Length -le 0) { throw ('Resource stream is empty for: ' + $expected) }; Write-Host ('Tray icon embedded OK: ' + $expected + ' (' + $stream.Length + ' bytes)')&quot;"
+          ConsoleToMsBuild="true" />
+  </Target>
+
+  <!--
+    En cross-compile (Mac/Linux → Windows) la validación post-build
+    queda cubierta de otra manera: BeforeBuild ya verifica que el PNG
+    fuente existe, y MSBuild procesa el <EmbeddedResource> nativamente.
+    Si el Link se rompiera, el resource embebido tendría nombre lógico
+    distinto y `TrayIconLoader.LoadOrFallback()` caería al
+    `SystemIcons.Application` en runtime — no rompe el agente, solo
+    muestra el ícono genérico de Windows. El script Bash de build
+    (build-windows-binaries.sh) sí valida que el EXE producido tenga
+    tamaño razonable como sanity check operativo.
+  -->
 </Project>
