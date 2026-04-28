@@ -10,12 +10,40 @@ function required(name: string, value?: string): string {
   return value;
 }
 
+/**
+ * Normaliza el GRPC_ENDPOINT para que el operador pueda omitir el
+ * puerto cuando es 443 (caso típico).
+ *
+ * Aceptamos tres formatos:
+ *   "grpc.tracenium.com"        → "grpc.tracenium.com:443"   (default)
+ *   "grpc.tracenium.com:443"    → "grpc.tracenium.com:443"   (explícito)
+ *   "grpc.tracenium.com:50051"  → "grpc.tracenium.com:50051" (override)
+ *
+ * El default a 443 facilita la migración: corporate firewalls ya tienen
+ * 443 outbound permitido (HTTPS estándar), evitando change-control para
+ * abrir puertos custom como 50051. Operadores que necesiten otro puerto
+ * (ej. transición desde la versión legacy en :50051) siguen pudiendo
+ * pasarlo explícito.
+ *
+ * IPv6 soportado vía bracket syntax estándar: "[::1]:443".
+ */
+function resolveGrpcEndpoint(raw: string): string {
+  const value = (raw || "").trim();
+  if (!value) {
+    throw new Error("Missing required environment variable: GRPC_ENDPOINT");
+  }
+  // IPv6 bracket-form preserva el puerto si lo trae: "[::1]:443"
+  // sin puerto: "[::1]" — agregar :443.
+  if (value.startsWith("[")) {
+    return value.includes("]:") ? value : `${value}:443`;
+  }
+  // IPv4 / hostname: presencia de ":" indica puerto explícito.
+  return value.includes(":") ? value : `${value}:443`;
+}
+
 export const config = {
-    // gRPC endpoint (host:port)
-    grpcEndpoint: required(
-    "GRPC_ENDPOINT",
-    process.env.GRPC_ENDPOINT
-  ),
+    // gRPC endpoint (host[:port], defaults to :443 if port omitted)
+    grpcEndpoint: resolveGrpcEndpoint(process.env.GRPC_ENDPOINT || ""),
 
   serverBaseUrl: (() => {
   const raw = process.env.SERVER_BASE_URL;

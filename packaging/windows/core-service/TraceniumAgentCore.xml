@@ -16,7 +16,15 @@
 	  </log>
 
   <env name="NODE_ENV" value="production" />
-  <env name="GRPC_ENDPOINT" value="grpc.tracenium.com:50051" />
+  <!--
+    Default endpoint sin puerto explícito. El agent (config.ts
+    resolveGrpcEndpoint) lo resuelve a :443. Corporate firewalls ya
+    tienen 443 outbound abierto (HTTPS estándar) — sin ticket de
+    change-control para puertos custom. El backend gRPC escucha en
+    443+50051 durante la transición. Operadores que requieran puerto
+    explícito pueden override aquí (ej. "host:50051").
+  -->
+  <env name="GRPC_ENDPOINT" value="grpc.tracenium.com" />
   <env name="CHANNEL" value="stable" />
 
   <onfailure action="restart" delay="5 sec" />
