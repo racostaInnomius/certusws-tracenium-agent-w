@@ -22427,7 +22427,7 @@ var import_dotenv = __toESM(require_main());
 // package.json
 var package_default = {
   name: "certusws-tracenium-agent",
-  version: "1.1.6",
+  version: "1.1.7",
   description: "Tracenium Agent - Hardware & Software inventory collector",
   license: "MIT",
   author: {
@@ -23295,7 +23295,11 @@ var import_fs8 = __toESM(require("fs"));
 var import_path6 = __toESM(require("path"));
 var import_os7 = __toESM(require("os"));
 var import_crypto8 = __toESM(require("crypto"));
+init_paths();
 function resolvePolicyPath() {
+  return import_path6.default.join(agentDataDir(), "policy.json");
+}
+function legacyPolicyPath() {
   if (process.platform === "win32") {
     const programData = process.env.ProgramData || "C:\\ProgramData";
     return import_path6.default.join(programData, "Tracenium", "policy.json");
@@ -23310,6 +23314,30 @@ var PolicyStore = class {
   }
   async load() {
     try {
+      if (!import_fs8.default.existsSync(this.filePath)) {
+        const legacy = legacyPolicyPath();
+        if (legacy !== this.filePath && import_fs8.default.existsSync(legacy)) {
+          try {
+            const dir = import_path6.default.dirname(this.filePath);
+            await import_fs8.default.promises.mkdir(dir, { recursive: true });
+            await import_fs8.default.promises.rename(legacy, this.filePath);
+            console.warn(
+              `PolicyStore: migrated policy.json from ${legacy} to ${this.filePath}`
+            );
+          } catch (err) {
+            console.warn("PolicyStore migration failed (non-fatal)", err);
+            try {
+              const raw2 = await import_fs8.default.promises.readFile(legacy, "utf8");
+              const parsed2 = JSON.parse(raw2);
+              if (parsed2?.policyVersion && parsed2?.policy) {
+                this.current = parsed2;
+                return;
+              }
+            } catch {
+            }
+          }
+        }
+      }
       if (!import_fs8.default.existsSync(this.filePath)) {
         this.current = null;
         return;
@@ -24588,10 +24616,16 @@ var Scheduler = class {
     this.addPolicyListener(ctx, "pluginsChanged", (plugins) => {
       logger.info("[scheduler] plugins updated", { plugins });
       this.startPipelines(ctx);
+      this.runInventory(ctx).catch(
+        (err) => logger.warn("[scheduler] post-policy inventory tick failed", { err: err?.message || err })
+      );
     });
     this.addPolicyListener(ctx, "modulesChanged", (modules) => {
       logger.info("[scheduler] modules updated", { modules });
       this.startPipelines(ctx);
+      this.runInventory(ctx).catch(
+        (err) => logger.warn("[scheduler] post-policy inventory tick failed (modules)", { err: err?.message || err })
+      );
     });
     this.addPolicyListener(ctx, "patchIntervalChanged", (interval) => {
       logger.info("[scheduler] patch interval updated", { interval });
@@ -26087,8 +26121,20 @@ function startGrpcStream(ctx) {
         const computedHash = PolicyStore.computeHash(parsed);
         const localHash = ctx.policy.getHash();
         if (localHash === computedHash) {
-          ctx.logger?.info?.("policyUpdate skipped: already applied", { eventId, policyVersion });
-          sendControlAck(ctx, eventId, 0, "policy_already_applied").catch(() => {
+          ctx.logger?.info?.("policyUpdate hash matched \u2014 runtime resync", { eventId, policyVersion });
+          ctx.policyRuntime.applyUpdate().then(() => {
+            try {
+              ctx.trayStatus.markPolicyApplied(ctx);
+            } catch {
+            }
+          }).catch((err) => {
+            ctx.logger?.warn?.("Runtime resync failed during already_applied path", {
+              eventId,
+              err: err?.message || err
+            });
+          }).finally(() => {
+            sendControlAck(ctx, eventId, 0, "policy_already_applied").catch(() => {
+            });
           });
           return;
         }

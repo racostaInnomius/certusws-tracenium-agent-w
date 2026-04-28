@@ -902,8 +902,50 @@ stream = client.Connect();
 
         const localHash = ctx.policy.getHash();
         if (localHash === computedHash) {
-          ctx.logger?.info?.("policyUpdate skipped: already applied", { eventId, policyVersion });
-          sendControlAck(ctx, eventId, 0, "policy_already_applied").catch(() => {});
+          // El disco ya tiene esta policy — save() es innecesario.
+          // PERO el runtime puede estar fuera de sincronía con el disco.
+          //
+          // Caso de bug que esto resuelve (vivido en producción):
+          //   1. Agent corriendo. policy.json en disco ya está NEW (de
+          //      un save() previo). Runtime tiene NEW (applyUpdate ran).
+          //   2. Auto-update se dispara. Daemon shutdown → install → restart.
+          //   3. Nuevo proceso boot: PolicyStore.load() lee disk → current=NEW.
+          //   4. PolicyRuntime se inicializa con DEFAULT_POLICY (no llama
+          //      applyUpdate en boot — ese era el gap).
+          //   5. Heartbeat reconciler manda policyUpdate con NEW.
+          //   6. localHash (NEW) === computedHash (NEW) → "already_applied" → skip.
+          //   7. Runtime sigue con DEFAULT_POLICY. Capabilities reportadas
+          //      en facts no incluyen plugins habilitados (ej: PMP).
+          //   8. Plugin coverage UI muestra el plugin como desactivado
+          //      en flota a pesar de que el ack server-side dice "applied".
+          //
+          // Defensa: forzar applyUpdate() acá garantiza que runtime
+          // siempre refleje disco después de un policyUpdate, sin
+          // importar el state pre-existente. applyUpdate() es idempotente:
+          // si runtime ya tenía NEW, simplemente re-emite los events
+          // (pluginsChanged, modulesChanged) y el scheduler maneja
+          // gracefully — incluyendo el inventory tick forzado de Fix 4
+          // que asegura que las capabilities reportadas reflejan el
+          // estado actual.
+          ctx.logger?.info?.("policyUpdate hash matched — runtime resync", { eventId, policyVersion });
+          // applyUpdate es async, pero el outer handler stream.on("data", ...)
+          // no lo es. Invocamos como promise chain en vez de await — el ACK se
+          // envía después de que el resync intenta correr (success o falla).
+          ctx.policyRuntime.applyUpdate()
+            .then(() => {
+              try {
+                ctx.trayStatus.markPolicyApplied(ctx);
+              } catch {}
+            })
+            .catch((err: any) => {
+              ctx.logger?.warn?.("Runtime resync failed during already_applied path", {
+                eventId,
+                err: err?.message || err
+              });
+            })
+            .finally(() => {
+              sendControlAck(ctx, eventId, 0, "policy_already_applied").catch(() => {});
+            });
           return;
         }
 
