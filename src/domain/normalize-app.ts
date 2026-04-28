@@ -1,5 +1,9 @@
 // src/domain/normalize-app.ts
 import crypto from "crypto";
+import {
+  normalizeSoftwareDisplayMetadata,
+  type SoftwareDisplayCategory
+} from "./software-display-normalizer.js";
 
 export interface RawAppInput {
   name?: string | null;
@@ -11,14 +15,21 @@ export interface RawAppInput {
 }
 
 export interface SoftwareApplication {
+
   name: string;
+  displayName?: string;
   version?: string;
   publisher?: string;
+  displayPublisher?: string;
   source: string;
   installLocation?: string;
   packageFamilyName?: string;
   installId: string;
   detectedAtUtc: string;
+  rawName?: string;
+  rawPublisher?: string;
+  userFacing?: boolean;
+  category?: SoftwareDisplayCategory;
 }
 
 function cleanString(value?: string | null): string | undefined {
@@ -46,8 +57,6 @@ export function generateInstallId(data: {
   packageFamilyName?: string;
   publisher?: string;
 }): string {
-// Stable identity: avoid volatile fields (version, location)
-// include publisher to reduce collisions
   const base = [
     (data.name || "").toLowerCase(),
     (data.publisher || "").toLowerCase(),
@@ -64,32 +73,47 @@ export function generateInstallId(data: {
 }
 
 export function normalizeApp(input: RawAppInput): SoftwareApplication | null {
-  const name = cleanString(input.name);
-  const normalizedName = name?.toLowerCase();
-  if (!name) return null;
+  const rawName = cleanString(input.name);
+  const normalizedIdentityName = rawName?.toLowerCase();
+  if (!rawName) return null;
 
   const version = cleanString(input.version);
-  const publisher = normalizePublisher(input.publisher);
+  const rawPublisher = normalizePublisher(input.publisher);
   const installLocation = cleanString(input.installLocation);
   const packageFamilyName = cleanString(input.packageFamilyName);
+  const source = input.source.toLowerCase();
+
+  const display = normalizeSoftwareDisplayMetadata({
+    name: rawName,
+    publisher: cleanString(input.publisher),
+    source,
+    installLocation,
+    packageFamilyName
+  });
 
   const detectedAtUtc = new Date().toISOString();
 
   const installId = generateInstallId({
-    name: normalizedName || name,
-    source: input.source,
+    name: normalizedIdentityName || rawName,
+    source,
     packageFamilyName,
-    publisher
+    publisher: rawPublisher
   });
 
   return {
-    name,
+    name: display.displayName,
+    displayName: display.displayName,
     version,
-    publisher,
-    source: input.source.toLowerCase(),
+    publisher: display.displayPublisher,
+    displayPublisher: display.displayPublisher,
+    source,
     installLocation,
     packageFamilyName,
     installId,
-    detectedAtUtc
+    detectedAtUtc,
+    rawName,
+    rawPublisher,
+    userFacing: display.userFacing,
+    category: display.category
   };
 }
