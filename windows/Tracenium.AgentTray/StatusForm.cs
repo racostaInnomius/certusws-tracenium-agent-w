@@ -83,7 +83,6 @@ internal sealed class StatusForm : Form
 
         AddSection(content, "Connectivity");
         AddRow(content, "Connectivity", "connectivity");
-        AddRow(content, "Snapshot updated", "snapshotUpdated");
         AddRow(content, "Last heartbeat", "lastHeartbeat");
         AddRow(content, "Last connected", "lastConnected");
         AddRow(content, "Last disconnected", "lastDisconnected");
@@ -97,7 +96,6 @@ internal sealed class StatusForm : Form
 
         AddSection(content, "Policy");
         AddRow(content, "Policy version", "policyVersion");
-        AddRow(content, "Policy hash", "policyHash");
         AddRow(content, "Enabled plugins", "plugins");
         AddRow(content, "Enabled modules", "modules");
 
@@ -121,7 +119,6 @@ internal sealed class StatusForm : Form
         {
             ApplyHeader(false, Environment.MachineName, null, null);
             Set("connectivity", "No local status snapshot found");
-            Set("snapshotUpdated", "—");
             Set("lastHeartbeat", "—");
             Set("lastConnected", "—");
             Set("lastDisconnected", "—");
@@ -131,7 +128,6 @@ internal sealed class StatusForm : Form
             Set("tenantId", "—");
             Set("deviceId", "—");
             Set("policyVersion", "—");
-            Set("policyHash", "—");
             Set("plugins", "—");
             Set("modules", "—");
             Set("lastJob", "—");
@@ -146,7 +142,6 @@ internal sealed class StatusForm : Form
 
         ApplyHeader(status.Grpc.Connected, ResolveHostname(status), status.AgentVersion, status.UpdatedAtUtc);
         Set("connectivity", status.Grpc.Connected ? "Online" : "Offline");
-        Set("snapshotUpdated", FormatTimestamp(status.UpdatedAtUtc));
         Set("lastHeartbeat", FormatTimestamp(status.Grpc.LastHeartbeatAtUtc));
         Set("lastConnected", FormatTimestamp(status.Grpc.LastConnectedAtUtc));
         Set("lastDisconnected", FormatTimestamp(status.Grpc.LastDisconnectedAtUtc));
@@ -156,7 +151,6 @@ internal sealed class StatusForm : Form
         Set("tenantId", string.IsNullOrWhiteSpace(status.TenantId) ? "—" : status.TenantId);
         Set("deviceId", string.IsNullOrWhiteSpace(status.DeviceId) ? "—" : status.DeviceId);
         Set("policyVersion", string.IsNullOrWhiteSpace(status.Policy.Version) ? "none" : status.Policy.Version);
-        Set("policyHash", string.IsNullOrWhiteSpace(status.Policy.Hash) ? "—" : status.Policy.Hash!);
         Set("plugins", status.Policy.Plugins.Count > 0 ? string.Join(", ", status.Policy.Plugins) : "—");
         Set("modules", status.Policy.Modules.Count > 0 ? string.Join(", ", status.Policy.Modules) : "—");
         Set("lastJob", FormatLastJob(status.Jobs));

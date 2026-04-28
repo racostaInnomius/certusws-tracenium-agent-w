@@ -43,6 +43,53 @@ GRPC_ENDPOINT="${TRACENIUM_GRPC_ENDPOINT:-grpc.tracenium.com:50051}"
 # block) — but the installer no longer persists a stale value.
 CHANNEL="${TRACENIUM_CHANNEL:-stable}"
 
+# =============================================================================
+# Defensive pre-flight cleanup — endpoints que vienen de instalaciones
+# anteriores pueden tener state half-stuck. Sanitizamos antes de tocar
+# nada nuevo. Cada bloque es idempotente: si no había nada que limpiar,
+# es no-op.
+# =============================================================================
+
+# (a) Apaga preventivamente CUALQUIER instancia previa del status app —
+#     si quedó half-bootstrapped en una sesión gráfica anterior, la
+#     próxima `bootstrap` del nuevo install puede colgarse esperando
+#     estado limpio (lo vivimos en pkg 1.1.5: `kickstart -k` colgado
+#     20 minutos hasta el timeout de 10 min de macOS Installer). Hacemos
+#     bootout per-user de forma exhaustiva sobre cada UID con sesión
+#     gráfica activa.
+for console_uid in $(/usr/bin/dscl . -list /Users UniqueID 2>/dev/null | /usr/bin/awk '$2 >= 500 && $2 < 60000 {print $2}'); do
+  /bin/launchctl bootout "gui/$console_uid/com.certusws.tracenium.agentstatus" >/dev/null 2>&1 || true
+done
+
+# (b) Sanea daemons del sistema antes del replace de archivos por
+#     PackageKit. Aunque PackageKit puede sobrescribir mientras corre,
+#     en algunos macOS Tahoe (15+) hemos visto que el `bootout` posterior
+#     se cuelga si el daemon original ya estaba en respawn loop. Mejor
+#     dejarlo limpio aquí y que `bootstrap` después arranque con el
+#     binario nuevo. `|| true` porque en first-install no existen.
+/bin/launchctl bootout system/com.certusws.tracenium.agent     >/dev/null 2>&1 || true
+/bin/launchctl bootout system/com.certusws.tracenium.privsvc   >/dev/null 2>&1 || true
+/bin/launchctl bootout system/com.certusws.tracenium.logrotate >/dev/null 2>&1 || true
+
+# (c) Mata cualquier `launchctl kickstart` que haya quedado colgado de
+#     una instalación anterior cancelada por timeout. Si no hay ninguno,
+#     `pkill` retorna 1 (no error real). El `|| true` lo silencia.
+/usr/bin/pkill -9 -f "launchctl kickstart .*com.certusws.tracenium" >/dev/null 2>&1 || true
+
+# (d) Migración del status/ directory: en versiones anteriores el agente
+#     escribía tray-status.json dentro de /Library/Application Support/
+#     Tracenium/Agent/status/, pero ese path tenía perms 700 (Agent dir
+#     completo es root-only por enrollment.token y certs mTLS) y el tray
+#     user-session no podía leerlo. La nueva ubicación es hermana del
+#     Agent dir: /Library/Application Support/Tracenium/status/ con perms
+#     755 + JSON 644.
+#
+#     Borramos el legacy status/ adentro de Agent/ para evitar dejar
+#     archivos huérfanos y un tray confuso que pudiera leer ambos paths.
+/bin/rm -rf "$AGENT_DIR/status" 2>/dev/null || true
+
+# =============================================================================
+
 mkdir -p "$BASE/Runtime"
 mkdir -p "$AGENT_DIR"
 mkdir -p "$PRIVSVC_DIR/macos"

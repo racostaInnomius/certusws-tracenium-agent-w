@@ -29,8 +29,15 @@
   <dict>
     <key>TRACENIUM_AGENT_DATA_DIR</key>
     <string>/Library/Application Support/Tracenium/Agent</string>
+    <!--
+      status/ vive como hermano de Agent/ (no dentro), porque Agent/
+      es mode 700 (root only) y el tray no puede traversearlo. La ruta
+      explícita aquí gana sobre el fallback derivado de
+      TRACENIUM_AGENT_DATA_DIR/status/ — eso garantiza que el tray
+      lea de la ruta correcta sin depender del codepath de fallback.
+    -->
     <key>TRACENIUM_TRAY_STATUS_PATH</key>
-    <string>/Library/Application Support/Tracenium/Agent/status/tray-status.json</string>
+    <string>/Library/Application Support/Tracenium/status/tray-status.json</string>
   </dict>
 </dict>
 </plist>

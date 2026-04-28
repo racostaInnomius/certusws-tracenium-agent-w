@@ -21,15 +21,23 @@ final class StatusBarController {
     func start() {
         popover.behavior = .transient
         popover.contentViewController = contentController
+        // Forzar el tamaño del popover ANTES del primer show. NSPopover
+        // por default se reduce al tamaño intrínseco del contentVC view,
+        // y `preferredContentSize` se aplica DESPUÉS del primer render
+        // — eso causaba que el primer click mostrara el popover
+        // colapsado al ancho del row más estrecho. Setearlo en el
+        // popover directamente garantiza el tamaño desde el frame 0.
+        popover.contentSize = StatusPopoverViewController.popoverSize
 
         if let button = statusItem.button {
-            if let image = statusImage {
-                button.image = image
-                button.imagePosition = .imageOnly
-                button.title = ""
-            } else {
-                button.title = "Tracenium"
-            }
+            // Solo icono, sin texto al lado (requirement: el menubar muestra
+            // únicamente el icono Tracenium). Si por alguna razón la imagen
+            // no carga, dejamos el button vacío en vez de fallback de texto
+            // — eso evita ruido visual permanente; el usuario verá un button
+            // tiny y al hacer click le sale el popover normal.
+            button.image = statusImage
+            button.imagePosition = .imageOnly
+            button.title = ""
             button.target = self
             button.action = #selector(togglePopover(_:))
         }
@@ -77,12 +85,12 @@ final class StatusBarController {
                 Logger.shared.info(status.grpc.connected ? "Agent connectivity state changed to online" : "Agent connectivity state changed to offline")
                 lastConnectivityState = status.grpc.connected
             }
-            button.title = status.grpc.connected ? "Tracenium Online" : "Tracenium Offline"
-            button.toolTip = "\(status.hostname.isEmpty ? "Tracenium Agent" : status.hostname) · \(status.agentVersion)"
+            // Sin texto en el menubar — solo icono. El detalle online/offline
+            // se ve en el popover. Mantenemos toolTip (hover) con info útil.
+            button.toolTip = "\(status.hostname.isEmpty ? "Tracenium Agent" : status.hostname) · \(status.agentVersion) · \(status.grpc.connected ? "Online" : "Offline")"
         } else {
             lastConnectivityState = nil
-            button.title = "Tracenium Unknown"
-            button.toolTip = "No local status snapshot found"
+            button.toolTip = "Tracenium Agent · No local status snapshot found"
         }
     }
 }

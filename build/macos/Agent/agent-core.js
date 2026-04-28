@@ -64,11 +64,15 @@ function getLegacySoftwareBaselineDbPath() {
   return import_path.default.join(process.cwd(), "data", "agent.db");
 }
 function getAgentStatusDir() {
-  return import_path.default.join(agentDataDir(), AGENT_STATUS_DIR_NAME);
+  return import_path.default.join(import_path.default.dirname(agentDataDir()), AGENT_STATUS_DIR_NAME);
 }
 function ensureAgentStatusDir() {
   const dir = getAgentStatusDir();
   import_fs.default.mkdirSync(dir, { recursive: true });
+  try {
+    import_fs.default.chmodSync(dir, 493);
+  } catch {
+  }
   return dir;
 }
 function getTrayStatusFilePath() {
@@ -22423,7 +22427,7 @@ var import_dotenv = __toESM(require_main());
 // package.json
 var package_default = {
   name: "certusws-tracenium-agent",
-  version: "1.1.5",
+  version: "1.1.6",
   description: "Tracenium Agent - Hardware & Software inventory collector",
   license: "MIT",
   author: {
@@ -23697,7 +23701,7 @@ var TrayStatusStore = class {
   save(snapshot) {
     ensureDir3(this.dir);
     const tmp = `${this.filePath}.tmp`;
-    import_fs13.default.writeFileSync(tmp, JSON.stringify(snapshot, null, 2), { encoding: "utf8", mode: 384 });
+    import_fs13.default.writeFileSync(tmp, JSON.stringify(snapshot, null, 2), { encoding: "utf8", mode: 420 });
     import_fs13.default.renameSync(tmp, this.filePath);
   }
   update(updater) {

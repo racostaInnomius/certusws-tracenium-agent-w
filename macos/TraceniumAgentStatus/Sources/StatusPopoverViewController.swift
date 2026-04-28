@@ -1,29 +1,163 @@
 import AppKit
 
+/// Popover de status del agente — rewrite limpio con NSGridView.
+///
+/// Decisiones clave de layout:
+///
+/// * **Tamaño fijo via popover.contentSize** (en StatusBarController) en
+///   vez de preferredContentSize aquí. preferredContentSize se aplica
+///   AFTER del primer show del popover, lo que causaba colapso al
+///   tamaño intrínseco en el primer render. Setearlo en el popover
+///   directamente garantiza el tamaño desde el primer click.
+///
+/// * **NSGridView para body** en vez de stack-de-stacks. NSGridView
+///   maneja automáticamente la alineación de columnas (label/value)
+///   sin necesidad de widthAnchor por row. Una sola constraint para
+///   las columnas resuelve todo el alineamiento vertical.
+///
+/// * **NSVisualEffectView material .popover** para el fondo translúcido
+///   nativo macOS. Header dark banner se queda encima y da contraste.
+///
+/// * **Frames + autoresizingMask** para el split header/body en vez de
+///   constraints — más simple y directo cuando el padre tiene tamaño
+///   fijo conocido.
 final class StatusPopoverViewController: NSViewController {
-    private let rootStack = NSStackView()
+    /// Tamaño del popover. Lee'do desde StatusBarController via
+    /// `StatusPopoverViewController.popoverSize`.
+    static let popoverSize = NSSize(width: 480, height: 560)
+    private static let headerHeight: CGFloat = 72
+    private static let bodyPadding: CGFloat = 16
+
+    // Header
     private let headerView = NSView()
-    private let badgeLabel = NSTextField(labelWithString: "UNKNOWN")
     private let titleLabel = NSTextField(labelWithString: "Tracenium Agent")
     private let subtitleLabel = NSTextField(labelWithString: "Waiting for local status snapshot...")
-    private var valueLabels: [String: NSTextField] = [:]
+    private let badgeLabel = NSTextField(labelWithString: "UNKNOWN")
+
+    // Body
+    private let grid = NSGridView()
+    private var valueCells: [String: NSTextField] = [:]
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 620))
-        root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-
-        rootStack.orientation = .vertical
-        rootStack.alignment = .leading
-        rootStack.spacing = 12
-        rootStack.translatesAutoresizingMaskIntoConstraints = false
+        // Root: NSVisualEffectView para fondo translúcido nativo.
+        let root = NSVisualEffectView(frame: NSRect(origin: .zero, size: Self.popoverSize))
+        root.material = .popover
+        root.blendingMode = .behindWindow
+        root.state = .active
+        root.autoresizingMask = [.width, .height]
+        view = root
 
         configureHeader()
-        rootStack.addArrangedSubview(headerView)
+        configureBody()
+    }
 
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        // Backup: si por alguna razón el popover en StatusBarController
+        // no setea contentSize, preferredContentSize aplica acá.
+        preferredContentSize = Self.popoverSize
+    }
+
+    // MARK: - Header
+
+    private func configureHeader() {
+        // Header pinned al top con autoresizing — no auto-layout aquí
+        // para mantener el split header/body simple y deterministic.
+        headerView.frame = NSRect(
+            x: 0,
+            y: Self.popoverSize.height - Self.headerHeight,
+            width: Self.popoverSize.width,
+            height: Self.headerHeight
+        )
+        headerView.autoresizingMask = [.width, .minYMargin]
+        headerView.wantsLayer = true
+        // Banner semi-opaco encima del visualEffect — más oscuro que
+        // el blur natural pero deja pasar algo del backdrop.
+        headerView.layer?.backgroundColor = NSColor(calibratedRed: 0.13, green: 0.16, blue: 0.19, alpha: 0.92).cgColor
+
+        titleLabel.font = NSFont.systemFont(ofSize: 15, weight: .bold)
+        titleLabel.textColor = .white
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        subtitleLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        subtitleLabel.textColor = NSColor(calibratedWhite: 0.82, alpha: 1.0)
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+        subtitleLabel.maximumNumberOfLines = 1
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        badgeLabel.font = NSFont.systemFont(ofSize: 11, weight: .bold)
+        badgeLabel.textColor = .white
+        badgeLabel.alignment = .center
+        badgeLabel.wantsLayer = true
+        badgeLabel.layer?.cornerRadius = 4
+        badgeLabel.layer?.masksToBounds = true
+        badgeLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        headerView.addSubview(titleLabel)
+        headerView.addSubview(subtitleLabel)
+        headerView.addSubview(badgeLabel)
+
+        NSLayoutConstraint.activate([
+            // Title arriba-izquierda
+            titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            titleLabel.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 14),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeLabel.leadingAnchor, constant: -12),
+
+            // Subtitle debajo del title
+            subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
+            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeLabel.leadingAnchor, constant: -12),
+
+            // Badge centrado vertical, pegado a la derecha
+            badgeLabel.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
+            badgeLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 70),
+            badgeLabel.heightAnchor.constraint(equalToConstant: 22)
+        ])
+
+        view.addSubview(headerView)
+    }
+
+    // MARK: - Body
+
+    private func configureBody() {
+        // Body container: ocupa lo que queda debajo del header.
+        let bodyHeight = Self.popoverSize.height - Self.headerHeight
+        let bodyContainer = NSView(frame: NSRect(
+            x: 0,
+            y: 0,
+            width: Self.popoverSize.width,
+            height: bodyHeight
+        ))
+        bodyContainer.autoresizingMask = [.width, .height]
+        view.addSubview(bodyContainer)
+
+        // ScrollView ocupa todo el body
+        let scrollView = NSScrollView(frame: bodyContainer.bounds)
+        scrollView.autoresizingMask = [.width, .height]
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .noBorder
+        bodyContainer.addSubview(scrollView)
+
+        // Grid: 2 columnas (label, value). NSGridView maneja
+        // automáticamente el alineamiento de columnas y rows.
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        grid.columnSpacing = 16
+        grid.rowSpacing = 6
+        grid.rowAlignment = .firstBaseline
+        // Columna 0 (labels): trailing align — los valores quedan
+        // alineados verticalmente entre rows incluso si los labels
+        // varían en ancho. Pero para verse Windows-like dejamos
+        // leading.
+        if grid.numberOfColumns > 0 {
+            grid.column(at: 0).xPlacement = .leading
+        }
+
+        // Populate grid
         addSection("Connectivity")
         addRow("Connectivity", key: "connectivity")
-        addRow("Snapshot updated", key: "snapshotUpdated")
         addRow("Last heartbeat", key: "lastHeartbeat")
         addRow("Last connected", key: "lastConnected")
         addRow("Last disconnected", key: "lastDisconnected")
@@ -37,7 +171,6 @@ final class StatusPopoverViewController: NSViewController {
 
         addSection("Policy")
         addRow("Policy version", key: "policyVersion")
-        addRow("Policy hash", key: "policyHash")
         addRow("Plugins", key: "plugins")
         addRow("Modules", key: "modules")
 
@@ -50,40 +183,72 @@ final class StatusPopoverViewController: NSViewController {
         addRow("Patch last scan", key: "patchLastScan")
         addRow("Patch error", key: "patchError")
 
-        let scrollView = NSScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.borderType = .noBorder
+        // Configurar columnas DESPUÉS de poblar — al momento de crear
+        // el grid no había columnas todavía.
+        if grid.numberOfColumns >= 1 {
+            grid.column(at: 0).xPlacement = .leading
+            grid.column(at: 0).width = 140
+        }
+        if grid.numberOfColumns >= 2 {
+            grid.column(at: 1).xPlacement = .leading
+        }
 
+        // Document view envuelve el grid con padding
         let documentView = NSView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
-        documentView.addSubview(rootStack)
+        documentView.addSubview(grid)
         NSLayoutConstraint.activate([
-            rootStack.topAnchor.constraint(equalTo: documentView.topAnchor, constant: 16),
-            rootStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: 16),
-            rootStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -16),
-            rootStack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor, constant: -16),
-            rootStack.widthAnchor.constraint(equalTo: documentView.widthAnchor, constant: -32)
+            grid.topAnchor.constraint(equalTo: documentView.topAnchor, constant: Self.bodyPadding),
+            grid.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: Self.bodyPadding),
+            grid.trailingAnchor.constraint(lessThanOrEqualTo: documentView.trailingAnchor, constant: -Self.bodyPadding),
+            grid.bottomAnchor.constraint(equalTo: documentView.bottomAnchor, constant: -Self.bodyPadding)
         ])
 
         scrollView.documentView = documentView
-        root.addSubview(scrollView)
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: root.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor)
-        ])
-
-        view = root
+        // Atar el documentView al ancho del clip view del scrollView —
+        // sin esto NSScrollView deja que el document tome ancho
+        // intrínseco (causa scroll horizontal y colapso visual).
+        documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor).isActive = true
     }
+
+    private func addSection(_ title: String) {
+        let label = NSTextField(labelWithString: title)
+        label.font = NSFont.systemFont(ofSize: 13, weight: .bold)
+        label.textColor = NSColor.controlAccentColor
+        // Section spans both columns
+        let row = grid.addRow(with: [label, NSGridCell.emptyContentView])
+        row.mergeCells(in: NSRange(location: 0, length: 2))
+        row.topPadding = grid.numberOfRows == 1 ? 0 : 8
+        row.bottomPadding = 2
+    }
+
+    private func addRow(_ title: String, key: String) {
+        let labelField = NSTextField(labelWithString: title)
+        labelField.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        labelField.textColor = NSColor.secondaryLabelColor
+
+        let valueField = NSTextField(labelWithString: "—")
+        valueField.font = NSFont.systemFont(ofSize: 12)
+        valueField.textColor = NSColor.labelColor
+        valueField.lineBreakMode = .byTruncatingMiddle
+        valueField.maximumNumberOfLines = 1
+        valueField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        valueCells[key] = valueField
+
+        grid.addRow(with: [labelField, valueField])
+    }
+
+    // MARK: - Render
 
     func render(_ status: TrayStatus?) {
         guard let status else {
-            applyHeader(online: false, hostname: Host.current().localizedName ?? ProcessInfo.processInfo.hostName, version: nil, updatedAt: nil)
+            applyHeader(
+                online: false,
+                hostname: Host.current().localizedName ?? ProcessInfo.processInfo.hostName,
+                version: nil,
+                updatedAt: nil
+            )
             set("connectivity", "No local status snapshot found")
-            set("snapshotUpdated", "—")
             set("lastHeartbeat", "—")
             set("lastConnected", "—")
             set("lastDisconnected", "—")
@@ -93,7 +258,6 @@ final class StatusPopoverViewController: NSViewController {
             set("agentVersion", "—")
             set("coreVersion", "—")
             set("policyVersion", "—")
-            set("policyHash", "—")
             set("plugins", "—")
             set("modules", "—")
             set("lastJob", "—")
@@ -114,7 +278,6 @@ final class StatusPopoverViewController: NSViewController {
         )
 
         set("connectivity", status.grpc.connected ? "Online" : "Offline")
-        set("snapshotUpdated", format(status.updatedAtUtc))
         set("lastHeartbeat", format(status.grpc.lastHeartbeatAtUtc))
         set("lastConnected", format(status.grpc.lastConnectedAtUtc))
         set("lastDisconnected", format(status.grpc.lastDisconnectedAtUtc))
@@ -124,7 +287,6 @@ final class StatusPopoverViewController: NSViewController {
         set("agentVersion", status.agentVersion.isEmpty ? "—" : status.agentVersion)
         set("coreVersion", status.coreVersion.isEmpty ? "—" : status.coreVersion)
         set("policyVersion", status.policy.version.isEmpty ? "none" : status.policy.version)
-        set("policyHash", (status.policy.hash?.isEmpty == false) ? status.policy.hash! : "—")
         set("plugins", status.policy.plugins.isEmpty ? "—" : status.policy.plugins.joined(separator: ", "))
         set("modules", status.policy.modules.isEmpty ? "—" : status.policy.modules.joined(separator: ", "))
         set("lastJob", formatJob(status.jobs))
@@ -134,51 +296,6 @@ final class StatusPopoverViewController: NSViewController {
         set("patchStatus", formatPatch(status.patch))
         set("patchLastScan", format(status.patch.lastScanAtUtc))
         set("patchError", (status.patch.lastError?.isEmpty == false) ? status.patch.lastError! : "—")
-    }
-
-    private func configureHeader() {
-        headerView.translatesAutoresizingMaskIntoConstraints = false
-        headerView.wantsLayer = true
-        headerView.layer?.backgroundColor = NSColor(calibratedRed: 0.13, green: 0.16, blue: 0.19, alpha: 1.0).cgColor
-        headerView.layer?.cornerRadius = 10
-        headerView.heightAnchor.constraint(equalToConstant: 88).isActive = true
-
-        let titleStack = NSStackView()
-        titleStack.orientation = .vertical
-        titleStack.alignment = .leading
-        titleStack.spacing = 4
-        titleStack.translatesAutoresizingMaskIntoConstraints = false
-
-        titleLabel.font = NSFont.systemFont(ofSize: 16, weight: .bold)
-        titleLabel.textColor = .white
-
-        subtitleLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        subtitleLabel.textColor = NSColor(calibratedWhite: 0.82, alpha: 1.0)
-        subtitleLabel.maximumNumberOfLines = 2
-        subtitleLabel.lineBreakMode = .byWordWrapping
-
-        titleStack.addArrangedSubview(titleLabel)
-        titleStack.addArrangedSubview(subtitleLabel)
-
-        badgeLabel.font = NSFont.systemFont(ofSize: 11, weight: .bold)
-        badgeLabel.textColor = .white
-        badgeLabel.alignment = .center
-        badgeLabel.wantsLayer = true
-        badgeLabel.layer?.cornerRadius = 6
-        badgeLabel.layer?.masksToBounds = true
-
-        headerView.addSubview(titleStack)
-        headerView.addSubview(badgeLabel)
-
-        NSLayoutConstraint.activate([
-            titleStack.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
-            titleStack.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            titleStack.trailingAnchor.constraint(lessThanOrEqualTo: badgeLabel.leadingAnchor, constant: -12),
-            badgeLabel.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
-            badgeLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 78),
-            badgeLabel.heightAnchor.constraint(equalToConstant: 28)
-        ])
     }
 
     private func applyHeader(online: Bool, hostname: String, version: String?, updatedAt: Date?) {
@@ -192,44 +309,8 @@ final class StatusPopoverViewController: NSViewController {
         subtitleLabel.stringValue = "\(hostname)  |  \(resolvedVersion)  |  \(updated)"
     }
 
-    private func addSection(_ title: String) {
-        let label = NSTextField(labelWithString: title)
-        label.font = NSFont.systemFont(ofSize: 13, weight: .bold)
-        label.textColor = NSColor.controlAccentColor
-        stackSeparatorIfNeeded()
-        rootStack.addArrangedSubview(label)
-    }
-
-    private func addRow(_ title: String, key: String) {
-        let row = NSStackView()
-        row.orientation = .vertical
-        row.alignment = .leading
-        row.spacing = 2
-
-        let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        titleLabel.textColor = NSColor.secondaryLabelColor
-
-        let valueLabel = NSTextField(labelWithString: "—")
-        valueLabel.font = NSFont.systemFont(ofSize: 12)
-        valueLabel.lineBreakMode = .byWordWrapping
-        valueLabel.maximumNumberOfLines = 4
-        valueLabels[key] = valueLabel
-
-        row.addArrangedSubview(titleLabel)
-        row.addArrangedSubview(valueLabel)
-        rootStack.addArrangedSubview(row)
-    }
-
-    private func stackSeparatorIfNeeded() {
-        guard !rootStack.arrangedSubviews.isEmpty else { return }
-        let separator = NSBox()
-        separator.boxType = .separator
-        rootStack.addArrangedSubview(separator)
-    }
-
     private func set(_ key: String, _ value: String) {
-        valueLabels[key]?.stringValue = value
+        valueCells[key]?.stringValue = value
     }
 
     private func resolveHostname(_ status: TrayStatus) -> String {

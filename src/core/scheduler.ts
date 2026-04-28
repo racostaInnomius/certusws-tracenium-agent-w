@@ -122,11 +122,33 @@ class Scheduler {
     this.addPolicyListener(ctx, "pluginsChanged", (plugins: string[]) => {
       logger.info("[scheduler] plugins updated", { plugins });
       this.startPipelines(ctx);
+
+      // Forzar un inventory tick INMEDIATO para que las nuevas
+      // capabilities (que incluyen los plugins habilitados) lleguen
+      // al backend sin esperar el próximo ciclo de inventory (default
+      // 8h). Sin esto, el operador habilita PMP en tenant policy →
+      // agente recibe + aplica → pero el dashboard plugin-coverage
+      // sigue mostrando 0 PMP hasta el próximo inventory cycle, lo
+      // cual confunde al operador y hace que parezca un bug.
+      //
+      // El runInventory enqueua via factsPipeline; si hay otro
+      // inventory en flight, el pipeline lo serializa naturalmente.
+      this.runInventory(ctx).catch(err =>
+        logger.warn("[scheduler] post-policy inventory tick failed", { err: err?.message || err })
+      );
     });
 
     this.addPolicyListener(ctx, "modulesChanged", (modules: string[]) => {
       logger.info("[scheduler] modules updated", { modules });
       this.startPipelines(ctx);
+
+      // Mismo motivo que pluginsChanged: las modules habilitadas
+      // (compliance, patch, etc.) impactan el agent_payload reportado
+      // y los métricos de dashboard. Forzamos un inventory tick para
+      // refresh inmediato.
+      this.runInventory(ctx).catch(err =>
+        logger.warn("[scheduler] post-policy inventory tick failed (modules)", { err: err?.message || err })
+      );
     });
 
     this.addPolicyListener(ctx, "patchIntervalChanged", (interval: number) => {

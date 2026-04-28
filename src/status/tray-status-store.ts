@@ -37,7 +37,13 @@ export class TrayStatusStore {
   save(snapshot: TrayStatusSnapshot) {
     ensureDir(this.dir);
     const tmp = `${this.filePath}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(snapshot, null, 2), { encoding: "utf8", mode: 0o600 });
+    // Mode 0o644: world-readable, root-writable. El tray app corre
+    // como user UID y necesita leer este archivo. Antes era 0o600 y
+    // bloqueaba al tray. El JSON no contiene secretos — solo info
+    // operacional (hostname, deviceId, versión, estado gRPC,
+    // policy version, job state). Equivalente al log file que
+    // también es 0o644 en /Library/Application Support/Tracenium/Logs/.
+    fs.writeFileSync(tmp, JSON.stringify(snapshot, null, 2), { encoding: "utf8", mode: 0o644 });
     fs.renameSync(tmp, this.filePath);
   }
 
