@@ -104,42 +104,28 @@ function isApplePkgutilNoise(pkgId: string): boolean {
   return false;
 }
 
-/**
- * Strip a version-shaped segment out of a pkgutil bundle id and return
- * both the canonical id (without the version) and the extracted
- * version. Some installers bake the version into the bundle id, e.g.
- *   com.docker.docker.4.32.1               →  com.docker.docker         + 4.32.1
- *   com.zoom.pkg.Zoom.5.18.10               →  com.zoom.pkg.Zoom         + 5.18.10
- *   com.microsoft.dotnet.runtime.10.0.3    →  com.microsoft.dotnet.runtime + 10.0.3
- *
- * Without canonicalization, the next vendor patch produces a new
- * `installId` (because installId hashes the pkgId), and the delta
- * detector reports "uninstalled old + installed new" instead of
- * "updated". Operators see add/remove churn and the FACTS_SNAPSHOT
- * dedup misfires.
- *
- * The match is conservative: 2+ dot-separated numeric components,
- * possibly followed by a non-numeric suffix (e.g. "10.0.3.component.osx.arm64"
- * — the noise filter usually drops these, but the canonicalization
- * still helps for the rare receipt that escapes the filter). We avoid
- * single-segment numerics ("com.foo.123") because those can be
- * legitimate non-version segments.
- */
+
 function canonicalizePkgutilId(pkgId: string): { canonical: string; version: string | null } {
   if (!pkgId) return { canonical: pkgId, version: null };
+
   // Match: optional ".<non-numeric-suffix>" then capture .<num>(.<num>)+
   // anywhere from the middle to the end.
   const re = /\.(\d+(?:\.\d+){1,3})(?=\.|$)/;
   const m = pkgId.match(re);
+
   if (!m) return { canonical: pkgId, version: null };
+
   const version = m[1];
+
   const canonical = pkgId.slice(0, m.index) + pkgId.slice((m.index ?? 0) + m[0].length);
-  return { canonical: canonical.replace(/\.{2,}/g, ".").replace(/\.$/, ""), version };
+
+  return {
+    canonical: canonical.replace(/\.{2,}/g, ".").replace(/\.$/, ""),
+    version
+  };
 }
 
-/**
- * Enterprise-grade hybrid macOS software collector (Applications, Utilities, User Apps, Homebrew, pkgutil)
- */
+
 async function collectMacSoftware(): Promise<SoftwareApplication[]> {
   try {
     const appDirs = [
@@ -196,7 +182,15 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
               ["-name", "kMDItemCFBundleIdentifier", "-raw", appPath],
               { timeout: 5000 }
             );
-            bundleId = stdout.trim() || null;
+
+            const rawBundleId = stdout.trim();
+
+            bundleId =
+              rawBundleId &&
+              rawBundleId !== "(null)" &&
+              rawBundleId.toLowerCase() !== "null"
+                ? rawBundleId
+                : null;
           } catch {
             bundleId = null;
           }
@@ -204,7 +198,7 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
           const normalized = normalizeApp({
             name,
             version: null,
-            publisher: null,
+            publisher: undefined,
             installLocation: appPath,
             packageFamilyName: bundleId,
             source: "macos-app-bundle"
@@ -316,28 +310,41 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
           let location: string | null = null;
           let volume: string | null = null;
           let version: string | null = null;
+
           for (const line of info.split("\n")) {
             const m = line.match(/^([a-z-]+):\s*(.*)$/i);
             if (!m) continue;
+
             const k = m[1].toLowerCase();
             const v = m[2].trim();
+
             if (k === "location") location = v;
             else if (k === "volume") volume = v;
             else if (k === "version") version = v;
           }
+
           // Resolve absolute install path. `volume` is often "/" and
           // `location` is the relative path under it. Empty location
           // for system packages means root install — always exists.
           let installLocationExists = true;
+
           if (location && location !== "/" && location !== "") {
             const root = volume && volume !== "/" ? volume : "";
             const abs = `${root}/${location}`.replace(/\/+/g, "/");
+
             installLocationExists = await fs.promises
               .access(abs, fs.constants.F_OK)
               .then(() => true)
               .catch(() => false);
           }
-          return { pkgId, location, volume, version, installLocationExists };
+
+          return {
+            pkgId,
+            location,
+            volume,
+            version,
+            installLocationExists
+          };
         } catch {
           // pkg-info itself failed — receipt is corrupt or vanished
           // between --pkgs and --pkg-info. Treat as orphan.
@@ -347,13 +354,18 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
 
       const pkgRecords: PkgRecord[] = [];
       const PKG_INFO_CONCURRENCY = 10;
+
       for (let i = 0; i < candidates.length; i += PKG_INFO_CONCURRENCY) {
         const batch = candidates.slice(i, i + PKG_INFO_CONCURRENCY);
         const records = await Promise.all(batch.map(readPkgInfo));
-        for (const r of records) if (r) pkgRecords.push(r);
+
+        for (const r of records) {
+          if (r) pkgRecords.push(r);
+        }
       }
 
       const orphans = pkgRecords.filter(r => !r.installLocationExists).length;
+
       if (orphans > 0) {
         console.warn(`[MACOS] dropped ${orphans} orphan pkgutil receipts (install location missing)`);
       }
@@ -373,7 +385,20 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
         const normalized = normalizeApp({
           name: canonical,
           version,
-          publisher: "pkgutil",
+          /**
+           * Critical fix:
+           * pkgutil is the collector/source, not the publisher.
+           * Passing "pkgutil" here makes the dashboard group software
+           * under publisher="pkgutil", which is incorrect.
+           *
+           * The normalizer will infer the real publisher from canonical
+           * package ids such as:
+           *   com.microsoft.*
+           *   com.epson.*
+           *   com.apple.*
+           *   com.teamviewer.*
+           */
+          publisher: undefined,
           installLocation: rec.location || "/",
           packageFamilyName: canonical,
           source: "pkgutil"
@@ -398,7 +423,7 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
     // Pass 2 (cross-source semantic dedup): the SAME logical app often
     // surfaces from multiple collectors:
     //
-    //   .app bundle:   name="Microsoft OneNote"       pfn="com.microsoft.onenote.mac"
+    //   .app bundle:   name="Microsoft OneNote"         pfn="com.microsoft.onenote.mac"
     //   pkgutil:       name="com.microsoft.onenote.mac" pfn="com.microsoft.onenote.mac"
     //
     // Both produce different `installId`s because `source` is part of
@@ -413,6 +438,7 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
     //   - pkgutil is last-resort identification for things that aren't
     //     bundles (drivers, kexts, receipts for deleted apps).
     const byInstallId = new Map<string, SoftwareApplication>();
+
     for (const app of results) {
       if (!app.installId) continue;
       byInstallId.set(app.installId, app);
@@ -423,6 +449,7 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
       "homebrew": 2,
       "pkgutil": 1
     };
+
     const sourceRank = (s: string) => SOURCE_PRIORITY[s?.toLowerCase?.() || ""] ?? 0;
 
     const byPfn = new Map<string, SoftwareApplication>();
@@ -430,6 +457,7 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
 
     for (const app of byInstallId.values()) {
       const pfn = app.packageFamilyName?.toLowerCase?.() || "";
+
       if (!pfn) {
         // No packageFamilyName to merge on — keep as-is. Anything
         // without a PFN is rare (nping from /Applications with "(null)"
@@ -439,6 +467,7 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
       }
 
       const existing = byPfn.get(pfn);
+
       if (!existing || sourceRank(app.source) > sourceRank(existing.source)) {
         byPfn.set(pfn, app);
       }
@@ -511,6 +540,7 @@ async function collectMacSecurity(ctx: AgentContext): Promise<AmpNamespace["secu
     if (!resp?.ok) return unknown;
 
     const posture = resp.result || {};
+
     return {
       bitlocker: {
         status: posture.filevault?.status ?? "unknown",
@@ -556,6 +586,7 @@ export const macProvider = {
         console.warn("[MACOS] EMPTY INVENTORY");
 
         const previous = loadSoftwareBaseline() ?? [];
+
         if (previous.length > 0) {
           deleteSoftwareByIds(previous.map(x => x.installId).filter(Boolean) as string[]);
         }
@@ -589,7 +620,6 @@ export const macProvider = {
         };
 
         upsertSoftwareBaseline(apps);
-
       } else {
         const deltaResult = computeSoftwareDelta(apps, previous);
 
@@ -625,7 +655,6 @@ export const macProvider = {
           };
         }
       }
-
     } catch (err) {
       console.error("[MACOS] collection failed", err);
     }

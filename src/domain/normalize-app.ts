@@ -32,6 +32,20 @@ export interface SoftwareApplication {
   category?: SoftwareDisplayCategory;
 }
 
+const SOURCE_ONLY_PUBLISHERS = new Set([
+  "pkgutil",
+  "homebrew",
+  "brew",
+  "dpkg",
+  "rpm",
+  "snap",
+  "flatpak",
+  "win32-registry",
+  "windows-registry",
+  "registry",
+  "macos-app-bundle"
+]);
+
 function cleanString(value?: string | null): string | undefined {
   if (!value) return undefined;
 
@@ -42,13 +56,17 @@ function cleanString(value?: string | null): string | undefined {
   return cleaned.length > 0 ? cleaned : undefined;
 }
 
-function normalizePublisher(publisher?: string | null): string | undefined {
-  if (!publisher) return undefined;
-
+function normalizePublisherForIdentity(publisher?: string | null): string | undefined {
   const p = cleanString(publisher);
   if (!p) return undefined;
 
-  return p.toLowerCase();
+  const lower = p.toLowerCase();
+
+  if (SOURCE_ONLY_PUBLISHERS.has(lower)) {
+    return undefined;
+  }
+
+  return lower;
 }
 
 export function generateInstallId(data: {
@@ -74,18 +92,33 @@ export function generateInstallId(data: {
 
 export function normalizeApp(input: RawAppInput): SoftwareApplication | null {
   const rawName = cleanString(input.name);
-  const normalizedIdentityName = rawName?.toLowerCase();
-  if (!rawName) return null;
+
+  if (!rawName) {
+    return null;
+  }
 
   const version = cleanString(input.version);
-  const rawPublisher = normalizePublisher(input.publisher);
+  const rawPublisher = cleanString(input.publisher);
+  const identityPublisher = normalizePublisherForIdentity(input.publisher);
   const installLocation = cleanString(input.installLocation);
   const packageFamilyName = cleanString(input.packageFamilyName);
-  const source = input.source.toLowerCase();
+  const source = cleanString(input.source)?.toLowerCase() || "unknown";
+
+  /**
+   * Technical identity should stay stable and independent from display rules.
+   *
+   * Example:
+   * - rawName/packageFamilyName: com.epson.pkg.EpsonScan2.Utility
+   * - displayName: Epson Scan 2 Utility
+   *
+   * installId must use the technical identity so improving labels later does
+   * not produce fake "removed + added" deltas.
+   */
+  const normalizedIdentityName = rawName.toLowerCase();
 
   const display = normalizeSoftwareDisplayMetadata({
     name: rawName,
-    publisher: cleanString(input.publisher),
+    publisher: rawPublisher,
     source,
     installLocation,
     packageFamilyName
@@ -94,10 +127,10 @@ export function normalizeApp(input: RawAppInput): SoftwareApplication | null {
   const detectedAtUtc = new Date().toISOString();
 
   const installId = generateInstallId({
-    name: normalizedIdentityName || rawName,
+    name: normalizedIdentityName,
     source,
     packageFamilyName,
-    publisher: rawPublisher
+    publisher: identityPublisher
   });
 
   return {
