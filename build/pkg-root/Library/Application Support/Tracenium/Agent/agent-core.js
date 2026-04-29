@@ -23618,11 +23618,28 @@ var PolicyStore = class {
     }
   }
   static computeHash(policyJson) {
-    const stable = JSON.stringify(policyJson, Object.keys(policyJson).sort());
-    const buf = Buffer.from(stable);
-    return import_crypto8.default.createHash("sha256").update(buf).digest("hex");
+    const canonical = stableStringify(policyJson);
+    return import_crypto8.default.createHash("sha256").update(Buffer.from(canonical, "utf8")).digest("hex");
   }
 };
+function stableStringify(value) {
+  if (value === null || value === void 0) return "null";
+  if (typeof value === "number" || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return "[" + value.map(stableStringify).join(",") + "]";
+  }
+  if (typeof value === "object") {
+    const keys = Object.keys(value).sort();
+    const parts = keys.map(
+      (k) => JSON.stringify(k) + ":" + stableStringify(value[k])
+    );
+    return "{" + parts.join(",") + "}";
+  }
+  return "null";
+}
 
 // src/core/policy-runtime.ts
 var import_events4 = require("events");
@@ -24690,14 +24707,14 @@ function buildAgentInfo(ctx) {
     }
   };
 }
-function stableStringify(obj) {
+function stableStringify2(obj) {
   if (obj === null || typeof obj !== "object") return JSON.stringify(obj);
-  if (Array.isArray(obj)) return `[${obj.map(stableStringify).join(",")}]`;
+  if (Array.isArray(obj)) return `[${obj.map(stableStringify2).join(",")}]`;
   const keys = Object.keys(obj).sort();
-  return `{${keys.map((k) => `"${k}":${stableStringify(obj[k])}`).join(",")}}`;
+  return `{${keys.map((k) => `"${k}":${stableStringify2(obj[k])}`).join(",")}}`;
 }
 function hashObject(obj) {
-  const json = stableStringify(obj);
+  const json = stableStringify2(obj);
   return "sha256:" + import_crypto10.default.createHash("sha256").update(json).digest("hex");
 }
 function buildDeviceBaseline(ctx, hardware) {
@@ -24777,18 +24794,18 @@ function normalizeForHash(value) {
   const entries = Object.entries(value).filter(([, entryValue]) => entryValue !== void 0).sort(([left], [right]) => left.localeCompare(right)).map(([key, entryValue]) => [key, normalizeForHash(entryValue)]);
   return Object.fromEntries(entries);
 }
-function stableStringify2(value) {
+function stableStringify3(value) {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map(stableStringify2).join(",")}]`;
+    return `[${value.map(stableStringify3).join(",")}]`;
   }
   const keys = Object.keys(value).sort();
-  return `{${keys.map((key) => `"${key}":${stableStringify2(value[key])}`).join(",")}}`;
+  return `{${keys.map((key) => `"${key}":${stableStringify3(value[key])}`).join(",")}}`;
 }
 function hashNamespace(value) {
-  return import_crypto12.default.createHash("sha256").update(stableStringify2(normalizeForHash(value))).digest("hex");
+  return import_crypto12.default.createHash("sha256").update(stableStringify3(normalizeForHash(value))).digest("hex");
 }
 function buildScpStateForHash(namespace) {
   const { hasChanges: _ignored, ...rest } = namespace;
