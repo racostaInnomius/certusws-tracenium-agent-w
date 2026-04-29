@@ -163,12 +163,64 @@ export class PolicyStore {
   }
 
   static computeHash(policyJson: any): string {
-    const stable = JSON.stringify(policyJson, Object.keys(policyJson).sort());
-    const buf = Buffer.from(stable);
-
+    // Canonical JSON serialization with recursive key sorting.
+    //
+    // The previous implementation used `JSON.stringify(value, replacer)`
+    // with `Object.keys(value).sort()` as the replacer, intending it as
+    // "sort keys for stable output". That's a misread of the spec: when
+    // the replacer is an array, it acts as a recursive ALLOWLIST of key
+    // names, not a sort directive. Since every policy's top-level keys
+    // are `["modules","plugins"]`, the allowlist filters every nested
+    // object down to `{}` because nested keys (`patch`, `compliance`,
+    // `enabled`, …) aren't in the allowlist.
+    //
+    // Concretely:
+    //   stringify({modules:{patch:true},plugins:{enabled:["amp"]}},
+    //             ["modules","plugins"])
+    //     → '{"modules":{},"plugins":{}}'
+    //   stringify({modules:{patch:true,compliance:true},
+    //              plugins:{enabled:["amp","scp","pmp"]}},
+    //             ["modules","plugins"])
+    //     → '{"modules":{},"plugins":{}}'   ← same string → same hash
+    //
+    // So EVERY policy with the same top-level shape collides, and the
+    // "hash matched — runtime resync" branch in grpc-stream.ts swallowed
+    // real policy updates as no-ops. Fleet impact: devices enrolled
+    // before this fix kept reporting their old plugin set even after
+    // tenant policy adopted PMP — the agent acked `policy_already_applied`
+    // while the runtime was actually running the stale policy. The only
+    // way out was deleting policy.json on disk so localHash became null.
+    //
+    // Correct fix: hand-rolled stable JSON that sorts keys at every
+    // depth. Strings JSON-escape via JSON.stringify() so we don't
+    // reinvent unicode escaping.
+    const canonical = stableStringify(policyJson);
     return crypto
       .createHash("sha256")
-      .update(buf)
+      .update(Buffer.from(canonical, "utf8"))
       .digest("hex");
   }
+}
+
+function stableStringify(value: any): string {
+  if (value === null || value === undefined) return "null";
+  if (typeof value === "number" || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    // Arrays preserve element order — order is semantically meaningful
+    // (e.g. plugin install order). Only object keys get sorted.
+    return "[" + value.map(stableStringify).join(",") + "]";
+  }
+  if (typeof value === "object") {
+    const keys = Object.keys(value).sort();
+    const parts = keys.map(
+      (k) => JSON.stringify(k) + ":" + stableStringify(value[k])
+    );
+    return "{" + parts.join(",") + "}";
+  }
+  // function, symbol, bigint — not expected in policy JSON. Fall back
+  // to "null" rather than throw, to mirror JSON.stringify's behavior.
+  return "null";
 }

@@ -19412,6 +19412,219 @@ var require_lib = __commonJS({
   }
 });
 
+// src/domain/software-display-normalizer.ts
+function normalizeSoftwareDisplayMetadata(input) {
+  const technicalName = clean(input.packageFamilyName) || clean(input.name) || "Unknown Software";
+  const source = clean(input.source)?.toLowerCase() || "unknown";
+  const sourcePublisher = normalizePublisherForDisplay(input.publisher);
+  const vendorFromIds = inferPublisher(technicalName) || inferPublisher(input.name) || inferPublisher(input.packageFamilyName);
+  const explicitRule = NAME_RULES.find((rule) => rule.pattern.test(technicalName) || rule.pattern.test(input.name));
+  const displayName = explicitRule?.displayName ? applyRegexDisplayName(explicitRule.pattern, explicitRule.displayName, technicalName) : buildDisplayName(input.name, technicalName, source);
+  const displayPublisher = explicitRule?.displayPublisher || vendorFromIds || sourcePublisher;
+  const category = explicitRule?.category || inferCategory(displayName, technicalName, source);
+  const userFacing = explicitRule?.userFacing ?? inferUserFacing(category, source, displayName, technicalName);
+  return {
+    displayName,
+    displayPublisher,
+    userFacing,
+    category
+  };
+}
+function clean(value) {
+  if (!value) return void 0;
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  return cleaned.length > 0 ? cleaned : void 0;
+}
+function normalizePublisherForDisplay(publisher) {
+  const value = clean(publisher);
+  if (!value) return void 0;
+  const lower = value.toLowerCase();
+  if (SOURCE_ONLY_PUBLISHERS.has(lower)) return void 0;
+  return value.replace(/\b(incorporated|inc\.?|corporation|corp\.?|llc|ltd\.?)\b/gi, "").replace(/\s+/g, " ").replace(/[,.]+$/g, "").trim() || value;
+}
+function inferPublisher(...values) {
+  for (const value of values) {
+    if (!value) continue;
+    for (const rule of VENDOR_RULES) {
+      if (rule.pattern.test(value)) return rule.publisher;
+    }
+  }
+  return void 0;
+}
+function buildDisplayName(rawName, technicalName, source) {
+  const cleanRawName = clean(rawName) || technicalName;
+  if (source === "macos-app-bundle" || source === "win32-registry") {
+    return titleKnownAcronyms(cleanRawName);
+  }
+  if (!looksTechnical(cleanRawName)) {
+    return titleKnownAcronyms(cleanRawName.replace(/[_-]+/g, " "));
+  }
+  return humanizeTechnicalId(technicalName);
+}
+function looksTechnical(value) {
+  return /^(com|org|net|io|us|desktop)\./i.test(value) || /\.pkg\./i.test(value) || /\.package\./i.test(value) || /[_-]/.test(value);
+}
+function humanizeTechnicalId(value) {
+  let result2 = value.replace(/^(com|org|net|io|us)\./i, "").replace(/\.pkg\./gi, ".").replace(/\.package\./gi, ".").replace(/\.app$/gi, "").replace(/\.cdm\.pkg\./gi, ".").replace(/_MASReceipt$/i, "").replace(/[_-]+/g, " ").replace(/\./g, " ").replace(/\b(and|or)\b/gi, (match) => match.toLowerCase()).replace(/\s+/g, " ").trim();
+  result2 = splitCamelCase(result2);
+  result2 = toTitleCase(result2);
+  result2 = titleKnownAcronyms(result2);
+  return result2 || value;
+}
+function splitCamelCase(value) {
+  return value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").replace(/\s+/g, " ").trim();
+}
+function toTitleCase(value) {
+  return value.split(" ").filter(Boolean).map((part) => {
+    if (/^[A-Z0-9]{2,}$/.test(part)) return part;
+    if (/^\d+$/.test(part)) return part;
+    return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+  }).join(" ");
+}
+function titleKnownAcronyms(value) {
+  return value.replace(/\bJdk\b/g, "JDK").replace(/\bJre\b/g, "JRE").replace(/\bSdk\b/g, "SDK").replace(/\bApi\b/g, "API").replace(/\bVpn\b/g, "VPN").replace(/\bUsb\b/g, "USB").replace(/\bCli\b/g, "CLI").replace(/\bOcr\b/g, "OCR").replace(/\bIca\b/g, "ICA").replace(/\bTwain\b/g, "TWAIN").replace(/\bNcat\b/g, "Ncat").replace(/\bNping\b/g, "Nping").replace(/\bXcode\b/g, "Xcode").replace(/\bMacos\b/g, "macOS").replace(/\bIos\b/g, "iOS");
+}
+function inferCategory(displayName, technicalName, source) {
+  const combined = `${displayName} ${technicalName}`;
+  if (/^(dpkg|rpm)$/i.test(source)) return "package";
+  if (/jdk|jre|runtime|dotnet|node|python|java/i.test(combined)) return "runtime";
+  if (/driver|audio\s*device|usbclassdriver/i.test(combined)) return "driver";
+  if (DRIVER_OR_COMPONENT_HINTS.some((re) => re.test(combined))) return "component";
+  if (/rosetta|gatekeeper|xprotect|mobiledevice|data-template/i.test(combined)) return "system";
+  if (/pkgutil|homebrew|snap|flatpak/i.test(source) && looksTechnical(technicalName)) return "component";
+  return "application";
+}
+function inferUserFacing(category, source, displayName, technicalName) {
+  if (category === "driver" || category === "component" || category === "system") return false;
+  if (category === "package" && /^(dpkg|rpm)$/i.test(source)) return false;
+  if (DRIVER_OR_COMPONENT_HINTS.some((re) => re.test(`${displayName} ${technicalName}`))) return false;
+  return true;
+}
+function applyRegexDisplayName(pattern, template, value) {
+  const match = value.match(pattern);
+  if (!match) return template;
+  return template.replace(/\$(\d+)/g, (_, index) => match[Number(index)] || "");
+}
+var SOURCE_ONLY_PUBLISHERS, VENDOR_RULES, NAME_RULES, DRIVER_OR_COMPONENT_HINTS;
+var init_software_display_normalizer = __esm({
+  "src/domain/software-display-normalizer.ts"() {
+    "use strict";
+    SOURCE_ONLY_PUBLISHERS = /* @__PURE__ */ new Set([
+      "pkgutil",
+      "homebrew",
+      "brew",
+      "dpkg",
+      "rpm",
+      "snap",
+      "flatpak",
+      "win32-registry",
+      "windows-registry",
+      "macos-app-bundle"
+    ]);
+    VENDOR_RULES = [
+      { pattern: /^com\.microsoft\./i, publisher: "Microsoft" },
+      { pattern: /^microsoft\b/i, publisher: "Microsoft" },
+      { pattern: /^com\.apple\./i, publisher: "Apple" },
+      { pattern: /^apple\b/i, publisher: "Apple" },
+      { pattern: /^com\.epson\./i, publisher: "Epson" },
+      { pattern: /^epson\b/i, publisher: "Epson" },
+      { pattern: /^com\.teamviewer\./i, publisher: "TeamViewer" },
+      { pattern: /^teamviewer\b/i, publisher: "TeamViewer" },
+      { pattern: /^com\.fortinet\./i, publisher: "Fortinet" },
+      { pattern: /^fortinet\b/i, publisher: "Fortinet" },
+      { pattern: /^com\.citrix\./i, publisher: "Citrix" },
+      { pattern: /^citrix\b/i, publisher: "Citrix" },
+      { pattern: /^com\.crowdstrike\./i, publisher: "CrowdStrike" },
+      { pattern: /^crowdstrike\b/i, publisher: "CrowdStrike" },
+      { pattern: /^org\.virtualbox\./i, publisher: "Oracle" },
+      { pattern: /^virtualbox\b/i, publisher: "Oracle" },
+      { pattern: /^us\.zoom\./i, publisher: "Zoom" },
+      { pattern: /^zoom\b/i, publisher: "Zoom" },
+      { pattern: /^net\.whatsapp\./i, publisher: "WhatsApp" },
+      { pattern: /^desktop\.WhatsApp$/i, publisher: "WhatsApp" },
+      { pattern: /^com\.google\./i, publisher: "Google" },
+      { pattern: /^google\b/i, publisher: "Google" },
+      { pattern: /^org\.mozilla\./i, publisher: "Mozilla" },
+      { pattern: /^com\.docker\./i, publisher: "Docker" },
+      { pattern: /^com\.openai\./i, publisher: "OpenAI" },
+      { pattern: /^com\.anthropic\./i, publisher: "Anthropic" },
+      { pattern: /^com\.nordvpn\./i, publisher: "NordVPN" },
+      { pattern: /^com\.certusws\./i, publisher: "Certus" },
+      { pattern: /^net\.temurin\./i, publisher: "Eclipse Adoptium" },
+      { pattern: /^org\.insecure\.nmap/i, publisher: "Nmap" }
+    ];
+    NAME_RULES = [
+      { pattern: /^com\.microsoft\.package\.Microsoft_Outlook\.app$/i, displayName: "Microsoft Outlook", displayPublisher: "Microsoft" },
+      { pattern: /^com\.microsoft\.package\.Microsoft_PowerPoint\.app$/i, displayName: "Microsoft PowerPoint", displayPublisher: "Microsoft" },
+      { pattern: /^com\.microsoft\.package\.Microsoft_OneNote\.app$/i, displayName: "Microsoft OneNote", displayPublisher: "Microsoft" },
+      { pattern: /^com\.microsoft\.package\.Microsoft_AutoUpdate\.app$/i, displayName: "Microsoft AutoUpdate", displayPublisher: "Microsoft", category: "component", userFacing: false },
+      { pattern: /^com\.microsoft\.pkg\.licensing$/i, displayName: "Microsoft Licensing", displayPublisher: "Microsoft", category: "component", userFacing: false },
+      { pattern: /^com\.microsoft\.MSTeamsAudioDevice$/i, displayName: "Microsoft Teams Audio Device", displayPublisher: "Microsoft", category: "driver", userFacing: false },
+      { pattern: /^com\.microsoft\.OneDrive-mac$/i, displayName: "OneDrive", displayPublisher: "Microsoft" },
+      { pattern: /^com\.apple\.pkg\.Keynote\d+$/i, displayName: "Keynote", displayPublisher: "Apple" },
+      { pattern: /^com\.apple\.pkg\.Numbers\d+$/i, displayName: "Numbers", displayPublisher: "Apple" },
+      { pattern: /^com\.apple\.pkg\.Pages\d+$/i, displayName: "Pages", displayPublisher: "Apple" },
+      { pattern: /^com\.apple\.pkg\.Xcode$/i, displayName: "Xcode", displayPublisher: "Apple" },
+      { pattern: /^com\.apple\.pkg\.RosettaUpdateAuto$/i, displayName: "Rosetta 2", displayPublisher: "Apple", category: "system", userFacing: false },
+      { pattern: /^com\.apple\.pkg\.MobileDeviceDevelopment$/i, displayName: "Apple Mobile Device Development", displayPublisher: "Apple", category: "component", userFacing: false },
+      { pattern: /^com\.apple\.files\.data-template$/i, displayName: "Apple Files Data Template", displayPublisher: "Apple", category: "system", userFacing: false },
+      { pattern: /^com\.epson\.pkg\.EpsonScan2$/i, displayName: "Epson Scan 2", displayPublisher: "Epson" },
+      { pattern: /^com\.epson\.pkg\.EpsonScan2\.Utility$/i, displayName: "Epson Scan 2 Utility", displayPublisher: "Epson", category: "component", userFacing: false },
+      { pattern: /^com\.epson\.pkg\.EpsonScan2\.help$/i, displayName: "Epson Scan 2 Help", displayPublisher: "Epson", category: "component", userFacing: false },
+      { pattern: /^com\.epson\.pkg\.EpsonScan2\.(ica|twain)$/i, displayName: "Epson Scan 2 Driver", displayPublisher: "Epson", category: "driver", userFacing: false },
+      { pattern: /^com\.epson\.pkg\.EpsonScan2\.standalone$/i, displayName: "Epson Scan 2 Standalone", displayPublisher: "Epson" },
+      { pattern: /^com\.epson\.pkg\.EPSONSoftwareUpdater$/i, displayName: "Epson Software Updater", displayPublisher: "Epson" },
+      { pattern: /^com\.epson\.pkg\.ScanSmart\.app$/i, displayName: "Epson ScanSmart", displayPublisher: "Epson" },
+      { pattern: /^com\.epson\.pkg\.eventmanager$/i, displayName: "Epson Event Manager", displayPublisher: "Epson" },
+      { pattern: /^com\.epson\.pkg\.easyphotoscan$/i, displayName: "Epson Easy Photo Scan", displayPublisher: "Epson" },
+      { pattern: /^com\.epson\.pkg\.EpsonPhotoPlus$/i, displayName: "Epson Photo+", displayPublisher: "Epson" },
+      { pattern: /^com\.epson\.pkg\.scannermonitor$/i, displayName: "Epson Scanner Monitor", displayPublisher: "Epson", category: "component", userFacing: false },
+      { pattern: /^com\.epson\.pkg\.Ocr(\.SysIntel)?$/i, displayName: "Epson OCR", displayPublisher: "Epson", category: "component", userFacing: false },
+      { pattern: /^com\.epson\.fpkg\.EpsonConnectPrinterSetup$/i, displayName: "Epson Connect Printer Setup", displayPublisher: "Epson" },
+      { pattern: /^com\.teamviewer\.remoteaudiodriver$/i, displayName: "TeamViewer Remote Audio Driver", displayPublisher: "TeamViewer", category: "driver", userFacing: false },
+      { pattern: /^com\.teamviewer\.AuthorizationPlugin$/i, displayName: "TeamViewer Authorization Plugin", displayPublisher: "TeamViewer", category: "component", userFacing: false },
+      { pattern: /^com\.teamviewer\.teamviewerUninstallerHelper$/i, displayName: "TeamViewer Uninstaller Helper", displayPublisher: "TeamViewer", category: "component", userFacing: false },
+      { pattern: /^com\.teamviewer\.teamviewerPriviledgedHelper$/i, displayName: "TeamViewer Privileged Helper", displayPublisher: "TeamViewer", category: "component", userFacing: false },
+      { pattern: /^com\.teamviewer\.teamviewerEnforceUIVersion$/i, displayName: "TeamViewer UI Version Enforcer", displayPublisher: "TeamViewer", category: "component", userFacing: false },
+      { pattern: /^com\.fortinet\.forticlient\.FortiClientarm64$/i, displayName: "FortiClient", displayPublisher: "Fortinet" },
+      { pattern: /^com\.fortinet\.forticlient\.vpnservice$/i, displayName: "FortiClient VPN Service", displayPublisher: "Fortinet", category: "component", userFacing: false },
+      { pattern: /^com\.fortinet\.forticlient\.commservice$/i, displayName: "FortiClient Communication Service", displayPublisher: "Fortinet", category: "component", userFacing: false },
+      { pattern: /^com\.fortinet\.forticlient\.fssoagent$/i, displayName: "FortiClient FSSO Agent", displayPublisher: "Fortinet", category: "component", userFacing: false },
+      { pattern: /^com\.fortinet\.forticlient\.(preinstall|postinstall)$/i, displayName: "FortiClient Installer Component", displayPublisher: "Fortinet", category: "component", userFacing: false },
+      { pattern: /^com\.fortinet\.forticlient\.Uninstall$/i, displayName: "FortiClient Uninstaller", displayPublisher: "Fortinet", category: "component", userFacing: false },
+      { pattern: /^com\.citrix\.ICAClient/i, displayName: "Citrix Workspace", displayPublisher: "Citrix" },
+      { pattern: /^com\.citrix\.common$/i, displayName: "Citrix Common Components", displayPublisher: "Citrix", category: "component", userFacing: false },
+      { pattern: /^com\.crowdstrike\.falcon\.sensor\.sysx$/i, displayName: "CrowdStrike Falcon Sensor", displayPublisher: "CrowdStrike", category: "component", userFacing: false },
+      { pattern: /^org\.virtualbox\.pkg\.virtualbox$/i, displayName: "VirtualBox", displayPublisher: "Oracle" },
+      { pattern: /^org\.virtualbox\.pkg\.virtualboxcli$/i, displayName: "VirtualBox CLI", displayPublisher: "Oracle", category: "component", userFacing: false },
+      { pattern: /^us\.zoom\.pkg\.videomeeting$/i, displayName: "Zoom", displayPublisher: "Zoom" },
+      { pattern: /^desktop\.WhatsApp$/i, displayName: "WhatsApp", displayPublisher: "WhatsApp" },
+      { pattern: /^org\.insecure\.nmap$/i, displayName: "Nmap", displayPublisher: "Nmap" },
+      { pattern: /^org\.insecure\.nmap\.ncat$/i, displayName: "Ncat", displayPublisher: "Nmap", category: "component", userFacing: false },
+      { pattern: /^org\.insecure\.nmap\.nping$/i, displayName: "Nping", displayPublisher: "Nmap", category: "component", userFacing: false },
+      { pattern: /^org\.insecure\.nmap\.zenmap$/i, displayName: "Zenmap", displayPublisher: "Nmap" },
+      { pattern: /^net\.temurin\.(\d+)\.jdk$/i, displayName: "Eclipse Temurin JDK $1", displayPublisher: "Eclipse Adoptium", category: "runtime" },
+      { pattern: /^com\.certusws\.tracenium\.agent$/i, displayName: "Tracenium Agent", displayPublisher: "Certus" },
+      { pattern: /^com\.certusws\.tracenium\.agentstatus$/i, displayName: "Tracenium Agent Status", displayPublisher: "Certus" }
+    ];
+    DRIVER_OR_COMPONENT_HINTS = [
+      /driver/i,
+      /audio\s*device/i,
+      /remote\s*audio/i,
+      /authorization\s*plugin/i,
+      /privileged\s*helper/i,
+      /uninstaller\s*helper/i,
+      /scanner\s*monitor/i,
+      /communication\s*service/i,
+      /vpn\s*service/i,
+      /installer\s*component/i,
+      /licensing/i,
+      /receipt/i,
+      /masreceipt/i
+    ];
+  }
+});
+
 // src/domain/normalize-app.ts
 function cleanString(value) {
   if (!value) return void 0;
@@ -19435,29 +19648,43 @@ function generateInstallId(data) {
   return `sha256:${hash}`;
 }
 function normalizeApp(input) {
-  const name = cleanString(input.name);
-  const normalizedName = name?.toLowerCase();
-  if (!name) return null;
+  const rawName = cleanString(input.name);
+  const normalizedIdentityName = rawName?.toLowerCase();
+  if (!rawName) return null;
   const version = cleanString(input.version);
-  const publisher = normalizePublisher(input.publisher);
+  const rawPublisher = normalizePublisher(input.publisher);
   const installLocation = cleanString(input.installLocation);
   const packageFamilyName = cleanString(input.packageFamilyName);
+  const source = input.source.toLowerCase();
+  const display = normalizeSoftwareDisplayMetadata({
+    name: rawName,
+    publisher: cleanString(input.publisher),
+    source,
+    installLocation,
+    packageFamilyName
+  });
   const detectedAtUtc = (/* @__PURE__ */ new Date()).toISOString();
   const installId = generateInstallId({
-    name: normalizedName || name,
-    source: input.source,
+    name: normalizedIdentityName || rawName,
+    source,
     packageFamilyName,
-    publisher
+    publisher: rawPublisher
   });
   return {
-    name,
+    name: display.displayName,
+    displayName: display.displayName,
     version,
-    publisher,
-    source: input.source.toLowerCase(),
+    publisher: display.displayPublisher,
+    displayPublisher: display.displayPublisher,
+    source,
     installLocation,
     packageFamilyName,
     installId,
-    detectedAtUtc
+    detectedAtUtc,
+    rawName,
+    rawPublisher,
+    userFacing: display.userFacing,
+    category: display.category
   };
 }
 var import_crypto9;
@@ -19465,6 +19692,7 @@ var init_normalize_app = __esm({
   "src/domain/normalize-app.ts"() {
     "use strict";
     import_crypto9 = __toESM(require("crypto"));
+    init_software_display_normalizer();
   }
 });
 
@@ -22427,7 +22655,7 @@ var import_dotenv = __toESM(require_main());
 // package.json
 var package_default = {
   name: "certusws-tracenium-agent",
-  version: "1.1.8",
+  version: "1.1.9",
   description: "Tracenium Agent - Hardware & Software inventory collector",
   license: "MIT",
   author: {
@@ -22464,18 +22692,19 @@ var package_default = {
 
 // src/bootstrap/config.ts
 import_dotenv.default.config();
-function required(name, value) {
+function resolveGrpcEndpoint(raw) {
+  const value = (raw || "").trim();
   if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
+    throw new Error("Missing required environment variable: GRPC_ENDPOINT");
   }
-  return value;
+  if (value.startsWith("[")) {
+    return value.includes("]:") ? value : `${value}:443`;
+  }
+  return value.includes(":") ? value : `${value}:443`;
 }
 var config = {
-  // gRPC endpoint (host:port)
-  grpcEndpoint: required(
-    "GRPC_ENDPOINT",
-    process.env.GRPC_ENDPOINT
-  ),
+  // gRPC endpoint (host[:port], defaults to :443 if port omitted)
+  grpcEndpoint: resolveGrpcEndpoint(process.env.GRPC_ENDPOINT || ""),
   serverBaseUrl: (() => {
     const raw = process.env.SERVER_BASE_URL;
     const hasValidEnv = typeof raw === "string" && raw.trim().length > 0;
