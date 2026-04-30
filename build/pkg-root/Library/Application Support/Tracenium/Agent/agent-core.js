@@ -25506,12 +25506,19 @@ function createGrpcClient(ctx) {
   let localClose = false;
   let writeChain = Promise.resolve();
   const inFlightEvents = /* @__PURE__ */ new Set();
+  let lastServerActivityMs = Date.now();
+  stream.getLastServerActivityMs = () => lastServerActivityMs;
   attachPrivPushHandler(ctx, (pushMsg) => {
     try {
       const method = pushMsg?.method;
       if (!method) return;
+      lastServerActivityMs = Date.now();
       const params = pushMsg?.params ?? {};
       ctx.logger?.info("[grpc-client] push message", { method, params });
+      if (method === "grpc.ping" || method === "grpc.control.ping") {
+        ctx.logger?.debug?.("[grpc-client] server ping received");
+        return;
+      }
       if (method === "grpc.ack") {
         ctx.logger?.info?.("[grpc-client] ACK push received", {
           rawEventId: params?.eventId,
@@ -25883,6 +25890,8 @@ init_state();
 init_update_task();
 var MAX_IN_FLIGHT = 3;
 var HEARTBEAT_INTERVAL_MS = 6e4;
+var WATCHDOG_TICK_MS = 3e4;
+var SILENCE_THRESHOLD_MS = 27e4;
 var RECONNECT_BASE_MS = 2e3;
 var RECONNECT_MAX_MS = 6e4;
 var reconnectAttempts = 0;
@@ -26306,6 +26315,7 @@ function startGrpcStream(ctx) {
   let retryTimer = null;
   let reconnectTimer = null;
   let heartbeatTimer = null;
+  let watchdogTimer = null;
   let unsubscribeOutbox = null;
   let draining = false;
   let drainScheduled = false;
@@ -26348,6 +26358,11 @@ function startGrpcStream(ctx) {
     } catch {
     }
     heartbeatTimer = null;
+    try {
+      if (watchdogTimer) clearInterval(watchdogTimer);
+    } catch {
+    }
+    watchdogTimer = null;
     try {
       stream.removeAllListeners();
     } catch {
@@ -26397,6 +26412,32 @@ function startGrpcStream(ctx) {
         armHeartbeat();
       }
     }, HEARTBEAT_INTERVAL_MS);
+  };
+  const armWatchdog = () => {
+    if (stopped) return;
+    if (watchdogTimer) {
+      clearInterval(watchdogTimer);
+      watchdogTimer = null;
+    }
+    watchdogTimer = setInterval(() => {
+      if (stopped) return;
+      const lastActivityMs = stream.getLastServerActivityMs?.();
+      if (typeof lastActivityMs !== "number") {
+        return;
+      }
+      const silentMs = Date.now() - lastActivityMs;
+      if (silentMs > SILENCE_THRESHOLD_MS) {
+        ctx.logger?.warn?.("gRPC stream: server silent past threshold, forcing reconnect", {
+          silentMs,
+          thresholdMs: SILENCE_THRESHOLD_MS
+        });
+        try {
+          stream.emit("error", new Error("server_silent_timeout"));
+        } catch {
+        }
+      }
+    }, WATCHDOG_TICK_MS);
+    watchdogTimer?.unref?.();
   };
   const scheduleReconnect = (reason) => {
     if (shutdownRequested) return;
@@ -26451,6 +26492,7 @@ function startGrpcStream(ctx) {
       rotationInProgress = false;
       requestDrain("bridge_connected");
       armHeartbeat();
+      armWatchdog();
       armMetricsFlush(ctx);
       return;
     }

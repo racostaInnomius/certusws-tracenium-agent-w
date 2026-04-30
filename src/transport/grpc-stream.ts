@@ -13,6 +13,25 @@ const ACK_TIMEOUT_MS = 60_000;
 const MAX_IN_FLIGHT = 3;
 const HEARTBEAT_INTERVAL_MS = 60_000;
 
+// Server-silence watchdog. When a backend instance dies ungracefully
+// (SIGKILL, OOM, network change, sleep/wake), the bridge layer often
+// doesn't see a clean FIN/RST and the kernel TCP keepalive default
+// won't fire for ~2 hours. Result: the agent thinks it's online,
+// the dashboard says it's offline, and jobs fail with stream_not_found.
+//
+// The fix is application-level: every server message updates a
+// `lastServerActivityMs` stamp on the stream object (see grpc-client
+// attachPrivPushHandler). This watchdog ticks every 30s and forces a
+// reconnect if the gap exceeds SILENCE_THRESHOLD_MS. With the server
+// pinging at 90s, a healthy stream sees activity at most ~95s apart;
+// 270s = 3× ping gives one missed-ping margin for lossy networks
+// before declaring zombie.
+//
+// Trade-off: at 90s server ping × 10K agents the server emits
+// ~111 pings/sec — well within budget for the bug fixed.
+const WATCHDOG_TICK_MS = 30_000;
+const SILENCE_THRESHOLD_MS = 270_000;
+
 // Exponential backoff with full jitter for gRPC reconnect.
 //
 // Why: a flat 5s delay means every agent in a tenant reconnects on the
@@ -602,6 +621,9 @@ export function startGrpcStream(ctx: AgentContext) {
   // state change (READY, rotation-end, etc.) without inheriting the
   // setInterval's fixed wall-clock cadence from the previous cycle.
   let heartbeatTimer: NodeJS.Timeout | null = null;
+  // Server-silence watchdog. setInterval is fine here — we want a
+  // fixed cadence regardless of stream state. Cleared in stop().
+  let watchdogTimer: NodeJS.Timeout | null = null;
   let unsubscribeOutbox: (() => void) | null = null;
   let draining = false;
   let drainScheduled = false;
@@ -638,6 +660,8 @@ stream = client.Connect();
     try { if (reconnectTimer) clearTimeout(reconnectTimer); } catch {}
     try { if (heartbeatTimer) clearTimeout(heartbeatTimer); } catch {}
     heartbeatTimer = null;
+    try { if (watchdogTimer) clearInterval(watchdogTimer); } catch {}
+    watchdogTimer = null;
     try { stream.removeAllListeners(); } catch {}
 
     try { unsubscribeOutbox?.(); } catch {}
@@ -694,6 +718,47 @@ stream = client.Connect();
         armHeartbeat();
       }
     }, HEARTBEAT_INTERVAL_MS);
+  };
+
+  // Arm the server-silence watchdog. Reads `lastServerActivityMs`
+  // from the stream object (set by grpc-client.attachPrivPushHandler
+  // on every server push). If the stamp is older than
+  // SILENCE_THRESHOLD_MS we treat the stream as zombie and force a
+  // reconnect via the same code path that handles bridge errors —
+  // emit("error") flows into stop() + scheduleReconnect.
+  //
+  // We don't `stop()` directly here so the existing reconnect
+  // serialization (`reconnecting` flag + exponential backoff) still
+  // applies. If the reason is genuine network change, the agent
+  // will back off correctly instead of hammer-reconnecting.
+  const armWatchdog = () => {
+    if (stopped) return;
+    if (watchdogTimer) {
+      clearInterval(watchdogTimer);
+      watchdogTimer = null;
+    }
+    watchdogTimer = setInterval(() => {
+      if (stopped) return;
+      const lastActivityMs = (stream as any).getLastServerActivityMs?.();
+      if (typeof lastActivityMs !== "number") {
+        // Stream object doesn't expose the tracker — older bridge
+        // build, fail open (don't trigger spurious reconnects).
+        return;
+      }
+      const silentMs = Date.now() - lastActivityMs;
+      if (silentMs > SILENCE_THRESHOLD_MS) {
+        ctx.logger?.warn?.("gRPC stream: server silent past threshold, forcing reconnect", {
+          silentMs,
+          thresholdMs: SILENCE_THRESHOLD_MS
+        });
+        // Tear down via the standard error path so reconnect
+        // scheduling and metrics increment work as designed.
+        try {
+          stream.emit("error", new Error("server_silent_timeout"));
+        } catch {}
+      }
+    }, WATCHDOG_TICK_MS);
+    (watchdogTimer as any)?.unref?.();
   };
 
   const scheduleReconnect = (reason: string) => {
@@ -774,6 +839,11 @@ stream = client.Connect();
       // 3-minute rotation causes three "return-early" ticks to fire
       // and accumulate 0-60s of skew before the next real HB.
       armHeartbeat();
+      // Server-silence watchdog: armed on READY so we only watchdog
+      // when there's actually a stream to be silent on. Re-armed on
+      // every READY, and cleared in stop() — same lifetime as
+      // heartbeat.
+      armWatchdog();
       // Start the metrics flush on the first READY of the process —
       // we didn't want to arm it in startGrpcStream() because every
       // reconnect would re-enter and we'd end up with N timers.

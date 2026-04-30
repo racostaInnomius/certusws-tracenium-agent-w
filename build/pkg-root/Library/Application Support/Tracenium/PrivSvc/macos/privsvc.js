@@ -24612,11 +24612,14 @@ var CHANNEL_OPTIONS = {
   "grpc.http2.min_time_between_pings_ms": 3e4,
   "grpc.http2.min_ping_interval_without_data_ms": 3e4
 };
+var WATCHDOG_INTERVAL_MS = 15e3;
+var DEAD_STREAM_THRESHOLD_MS = 15e4;
 var state = {
   connected: false,
   connecting: false,
   chunks: /* @__PURE__ */ new Map(),
-  channelWatchGen: 0
+  channelWatchGen: 0,
+  watchdogTimer: null
 };
 var CHUNK_TTL_MS = 5 * 60 * 1e3;
 var CHUNK_SWEEP_INTERVAL_MS = 60 * 1e3;
@@ -24639,11 +24642,62 @@ function sweepStaleChunks() {
 }
 var chunkSweeper = setInterval(sweepStaleChunks, CHUNK_SWEEP_INTERVAL_MS);
 chunkSweeper.unref();
+function stopWatchdog() {
+  if (state.watchdogTimer) {
+    try {
+      clearInterval(state.watchdogTimer);
+    } catch {
+    }
+    state.watchdogTimer = null;
+  }
+}
+function startWatchdog() {
+  stopWatchdog();
+  state.watchdogTimer = setInterval(() => {
+    if (!state.connected || !state.call) return;
+    const now = Date.now();
+    const lastActivity = Math.max(
+      state.lastReceiveAtMs ?? 0,
+      state.lastSendAtMs ?? 0,
+      state.connectedAtMs ?? 0
+    );
+    if (lastActivity === 0) return;
+    const silentMs = now - lastActivity;
+    if (silentMs <= DEAD_STREAM_THRESHOLD_MS) return;
+    const details = {
+      silentMs,
+      thresholdMs: DEAD_STREAM_THRESHOLD_MS,
+      connectedAtUtc: state.connectedAtMs ? new Date(state.connectedAtMs).toISOString() : null,
+      lastReceiveUtc: state.lastReceiveAtMs ? new Date(state.lastReceiveAtMs).toISOString() : null,
+      lastSendUtc: state.lastSendAtMs ? new Date(state.lastSendAtMs).toISOString() : null
+    };
+    logger.warn("grpc_bridge_dead_stream_detected", details);
+    try {
+      state.push?.({
+        v: 1,
+        method: "grpc.control.deadStream",
+        params: details,
+        meta: {
+          tenantId: state.tenantId,
+          deviceId: state.deviceId,
+          connectionId: state.target
+        }
+      });
+    } catch {
+    }
+    teardownBridge("dead_stream_watchdog", details);
+  }, WATCHDOG_INTERVAL_MS);
+  state.watchdogTimer.unref?.();
+}
 function teardownBridge(reason, details) {
   const wasConnected = state.connected || state.connecting;
   state.connected = false;
   state.connecting = false;
   state.channelWatchGen += 1;
+  stopWatchdog();
+  state.connectedAtMs = void 0;
+  state.lastReceiveAtMs = void 0;
+  state.lastSendAtMs = void 0;
   const call = state.call;
   state.call = void 0;
   if (call) {
@@ -24776,6 +24830,7 @@ function decodeBoundedBytes(value, fieldName) {
   return decoded;
 }
 function handleControlMessage(msg) {
+  state.lastReceiveAtMs = Date.now();
   if (msg.ack) {
     push("grpc.ack", {
       eventId: String(msg.ack.eventId || ""),
@@ -24835,7 +24890,10 @@ function write(msg) {
     }
     call.write(msg, (err) => {
       if (err) reject(err);
-      else resolve();
+      else {
+        state.lastSendAtMs = Date.now();
+        resolve();
+      }
     });
   });
 }
@@ -24934,12 +24992,16 @@ async function startConnection(params, pushSink) {
       }
     });
     state.connected = true;
+    state.connectedAtMs = Date.now();
+    state.lastReceiveAtMs = state.connectedAtMs;
+    state.lastSendAtMs = state.connectedAtMs;
     push("grpc.connected", {
       ready: true,
       target: state.target,
       atUtc: (/* @__PURE__ */ new Date()).toISOString()
     });
     watchChannelState(state.client, generation);
+    startWatchdog();
   } finally {
     state.connecting = false;
   }

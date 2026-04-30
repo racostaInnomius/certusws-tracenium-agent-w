@@ -87,14 +87,48 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
   // track in-flight events to avoid duplicate sends before ACK
   const inFlightEvents = new Set<string>();
 
+  // ── Server activity tracker (P0 fix for stream-zombie bug) ───────
+  //
+  // Stamps the wall-clock timestamp of the most recent message we
+  // received from the server, ANY message — server pings, ACKs,
+  // policy updates, jobs, the lot. The grpc-stream watchdog reads
+  // this via `stream.getLastServerActivityMs()` and declares the
+  // stream zombie if it goes longer than ~270s without any update,
+  // which forces a reconnect.
+  //
+  // Why we set this in attachPrivPushHandler instead of inside each
+  // method branch: the activity signal is "I heard from the server",
+  // and that's true for every push regardless of what payload it
+  // carries. Updating in one central place means a future new
+  // message type doesn't accidentally bypass the watchdog.
+  //
+  // Initialized to "now" so a freshly-created stream isn't seen as
+  // zombie before the first server ping arrives.
+  let lastServerActivityMs = Date.now();
+  (stream as any).getLastServerActivityMs = () => lastServerActivityMs;
+
   // Push from PrivSvc → re-emit as "data"
   attachPrivPushHandler(ctx, (pushMsg: any) => {
     try {
       const method = pushMsg?.method;
       if (!method) return;
 
+      // Mark activity for ANY recognized push from the server. This
+      // is the canonical liveness signal for the watchdog.
+      lastServerActivityMs = Date.now();
+
       const params = pushMsg?.params ?? {};
       ctx.logger?.info("[grpc-client] push message", { method, params });
+
+      // Server ping (sent every ~90s by controlplane.ts). We don't
+      // need to do anything with it — the activity stamp above is
+      // already updated. The explicit early-return keeps it from
+      // falling through to the unmatched-method passthrough log
+      // (which would spam at the new 90s cadence).
+      if (method === "grpc.ping" || method === "grpc.control.ping") {
+        ctx.logger?.debug?.("[grpc-client] server ping received");
+        return;
+      }
 
       if (method === "grpc.ack") {
         ctx.logger?.info?.("[grpc-client] ACK push received", {

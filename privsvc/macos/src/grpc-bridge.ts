@@ -13,6 +13,14 @@ const PROTO_PATH = path.resolve(__dirname, "../proto/controlplane.proto");
 // connections (e.g. Wi-Fi dropped and reconnected) by pinging the server
 // regardless of outbound traffic. Without these, the channel can stay in
 // a "zombie" state for hours with no way to tell the link is dead.
+//
+// Note: in production we've seen cases where the @grpc/grpc-js HTTP/2
+// keepalive doesn't fire reliably after sleep/wake or ungraceful
+// backend restarts (SIGKILL, OOM). The application-level watchdog
+// below — see WATCHDOG_INTERVAL_MS / DEAD_STREAM_THRESHOLD_MS — is
+// the safety net for those cases. Same approach the Windows
+// (Tracenium.PrivSvc.Windows/Ipc/GrpcBridge.cs) bridge uses, with
+// matching numbers (15s tick, 150s threshold).
 const CHANNEL_OPTIONS: grpc.ChannelOptions = {
   "grpc.keepalive_time_ms": 30_000,            // send a ping every 30s
   "grpc.keepalive_timeout_ms": 10_000,         // fail if no pong in 10s
@@ -21,6 +29,21 @@ const CHANNEL_OPTIONS: grpc.ChannelOptions = {
   "grpc.http2.min_time_between_pings_ms": 30_000,
   "grpc.http2.min_ping_interval_without_data_ms": 30_000
 };
+
+// Application-level dead-stream watchdog. Polls every WATCHDOG_INTERVAL_MS
+// the wall-clock gap between "now" and the most recent server activity;
+// if that gap crosses DEAD_STREAM_THRESHOLD_MS the bridge declares the
+// stream zombie, emits a `grpc.control.deadStream` push so the agent can
+// log the event with full timing, and tears down → reconnect.
+//
+// Threshold rationale (mirror of Windows' settings):
+//   * Server sends `ping` every 90s (controlplane.ts HEARTBEAT_INTERVAL_MS).
+//   * 150s = 1× ping + ~60s grace for jitter/network blips. A genuinely
+//     idle but healthy stream still shows activity well under that.
+//   * 15s tick keeps detection latency bounded — worst case
+//     ~150 + 15 = 165s.
+const WATCHDOG_INTERVAL_MS = 15_000;
+const DEAD_STREAM_THRESHOLD_MS = 150_000;
 
 type BridgeState = {
   client?: any;
@@ -45,13 +68,20 @@ type BridgeState = {
     namespaces: string[];
   }>;
   channelWatchGen: number;
+  // Dead-stream watchdog state. Set on connection start, updated on
+  // every recv/send, used by watchdogTick() to detect zombies.
+  connectedAtMs?: number;
+  lastReceiveAtMs?: number;
+  lastSendAtMs?: number;
+  watchdogTimer?: NodeJS.Timeout | null;
 };
 
 const state: BridgeState = {
   connected: false,
   connecting: false,
   chunks: new Map(),
-  channelWatchGen: 0
+  channelWatchGen: 0,
+  watchdogTimer: null
 };
 
 // Incomplete chunked FACTS uploads are kept in `state.chunks` until the final
@@ -95,6 +125,94 @@ function sweepStaleChunks() {
 const chunkSweeper = setInterval(sweepStaleChunks, CHUNK_SWEEP_INTERVAL_MS);
 chunkSweeper.unref();
 
+// ── Dead-stream watchdog (paridad con Windows GrpcBridge.cs) ─────────
+//
+// The Windows bridge has had this since day one and it's been catching
+// zombies in production. Mirroring the same shape here so macOS doesn't
+// rely solely on @grpc/grpc-js HTTP/2 keepalive (which has known
+// reliability issues post sleep/wake or ungraceful backend SIGKILL).
+//
+// Lifecycle:
+//   * startWatchdog() — armed at the end of startConnection() once the
+//     stream is live. setInterval, unref'd so it doesn't keep the
+//     daemon alive on shutdown.
+//   * watchdogTick() — fires every WATCHDOG_INTERVAL_MS, computes the
+//     gap since the last meaningful event (recv / send / connectedAt),
+//     and if it exceeds DEAD_STREAM_THRESHOLD_MS:
+//       1. Pushes `grpc.control.deadStream` so the agent logs full
+//          timing context BEFORE the disconnect — operator can grep
+//          this in the agent log to confirm the zombie path triggered.
+//       2. Calls teardownBridge("dead_stream_watchdog") which already
+//          handles the cancel/cleanup/grpc.disconnected push.
+//       3. Returns. The agent's normal reconnect loop takes over.
+//   * stopWatchdog() — invoked from teardownBridge to make absolutely
+//     sure we don't leak the timer across reconnect cycles.
+function stopWatchdog() {
+  if (state.watchdogTimer) {
+    try { clearInterval(state.watchdogTimer); } catch {}
+    state.watchdogTimer = null;
+  }
+}
+
+function startWatchdog() {
+  // Belt-and-suspenders: clear any existing timer before arming a new
+  // one. teardownBridge already calls stopWatchdog, but a future code
+  // path that calls startWatchdog twice in a row shouldn't leak.
+  stopWatchdog();
+
+  state.watchdogTimer = setInterval(() => {
+    if (!state.connected || !state.call) return;
+
+    const now = Date.now();
+    const lastActivity = Math.max(
+      state.lastReceiveAtMs ?? 0,
+      state.lastSendAtMs ?? 0,
+      state.connectedAtMs ?? 0
+    );
+
+    if (lastActivity === 0) return; // not yet established
+    const silentMs = now - lastActivity;
+    if (silentMs <= DEAD_STREAM_THRESHOLD_MS) return;
+
+    const details = {
+      silentMs,
+      thresholdMs: DEAD_STREAM_THRESHOLD_MS,
+      connectedAtUtc: state.connectedAtMs
+        ? new Date(state.connectedAtMs).toISOString()
+        : null,
+      lastReceiveUtc: state.lastReceiveAtMs
+        ? new Date(state.lastReceiveAtMs).toISOString()
+        : null,
+      lastSendUtc: state.lastSendAtMs
+        ? new Date(state.lastSendAtMs).toISOString()
+        : null
+    };
+
+    logger.warn("grpc_bridge_dead_stream_detected", details);
+
+    // Match the Windows wire shape — agent already understands this
+    // method (handled in grpc-client.ts as a soft failure signal).
+    try {
+      state.push?.({
+        v: 1,
+        method: "grpc.control.deadStream",
+        params: details,
+        meta: {
+          tenantId: state.tenantId,
+          deviceId: state.deviceId,
+          connectionId: state.target
+        }
+      });
+    } catch {}
+
+    teardownBridge("dead_stream_watchdog", details);
+  }, WATCHDOG_INTERVAL_MS);
+
+  // Don't keep the privsvc process alive on shutdown just for the
+  // watchdog tick.
+  state.watchdogTimer.unref?.();
+}
+
 // Collapse all "tear down the current channel/stream" paths into one helper
 // so every transport-level failure ends the same way: no stale client/call
 // references, no stuck flags, and a single `grpc.disconnected` push so the
@@ -106,6 +224,16 @@ function teardownBridge(reason: string, details?: Record<string, any>) {
   // Bump the watch generation so any older watcher callback that fires
   // after this point is ignored.
   state.channelWatchGen += 1;
+
+  // Stop the watchdog before tearing call/client. Otherwise it could
+  // tick once between us setting connected=false and clearing the
+  // timer, and (because we still have the stale lastActivity stamps)
+  // emit a spurious "dead_stream_watchdog" alongside whatever real
+  // reason actually triggered teardown.
+  stopWatchdog();
+  state.connectedAtMs = undefined;
+  state.lastReceiveAtMs = undefined;
+  state.lastSendAtMs = undefined;
 
   const call = state.call;
   state.call = undefined;
@@ -260,6 +388,12 @@ function decodeBoundedBytes(value: any, fieldName: string): string {
 }
 
 function handleControlMessage(msg: any) {
+  // Liveness signal for the watchdog: any message from the server,
+  // including `ping` (which intentionally has no specific handler
+  // below), counts as activity. Stamp BEFORE the per-method dispatch
+  // so a future new message type doesn't accidentally bypass us.
+  state.lastReceiveAtMs = Date.now();
+
   if (msg.ack) {
     push("grpc.ack", {
       eventId: String(msg.ack.eventId || ""),
@@ -326,7 +460,13 @@ function write(msg: any): Promise<void> {
 
     call.write(msg, (err: Error | null | undefined) => {
       if (err) reject(err);
-      else resolve();
+      else {
+        // Liveness signal for the watchdog. Heartbeats and FACTS
+        // routes both go through here, so this is enough to mark
+        // "the agent thinks the stream is alive enough to write".
+        state.lastSendAtMs = Date.now();
+        resolve();
+      }
     });
   });
 }
@@ -461,6 +601,11 @@ async function startConnection(params: Record<string, any>, pushSink: PushSink) 
     });
 
     state.connected = true;
+    state.connectedAtMs = Date.now();
+    // Seed both stamps to "now" so the watchdog has a reasonable
+    // baseline before the first server ping or our first heartbeat.
+    state.lastReceiveAtMs = state.connectedAtMs;
+    state.lastSendAtMs = state.connectedAtMs;
     push("grpc.connected", {
       ready: true,
       target: state.target,
@@ -469,6 +614,13 @@ async function startConnection(params: Record<string, any>, pushSink: PushSink) 
 
     // Start watching the channel state so network drops surface quickly.
     watchChannelState(state.client, generation);
+
+    // Application-level dead-stream watchdog. Last line of defence in
+    // case the @grpc/grpc-js HTTP/2 keepalive doesn't fire after
+    // sleep/wake or an ungraceful backend SIGKILL — we've seen Macs
+    // sit zombie for hours otherwise. Mirrors what the Windows
+    // bridge does.
+    startWatchdog();
   } finally {
     state.connecting = false;
   }
