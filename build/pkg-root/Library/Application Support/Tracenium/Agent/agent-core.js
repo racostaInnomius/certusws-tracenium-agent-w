@@ -64,7 +64,16 @@ function getLegacySoftwareBaselineDbPath() {
   return import_path.default.join(process.cwd(), "data", "agent.db");
 }
 function getAgentStatusDir() {
+  if (import_os.default.platform() === "win32") {
+    return import_path.default.join(agentDataDir(), AGENT_STATUS_DIR_NAME);
+  }
   return import_path.default.join(import_path.default.dirname(agentDataDir()), AGENT_STATUS_DIR_NAME);
+}
+function getLegacyAgentStatusDir() {
+  if (import_os.default.platform() === "win32") {
+    return import_path.default.join(import_path.default.dirname(agentDataDir()), AGENT_STATUS_DIR_NAME);
+  }
+  return null;
 }
 function ensureAgentStatusDir() {
   const dir = getAgentStatusDir();
@@ -163,7 +172,7 @@ var require_package = __commonJS({
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
     var fs17 = require("fs");
-    var path12 = require("path");
+    var path13 = require("path");
     var os17 = require("os");
     var crypto10 = require("crypto");
     var packageJson = require_package();
@@ -279,7 +288,7 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path12.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path13.resolve(process.cwd(), ".env.vault");
       }
       if (fs17.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
@@ -287,7 +296,7 @@ var require_main = __commonJS({
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path12.join(os17.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path13.join(os17.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = Boolean(options && options.debug);
@@ -304,7 +313,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path12.resolve(process.cwd(), ".env");
+      const dotenvPath = path13.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       const debug = Boolean(options && options.debug);
       const quiet = options && "quiet" in options ? options.quiet : true;
@@ -328,13 +337,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path13 of optionPaths) {
+      for (const path14 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs17.readFileSync(path13, { encoding }));
+          const parsed = DotenvModule.parse(fs17.readFileSync(path14, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e) {
           if (debug) {
-            _debug(`Failed to load ${path13} ${e.message}`);
+            _debug(`Failed to load ${path14} ${e.message}`);
           }
           lastError = e;
         }
@@ -349,7 +358,7 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative = path12.relative(process.cwd(), filePath);
+            const relative = path13.relative(process.cwd(), filePath);
             shortPaths.push(relative);
           } catch (e) {
             if (debug) {
@@ -1446,7 +1455,7 @@ var require_util = __commonJS({
     "use strict";
     var os17 = require("os");
     var fs17 = require("fs");
-    var path12 = require("path");
+    var path13 = require("path");
     var spawn2 = require("child_process").spawn;
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
@@ -2151,7 +2160,7 @@ var require_util = __commonJS({
     function getFilesInPath(source) {
       const lstatSync = fs17.lstatSync;
       const readdirSync = fs17.readdirSync;
-      const join = path12.join;
+      const join = path13.join;
       function isDirectory(source2) {
         return lstatSync(source2).isDirectory();
       }
@@ -8835,7 +8844,7 @@ var require_graphics = __commonJS({
   "node_modules/systeminformation/lib/graphics.js"(exports2) {
     "use strict";
     var fs17 = require("fs");
-    var path12 = require("path");
+    var path13 = require("path");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
@@ -9196,9 +9205,9 @@ var require_graphics = __commonJS({
         }
         if (_windows) {
           try {
-            const basePath = path12.join(util.WINDIR, "System32", "DriverStore", "FileRepository");
+            const basePath = path13.join(util.WINDIR, "System32", "DriverStore", "FileRepository");
             const candidates = fs17.readdirSync(basePath, { withFileTypes: true }).filter((dir) => dir.isDirectory()).map((dir) => {
-              const nvidiaSmiPath = path12.join(basePath, dir.name, "nvidia-smi.exe");
+              const nvidiaSmiPath = path13.join(basePath, dir.name, "nvidia-smi.exe");
               try {
                 const stats = fs17.statSync(nvidiaSmiPath);
                 return { path: nvidiaSmiPath, ctime: stats.ctimeMs };
@@ -14062,7 +14071,7 @@ var require_processes = __commonJS({
     "use strict";
     var os17 = require("os");
     var fs17 = require("fs");
-    var path12 = require("path");
+    var path13 = require("path");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
@@ -14632,7 +14641,7 @@ var require_processes = __commonJS({
               }
               if (firstPos === 1e4 && tmpCommand.indexOf(" ") > -1) {
                 const parts = tmpCommand.split(" ");
-                if (fs17.existsSync(path12.join(cmdPath, parts[0]))) {
+                if (fs17.existsSync(path13.join(cmdPath, parts[0]))) {
                   command = parts.shift();
                   params = (parts.join(" ") + " " + tmpParams).trim();
                 } else {
@@ -18768,7 +18777,7 @@ var require_bluetooth = __commonJS({
     "use strict";
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
-    var path12 = require("path");
+    var path13 = require("path");
     var util = require_util();
     var bluetoothVendors = require_bluetoothVendors();
     var fs17 = require("fs");
@@ -18900,7 +18909,7 @@ var require_bluetooth = __commonJS({
           if (_linux) {
             const btFiles = util.getFilesInPath("/var/lib/bluetooth/");
             btFiles.forEach((element) => {
-              const filename = path12.basename(element);
+              const filename = path13.basename(element);
               const pathParts = element.split("/");
               const macAddr1 = pathParts.length >= 6 ? pathParts[pathParts.length - 2] : null;
               const macAddr2 = pathParts.length >= 7 ? pathParts[pathParts.length - 3] : null;
@@ -19414,13 +19423,14 @@ var require_lib = __commonJS({
 
 // src/domain/software-display-normalizer.ts
 function normalizeSoftwareDisplayMetadata(input) {
-  const technicalName = clean(input.packageFamilyName) || clean(input.name) || "Unknown Software";
+  const rawName = clean(input.name) || "Unknown Software";
+  const technicalName = clean(input.packageFamilyName) || rawName;
   const source = clean(input.source)?.toLowerCase() || "unknown";
-  const sourcePublisher = normalizePublisherForDisplay(input.publisher);
-  const vendorFromIds = inferPublisher(technicalName) || inferPublisher(input.name) || inferPublisher(input.packageFamilyName);
-  const explicitRule = NAME_RULES.find((rule) => rule.pattern.test(technicalName) || rule.pattern.test(input.name));
-  const displayName = explicitRule?.displayName ? applyRegexDisplayName(explicitRule.pattern, explicitRule.displayName, technicalName) : buildDisplayName(input.name, technicalName, source);
-  const displayPublisher = explicitRule?.displayPublisher || vendorFromIds || sourcePublisher;
+  const explicitRule = NAME_RULES.find(
+    (rule) => rule.pattern.test(technicalName) || rule.pattern.test(rawName)
+  );
+  const displayName = explicitRule?.displayName ? applyRegexDisplayName(explicitRule.pattern, explicitRule.displayName, technicalName) : buildDisplayName(rawName, technicalName, source);
+  const displayPublisher = explicitRule?.displayPublisher || normalizePublisherName(input.publisher, rawName, technicalName, source);
   const category = explicitRule?.category || inferCategory(displayName, technicalName, source);
   const userFacing = explicitRule?.userFacing ?? inferUserFacing(category, source, displayName, technicalName);
   return {
@@ -19430,30 +19440,48 @@ function normalizeSoftwareDisplayMetadata(input) {
     category
   };
 }
+function normalizePublisherName(publisher, name, packageFamilyName, source) {
+  const rawPublisher = clean(publisher);
+  const lowerPublisher = rawPublisher?.toLowerCase();
+  if (rawPublisher && lowerPublisher && !SOURCE_ONLY_PUBLISHERS.has(lowerPublisher)) {
+    return canonicalizeKnownPublisher(rawPublisher);
+  }
+  const inferredPublisher = inferPublisher(packageFamilyName, name);
+  if (inferredPublisher) {
+    return inferredPublisher;
+  }
+  return "Unknown";
+}
 function clean(value) {
   if (!value) return void 0;
   const cleaned = value.replace(/\s+/g, " ").trim();
   return cleaned.length > 0 ? cleaned : void 0;
 }
-function normalizePublisherForDisplay(publisher) {
-  const value = clean(publisher);
-  if (!value) return void 0;
-  const lower = value.toLowerCase();
-  if (SOURCE_ONLY_PUBLISHERS.has(lower)) return void 0;
-  return value.replace(/\b(incorporated|inc\.?|corporation|corp\.?|llc|ltd\.?)\b/gi, "").replace(/\s+/g, " ").replace(/[,.]+$/g, "").trim() || value;
+function canonicalizeKnownPublisher(value) {
+  const normalized = value.trim().replace(/\s+/g, " ").replace(/[,.]+$/g, "").toLowerCase();
+  if (KNOWN_PUBLISHERS[normalized]) {
+    return KNOWN_PUBLISHERS[normalized];
+  }
+  const withoutLegalSuffix = normalized.replace(/\b(incorporated|inc\.?|corporation|corp\.?|llc|ltd\.?)\b/gi, "").replace(/\s+/g, " ").replace(/[,.]+$/g, "").trim();
+  if (KNOWN_PUBLISHERS[withoutLegalSuffix]) {
+    return KNOWN_PUBLISHERS[withoutLegalSuffix];
+  }
+  return toTitleCase(value);
 }
 function inferPublisher(...values) {
   for (const value of values) {
     if (!value) continue;
     for (const rule of VENDOR_RULES) {
-      if (rule.pattern.test(value)) return rule.publisher;
+      if (rule.pattern.test(value)) {
+        return rule.publisher;
+      }
     }
   }
   return void 0;
 }
 function buildDisplayName(rawName, technicalName, source) {
   const cleanRawName = clean(rawName) || technicalName;
-  if (source === "macos-app-bundle" || source === "win32-registry") {
+  if (source === "macos-app-bundle" || source === "win32-registry" || source === "windows-registry") {
     return titleKnownAcronyms(cleanRawName);
   }
   if (!looksTechnical(cleanRawName)) {
@@ -19475,14 +19503,19 @@ function splitCamelCase(value) {
   return value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").replace(/\s+/g, " ").trim();
 }
 function toTitleCase(value) {
-  return value.split(" ").filter(Boolean).map((part) => {
+  return value.trim().replace(/\s+/g, " ").split(" ").filter(Boolean).map((part) => {
     if (/^[A-Z0-9]{2,}$/.test(part)) return part;
     if (/^\d+$/.test(part)) return part;
-    return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+    const lower = part.toLowerCase();
+    const upper = lower.toUpperCase();
+    if (PRESERVE_UPPERCASE_WORDS.has(upper)) {
+      return upper;
+    }
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
   }).join(" ");
 }
 function titleKnownAcronyms(value) {
-  return value.replace(/\bJdk\b/g, "JDK").replace(/\bJre\b/g, "JRE").replace(/\bSdk\b/g, "SDK").replace(/\bApi\b/g, "API").replace(/\bVpn\b/g, "VPN").replace(/\bUsb\b/g, "USB").replace(/\bCli\b/g, "CLI").replace(/\bOcr\b/g, "OCR").replace(/\bIca\b/g, "ICA").replace(/\bTwain\b/g, "TWAIN").replace(/\bNcat\b/g, "Ncat").replace(/\bNping\b/g, "Nping").replace(/\bXcode\b/g, "Xcode").replace(/\bMacos\b/g, "macOS").replace(/\bIos\b/g, "iOS");
+  return value.replace(/\bJdk\b/g, "JDK").replace(/\bJre\b/g, "JRE").replace(/\bSdk\b/g, "SDK").replace(/\bApi\b/g, "API").replace(/\bVpn\b/g, "VPN").replace(/\bUsb\b/g, "USB").replace(/\bCli\b/g, "CLI").replace(/\bOcr\b/g, "OCR").replace(/\bIca\b/g, "ICA").replace(/\bTwain\b/g, "TWAIN").replace(/\bNcat\b/g, "Ncat").replace(/\bNping\b/g, "Nping").replace(/\bXcode\b/g, "Xcode").replace(/\bMacos\b/g, "macOS").replace(/\bIos\b/g, "iOS").replace(/\bCpu\b/g, "CPU").replace(/\bGpu\b/g, "GPU").replace(/\bUi\b/g, "UI").replace(/\bPdf\b/g, "PDF");
 }
 function inferCategory(displayName, technicalName, source) {
   const combined = `${displayName} ${technicalName}`;
@@ -19491,7 +19524,9 @@ function inferCategory(displayName, technicalName, source) {
   if (/driver|audio\s*device|usbclassdriver/i.test(combined)) return "driver";
   if (DRIVER_OR_COMPONENT_HINTS.some((re) => re.test(combined))) return "component";
   if (/rosetta|gatekeeper|xprotect|mobiledevice|data-template/i.test(combined)) return "system";
-  if (/pkgutil|homebrew|snap|flatpak/i.test(source) && looksTechnical(technicalName)) return "component";
+  if (/pkgutil|homebrew|snap|flatpak/i.test(source) && looksTechnical(technicalName)) {
+    return "component";
+  }
   return "application";
 }
 function inferUserFacing(category, source, displayName, technicalName) {
@@ -19502,10 +19537,12 @@ function inferUserFacing(category, source, displayName, technicalName) {
 }
 function applyRegexDisplayName(pattern, template, value) {
   const match = value.match(pattern);
-  if (!match) return template;
+  if (!match) {
+    return template;
+  }
   return template.replace(/\$(\d+)/g, (_, index) => match[Number(index)] || "");
 }
-var SOURCE_ONLY_PUBLISHERS, VENDOR_RULES, NAME_RULES, DRIVER_OR_COMPONENT_HINTS;
+var SOURCE_ONLY_PUBLISHERS, PRESERVE_UPPERCASE_WORDS, KNOWN_PUBLISHERS, VENDOR_RULES, NAME_RULES, DRIVER_OR_COMPONENT_HINTS;
 var init_software_display_normalizer = __esm({
   "src/domain/software-display-normalizer.ts"() {
     "use strict";
@@ -19519,11 +19556,73 @@ var init_software_display_normalizer = __esm({
       "flatpak",
       "win32-registry",
       "windows-registry",
+      "registry",
       "macos-app-bundle"
     ]);
+    PRESERVE_UPPERCASE_WORDS = /* @__PURE__ */ new Set([
+      "LLC",
+      "LTD",
+      "GMBH",
+      "SAS",
+      "SA",
+      "INC",
+      "AG",
+      "BV",
+      "AB",
+      "NV",
+      "PLC"
+    ]);
+    KNOWN_PUBLISHERS = {
+      "microsoft": "Microsoft",
+      "microsoft corporation": "Microsoft",
+      "microsoft corp": "Microsoft",
+      "microsoft corp.": "Microsoft",
+      "google": "Google",
+      "google llc": "Google",
+      "google inc": "Google",
+      "google inc.": "Google",
+      "apple": "Apple",
+      "apple inc": "Apple",
+      "apple inc.": "Apple",
+      "epson": "Epson",
+      "seiko epson": "Epson",
+      "seiko epson corporation": "Epson",
+      "teamviewer": "TeamViewer",
+      "teamviewer germany gmbh": "TeamViewer",
+      "fortinet": "Fortinet",
+      "fortinet inc": "Fortinet",
+      "fortinet inc.": "Fortinet",
+      "citrix": "Citrix",
+      "citrix systems": "Citrix",
+      "citrix systems inc": "Citrix",
+      "citrix systems inc.": "Citrix",
+      "crowdstrike": "CrowdStrike",
+      "crowdstrike inc": "CrowdStrike",
+      "crowdstrike inc.": "CrowdStrike",
+      "zoom": "Zoom",
+      "zoom video communications": "Zoom",
+      "zoom video communications inc": "Zoom",
+      "zoom video communications inc.": "Zoom",
+      "mozilla": "Mozilla",
+      "mozilla corporation": "Mozilla",
+      "docker": "Docker",
+      "docker inc": "Docker",
+      "docker inc.": "Docker",
+      "oracle": "Oracle",
+      "oracle america inc": "Oracle",
+      "oracle america inc.": "Oracle",
+      "openai": "OpenAI",
+      "anthropic": "Anthropic",
+      "nordvpn": "NordVPN",
+      "whatsapp": "WhatsApp",
+      "nmap": "Nmap",
+      "eclipse adoptium": "Eclipse Adoptium",
+      "certus": "Certus"
+    };
     VENDOR_RULES = [
       { pattern: /^com\.microsoft\./i, publisher: "Microsoft" },
       { pattern: /^microsoft\b/i, publisher: "Microsoft" },
+      { pattern: /\bmicrosoft\b/i, publisher: "Microsoft" },
       { pattern: /^com\.apple\./i, publisher: "Apple" },
       { pattern: /^apple\b/i, publisher: "Apple" },
       { pattern: /^com\.epson\./i, publisher: "Epson" },
@@ -19542,16 +19641,37 @@ var init_software_display_normalizer = __esm({
       { pattern: /^zoom\b/i, publisher: "Zoom" },
       { pattern: /^net\.whatsapp\./i, publisher: "WhatsApp" },
       { pattern: /^desktop\.WhatsApp$/i, publisher: "WhatsApp" },
+      { pattern: /^whatsapp\b/i, publisher: "WhatsApp" },
       { pattern: /^com\.google\./i, publisher: "Google" },
       { pattern: /^google\b/i, publisher: "Google" },
       { pattern: /^org\.mozilla\./i, publisher: "Mozilla" },
+      { pattern: /^mozilla\b/i, publisher: "Mozilla" },
+      { pattern: /^firefox\b/i, publisher: "Mozilla" },
       { pattern: /^com\.docker\./i, publisher: "Docker" },
+      { pattern: /^docker\b/i, publisher: "Docker" },
       { pattern: /^com\.openai\./i, publisher: "OpenAI" },
+      { pattern: /^openai\b/i, publisher: "OpenAI" },
       { pattern: /^com\.anthropic\./i, publisher: "Anthropic" },
+      { pattern: /^anthropic\b/i, publisher: "Anthropic" },
       { pattern: /^com\.nordvpn\./i, publisher: "NordVPN" },
+      { pattern: /^nordvpn\b/i, publisher: "NordVPN" },
       { pattern: /^com\.certusws\./i, publisher: "Certus" },
       { pattern: /^net\.temurin\./i, publisher: "Eclipse Adoptium" },
-      { pattern: /^org\.insecure\.nmap/i, publisher: "Nmap" }
+      { pattern: /^temurin\b/i, publisher: "Eclipse Adoptium" },
+      { pattern: /^org\.insecure\.nmap/i, publisher: "Nmap" },
+      { pattern: /^com\.amazon\./i, publisher: "Amazon" },
+      { pattern: /^com\.if\.Amphetamine$/i, publisher: "Amphetamine" },
+      { pattern: /^com\.tinyapp\.TablePlus$/i, publisher: "TablePlus" },
+      { pattern: /^com\.torusknot\.SourceTreeNotMAS$/i, publisher: "Atlassian" },
+      { pattern: /^com\.devolutions\./i, publisher: "Devolutions" },
+      { pattern: /^com\.hicknhacksoftware\./i, publisher: "HicknHack Software" },
+      { pattern: /^com\.titanium\./i, publisher: "Titanium Software" },
+      { pattern: /^com\.caliente\./i, publisher: "Caliente" },
+      { pattern: /^com\.google\.android\.studio$/i, publisher: "Google" },
+      { pattern: /^net\.metaquotes\./i, publisher: "MetaQuotes" },
+      { pattern: /^notion\.id$/i, publisher: "Notion" },
+      { pattern: /^com\.carriez\.rustdesk$/i, publisher: "RustDesk" },
+      { pattern: /^com\.philandro\.anydesk$/i, publisher: "AnyDesk" }
     ];
     NAME_RULES = [
       { pattern: /^com\.microsoft\.package\.Microsoft_Outlook\.app$/i, displayName: "Microsoft Outlook", displayPublisher: "Microsoft" },
@@ -19568,6 +19688,10 @@ var init_software_display_normalizer = __esm({
       { pattern: /^com\.apple\.pkg\.RosettaUpdateAuto$/i, displayName: "Rosetta 2", displayPublisher: "Apple", category: "system", userFacing: false },
       { pattern: /^com\.apple\.pkg\.MobileDeviceDevelopment$/i, displayName: "Apple Mobile Device Development", displayPublisher: "Apple", category: "component", userFacing: false },
       { pattern: /^com\.apple\.files\.data-template$/i, displayName: "Apple Files Data Template", displayPublisher: "Apple", category: "system", userFacing: false },
+      { pattern: /^com\.apple\.cdm\.pkg\.Keynote_MASReceipt$/i, displayName: "Keynote Receipt", displayPublisher: "Apple", category: "component", userFacing: false },
+      { pattern: /^com\.apple\.cdm\.pkg\.Numbers_MASReceipt$/i, displayName: "Numbers Receipt", displayPublisher: "Apple", category: "component", userFacing: false },
+      { pattern: /^com\.apple\.cdm\.pkg\.Pages_MASReceipt$/i, displayName: "Pages Receipt", displayPublisher: "Apple", category: "component", userFacing: false },
+      { pattern: /^com\.apple\.cdm\.pkg\.iMovie_MASReceipt$/i, displayName: "iMovie Receipt", displayPublisher: "Apple", category: "component", userFacing: false },
       { pattern: /^com\.epson\.pkg\.EpsonScan2$/i, displayName: "Epson Scan 2", displayPublisher: "Epson" },
       { pattern: /^com\.epson\.pkg\.EpsonScan2\.Utility$/i, displayName: "Epson Scan 2 Utility", displayPublisher: "Epson", category: "component", userFacing: false },
       { pattern: /^com\.epson\.pkg\.EpsonScan2\.help$/i, displayName: "Epson Scan 2 Help", displayPublisher: "Epson", category: "component", userFacing: false },
@@ -19581,6 +19705,11 @@ var init_software_display_normalizer = __esm({
       { pattern: /^com\.epson\.pkg\.scannermonitor$/i, displayName: "Epson Scanner Monitor", displayPublisher: "Epson", category: "component", userFacing: false },
       { pattern: /^com\.epson\.pkg\.Ocr(\.SysIntel)?$/i, displayName: "Epson OCR", displayPublisher: "Epson", category: "component", userFacing: false },
       { pattern: /^com\.epson\.fpkg\.EpsonConnectPrinterSetup$/i, displayName: "Epson Connect Printer Setup", displayPublisher: "Epson" },
+      { pattern: /^com\.epson\.pkg\.ijpdrv\./i, displayName: "Epson Inkjet Printer Driver", displayPublisher: "Epson", category: "driver", userFacing: false },
+      { pattern: /^com\.epson\.fpkg\.ECPS/i, displayName: "Epson Connect Printer Setup", displayPublisher: "Epson", category: "component", userFacing: false },
+      { pattern: /^com\.epson\.guide\./i, displayName: "Epson User Guide", displayPublisher: "Epson", category: "component", userFacing: false },
+      { pattern: /^com\.epson\.pkg\.AppletW$/i, displayName: "Epson Applet", displayPublisher: "Epson", category: "component", userFacing: false },
+      { pattern: /^com\.epson\.pkg\.Epdfcihr\.arm$/i, displayName: "Epson PDF Component", displayPublisher: "Epson", category: "component", userFacing: false },
       { pattern: /^com\.teamviewer\.remoteaudiodriver$/i, displayName: "TeamViewer Remote Audio Driver", displayPublisher: "TeamViewer", category: "driver", userFacing: false },
       { pattern: /^com\.teamviewer\.AuthorizationPlugin$/i, displayName: "TeamViewer Authorization Plugin", displayPublisher: "TeamViewer", category: "component", userFacing: false },
       { pattern: /^com\.teamviewer\.teamviewerUninstallerHelper$/i, displayName: "TeamViewer Uninstaller Helper", displayPublisher: "TeamViewer", category: "component", userFacing: false },
@@ -19620,7 +19749,10 @@ var init_software_display_normalizer = __esm({
       /installer\s*component/i,
       /licensing/i,
       /receipt/i,
-      /masreceipt/i
+      /masreceipt/i,
+      /software\s*updater/i,
+      /update\s*helper/i,
+      /common\s*components/i
     ];
   }
 });
@@ -19631,11 +19763,14 @@ function cleanString(value) {
   const cleaned = value.replace(/\s+/g, " ").trim();
   return cleaned.length > 0 ? cleaned : void 0;
 }
-function normalizePublisher(publisher) {
-  if (!publisher) return void 0;
+function normalizePublisherForIdentity(publisher) {
   const p = cleanString(publisher);
   if (!p) return void 0;
-  return p.toLowerCase();
+  const lower = p.toLowerCase();
+  if (SOURCE_ONLY_PUBLISHERS2.has(lower)) {
+    return void 0;
+  }
+  return lower;
 }
 function generateInstallId(data) {
   const base = [
@@ -19649,26 +19784,29 @@ function generateInstallId(data) {
 }
 function normalizeApp(input) {
   const rawName = cleanString(input.name);
-  const normalizedIdentityName = rawName?.toLowerCase();
-  if (!rawName) return null;
+  if (!rawName) {
+    return null;
+  }
   const version = cleanString(input.version);
-  const rawPublisher = normalizePublisher(input.publisher);
+  const rawPublisher = cleanString(input.publisher);
+  const identityPublisher = normalizePublisherForIdentity(input.publisher);
   const installLocation = cleanString(input.installLocation);
   const packageFamilyName = cleanString(input.packageFamilyName);
-  const source = input.source.toLowerCase();
+  const source = cleanString(input.source)?.toLowerCase() || "unknown";
+  const normalizedIdentityName = rawName.toLowerCase();
   const display = normalizeSoftwareDisplayMetadata({
     name: rawName,
-    publisher: cleanString(input.publisher),
+    publisher: rawPublisher,
     source,
     installLocation,
     packageFamilyName
   });
   const detectedAtUtc = (/* @__PURE__ */ new Date()).toISOString();
   const installId = generateInstallId({
-    name: normalizedIdentityName || rawName,
+    name: normalizedIdentityName,
     source,
     packageFamilyName,
-    publisher: rawPublisher
+    publisher: identityPublisher
   });
   return {
     name: display.displayName,
@@ -19687,12 +19825,25 @@ function normalizeApp(input) {
     category: display.category
   };
 }
-var import_crypto9;
+var import_crypto9, SOURCE_ONLY_PUBLISHERS2;
 var init_normalize_app = __esm({
   "src/domain/normalize-app.ts"() {
     "use strict";
     import_crypto9 = __toESM(require("crypto"));
     init_software_display_normalizer();
+    SOURCE_ONLY_PUBLISHERS2 = /* @__PURE__ */ new Set([
+      "pkgutil",
+      "homebrew",
+      "brew",
+      "dpkg",
+      "rpm",
+      "snap",
+      "flatpak",
+      "win32-registry",
+      "windows-registry",
+      "registry",
+      "macos-app-bundle"
+    ]);
   }
 });
 
@@ -20238,7 +20389,10 @@ function canonicalizePkgutilId(pkgId) {
   if (!m) return { canonical: pkgId, version: null };
   const version = m[1];
   const canonical = pkgId.slice(0, m.index) + pkgId.slice((m.index ?? 0) + m[0].length);
-  return { canonical: canonical.replace(/\.{2,}/g, ".").replace(/\.$/, ""), version };
+  return {
+    canonical: canonical.replace(/\.{2,}/g, ".").replace(/\.$/, ""),
+    version
+  };
 }
 async function collectMacSoftware() {
   try {
@@ -20275,14 +20429,15 @@ async function collectMacSoftware() {
               ["-name", "kMDItemCFBundleIdentifier", "-raw", appPath],
               { timeout: 5e3 }
             );
-            bundleId = stdout.trim() || null;
+            const rawBundleId = stdout.trim();
+            bundleId = rawBundleId && rawBundleId !== "(null)" && rawBundleId.toLowerCase() !== "null" ? rawBundleId : null;
           } catch {
             bundleId = null;
           }
           const normalized = normalizeApp({
             name,
             version: null,
-            publisher: null,
+            publisher: void 0,
             installLocation: appPath,
             packageFamilyName: bundleId,
             source: "macos-app-bundle"
@@ -20353,7 +20508,13 @@ async function collectMacSoftware() {
             const abs = `${root}/${location}`.replace(/\/+/g, "/");
             installLocationExists = await import_fs10.default.promises.access(abs, import_fs10.default.constants.F_OK).then(() => true).catch(() => false);
           }
-          return { pkgId, location, volume, version, installLocationExists };
+          return {
+            pkgId,
+            location,
+            volume,
+            version,
+            installLocationExists
+          };
         } catch {
           return null;
         }
@@ -20363,7 +20524,9 @@ async function collectMacSoftware() {
       for (let i = 0; i < candidates.length; i += PKG_INFO_CONCURRENCY) {
         const batch = candidates.slice(i, i + PKG_INFO_CONCURRENCY);
         const records = await Promise.all(batch.map(readPkgInfo));
-        for (const r of records) if (r) pkgRecords.push(r);
+        for (const r of records) {
+          if (r) pkgRecords.push(r);
+        }
       }
       const orphans = pkgRecords.filter((r) => !r.installLocationExists).length;
       if (orphans > 0) {
@@ -20376,7 +20539,20 @@ async function collectMacSoftware() {
         const normalized = normalizeApp({
           name: canonical,
           version,
-          publisher: "pkgutil",
+          /**
+           * Critical fix:
+           * pkgutil is the collector/source, not the publisher.
+           * Passing "pkgutil" here makes the dashboard group software
+           * under publisher="pkgutil", which is incorrect.
+           *
+           * The normalizer will infer the real publisher from canonical
+           * package ids such as:
+           *   com.microsoft.*
+           *   com.epson.*
+           *   com.apple.*
+           *   com.teamviewer.*
+           */
+          publisher: void 0,
           installLocation: rec.location || "/",
           packageFamilyName: canonical,
           source: "pkgutil"
@@ -21816,7 +21992,7 @@ var init_semver = __esm({
 // src/update/update-service.ts
 function resolveBaseDir3() {
   if (process.platform === "win32") {
-    return import_path11.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
+    return import_path12.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
   }
   if (process.platform === "darwin") {
     return "/Library/Application Support/Tracenium";
@@ -21935,7 +22111,7 @@ function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3, idleTimeo
   return new Promise((resolve, reject) => {
     const url = new URL(urlString);
     const lib = url.protocol === "https:" ? import_https.default : import_http.default;
-    ensureDir4(import_path11.default.dirname(filePath));
+    ensureDir4(import_path12.default.dirname(filePath));
     const tmpPath = `${filePath}.tmp`;
     const file = import_fs16.default.createWriteStream(tmpPath);
     let settled = false;
@@ -22199,11 +22375,11 @@ async function downloadWindowsMsi(ctx, latestVersion, expectedHash) {
   if (!dl?.downloadUrl) {
     throw new Error("update_download_url_missing");
   }
-  const dir = import_path11.default.join(resolveBaseDir3(), "updates");
+  const dir = import_path12.default.join(resolveBaseDir3(), "updates");
   ensureDir4(dir);
   const arch = getArch();
   const fileName = `Tracenium-Agent-${latestVersion}-${arch}.msi`;
-  const filePath = import_path11.default.join(dir, fileName);
+  const filePath = import_path12.default.join(dir, fileName);
   const { size } = await downloadToFile(dl.downloadUrl, filePath);
   const sha256 = await sha256File(filePath);
   if (!expectedHash) {
@@ -22231,11 +22407,11 @@ async function downloadMacosPkg(ctx, latestVersion, expectedHash) {
   if (!dl?.downloadUrl) {
     throw new Error("update_download_url_missing");
   }
-  const dir = import_path11.default.join(resolveBaseDir3(), "updates");
+  const dir = import_path12.default.join(resolveBaseDir3(), "updates");
   ensureDir4(dir);
   const arch = getArch();
   const fileName = `Tracenium-Agent-${latestVersion}-${arch}.pkg`;
-  const filePath = import_path11.default.join(dir, fileName);
+  const filePath = import_path12.default.join(dir, fileName);
   const { size } = await downloadToFile(dl.downloadUrl, filePath);
   const sha256 = await sha256File(filePath);
   if (!expectedHash) {
@@ -22261,11 +22437,11 @@ async function downloadMacosPkg(ctx, latestVersion, expectedHash) {
 async function performWindowsMsiUpdate(ctx, latestVersion, expectedHash, downloadUrlOverride) {
   let downloaded;
   if (downloadUrlOverride) {
-    const dir = import_path11.default.join(resolveBaseDir3(), "updates");
+    const dir = import_path12.default.join(resolveBaseDir3(), "updates");
     ensureDir4(dir);
     const arch = getArch();
     const fileName = `Tracenium-Agent-${latestVersion}-${arch}.msi`;
-    const filePath = import_path11.default.join(dir, fileName);
+    const filePath = import_path12.default.join(dir, fileName);
     console.log("[update] downloading from override url", {
       url: downloadUrlOverride,
       version: latestVersion
@@ -22311,11 +22487,11 @@ async function performWindowsMsiUpdate(ctx, latestVersion, expectedHash, downloa
 async function performMacosPkgUpdate(ctx, latestVersion, expectedHash, downloadUrlOverride) {
   let downloaded;
   if (downloadUrlOverride) {
-    const dir = import_path11.default.join(resolveBaseDir3(), "updates");
+    const dir = import_path12.default.join(resolveBaseDir3(), "updates");
     ensureDir4(dir);
     const arch = getArch();
     const fileName = `Tracenium-Agent-${latestVersion}-${arch}.pkg`;
-    const filePath = import_path11.default.join(dir, fileName);
+    const filePath = import_path12.default.join(dir, fileName);
     console.log("[update] downloading pkg from override url", {
       url: downloadUrlOverride,
       version: latestVersion
@@ -22358,12 +22534,12 @@ async function performMacosPkgUpdate(ctx, latestVersion, expectedHash, downloadU
   const result2 = await runMacosPkgUpdate(downloaded.filePath);
   return result2;
 }
-var import_fs16, import_path11, import_crypto11, import_http, import_https;
+var import_fs16, import_path12, import_crypto11, import_http, import_https;
 var init_update_service = __esm({
   "src/update/update-service.ts"() {
     "use strict";
     import_fs16 = __toESM(require("fs"));
-    import_path11 = __toESM(require("path"));
+    import_path12 = __toESM(require("path"));
     import_crypto11 = __toESM(require("crypto"));
     import_http = __toESM(require("http"));
     import_https = __toESM(require("https"));
@@ -22655,7 +22831,7 @@ var import_dotenv = __toESM(require_main());
 // package.json
 var package_default = {
   name: "certusws-tracenium-agent",
-  version: "1.1.10",
+  version: "1.1.11",
   description: "Tracenium Agent - Hardware & Software inventory collector",
   license: "MIT",
   author: {
@@ -23947,17 +24123,31 @@ var logger = {
 // src/status/tray-status-store.ts
 var import_fs13 = __toESM(require("fs"));
 var import_os14 = __toESM(require("os"));
+var import_path10 = __toESM(require("path"));
 init_paths();
 init_state();
 init_update_state();
+var TRAY_STATUS_FILE_NAME2 = "tray-status.json";
 function ensureDir3(dir) {
   import_fs13.default.mkdirSync(dir, { recursive: true });
+}
+function purgeLegacyStatusFile() {
+  const legacyDir = getLegacyAgentStatusDir();
+  if (!legacyDir) return;
+  const legacyFile = import_path10.default.join(legacyDir, TRAY_STATUS_FILE_NAME2);
+  try {
+    if (import_fs13.default.existsSync(legacyFile)) {
+      import_fs13.default.unlinkSync(legacyFile);
+    }
+  } catch {
+  }
 }
 var TrayStatusStore = class {
   dir = ensureAgentStatusDir();
   filePath = getTrayStatusFilePath();
   constructor() {
     ensureDir3(this.dir);
+    purgeLegacyStatusFile();
   }
   getPath() {
     return this.filePath;
@@ -24156,7 +24346,7 @@ async function bootstrapContext() {
 
 // src/queue/sqlite-outbox.ts
 var import_os15 = __toESM(require("os"));
-var import_path10 = __toESM(require("path"));
+var import_path11 = __toESM(require("path"));
 var import_fs14 = __toESM(require("fs"));
 var import_better_sqlite32 = __toESM(require("better-sqlite3"));
 var import_zlib = __toESM(require("zlib"));
@@ -24200,15 +24390,15 @@ function maybeDecompressPayload(value) {
 function defaultDbPath() {
   if (import_os15.default.platform() === "win32") {
     const programData = process.env.PROGRAMDATA || process.env.ProgramData || "C:\\ProgramData";
-    return import_path10.default.join(programData, "Tracenium", "Agent", "outbox.db");
+    return import_path11.default.join(programData, "Tracenium", "Agent", "outbox.db");
   }
-  return import_path10.default.join(import_os15.default.homedir(), ".tracenium", "agent", "outbox.db");
+  return import_path11.default.join(import_os15.default.homedir(), ".tracenium", "agent", "outbox.db");
 }
 var SqliteOutbox = class {
   constructor(dbPath = defaultDbPath()) {
     this.dbPath = dbPath;
     this.lockOwner = `agentcore:${import_os15.default.hostname()}:${process.pid}`;
-    const dir = import_path10.default.dirname(dbPath);
+    const dir = import_path11.default.dirname(dbPath);
     import_fs14.default.mkdirSync(dir, { recursive: true });
     this.db = new import_better_sqlite32.default(dbPath);
     logger.info("[outbox] initialized", { dbPath: this.dbPath });

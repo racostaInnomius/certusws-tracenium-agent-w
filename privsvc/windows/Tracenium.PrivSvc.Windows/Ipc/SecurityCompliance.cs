@@ -426,24 +426,136 @@ foreach ($p in $protocols) {
 
     private static object GetInstalledSecurityPatches()
     {
+        // Use the COM Microsoft.Update.Session API instead of `Get-HotFix`.
+        //
+        // Why we moved off Get-HotFix:
+        //   `Get-HotFix` wraps the WMI class Win32_QuickFixEngineering which
+        //   only enumerates a subset of installed updates — specifically the
+        //   ones registered as "QuickFixes". It systematically MISSES:
+        //     * Modern cumulative updates installed via CBS (the bulk of
+        //       Windows 10/11 monthly Patch Tuesday rollups)
+        //     * .NET Framework security updates
+        //     * Preview / OOB updates
+        //     * Driver updates and DISM-applied updates
+        //
+        //   Result: the SCP `patches` evidence reported 4 KBs while Windows
+        //   Settings → Update history showed 10 — the operator's source of
+        //   truth disagreed with our audit, which defeats the whole point.
+        //
+        //   `Microsoft.Update.Session.QueryHistory()` is the SAME API that
+        //   "Update history" in Settings reads from, so what we report
+        //   matches what the operator sees on the device.
+        //
+        //   Schema mapping per IUpdateHistoryEntry:
+        //     ResultCode 2  → Succeeded   (we filter to this)
+        //     Operation 1   → Installation (skip Uninstallation = 2)
+        //     Title         → free-form, KB id usually in parens
+        //     Date          → install timestamp (UTC)
+        //     UpdateIdentity.UpdateID → stable GUID for cross-platform refs
+        //
+        //   We extract the KB id with a regex on the title (e.g.
+        //   "...(KB5083769)" → "KB5083769") so the agent-side normalizer can
+        //   keep using `hotFixId` as the primary display key. If a title
+        //   doesn't match, hotFixId stays null and the UI shows the title
+        //   instead — graceful degradation rather than dropping the row.
+        //
+        //   `installedBy` is hardcoded to "Windows Update" because the COM
+        //   API doesn't expose the principal that triggered the install.
+        //   Get-HotFix did expose it (via WMI), but losing that field is an
+        //   acceptable trade-off for getting the COMPLETE history.
+        //
+        //   `lastScanUtc` records when WE ran THIS query — gives the UI a
+        //   "data freshness" signal even when the device hasn't installed
+        //   anything new in months. Was missing entirely before this fix.
         try
         {
-            var output = RunPs(
-                "Get-HotFix | Where-Object { $_.HotFixID -match '^KB' -and ($_.Description -match 'Security|Update|Hotfix') } | Sort-Object InstalledOn -Descending | Select-Object HotFixID, Description, InstalledBy, InstalledOn | ConvertTo-Json -Depth 4"
-            );
+            var output = RunPs(@"
+$session = New-Object -ComObject Microsoft.Update.Session
+$searcher = $session.CreateUpdateSearcher()
+$total = $searcher.GetTotalHistoryCount()
+if ($total -le 0) {
+  '[]'
+  return
+}
+
+$history = $searcher.QueryHistory(0, $total)
+$items = @()
+foreach ($entry in $history) {
+  # Only successful installs. ResultCode enum:
+  #   0 NotStarted, 1 InProgress, 2 Succeeded, 3 SucceededWithErrors,
+  #   4 Failed, 5 Aborted
+  # Operation enum: 1 Installation, 2 Uninstallation
+  if ([int]$entry.ResultCode -ne 2) { continue }
+  if ([int]$entry.Operation -ne 1) { continue }
+
+  $title = [string]$entry.Title
+  $kb = $null
+  $kbMatch = [regex]::Match($title, '\(KB(\d+)\)')
+  if ($kbMatch.Success) { $kb = 'KB' + $kbMatch.Groups[1].Value }
+
+  $updateId = $null
+  try { $updateId = [string]$entry.UpdateIdentity.UpdateID } catch {}
+
+  $items += [pscustomobject]@{
+    hotFixId      = $kb
+    title         = $title
+    description   = [string]$entry.Description
+    installedOn   = $entry.Date.ToUniversalTime().ToString('o')
+    installedBy   = 'Windows Update'
+    operation     = 'install'
+    resultCode    = [int]$entry.ResultCode
+    updateId      = $updateId
+    supportUrl    = try { [string]$entry.SupportUrl } catch { $null }
+  }
+}
+
+# Sort newest-first. Stable string sort works because installedOn is
+# ISO-8601 UTC.
+$items = $items | Sort-Object -Property installedOn -Descending
+$items | ConvertTo-Json -Depth 4
+");
 
             var items = ParseJsonArray(output);
+            var nowUtc = DateTime.UtcNow.ToString("O");
 
             return new
             {
                 status = items.Count > 0 ? "present" : "unknown",
                 count = items.Count,
+                lastScanUtc = nowUtc,
                 items
             };
         }
         catch
         {
-            return new { status = "unknown", count = 0, items = Array.Empty<object>() };
+            // Fall back to Get-HotFix on COM failures (e.g. WUA service
+            // disabled / COM objects unavailable). Better to show a partial
+            // list than nothing at all.
+            try
+            {
+                var fallback = RunPs(
+                    "Get-HotFix | Where-Object { $_.HotFixID -match '^KB' -and ($_.Description -match 'Security|Update|Hotfix') } | Sort-Object InstalledOn -Descending | Select-Object HotFixID, Description, InstalledBy, InstalledOn | ConvertTo-Json -Depth 4"
+                );
+                var fbItems = ParseJsonArray(fallback);
+                return new
+                {
+                    status = fbItems.Count > 0 ? "present" : "unknown",
+                    count = fbItems.Count,
+                    lastScanUtc = DateTime.UtcNow.ToString("O"),
+                    source = "get_hotfix_fallback",
+                    items = fbItems
+                };
+            }
+            catch
+            {
+                return new
+                {
+                    status = "unknown",
+                    count = 0,
+                    lastScanUtc = DateTime.UtcNow.ToString("O"),
+                    items = Array.Empty<object>()
+                };
+            }
         }
     }
 
