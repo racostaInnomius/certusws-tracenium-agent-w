@@ -1,13 +1,44 @@
 import fs from "fs";
 import os from "os";
+import path from "path";
 import type { AgentContext } from "../core/agent-context";
-import { ensureAgentStatusDir, getTrayStatusFilePath } from "../bootstrap/paths";
+import {
+  ensureAgentStatusDir,
+  getTrayStatusFilePath,
+  getLegacyAgentStatusDir,
+} from "../bootstrap/paths";
 import { loadPmpState } from "../plugins/pmp/state";
 import { loadUpdateState } from "../update/update-state";
 import type { TrayStatusSnapshot } from "./tray-status-types";
 
+const TRAY_STATUS_FILE_NAME = "tray-status.json";
+
 function ensureDir(dir: string) {
   fs.mkdirSync(dir, { recursive: true });
+}
+
+/**
+ * Best-effort cleanup of a stale tray-status.json from the pre-fix
+ * Windows path. Without this, an operator inspecting
+ * C:\ProgramData\Tracenium\status\ would still see the old zombie
+ * JSON (last written by an earlier release) and second-guess whether
+ * the tray is reading from the right place.
+ *
+ * Failure modes (file in use, perms denied, dir missing) are all
+ * silently swallowed — the file is just informational debris, never
+ * required for correctness.
+ */
+function purgeLegacyStatusFile() {
+  const legacyDir = getLegacyAgentStatusDir();
+  if (!legacyDir) return;
+  const legacyFile = path.join(legacyDir, TRAY_STATUS_FILE_NAME);
+  try {
+    if (fs.existsSync(legacyFile)) {
+      fs.unlinkSync(legacyFile);
+    }
+  } catch {
+    // ignore — leftover zombie at most, not a correctness issue.
+  }
 }
 
 export class TrayStatusStore {
@@ -16,6 +47,7 @@ export class TrayStatusStore {
 
   constructor() {
     ensureDir(this.dir);
+    purgeLegacyStatusFile();
   }
 
   getPath() {
