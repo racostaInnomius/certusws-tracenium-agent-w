@@ -24614,13 +24614,47 @@ var CHANNEL_OPTIONS = {
 };
 var WATCHDOG_INTERVAL_MS = 15e3;
 var DEAD_STREAM_THRESHOLD_MS = 15e4;
+var BREAKER_TICK_MS = 3e4;
+var BREAKER_THRESHOLD_MS = 5 * 60 * 1e3;
 var state = {
   connected: false,
   connecting: false,
   chunks: /* @__PURE__ */ new Map(),
   channelWatchGen: 0,
-  watchdogTimer: null
+  watchdogTimer: null,
+  everConnected: false,
+  breakerTimer: null
 };
+function tickBreaker() {
+  if (!state.everConnected) return;
+  if (state.connected) return;
+  const since = state.lastSuccessfulConnectAtMs ?? 0;
+  if (since === 0) return;
+  const idleMs = Date.now() - since;
+  if (idleMs < BREAKER_THRESHOLD_MS) return;
+  logger.error("grpc_bridge_circuit_breaker_tripped", {
+    idleMs,
+    thresholdMs: BREAKER_THRESHOLD_MS,
+    lastSuccessfulConnectAtUtc: new Date(since).toISOString()
+  });
+  try {
+    state.push?.({
+      v: 1,
+      method: "grpc.control.daemonExit",
+      params: { reason: "circuit_breaker", idleMs },
+      meta: {
+        tenantId: state.tenantId,
+        deviceId: state.deviceId,
+        connectionId: state.target
+      }
+    });
+  } catch {
+  }
+  setTimeout(() => process.exit(1), 100).unref?.();
+}
+var breakerInterval = setInterval(tickBreaker, BREAKER_TICK_MS);
+breakerInterval.unref?.();
+state.breakerTimer = breakerInterval;
 var CHUNK_TTL_MS = 5 * 60 * 1e3;
 var CHUNK_SWEEP_INTERVAL_MS = 60 * 1e3;
 var MAX_CHUNKS_PER_MESSAGE = 64;
@@ -24995,6 +25029,8 @@ async function startConnection(params, pushSink) {
     state.connectedAtMs = Date.now();
     state.lastReceiveAtMs = state.connectedAtMs;
     state.lastSendAtMs = state.connectedAtMs;
+    state.lastSuccessfulConnectAtMs = state.connectedAtMs;
+    state.everConnected = true;
     push("grpc.connected", {
       ready: true,
       target: state.target,

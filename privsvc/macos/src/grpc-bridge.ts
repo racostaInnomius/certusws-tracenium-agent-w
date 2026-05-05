@@ -45,6 +45,41 @@ const CHANNEL_OPTIONS: grpc.ChannelOptions = {
 const WATCHDOG_INTERVAL_MS = 15_000;
 const DEAD_STREAM_THRESHOLD_MS = 150_000;
 
+// ── Self-restart circuit breaker ──────────────────────────────────────
+//
+// Last-resort safety net for the case where every other recovery path
+// has failed: the watchdog tore the bridge down, the agent-core asked
+// us to reconnect, but the reconnect attempts have been failing back
+// to back for too long. Without this, the privsvc just spins forever
+// emitting `grpc.connect_failed` while the agent assumes someone else
+// will fix it — none of the higher layers will, because launchd thinks
+// the daemon is healthy (the process is running fine) and the agent
+// has no authority to restart privsvc.
+//
+// Mechanics:
+//   * `lastSuccessfulConnectAtMs` is stamped on every successful
+//     `state.connected = true` (i.e. once HELLO has been written and
+//     the bridge believes the stream is live).
+//   * A `setInterval` checks every BREAKER_TICK_MS whether we've gone
+//     longer than BREAKER_THRESHOLD_MS WITHOUT being connected. If so,
+//     `process.exit(1)`. launchd's KeepAlive=true relaunches us
+//     immediately, which gets us a fresh process, fresh gRPC client,
+//     fresh TLS handshake — the nuclear option that always works.
+//
+// Why 5 minutes:
+//   * A healthy reconnect cycle takes <30s end-to-end (DNS, TLS, HELLO).
+//   * Sleep/wake reconnects we've measured top out at ~90s (network
+//     stack settling).
+//   * 5 min is long enough that no normal operation trips it, short
+//     enough that an operator opening a zombie laptop sees the device
+//     come back inside coffee-break time.
+//   * NEVER trip during initial boot before any agent has ever talked
+//     to us — see `everConnected` guard below. We don't want a daemon
+//     that's been freshly installed (and is correctly waiting for the
+//     agent to call `grpc.connect`) to suicide every 5 minutes.
+const BREAKER_TICK_MS = 30_000;
+const BREAKER_THRESHOLD_MS = 5 * 60 * 1000;
+
 type BridgeState = {
   client?: any;
   call?: grpc.ClientDuplexStream<any, any>;
@@ -74,6 +109,14 @@ type BridgeState = {
   lastReceiveAtMs?: number;
   lastSendAtMs?: number;
   watchdogTimer?: NodeJS.Timeout | null;
+  // Self-restart circuit breaker state. `lastSuccessfulConnectAtMs`
+  // stamps the wall-clock of the most recent HELLO that brought us to
+  // `connected=true`. `everConnected` flips once and stays — used to
+  // suppress the breaker on first-boot when no agent has ever asked
+  // us to connect yet. `breakerTimer` is the polling interval.
+  lastSuccessfulConnectAtMs?: number;
+  everConnected: boolean;
+  breakerTimer?: NodeJS.Timeout | null;
 };
 
 const state: BridgeState = {
@@ -81,8 +124,58 @@ const state: BridgeState = {
   connecting: false,
   chunks: new Map(),
   channelWatchGen: 0,
-  watchdogTimer: null
+  watchdogTimer: null,
+  everConnected: false,
+  breakerTimer: null
 };
+
+// Self-restart circuit breaker — armed at module load. We arm it
+// unconditionally (not from startConnection) because a daemon that
+// has been up >5 min in the "never even connected once" state is
+// already worth investigating; but we GATE the actual exit() on
+// `everConnected`, so a fresh install or a daemon that's correctly
+// idling waiting for agent-core to come up doesn't suicide.
+//
+// .unref() so the timer doesn't keep the daemon alive on shutdown.
+function tickBreaker() {
+  if (!state.everConnected) return; // first-boot safety: see comment above
+  if (state.connected) return; // healthy
+  const since = state.lastSuccessfulConnectAtMs ?? 0;
+  if (since === 0) return; // unreachable given everConnected, but cheap guard
+  const idleMs = Date.now() - since;
+  if (idleMs < BREAKER_THRESHOLD_MS) return;
+
+  // We've been disconnected for too long despite the agent presumably
+  // pushing reconnects at us. Something in this process is stuck
+  // (channel state, TLS context, DNS cache, anything). Hard exit and
+  // let launchd give us a clean slate.
+  logger.error("grpc_bridge_circuit_breaker_tripped", {
+    idleMs,
+    thresholdMs: BREAKER_THRESHOLD_MS,
+    lastSuccessfulConnectAtUtc: new Date(since).toISOString()
+  });
+  // Best-effort notify — won't make it through if push is also broken,
+  // but try anyway so an operator tailing the agent log can correlate.
+  try {
+    state.push?.({
+      v: 1,
+      method: "grpc.control.daemonExit",
+      params: { reason: "circuit_breaker", idleMs },
+      meta: {
+        tenantId: state.tenantId,
+        deviceId: state.deviceId,
+        connectionId: state.target
+      }
+    });
+  } catch {}
+  // Tiny delay so the log line + push have a chance to flush. 100ms
+  // is plenty for both stderr and the IPC pipe.
+  setTimeout(() => process.exit(1), 100).unref?.();
+}
+
+const breakerInterval = setInterval(tickBreaker, BREAKER_TICK_MS);
+breakerInterval.unref?.();
+state.breakerTimer = breakerInterval;
 
 // Incomplete chunked FACTS uploads are kept in `state.chunks` until the final
 // piece arrives. If the agent dies or the network drops between chunks, the
@@ -606,6 +699,11 @@ async function startConnection(params: Record<string, any>, pushSink: PushSink) 
     // baseline before the first server ping or our first heartbeat.
     state.lastReceiveAtMs = state.connectedAtMs;
     state.lastSendAtMs = state.connectedAtMs;
+    // Stamp the circuit breaker's "we have been alive at least once"
+    // baseline. From here on, going >BREAKER_THRESHOLD_MS without
+    // returning to this code path will trip the breaker.
+    state.lastSuccessfulConnectAtMs = state.connectedAtMs;
+    state.everConnected = true;
     push("grpc.connected", {
       ready: true,
       target: state.target,

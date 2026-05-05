@@ -22831,7 +22831,7 @@ var import_dotenv = __toESM(require_main());
 // package.json
 var package_default = {
   name: "certusws-tracenium-agent",
-  version: "1.1.11",
+  version: "1.1.12",
   description: "Tracenium Agent - Hardware & Software inventory collector",
   license: "MIT",
   author: {
@@ -25508,6 +25508,7 @@ function createGrpcClient(ctx) {
   const inFlightEvents = /* @__PURE__ */ new Set();
   let lastServerActivityMs = Date.now();
   stream.getLastServerActivityMs = () => lastServerActivityMs;
+  const SILENCE_THRESHOLD_MS2 = 27e4;
   attachPrivPushHandler(ctx, (pushMsg) => {
     try {
       const method = pushMsg?.method;
@@ -25879,7 +25880,22 @@ function createGrpcClient(ctx) {
       });
       return stream;
     },
-    isConnected: () => connected
+    // Reports "live" only if (a) the local connect handshake
+    // completed AND (b) we've heard from the server within the
+    // silence threshold. The local `connected` flag alone is
+    // insufficient: when the PrivSvc bridge goes zombie (post
+    // sleep/wake half-open TCP) it stops emitting `grpc.disconnected`
+    // at all, so `connected` stays `true` until something else
+    // resets it — meanwhile heartbeats `stream.write(...)` succeed
+    // into kernel buffer that never reaches the server, the dashboard
+    // shows the device offline, but the tray icon stays green and
+    // any caller that gates on `isConnected()` keeps trying. This
+    // staleness gate makes `isConnected()` track REAL liveness, not
+    // wishful thinking.
+    isConnected: () => {
+      if (!connected) return false;
+      return Date.now() - lastServerActivityMs <= SILENCE_THRESHOLD_MS2;
+    }
   };
   ctx.__grpcClientInstance = client;
   return client;
@@ -26432,6 +26448,10 @@ function startGrpcStream(ctx) {
           thresholdMs: SILENCE_THRESHOLD_MS
         });
         try {
+          ctx.trayStatus.markGrpcDisconnected();
+        } catch {
+        }
+        try {
           stream.emit("error", new Error("server_silent_timeout"));
         } catch {
         }
@@ -26461,7 +26481,21 @@ function startGrpcStream(ctx) {
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       if (shutdownRequested) return;
-      startGrpcStream(ctx);
+      try {
+        startGrpcStream(ctx);
+      } catch (err) {
+        ctx.logger?.error?.("gRPC stream: reconnect attempt threw, rescheduling", {
+          reason,
+          error: err?.message || String(err),
+          attempt: reconnectAttempts
+        });
+        try {
+          ctx.trayStatus.markGrpcDisconnected();
+        } catch {
+        }
+        reconnecting = false;
+        scheduleReconnect("reconnect_attempt_threw");
+      }
     }, delayMs);
   };
   try {

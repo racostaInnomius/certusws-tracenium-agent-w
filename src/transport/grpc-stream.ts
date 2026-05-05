@@ -751,6 +751,15 @@ stream = client.Connect();
           silentMs,
           thresholdMs: SILENCE_THRESHOLD_MS
         });
+        // Mark tray disconnected immediately. The PrivSvc bridge is
+        // supposed to push `grpc.disconnected` when the stream dies —
+        // but if we got here it's BECAUSE the bridge has gone silent
+        // and is failing to emit anything (zombie TCP / half-open
+        // socket post sleep+wake). Without this nudge, the tray keeps
+        // showing green for the entire reconnect cycle (potentially
+        // minutes) while the dashboard already shows the device as
+        // offline. Same fix as the catch in scheduleReconnect.
+        try { ctx.trayStatus.markGrpcDisconnected(); } catch {}
         // Tear down via the standard error path so reconnect
         // scheduling and metrics increment work as designed.
         try {
@@ -786,7 +795,38 @@ stream = client.Connect();
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       if (shutdownRequested) return;
-      startGrpcStream(ctx);
+      // Defensive try/catch around the recursive startGrpcStream call.
+      // Without it, ANY synchronous throw — e.g. createGrpcClient
+      // throwing because the cached PrivSvc IPC client is stale, or
+      // outbox.recoverStaleInflight failing on a corrupt SQLite —
+      // becomes an uncaught exception in the setTimeout callback. The
+      // process keeps running (Node logs unhandledException and
+      // continues), but `reconnecting = true` is never reset and the
+      // previous stream's `stopped = true` already fired, so NOTHING
+      // ever schedules another reconnect. The agent goes silently
+      // zombie: tray stays "connected", the bridge sees no traffic,
+      // and the dashboard slowly marks the device offline (~90s) while
+      // the user has no idea anything is wrong. We've seen 3 macOS
+      // hosts hit exactly this state after sleep/wake.
+      //
+      // On catch we reset the `reconnecting` flag and re-arm via
+      // scheduleReconnect so the exponential backoff carries us through
+      // whatever transient cause threw.
+      try {
+        startGrpcStream(ctx);
+      } catch (err: any) {
+        ctx.logger?.error?.("gRPC stream: reconnect attempt threw, rescheduling", {
+          reason,
+          error: err?.message || String(err),
+          attempt: reconnectAttempts
+        });
+        // Mark tray disconnected immediately — the bridge thinks it's
+        // up, but our retry path just blew up. Lying to the user with
+        // a green tray icon is worse than showing the truth.
+        try { ctx.trayStatus.markGrpcDisconnected(); } catch {}
+        reconnecting = false;
+        scheduleReconnect("reconnect_attempt_threw");
+      }
     }, delayMs);
   };
 

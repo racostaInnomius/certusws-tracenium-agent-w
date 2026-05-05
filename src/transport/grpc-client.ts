@@ -107,6 +107,15 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
   let lastServerActivityMs = Date.now();
   (stream as any).getLastServerActivityMs = () => lastServerActivityMs;
 
+  // Mirror of grpc-stream.ts SILENCE_THRESHOLD_MS. Kept here as a
+  // local constant (not imported) to avoid a circular dep — grpc-stream
+  // already imports from this file. If the threshold changes there,
+  // change it here too. The important invariant is: this MUST be ≥ the
+  // watchdog threshold, otherwise `isConnected()` would start lying
+  // "false" before the watchdog fires its reconnect, which would make
+  // heartbeats stop short of triggering any recovery.
+  const SILENCE_THRESHOLD_MS = 270_000;
+
   // Push from PrivSvc → re-emit as "data"
   attachPrivPushHandler(ctx, (pushMsg: any) => {
     try {
@@ -580,7 +589,22 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       ensureConnected().catch(() => {});
       return stream;
     },
-    isConnected: () => connected
+    // Reports "live" only if (a) the local connect handshake
+    // completed AND (b) we've heard from the server within the
+    // silence threshold. The local `connected` flag alone is
+    // insufficient: when the PrivSvc bridge goes zombie (post
+    // sleep/wake half-open TCP) it stops emitting `grpc.disconnected`
+    // at all, so `connected` stays `true` until something else
+    // resets it — meanwhile heartbeats `stream.write(...)` succeed
+    // into kernel buffer that never reaches the server, the dashboard
+    // shows the device offline, but the tray icon stays green and
+    // any caller that gates on `isConnected()` keeps trying. This
+    // staleness gate makes `isConnected()` track REAL liveness, not
+    // wishful thinking.
+    isConnected: () => {
+      if (!connected) return false;
+      return Date.now() - lastServerActivityMs <= SILENCE_THRESHOLD_MS;
+    }
   };
 
   (ctx as any).__grpcClientInstance = client;
