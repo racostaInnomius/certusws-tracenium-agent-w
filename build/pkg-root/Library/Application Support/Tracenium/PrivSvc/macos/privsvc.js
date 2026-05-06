@@ -24645,14 +24645,15 @@ function tripBreaker(reason, details) {
 function tickBreaker() {
   if (!state.everConnected) return;
   if (!state.connected) {
-    const since = state.lastSuccessfulConnectAtMs ?? 0;
-    if (since === 0) return;
-    const idleMs = Date.now() - since;
+    const lastDisc = state.lastDisconnectedAtMs ?? 0;
+    if (lastDisc === 0) return;
+    const idleMs = Date.now() - lastDisc;
     if (idleMs < BREAKER_THRESHOLD_MS) return;
     tripBreaker("disconnected_too_long", {
       idleMs,
       thresholdMs: BREAKER_THRESHOLD_MS,
-      lastSuccessfulConnectAtUtc: new Date(since).toISOString()
+      lastDisconnectedAtUtc: new Date(lastDisc).toISOString(),
+      lastSuccessfulConnectAtUtc: state.lastSuccessfulConnectAtMs ? new Date(state.lastSuccessfulConnectAtMs).toISOString() : null
     });
     return;
   }
@@ -24742,6 +24743,9 @@ function teardownBridge(reason, details) {
   const wasConnected = state.connected || state.connecting;
   state.connected = false;
   state.connecting = false;
+  if (wasConnected) {
+    state.lastDisconnectedAtMs = Date.now();
+  }
   state.channelWatchGen += 1;
   stopWatchdog();
   state.connectedAtMs = void 0;
@@ -25046,6 +25050,7 @@ async function startConnection(params, pushSink) {
     state.lastSendAtMs = state.connectedAtMs;
     state.lastSuccessfulConnectAtMs = state.connectedAtMs;
     state.everConnected = true;
+    state.lastDisconnectedAtMs = void 0;
     push("grpc.connected", {
       ready: true,
       target: state.target,
