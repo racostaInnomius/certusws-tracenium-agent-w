@@ -11,6 +11,7 @@ import {
   handleHeartbeat
 } from "./grpc-bridge";
 import { handlePatchInstall, handlePatchScan } from "./patch-management";
+import { handlePmpReadCheckState, handlePmpRemediate } from "./pmp-remediation";
 import { handleSecurityPosture } from "./security-posture";
 import { handleSdpDetect, handleSdpDownload, handleSdpInstall } from "./sdp";
 import { logger } from "./logger";
@@ -25,9 +26,15 @@ function requiresRoot(method: string) {
   // primitive runs in privsvc and we don't want a partial-privilege
   // attack surface where an unprivileged caller can probe the
   // detection runner with arbitrary commands. Same gate as crypto/grpc.
+  //
+  // pmp.* covers Phase 1 Patch Management v2 remediation primitives
+  // (read_check_state + remediate). Both run privileged work (registry
+  // reads on Windows, defaults/launchctl on macOS, etc.) and the
+  // unprivileged surface is intentionally zero.
   return method.startsWith("crypto.")
       || method.startsWith("grpc.")
       || method.startsWith("sdp.")
+      || method.startsWith("pmp.")
       || method === "patch.install";
 }
 
@@ -114,6 +121,17 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "sdp.install":
       return handleSdpInstall(req);
+
+    // PMv2 — non-patch security remediation. See privsvc/macos/src/
+    // pmp-remediation.ts. Phase 1 covers Windows-only checkIds —
+    // these handlers return `unsupported_check` for everything until
+    // Phase 2 lands macOS-applicable handlers (FileVault, Gatekeeper,
+    // screen lock, SIP).
+    case "pmp.read_check_state":
+      return handlePmpReadCheckState(req);
+
+    case "pmp.remediate":
+      return handlePmpRemediate(req);
 
     default:
       return fail(req.id, "not_supported", `Unsupported method: ${req.method}`);

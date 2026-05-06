@@ -13,6 +13,26 @@ export type PrivSvcMethod =
   | "security.compliance"
   | "patch.scan"
   | "patch.install"
+  // Patch Management v2 — non-patch security remediation (TLS,
+  // ciphers, SMB, firewall, etc) routed through the same PMP
+  // plugin. Two methods:
+  //   * `pmp.read_check_state` — read-only probe of the local
+  //                              system state for a given checkId.
+  //                              Used pre-install (idempotency
+  //                              compute), pre-apply (state_before),
+  //                              and post-apply (verification +
+  //                              state_after). Returns
+  //                              { state, isCompliant, supported }.
+  //   * `pmp.remediate`        — apply the registry / plist /
+  //                              powershell change. Privsvc dispatches
+  //                              by checkId to a hardcoded whitelist
+  //                              — NEVER executes catalog-supplied
+  //                              scripts. Returns
+  //                              { exitCode, stderrExcerpt,
+  //                                durationMs, requiresReboot,
+  //                                changesApplied[] }.
+  | "pmp.read_check_state"
+  | "pmp.remediate"
   | "crypto.csr.generate" // enrollment CSR generation
   | "crypto.cert.install" // install client cert (bind to existing key)
   // gRPC bridge (PrivSvc owns mTLS private key + channel)

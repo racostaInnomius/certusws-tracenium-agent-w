@@ -43,14 +43,20 @@ public sealed class Router
             req.Meta?.TenantId,
             req.Meta?.DeviceId);
 
-        // Enforce LocalSystem for sensitive operations (crypto + gRPC bridge + sdp).
+        // Enforce LocalSystem for sensitive operations (crypto + gRPC bridge + sdp + pmp).
         // sdp.* (download / detect / install) all run privileged work
         // — even sdp.detect's command_exit runs arbitrary commands the
         // catalog operator specified, which is a privileged operation
         // by definition. Same gate as crypto/grpc.
+        //
+        // pmp.* covers the Patch Management v2 remediation primitives
+        // (read_check_state + remediate). Both touch privileged
+        // surface — registry edits, powershell cmdlets, optional-
+        // feature toggles — and there is no unprivileged subset.
         if (req.Method.StartsWith("grpc.", StringComparison.OrdinalIgnoreCase) ||
             req.Method.StartsWith("crypto.", StringComparison.OrdinalIgnoreCase) ||
-            req.Method.StartsWith("sdp.", StringComparison.OrdinalIgnoreCase))
+            req.Method.StartsWith("sdp.", StringComparison.OrdinalIgnoreCase) ||
+            req.Method.StartsWith("pmp.", StringComparison.OrdinalIgnoreCase))
         {
             if (!IsLocalSystem())
             {
@@ -100,6 +106,13 @@ public sealed class Router
             "sdp.detect" => Sdp.HandleDetect(req),
             "sdp.download" => Sdp.HandleDownload(req),
             "sdp.install" => Sdp.HandleInstall(req),
+
+            // PMv2 — Phase 1-E remediation primitives. See Ipc/PmpRemediation.cs.
+            // Phase 1 dispatch table covers 4 Windows checkIds:
+            // legacy_tls_disabled / weak_ciphers_disabled /
+            // smbv1_disabled / firewall.profiles_enabled.
+            "pmp.read_check_state" => PmpRemediation.HandleReadCheckState(req),
+            "pmp.remediate" => PmpRemediation.HandleRemediate(req),
 
             _ => Task.FromResult(PrivSvcResponse.Fail(req.Id, "not_supported", $"Unsupported method: {req.Method}"))
         };

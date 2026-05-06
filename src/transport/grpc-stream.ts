@@ -6,7 +6,8 @@ import { PolicyStore } from "../core/policy-store";
 import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { Namespaces, DeviceFacts } from "../domain/device-facts";
 import type { PmpNamespace } from "../domain/pmp-types";
-import { updatePmpState } from "../plugins/pmp/state";
+import { updatePmpState, isRemediateInFlight } from "../plugins/pmp/state";
+import { runRemediation } from "../plugins/pmp/remediation";
 import { runSoftwareInstall } from "../plugins/sdp";
 import { runUpdateTask } from "../update/update-task";
 
@@ -454,6 +455,19 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
         };
       }
 
+      // PMv2 cross-lock: refuse a patch_install while a
+      // patch_remediate is in flight. The remediate path uses a
+      // module-level flag in plugins/pmp/state.ts; the install
+      // path uses _patchInstallInProgress on ctx. Both check the
+      // OTHER lock so a registry edit can't race a Windows Update
+      // installer.
+      if (isRemediateInFlight()) {
+        return {
+          status: 1,
+          message: "patch_install retry: patch_remediate in progress"
+        };
+      }
+
       const mode = String(payload?.mode || "install").trim().toLowerCase();
       const kbArticleIds = Array.isArray(payload?.kbArticleIds)
         ? payload.kbArticleIds.map((item: unknown) => String(item || "").trim()).filter(Boolean)
@@ -565,6 +579,32 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
         };
       } finally {
         (ctx as any)._patchInstallInProgress = false;
+      }
+    }
+
+    case "patch_remediate": {
+      // Patch Management v2 — non-patch security remediation
+      // (TLS, ciphers, SMB, firewall). Routed through the existing
+      // PMP plugin so it shares the install/remediate concurrency
+      // lock; envelope + outcome encoding follow the same pattern
+      // as software_install (see runRemediation in
+      // plugins/pmp/remediation.ts).
+      try {
+        const ack = await runRemediation(ctx, jobId, payload);
+        return { status: ack.ackStatus, message: ack.ackMessage };
+      } catch (err: any) {
+        // runRemediation is documented as non-throwing — this is a
+        // belt-and-braces guard. Treat as transient so the
+        // orchestrator may retry (a transient privsvc IPC blip
+        // shouldn't burn the job).
+        ctx.logger?.error?.("patch_remediate handler threw unexpectedly", {
+          jobId,
+          error: err?.message || String(err),
+        });
+        return {
+          status: 1,
+          message: `patch_remediate:failed;remediationId=${Number(payload?.remediationId) || 0};reason=handler_threw`,
+        };
       }
     }
 
