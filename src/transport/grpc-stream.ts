@@ -764,9 +764,34 @@ stream = client.Connect();
           armHeartbeat();
           return;
         }
-        if (!stream || !client.isConnected?.()) {
-          // Stream not up yet — don't re-arm; the READY handler on
-          // reconnect will kick off a fresh cycle.
+        if (!stream) {
+          // No stream object at all — defensive guard. Re-arming
+          // here would NPE on the write below.
+          return;
+        }
+        if (!client.isConnected?.()) {
+          // BEFORE Patch D: we returned silently here on the
+          // assumption that READY would re-kick us. That created a
+          // dead-end after the silence-staleness check in
+          // `isConnected()` (Patch B): once `lastServerActivityMs`
+          // crossed SILENCE_THRESHOLD_MS, `isConnected()` started
+          // reporting false even with the local `connected` flag
+          // still true — heartbeats stopped, NOTHING ELSE on either
+          // side noticed (privsvc thinks it's still connected, no
+          // grpc.disconnected push ever arrives), and the stream sat
+          // zombie until an operator kicked privsvc by hand.
+          //
+          // Patch D — treat this exactly like an explicit error:
+          // mark tray disconnected immediately, emit("error") so the
+          // existing on("error") flow runs `stop()` + scheduleReconnect()
+          // → eventual `priv.call("grpc.connect")` that opens a fresh
+          // socket. The heartbeat path becomes the active liveness
+          // detector when the watchdog hasn't fired (e.g. because
+          // `lastServerActivityMs` was updated by some non-server
+          // event we shouldn't have counted as activity).
+          ctx.logger?.warn?.("gRPC stream: heartbeat tick saw stale connection, forcing reconnect");
+          try { ctx.trayStatus.markGrpcDisconnected(); } catch {}
+          try { stream.emit("error", new Error("heartbeat_saw_stale_connection")); } catch {}
           return;
         }
 
@@ -784,7 +809,10 @@ stream = client.Connect();
         ctx.logger?.error?.("Heartbeat send failed", err?.message || err);
       } finally {
         // Re-arm regardless of success — a transient write failure
-        // shouldn't silence heartbeats forever.
+        // shouldn't silence heartbeats forever. (When we DO bail out
+        // via the staleness branch above, we returned BEFORE this
+        // finally — `stop()` will run via the on("error") handler
+        // and clear the timer state cleanly.)
         armHeartbeat();
       }
     }, HEARTBEAT_INTERVAL_MS);

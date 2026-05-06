@@ -137,30 +137,13 @@ const state: BridgeState = {
 // idling waiting for agent-core to come up doesn't suicide.
 //
 // .unref() so the timer doesn't keep the daemon alive on shutdown.
-function tickBreaker() {
-  if (!state.everConnected) return; // first-boot safety: see comment above
-  if (state.connected) return; // healthy
-  const since = state.lastSuccessfulConnectAtMs ?? 0;
-  if (since === 0) return; // unreachable given everConnected, but cheap guard
-  const idleMs = Date.now() - since;
-  if (idleMs < BREAKER_THRESHOLD_MS) return;
-
-  // We've been disconnected for too long despite the agent presumably
-  // pushing reconnects at us. Something in this process is stuck
-  // (channel state, TLS context, DNS cache, anything). Hard exit and
-  // let launchd give us a clean slate.
-  logger.error("grpc_bridge_circuit_breaker_tripped", {
-    idleMs,
-    thresholdMs: BREAKER_THRESHOLD_MS,
-    lastSuccessfulConnectAtUtc: new Date(since).toISOString()
-  });
-  // Best-effort notify — won't make it through if push is also broken,
-  // but try anyway so an operator tailing the agent log can correlate.
+function tripBreaker(reason: string, details: Record<string, any>) {
+  logger.error("grpc_bridge_circuit_breaker_tripped", { reason, ...details });
   try {
     state.push?.({
       v: 1,
       method: "grpc.control.daemonExit",
-      params: { reason: "circuit_breaker", idleMs },
+      params: { reason, ...details },
       meta: {
         tenantId: state.tenantId,
         deviceId: state.deviceId,
@@ -168,9 +151,61 @@ function tickBreaker() {
       }
     });
   } catch {}
-  // Tiny delay so the log line + push have a chance to flush. 100ms
-  // is plenty for both stderr and the IPC pipe.
-  setTimeout(() => process.exit(1), 100).unref?.();
+  // Slightly longer flush window than the 100ms we had before. With
+  // stdout still occasionally block-buffered we want the launchd
+  // FD inheritance + the IPC pipe BOTH to drain before we exit.
+  setTimeout(() => process.exit(1), 250).unref?.();
+}
+
+function tickBreaker() {
+  if (!state.everConnected) return; // first-boot safety: see comment above
+
+  // ── Case 1: classically disconnected too long ────────────────────
+  // The original v1 path: agent has been pushing reconnects at us
+  // and they've all failed beyond the threshold.
+  if (!state.connected) {
+    const since = state.lastSuccessfulConnectAtMs ?? 0;
+    if (since === 0) return; // unreachable given everConnected, but cheap guard
+    const idleMs = Date.now() - since;
+    if (idleMs < BREAKER_THRESHOLD_MS) return;
+    tripBreaker("disconnected_too_long", {
+      idleMs,
+      thresholdMs: BREAKER_THRESHOLD_MS,
+      lastSuccessfulConnectAtUtc: new Date(since).toISOString(),
+    });
+    return;
+  }
+
+  // ── Case 2: ZOMBIE — connected=true but no recv activity ────────
+  // Patch E (post real-world incident, May 2026): a TCP that goes
+  // half-open after the backend SIGKILLs / network partition can leave
+  // `state.connected === true` indefinitely on this side. The bridge
+  // watchdog (DEAD_STREAM_THRESHOLD_MS = 150s) was supposed to catch
+  // this, but in practice it MISSED the case (suspected stdout block-
+  // buffering hiding the teardown log + a still-not-fully-explained
+  // condition where lastReceiveAtMs/lastSendAtMs stayed fresh). The
+  // breaker is the last line of defence: if we go BREAKER_THRESHOLD_MS
+  // without hearing ONE thing back from the server (server pings
+  // every 90s, so `lastReceiveAtMs` should normally never be more
+  // than ~95s old on a healthy stream), tear the daemon down so
+  // launchd hands us a fresh process with a fresh socket.
+  //
+  // We DELIBERATELY use lastReceiveAtMs only — not lastSendAtMs —
+  // because the agent could be sending heartbeats into a dead TCP
+  // forever (kernel buffer accepts, server never reads), keeping
+  // lastSendAtMs deceptively fresh. The only real liveness signal
+  // is "the server actually said something to us recently".
+  const lastRecv = state.lastReceiveAtMs ?? state.connectedAtMs ?? 0;
+  if (lastRecv === 0) return;
+  const silentMs = Date.now() - lastRecv;
+  if (silentMs < BREAKER_THRESHOLD_MS) return;
+
+  tripBreaker("connected_but_silent", {
+    silentMs,
+    thresholdMs: BREAKER_THRESHOLD_MS,
+    lastReceiveAtUtc: new Date(lastRecv).toISOString(),
+    note: "TCP half-open suspected — bridge watchdog should have caught this earlier",
+  });
 }
 
 const breakerInterval = setInterval(tickBreaker, BREAKER_TICK_MS);
