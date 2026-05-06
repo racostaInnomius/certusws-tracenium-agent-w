@@ -111,10 +111,14 @@ type BridgeState = {
   watchdogTimer?: NodeJS.Timeout | null;
   // Self-restart circuit breaker state. `lastSuccessfulConnectAtMs`
   // stamps the wall-clock of the most recent HELLO that brought us to
-  // `connected=true`. `everConnected` flips once and stays — used to
-  // suppress the breaker on first-boot when no agent has ever asked
-  // us to connect yet. `breakerTimer` is the polling interval.
+  // `connected=true`. `lastDisconnectedAtMs` stamps the moment we
+  // most recently transitioned from connected → disconnected; the
+  // breaker measures time-since-disconnect (NOT time-since-last-
+  // connect — Patch I fix). `everConnected` flips once and stays —
+  // used to suppress the breaker on first-boot when no agent has
+  // ever asked us to connect yet.
   lastSuccessfulConnectAtMs?: number;
+  lastDisconnectedAtMs?: number;
   everConnected: boolean;
   breakerTimer?: NodeJS.Timeout | null;
 };
@@ -161,17 +165,35 @@ function tickBreaker() {
   if (!state.everConnected) return; // first-boot safety: see comment above
 
   // ── Case 1: classically disconnected too long ────────────────────
-  // The original v1 path: agent has been pushing reconnects at us
-  // and they've all failed beyond the threshold.
+  // Agent has been trying to reconnect (with backoff) and not getting
+  // through. We trip if the gap since the disconnect itself exceeds
+  // the threshold.
+  //
+  // Patch I (May 2026 incident, follow-up to Patch E): we used to
+  // measure `now - lastSuccessfulConnectAtMs`, which is the wall-
+  // clock since the last HELLO succeeded. That's wrong: a healthy
+  // 30-minute connection that just dropped a moment ago would show
+  // `idleMs=30min` and trip the breaker INSTANTLY, before the
+  // agent's exponential-backoff reconnect even gets a chance to
+  // retry. The metric we actually care about is "how long have we
+  // been DISCONNECTED" — which is `now - lastDisconnectedAtMs`.
+  // `lastDisconnectedAtMs` is stamped by teardownBridge() at the
+  // moment connected flips true → false, so on a brand-new drop
+  // it's ~0ms and we (correctly) leave the agent's reconnect loop
+  // alone. Only if the agent stays unable to reconnect for the full
+  // BREAKER_THRESHOLD_MS do we relaunch the daemon.
   if (!state.connected) {
-    const since = state.lastSuccessfulConnectAtMs ?? 0;
-    if (since === 0) return; // unreachable given everConnected, but cheap guard
-    const idleMs = Date.now() - since;
+    const lastDisc = state.lastDisconnectedAtMs ?? 0;
+    if (lastDisc === 0) return; // never disconnected: nothing to measure
+    const idleMs = Date.now() - lastDisc;
     if (idleMs < BREAKER_THRESHOLD_MS) return;
     tripBreaker("disconnected_too_long", {
       idleMs,
       thresholdMs: BREAKER_THRESHOLD_MS,
-      lastSuccessfulConnectAtUtc: new Date(since).toISOString(),
+      lastDisconnectedAtUtc: new Date(lastDisc).toISOString(),
+      lastSuccessfulConnectAtUtc: state.lastSuccessfulConnectAtMs
+        ? new Date(state.lastSuccessfulConnectAtMs).toISOString()
+        : null,
     });
     return;
   }
@@ -349,6 +371,16 @@ function teardownBridge(reason: string, details?: Record<string, any>) {
   const wasConnected = state.connected || state.connecting;
   state.connected = false;
   state.connecting = false;
+
+  // Patch I — stamp the disconnect moment for the breaker. We only
+  // stamp on the FIRST teardown after a connect (i.e. when wasConnected
+  // was true); otherwise back-to-back teardowns from the same dropped
+  // session would push the timestamp forward and mask a real "stuck
+  // disconnected" state.
+  if (wasConnected) {
+    state.lastDisconnectedAtMs = Date.now();
+  }
+
   // Bump the watch generation so any older watcher callback that fires
   // after this point is ignored.
   state.channelWatchGen += 1;
@@ -739,6 +771,11 @@ async function startConnection(params: Record<string, any>, pushSink: PushSink) 
     // returning to this code path will trip the breaker.
     state.lastSuccessfulConnectAtMs = state.connectedAtMs;
     state.everConnected = true;
+    // Patch I — once we're freshly connected, clear the disconnect
+    // stamp. The breaker should only measure time-since-CURRENT-
+    // disconnect, not time-since-some-drop-an-hour-ago that we long
+    // since recovered from.
+    state.lastDisconnectedAtMs = undefined;
     push("grpc.connected", {
       ready: true,
       target: state.target,
