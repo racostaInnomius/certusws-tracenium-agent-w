@@ -675,14 +675,14 @@ var require_tls_helpers = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CIPHER_SUITES = void 0;
     exports2.getDefaultRootsData = getDefaultRootsData;
-    var fs5 = require("fs");
+    var fs6 = require("fs");
     exports2.CIPHER_SUITES = process.env.GRPC_SSL_CIPHER_SUITES;
     var DEFAULT_ROOTS_FILE_PATH = process.env.GRPC_DEFAULT_SSL_ROOTS_FILE_PATH;
     var defaultRootsData = null;
     function getDefaultRootsData() {
       if (DEFAULT_ROOTS_FILE_PATH) {
         if (defaultRootsData === null) {
-          defaultRootsData = fs5.readFileSync(DEFAULT_ROOTS_FILE_PATH);
+          defaultRootsData = fs6.readFileSync(DEFAULT_ROOTS_FILE_PATH);
         }
         return defaultRootsData;
       }
@@ -713,19 +713,19 @@ var require_uri_parser = __commonJS({
       };
     }
     var NUMBER_REGEX = /^\d+$/;
-    function splitHostPort(path4) {
-      if (path4.startsWith("[")) {
-        const hostEnd = path4.indexOf("]");
+    function splitHostPort(path5) {
+      if (path5.startsWith("[")) {
+        const hostEnd = path5.indexOf("]");
         if (hostEnd === -1) {
           return null;
         }
-        const host = path4.substring(1, hostEnd);
+        const host = path5.substring(1, hostEnd);
         if (host.indexOf(":") === -1) {
           return null;
         }
-        if (path4.length > hostEnd + 1) {
-          if (path4[hostEnd + 1] === ":") {
-            const portString = path4.substring(hostEnd + 2);
+        if (path5.length > hostEnd + 1) {
+          if (path5[hostEnd + 1] === ":") {
+            const portString = path5.substring(hostEnd + 2);
             if (NUMBER_REGEX.test(portString)) {
               return {
                 host,
@@ -743,7 +743,7 @@ var require_uri_parser = __commonJS({
           };
         }
       } else {
-        const splitPath = path4.split(":");
+        const splitPath = path5.split(":");
         if (splitPath.length === 2) {
           if (NUMBER_REGEX.test(splitPath[1])) {
             return {
@@ -755,7 +755,7 @@ var require_uri_parser = __commonJS({
           }
         } else {
           return {
-            host: path4
+            host: path5
           };
         }
       }
@@ -3755,14 +3755,14 @@ var require_client_interceptors = __commonJS({
       }
     };
     exports2.InterceptingCall = InterceptingCall;
-    function getCall(channel, path4, options) {
+    function getCall(channel, path5, options) {
       var _a, _b;
       const deadline = (_a = options.deadline) !== null && _a !== void 0 ? _a : Infinity;
       const host = options.host;
       const parent = (_b = options.parent) !== null && _b !== void 0 ? _b : null;
       const propagateFlags = options.propagate_flags;
       const credentials2 = options.credentials;
-      const call = channel.createCall(path4, deadline, host, parent, propagateFlags);
+      const call = channel.createCall(path5, deadline, host, parent, propagateFlags);
       if (credentials2) {
         call.setCredentials(credentials2);
       }
@@ -4332,9 +4332,9 @@ var require_make_client = __commonJS({
       ServiceClientImpl.serviceName = serviceName;
       return ServiceClientImpl;
     }
-    function partial(fn, path4, serialize, deserialize) {
+    function partial(fn, path5, serialize, deserialize) {
       return function(...args) {
-        return fn.call(this, path4, serialize, deserialize, ...args);
+        return fn.call(this, path5, serialize, deserialize, ...args);
       };
     }
     function isProtobufTypeDefinition(obj) {
@@ -6189,7 +6189,7 @@ var require_fetch = __commonJS({
     module2.exports = fetch;
     var asPromise = require_aspromise();
     var inquire2 = require_inquire();
-    var fs5 = inquire2("fs");
+    var fs6 = inquire2("fs");
     function fetch(filename, options, callback) {
       if (typeof options === "function") {
         callback = options;
@@ -6198,8 +6198,8 @@ var require_fetch = __commonJS({
         options = {};
       if (!callback)
         return asPromise(fetch, this, filename, options);
-      if (!options.xhr && fs5 && fs5.readFile)
-        return fs5.readFile(filename, function fetchReadFileCallback(err, contents) {
+      if (!options.xhr && fs6 && fs6.readFile)
+        return fs6.readFile(filename, function fetchReadFileCallback(err, contents) {
           return err && typeof XMLHttpRequest !== "undefined" ? fetch.xhr(filename, options, callback) : err ? callback(err) : callback(null, options.binary ? contents : contents.toString("utf8"));
         });
       return fetch.xhr(filename, options, callback);
@@ -6237,15 +6237,15 @@ var require_fetch = __commonJS({
 var require_path = __commonJS({
   "node_modules/@protobufjs/path/index.js"(exports2) {
     "use strict";
-    var path4 = exports2;
+    var path5 = exports2;
     var isAbsolute = (
       /**
        * Tests if the specified path is absolute.
        * @param {string} path Path to test
        * @returns {boolean} `true` if path is absolute
        */
-      path4.isAbsolute = function isAbsolute2(path5) {
-        return /^(?:\/|\w+:)/.test(path5);
+      path5.isAbsolute = function isAbsolute2(path6) {
+        return /^(?:\/|\w+:)/.test(path6);
       }
     );
     var normalize = (
@@ -6254,9 +6254,9 @@ var require_path = __commonJS({
        * @param {string} path Path to normalize
        * @returns {string} Normalized path
        */
-      path4.normalize = function normalize2(path5) {
-        path5 = path5.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
-        var parts = path5.split("/"), absolute = isAbsolute(path5), prefix = "";
+      path5.normalize = function normalize2(path6) {
+        path6 = path6.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+        var parts = path6.split("/"), absolute = isAbsolute(path6), prefix = "";
         if (absolute)
           prefix = parts.shift() + "/";
         for (var i = 0; i < parts.length; ) {
@@ -6275,7 +6275,7 @@ var require_path = __commonJS({
         return prefix + parts.join("/");
       }
     );
-    path4.resolve = function resolve(originPath, includePath, alreadyNormalized) {
+    path5.resolve = function resolve(originPath, includePath, alreadyNormalized) {
       if (!alreadyNormalized)
         includePath = normalize(includePath);
       if (isAbsolute(includePath))
@@ -6426,16 +6426,16 @@ var require_namespace = __commonJS({
       object.onRemove(this);
       return clearCache(this);
     };
-    Namespace.prototype.define = function define2(path4, json) {
-      if (util.isString(path4))
-        path4 = path4.split(".");
-      else if (!Array.isArray(path4))
+    Namespace.prototype.define = function define2(path5, json) {
+      if (util.isString(path5))
+        path5 = path5.split(".");
+      else if (!Array.isArray(path5))
         throw TypeError("illegal path");
-      if (path4 && path4.length && path4[0] === "")
+      if (path5 && path5.length && path5[0] === "")
         throw Error("path must be relative");
       var ptr = this;
-      while (path4.length > 0) {
-        var part = path4.shift();
+      while (path5.length > 0) {
+        var part = path5.shift();
         if (ptr.nested && ptr.nested[part]) {
           ptr = ptr.nested[part];
           if (!(ptr instanceof Namespace))
@@ -6470,26 +6470,26 @@ var require_namespace = __commonJS({
       });
       return this;
     };
-    Namespace.prototype.lookup = function lookup(path4, filterTypes, parentAlreadyChecked) {
+    Namespace.prototype.lookup = function lookup(path5, filterTypes, parentAlreadyChecked) {
       if (typeof filterTypes === "boolean") {
         parentAlreadyChecked = filterTypes;
         filterTypes = void 0;
       } else if (filterTypes && !Array.isArray(filterTypes))
         filterTypes = [filterTypes];
-      if (util.isString(path4) && path4.length) {
-        if (path4 === ".")
+      if (util.isString(path5) && path5.length) {
+        if (path5 === ".")
           return this.root;
-        path4 = path4.split(".");
-      } else if (!path4.length)
+        path5 = path5.split(".");
+      } else if (!path5.length)
         return this;
-      var flatPath = path4.join(".");
-      if (path4[0] === "")
-        return this.root.lookup(path4.slice(1), filterTypes);
+      var flatPath = path5.join(".");
+      if (path5[0] === "")
+        return this.root.lookup(path5.slice(1), filterTypes);
       var found = this.root._fullyQualifiedObjects && this.root._fullyQualifiedObjects["." + flatPath];
       if (found && (!filterTypes || filterTypes.indexOf(found.constructor) > -1)) {
         return found;
       }
-      found = this._lookupImpl(path4, flatPath);
+      found = this._lookupImpl(path5, flatPath);
       if (found && (!filterTypes || filterTypes.indexOf(found.constructor) > -1)) {
         return found;
       }
@@ -6497,7 +6497,7 @@ var require_namespace = __commonJS({
         return null;
       var current = this;
       while (current.parent) {
-        found = current.parent._lookupImpl(path4, flatPath);
+        found = current.parent._lookupImpl(path5, flatPath);
         if (found && (!filterTypes || filterTypes.indexOf(found.constructor) > -1)) {
           return found;
         }
@@ -6505,49 +6505,49 @@ var require_namespace = __commonJS({
       }
       return null;
     };
-    Namespace.prototype._lookupImpl = function lookup(path4, flatPath) {
+    Namespace.prototype._lookupImpl = function lookup(path5, flatPath) {
       if (Object.prototype.hasOwnProperty.call(this._lookupCache, flatPath)) {
         return this._lookupCache[flatPath];
       }
-      var found = this.get(path4[0]);
+      var found = this.get(path5[0]);
       var exact = null;
       if (found) {
-        if (path4.length === 1) {
+        if (path5.length === 1) {
           exact = found;
         } else if (found instanceof Namespace) {
-          path4 = path4.slice(1);
-          exact = found._lookupImpl(path4, path4.join("."));
+          path5 = path5.slice(1);
+          exact = found._lookupImpl(path5, path5.join("."));
         }
       } else {
         for (var i = 0; i < this.nestedArray.length; ++i)
-          if (this._nestedArray[i] instanceof Namespace && (found = this._nestedArray[i]._lookupImpl(path4, flatPath)))
+          if (this._nestedArray[i] instanceof Namespace && (found = this._nestedArray[i]._lookupImpl(path5, flatPath)))
             exact = found;
       }
       this._lookupCache[flatPath] = exact;
       return exact;
     };
-    Namespace.prototype.lookupType = function lookupType(path4) {
-      var found = this.lookup(path4, [Type]);
+    Namespace.prototype.lookupType = function lookupType(path5) {
+      var found = this.lookup(path5, [Type]);
       if (!found)
-        throw Error("no such type: " + path4);
+        throw Error("no such type: " + path5);
       return found;
     };
-    Namespace.prototype.lookupEnum = function lookupEnum(path4) {
-      var found = this.lookup(path4, [Enum]);
+    Namespace.prototype.lookupEnum = function lookupEnum(path5) {
+      var found = this.lookup(path5, [Enum]);
       if (!found)
-        throw Error("no such Enum '" + path4 + "' in " + this);
+        throw Error("no such Enum '" + path5 + "' in " + this);
       return found;
     };
-    Namespace.prototype.lookupTypeOrEnum = function lookupTypeOrEnum(path4) {
-      var found = this.lookup(path4, [Type, Enum]);
+    Namespace.prototype.lookupTypeOrEnum = function lookupTypeOrEnum(path5) {
+      var found = this.lookup(path5, [Type, Enum]);
       if (!found)
-        throw Error("no such Type or Enum '" + path4 + "' in " + this);
+        throw Error("no such Type or Enum '" + path5 + "' in " + this);
       return found;
     };
-    Namespace.prototype.lookupService = function lookupService(path4) {
-      var found = this.lookup(path4, [Service]);
+    Namespace.prototype.lookupService = function lookupService(path5) {
+      var found = this.lookup(path5, [Service]);
       if (!found)
-        throw Error("no such Service '" + path4 + "' in " + this);
+        throw Error("no such Service '" + path5 + "' in " + this);
       return found;
     };
     Namespace._configure = function(Type_, Service_, Enum_) {
@@ -7915,14 +7915,14 @@ var require_util = __commonJS({
       Object.defineProperty(object, "$type", { value: enm, enumerable: false });
       return enm;
     };
-    util.setProperty = function setProperty(dst, path4, value, ifNotSet) {
-      function setProp(dst2, path5, value2) {
-        var part = path5.shift();
+    util.setProperty = function setProperty(dst, path5, value, ifNotSet) {
+      function setProp(dst2, path6, value2) {
+        var part = path6.shift();
         if (part === "__proto__" || part === "prototype") {
           return dst2;
         }
-        if (path5.length > 0) {
-          dst2[part] = setProp(dst2[part] || {}, path5, value2);
+        if (path6.length > 0) {
+          dst2[part] = setProp(dst2[part] || {}, path6, value2);
         } else {
           var prevValue = dst2[part];
           if (prevValue && ifNotSet)
@@ -7935,10 +7935,10 @@ var require_util = __commonJS({
       }
       if (typeof dst !== "object")
         throw TypeError("dst must be an object");
-      if (!path4)
+      if (!path5)
         throw TypeError("path must be specified");
-      path4 = path4.split(".");
-      return setProp(dst, path4, value);
+      path5 = path5.split(".");
+      return setProp(dst, path5, value);
     };
     Object.defineProperty(util, "decorateRoot", {
       get: function() {
@@ -8484,12 +8484,12 @@ var require_object = __commonJS({
        */
       fullName: {
         get: function() {
-          var path4 = [this.name], ptr = this.parent;
+          var path5 = [this.name], ptr = this.parent;
           while (ptr) {
-            path4.unshift(ptr.name);
+            path5.unshift(ptr.name);
             ptr = ptr.parent;
           }
-          return path4.join(".");
+          return path5.join(".");
         }
       }
     });
@@ -12478,19 +12478,19 @@ var require_util2 = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.addCommonProtos = exports2.loadProtosWithOptionsSync = exports2.loadProtosWithOptions = void 0;
-    var fs5 = require("fs");
-    var path4 = require("path");
+    var fs6 = require("fs");
+    var path5 = require("path");
     var Protobuf = require_protobufjs();
     function addIncludePathResolver(root, includePaths) {
       const originalResolvePath = root.resolvePath;
       root.resolvePath = (origin, target) => {
-        if (path4.isAbsolute(target)) {
+        if (path5.isAbsolute(target)) {
           return target;
         }
         for (const directory of includePaths) {
-          const fullPath = path4.join(directory, target);
+          const fullPath = path5.join(directory, target);
           try {
-            fs5.accessSync(fullPath, fs5.constants.R_OK);
+            fs6.accessSync(fullPath, fs6.constants.R_OK);
             return fullPath;
           } catch (err) {
             continue;
@@ -18811,9 +18811,9 @@ var require_server_call = __commonJS({
       return status;
     }
     var ServerUnaryCallImpl = class extends events_1.EventEmitter {
-      constructor(path4, call, metadata, request) {
+      constructor(path5, call, metadata, request) {
         super();
-        this.path = path4;
+        this.path = path5;
         this.call = call;
         this.metadata = metadata;
         this.request = request;
@@ -18843,9 +18843,9 @@ var require_server_call = __commonJS({
     };
     exports2.ServerUnaryCallImpl = ServerUnaryCallImpl;
     var ServerReadableStreamImpl = class extends stream_1.Readable {
-      constructor(path4, call, metadata) {
+      constructor(path5, call, metadata) {
         super({ objectMode: true });
-        this.path = path4;
+        this.path = path5;
         this.call = call;
         this.metadata = metadata;
         this.cancelled = false;
@@ -18877,9 +18877,9 @@ var require_server_call = __commonJS({
     };
     exports2.ServerReadableStreamImpl = ServerReadableStreamImpl;
     var ServerWritableStreamImpl = class extends stream_1.Writable {
-      constructor(path4, call, metadata, request) {
+      constructor(path5, call, metadata, request) {
         super({ objectMode: true });
-        this.path = path4;
+        this.path = path5;
         this.call = call;
         this.metadata = metadata;
         this.request = request;
@@ -18933,9 +18933,9 @@ var require_server_call = __commonJS({
     };
     exports2.ServerWritableStreamImpl = ServerWritableStreamImpl;
     var ServerDuplexStreamImpl = class extends stream_1.Duplex {
-      constructor(path4, call, metadata) {
+      constructor(path5, call, metadata) {
         super({ objectMode: true });
-        this.path = path4;
+        this.path = path5;
         this.call = call;
         this.metadata = metadata;
         this.pendingStatus = {
@@ -21211,11 +21211,11 @@ var require_server = __commonJS({
           }
           return true;
         }
-        _retrieveHandler(path4) {
-          serverCallTrace("Received call to method " + path4 + " at address " + this.serverAddressString);
-          const handler = this.handlers.get(path4);
+        _retrieveHandler(path5) {
+          serverCallTrace("Received call to method " + path5 + " at address " + this.serverAddressString);
+          const handler = this.handlers.get(path5);
           if (handler === void 0) {
-            serverCallTrace("No handler registered for method " + path4 + ". Sending UNIMPLEMENTED status.");
+            serverCallTrace("No handler registered for method " + path5 + ". Sending UNIMPLEMENTED status.");
             return null;
           }
           return handler;
@@ -21237,10 +21237,10 @@ var require_server = __commonJS({
             channelzSessionInfo === null || channelzSessionInfo === void 0 ? void 0 : channelzSessionInfo.streamTracker.addCallFailed();
             return;
           }
-          const path4 = headers[HTTP2_HEADER_PATH];
-          const handler = this._retrieveHandler(path4);
+          const path5 = headers[HTTP2_HEADER_PATH];
+          const handler = this._retrieveHandler(path5);
           if (!handler) {
-            this._respondWithError(getUnimplementedStatusResponse(path4), stream, channelzSessionInfo);
+            this._respondWithError(getUnimplementedStatusResponse(path5), stream, channelzSessionInfo);
             return;
           }
           const callEventTracker = {
@@ -21288,10 +21288,10 @@ var require_server = __commonJS({
           if (this._verifyContentType(stream, headers) !== true) {
             return;
           }
-          const path4 = headers[HTTP2_HEADER_PATH];
-          const handler = this._retrieveHandler(path4);
+          const path5 = headers[HTTP2_HEADER_PATH];
+          const handler = this._retrieveHandler(path5);
           if (!handler) {
-            this._respondWithError(getUnimplementedStatusResponse(path4), stream, null);
+            this._respondWithError(getUnimplementedStatusResponse(path5), stream, null);
             return;
           }
           const call = (0, server_interceptors_1.getServerInterceptingCall)([...extraInterceptors, ...this.interceptors], stream, headers, null, handler, this.options);
@@ -22312,7 +22312,7 @@ var require_certificate_provider = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileWatcherCertificateProvider = void 0;
-    var fs5 = require("fs");
+    var fs6 = require("fs");
     var logging = require_logging();
     var constants_1 = require_constants();
     var util_1 = require("util");
@@ -22320,7 +22320,7 @@ var require_certificate_provider = __commonJS({
     function trace(text) {
       logging.trace(constants_1.LogVerbosity.DEBUG, TRACER_NAME, text);
     }
-    var readFilePromise = (0, util_1.promisify)(fs5.readFile);
+    var readFilePromise = (0, util_1.promisify)(fs6.readFile);
     var FileWatcherCertificateProvider = class {
       constructor(config) {
         this.config = config;
@@ -22575,13 +22575,13 @@ var require_resolver_uds = __commonJS({
         this.listener = listener;
         this.hasReturnedResult = false;
         this.endpoints = [];
-        let path4;
+        let path5;
         if (target.authority === "") {
-          path4 = "/" + target.path;
+          path5 = "/" + target.path;
         } else {
-          path4 = target.path;
+          path5 = target.path;
         }
-        this.endpoints = [{ addresses: [{ path: path4 }] }];
+        this.endpoints = [{ addresses: [{ path: path5 }] }];
       }
       updateResolution() {
         if (!this.hasReturnedResult) {
@@ -22641,12 +22641,12 @@ var require_resolver_ip = __commonJS({
           return;
         }
         const pathList = target.path.split(",");
-        for (const path4 of pathList) {
-          const hostPort = (0, uri_parser_1.splitHostPort)(path4);
+        for (const path5 of pathList) {
+          const hostPort = (0, uri_parser_1.splitHostPort)(path5);
           if (hostPort === null) {
             this.error = {
               code: constants_1.Status.UNAVAILABLE,
-              details: `Failed to parse ${target.scheme} address ${path4}`,
+              details: `Failed to parse ${target.scheme} address ${path5}`,
               metadata: new metadata_1.Metadata()
             };
             return;
@@ -22654,7 +22654,7 @@ var require_resolver_ip = __commonJS({
           if (target.scheme === IPV4_SCHEME && !(0, net_1.isIPv4)(hostPort.host) || target.scheme === IPV6_SCHEME && !(0, net_1.isIPv6)(hostPort.host)) {
             this.error = {
               code: constants_1.Status.UNAVAILABLE,
-              details: `Failed to parse ${target.scheme} address ${path4}`,
+              details: `Failed to parse ${target.scheme} address ${path5}`,
               metadata: new metadata_1.Metadata()
             };
             return;
@@ -24004,7 +24004,7 @@ var require_src3 = __commonJS({
 });
 
 // privsvc/macos/src/server.ts
-var import_fs4 = __toESM(require("fs"));
+var import_fs5 = __toESM(require("fs"));
 var import_net = __toESM(require("net"));
 
 // privsvc/macos/src/paths.ts
@@ -24625,23 +24625,13 @@ var state = {
   everConnected: false,
   breakerTimer: null
 };
-function tickBreaker() {
-  if (!state.everConnected) return;
-  if (state.connected) return;
-  const since = state.lastSuccessfulConnectAtMs ?? 0;
-  if (since === 0) return;
-  const idleMs = Date.now() - since;
-  if (idleMs < BREAKER_THRESHOLD_MS) return;
-  logger.error("grpc_bridge_circuit_breaker_tripped", {
-    idleMs,
-    thresholdMs: BREAKER_THRESHOLD_MS,
-    lastSuccessfulConnectAtUtc: new Date(since).toISOString()
-  });
+function tripBreaker(reason, details) {
+  logger.error("grpc_bridge_circuit_breaker_tripped", { reason, ...details });
   try {
     state.push?.({
       v: 1,
       method: "grpc.control.daemonExit",
-      params: { reason: "circuit_breaker", idleMs },
+      params: { reason, ...details },
       meta: {
         tenantId: state.tenantId,
         deviceId: state.deviceId,
@@ -24650,7 +24640,32 @@ function tickBreaker() {
     });
   } catch {
   }
-  setTimeout(() => process.exit(1), 100).unref?.();
+  setTimeout(() => process.exit(1), 250).unref?.();
+}
+function tickBreaker() {
+  if (!state.everConnected) return;
+  if (!state.connected) {
+    const since = state.lastSuccessfulConnectAtMs ?? 0;
+    if (since === 0) return;
+    const idleMs = Date.now() - since;
+    if (idleMs < BREAKER_THRESHOLD_MS) return;
+    tripBreaker("disconnected_too_long", {
+      idleMs,
+      thresholdMs: BREAKER_THRESHOLD_MS,
+      lastSuccessfulConnectAtUtc: new Date(since).toISOString()
+    });
+    return;
+  }
+  const lastRecv = state.lastReceiveAtMs ?? state.connectedAtMs ?? 0;
+  if (lastRecv === 0) return;
+  const silentMs = Date.now() - lastRecv;
+  if (silentMs < BREAKER_THRESHOLD_MS) return;
+  tripBreaker("connected_but_silent", {
+    silentMs,
+    thresholdMs: BREAKER_THRESHOLD_MS,
+    lastReceiveAtUtc: new Date(lastRecv).toISOString(),
+    note: "TCP half-open suspected \u2014 bridge watchdog should have caught this earlier"
+  });
 }
 var breakerInterval = setInterval(tickBreaker, BREAKER_TICK_MS);
 breakerInterval.unref?.();
@@ -25469,6 +25484,69 @@ async function handlePatchInstall(req) {
   }
 }
 
+// privsvc/macos/src/pmp-remediation.ts
+var READ_HANDLERS = {
+  // Phase 2 entries land here.
+};
+var REMEDIATE_HANDLERS = {
+  // Phase 2 entries land here.
+};
+async function handlePmpReadCheckState(req) {
+  const checkId = String(req.params?.checkId || "").trim();
+  if (!checkId) {
+    return fail(req.id, "bad_request", "checkId required");
+  }
+  const handler = READ_HANDLERS[checkId];
+  if (!handler) {
+    logger.info("pmp_read_check_state_unsupported", { checkId });
+    return fail(req.id, "unsupported_check", `no read handler for checkId ${checkId} on macOS`);
+  }
+  try {
+    const result = await handler(req.params || {});
+    return success(req.id, {
+      state: result.state,
+      isCompliant: result.isCompliant === true,
+      supported: true
+    });
+  } catch (err) {
+    logger.error("pmp_read_check_state_failed", {
+      checkId,
+      error: err?.message || String(err)
+    });
+    return fail(req.id, "read_state_failed", err?.message || String(err));
+  }
+}
+async function handlePmpRemediate(req) {
+  const checkId = String(req.params?.checkId || "").trim();
+  if (!checkId) {
+    return fail(req.id, "bad_request", "checkId required");
+  }
+  const handler = REMEDIATE_HANDLERS[checkId];
+  if (!handler) {
+    logger.info("pmp_remediate_unsupported", { checkId });
+    return fail(req.id, "unsupported_check", `no remediation handler for checkId ${checkId} on macOS`);
+  }
+  try {
+    const result = await handler(req.params || {});
+    return success(req.id, {
+      exitCode: result.exitCode,
+      stderrExcerpt: result.stderrExcerpt ?? null,
+      durationMs: result.durationMs,
+      requiresReboot: result.requiresReboot === true,
+      changesApplied: Array.isArray(result.changesApplied) ? result.changesApplied : []
+    });
+  } catch (err) {
+    if (err?.code === "remediate_timeout") {
+      return fail(req.id, "remediate_timeout", err?.message || "remediate timed out");
+    }
+    logger.error("pmp_remediate_failed", {
+      checkId,
+      error: err?.message || String(err)
+    });
+    return fail(req.id, "remediate_failed", err?.message || String(err));
+  }
+}
+
 // privsvc/macos/src/security-posture.ts
 var import_child_process3 = require("child_process");
 var import_util3 = require("util");
@@ -25673,13 +25751,13 @@ function parseSharingBlocks(output) {
   if (current) items.push(current);
   return items;
 }
-async function inspectShareRisk(path4) {
-  const result = await run2("/bin/ls", ["-lde", path4], 8e3);
+async function inspectShareRisk(path5) {
+  const result = await run2("/bin/ls", ["-lde", path5], 8e3);
   const output = result.output;
   const hasEveryoneWriteAcl = /everyone allow .*?(write|delete|add_file|add_subdirectory|writeattr|writeextattr|chown)/i.test(output);
   const worldWritable = /^[\-d].{7}w/.test(output);
   return {
-    path: path4,
+    path: path5,
     hasEveryoneWriteAcl,
     worldWritable,
     raw: output || void 0
@@ -25689,8 +25767,8 @@ async function collectShares() {
   const result = await run2("/usr/sbin/sharing", ["-l"], 12e3);
   const items = parseSharingBlocks(result.output);
   const detailed = await Promise.all(items.map(async (item) => {
-    const path4 = typeof item.path === "string" ? item.path : void 0;
-    const risk = path4 ? await inspectShareRisk(path4) : null;
+    const path5 = typeof item.path === "string" ? item.path : void 0;
+    const risk = path5 ? await inspectShareRisk(path5) : null;
     const risky = Boolean(risk?.hasEveryoneWriteAcl || risk?.worldWritable);
     return {
       ...item,
@@ -25929,12 +26007,561 @@ async function handleSecurityPosture(req) {
   });
 }
 
+// privsvc/macos/src/sdp.ts
+var import_child_process4 = require("child_process");
+var import_util4 = require("util");
+var import_crypto3 = __toESM(require("crypto"));
+var import_fs4 = __toESM(require("fs"));
+var import_path4 = __toESM(require("path"));
+var execFileAsync4 = (0, import_util4.promisify)(import_child_process4.execFile);
+var STAGING_DIR = import_path4.default.join(DATA_DIR, "sdp-staging");
+var STAGING_TTL_MS = 24 * 60 * 60 * 1e3;
+var MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024;
+var DEFAULT_DOWNLOAD_TIMEOUT_S = 600;
+var DEFAULT_INSTALL_TIMEOUT_S = 1740;
+function ensureStagingDir() {
+  import_fs4.default.mkdirSync(STAGING_DIR, { recursive: true });
+  try {
+    import_fs4.default.chmodSync(STAGING_DIR, 448);
+  } catch {
+  }
+}
+function sweepOldStagingFiles() {
+  let entries = [];
+  try {
+    entries = import_fs4.default.readdirSync(STAGING_DIR);
+  } catch {
+    return;
+  }
+  const cutoff = Date.now() - STAGING_TTL_MS;
+  for (const name of entries) {
+    const full = import_path4.default.join(STAGING_DIR, name);
+    try {
+      const st = import_fs4.default.statSync(full);
+      if (st.mtimeMs < cutoff) {
+        import_fs4.default.unlinkSync(full);
+        logger.info("sdp_staging_swept", { file: name, ageMs: Date.now() - st.mtimeMs });
+      }
+    } catch {
+    }
+  }
+}
+function sha256OfFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = import_crypto3.default.createHash("sha256");
+    const stream = import_fs4.default.createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+function compareSemver(a, b) {
+  const parse = (v) => String(v || "").split(/[.-]/).map((seg) => {
+    const m = /^\d+/.exec(seg);
+    return m ? Number(m[0]) : 0;
+  });
+  const av = parse(a);
+  const bv = parse(b);
+  const n = Math.max(av.length, bv.length);
+  for (let i = 0; i < n; i++) {
+    const ai = av[i] ?? 0;
+    const bi = bv[i] ?? 0;
+    if (ai !== bi) return ai > bi ? 1 : -1;
+  }
+  return 0;
+}
+function meetsMinVersion(installed, minVersion) {
+  if (!minVersion) return true;
+  return compareSemver(installed, minVersion) >= 0;
+}
+async function detectBundleVersion(rule) {
+  let paths = [];
+  try {
+    const { stdout } = await execFileAsync4(
+      "/usr/bin/mdfind",
+      [`kMDItemCFBundleIdentifier == '${rule.bundleId.replace(/'/g, "")}'`],
+      { timeout: 15e3, maxBuffer: 1024 * 1024 }
+    );
+    paths = stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+  } catch {
+    paths = [];
+  }
+  if (paths.length === 0) {
+    try {
+      const apps = import_fs4.default.readdirSync("/Applications").filter((n) => n.endsWith(".app"));
+      for (const app of apps) {
+        const plistPath2 = `/Applications/${app}/Contents/Info.plist`;
+        try {
+          const { stdout } = await execFileAsync4(
+            "/usr/bin/defaults",
+            ["read", plistPath2, "CFBundleIdentifier"],
+            { timeout: 5e3 }
+          );
+          if (stdout.trim() === rule.bundleId) {
+            paths.push(`/Applications/${app}`);
+          }
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
+  if (paths.length === 0) {
+    return {
+      matched: false,
+      snapshot: { bundleId: rule.bundleId, found: false }
+    };
+  }
+  const appPath = paths[0];
+  const plistPath = `${appPath}/Contents/Info.plist`;
+  let installed = "";
+  for (const key of ["CFBundleShortVersionString", "CFBundleVersion"]) {
+    try {
+      const { stdout } = await execFileAsync4(
+        "/usr/bin/defaults",
+        ["read", plistPath, key],
+        { timeout: 5e3 }
+      );
+      const v = stdout.trim();
+      if (v) {
+        installed = v;
+        break;
+      }
+    } catch {
+    }
+  }
+  const matched = installed.length > 0 && meetsMinVersion(installed, rule.minVersion);
+  return {
+    matched,
+    snapshot: {
+      bundleId: rule.bundleId,
+      found: true,
+      path: appPath,
+      installedVersion: installed || null,
+      minVersion: rule.minVersion ?? null
+    }
+  };
+}
+async function detectPkgReceipt(rule) {
+  try {
+    const { stdout } = await execFileAsync4(
+      "/usr/sbin/pkgutil",
+      ["--pkg-info", rule.pkgId],
+      { timeout: 1e4, maxBuffer: 1024 * 1024 }
+    );
+    const versionLine = stdout.split("\n").map((s) => s.trim()).find((line2) => line2.startsWith("version:"));
+    const installed = versionLine ? versionLine.replace(/^version:\s*/, "").trim() : "";
+    const matched = installed.length > 0 && meetsMinVersion(installed, rule.minVersion);
+    return {
+      matched,
+      snapshot: {
+        pkgId: rule.pkgId,
+        found: true,
+        installedVersion: installed || null,
+        minVersion: rule.minVersion ?? null
+      }
+    };
+  } catch {
+    return {
+      matched: false,
+      snapshot: { pkgId: rule.pkgId, found: false }
+    };
+  }
+}
+async function detectFileExists(rule) {
+  try {
+    const st = import_fs4.default.statSync(rule.path);
+    return {
+      matched: true,
+      snapshot: {
+        path: rule.path,
+        type: st.isFile() ? "file" : st.isDirectory() ? "dir" : "other",
+        sizeBytes: st.size
+      }
+    };
+  } catch {
+    return {
+      matched: false,
+      snapshot: { path: rule.path, found: false }
+    };
+  }
+}
+async function detectCommandExit(rule) {
+  let exitCode = -1;
+  let stdout = "";
+  let stderr = "";
+  try {
+    const result = await execFileAsync4(rule.cmd, rule.args ?? [], {
+      timeout: 15e3,
+      maxBuffer: 256 * 1024
+    });
+    exitCode = 0;
+    stdout = String(result.stdout || "");
+    stderr = String(result.stderr || "");
+  } catch (err) {
+    exitCode = Number.isFinite(Number(err?.code)) ? Number(err.code) : -1;
+    stdout = String(err?.stdout || "");
+    stderr = String(err?.stderr || "");
+  }
+  let stdoutMatched = null;
+  if (rule.stdoutMatches) {
+    try {
+      const re = new RegExp(rule.stdoutMatches);
+      stdoutMatched = re.test(stdout);
+    } catch {
+      stdoutMatched = false;
+    }
+  }
+  const matched = exitCode === 0 && (stdoutMatched === null || stdoutMatched === true);
+  return {
+    matched,
+    snapshot: {
+      cmd: rule.cmd,
+      args: rule.args ?? [],
+      exitCode,
+      stdoutPreview: stdout.slice(0, 200),
+      stderrPreview: stderr.slice(0, 200),
+      stdoutMatched
+    }
+  };
+}
+async function handleSdpDetect(req) {
+  const rule = req.params?.rule;
+  if (!rule || typeof rule !== "object") {
+    return fail(req.id, "bad_request", "rule required");
+  }
+  const ruleType = String(rule.type || "");
+  try {
+    let result;
+    switch (ruleType) {
+      case "bundle_version":
+        if (typeof rule.bundleId !== "string" || !rule.bundleId.trim()) {
+          return fail(req.id, "bad_request", "bundle_version.bundleId required");
+        }
+        result = await detectBundleVersion({
+          bundleId: String(rule.bundleId),
+          minVersion: rule.minVersion ? String(rule.minVersion) : void 0
+        });
+        break;
+      case "pkg_receipt":
+        if (typeof rule.pkgId !== "string" || !rule.pkgId.trim()) {
+          return fail(req.id, "bad_request", "pkg_receipt.pkgId required");
+        }
+        result = await detectPkgReceipt({
+          pkgId: String(rule.pkgId),
+          minVersion: rule.minVersion ? String(rule.minVersion) : void 0
+        });
+        break;
+      case "file_exists":
+        if (typeof rule.path !== "string" || !rule.path.trim()) {
+          return fail(req.id, "bad_request", "file_exists.path required");
+        }
+        result = await detectFileExists({ path: String(rule.path) });
+        break;
+      case "command_exit":
+        if (typeof rule.cmd !== "string" || !rule.cmd.trim()) {
+          return fail(req.id, "bad_request", "command_exit.cmd required");
+        }
+        result = await detectCommandExit({
+          cmd: String(rule.cmd),
+          args: Array.isArray(rule.args) ? rule.args.map((a) => String(a)) : void 0,
+          stdoutMatches: rule.stdoutMatches ? String(rule.stdoutMatches) : void 0
+        });
+        break;
+      case "registry_uninstall":
+        return success(req.id, {
+          matched: false,
+          snapshot: { skipped: true, reason: "registry_uninstall_not_applicable_on_macos" }
+        });
+      default:
+        return fail(req.id, "bad_request", `unknown detection rule type: ${ruleType}`);
+    }
+    logger.info("sdp_detect", {
+      type: ruleType,
+      matched: result.matched
+    });
+    return success(req.id, result);
+  } catch (err) {
+    logger.error("sdp_detect_failed", {
+      type: ruleType,
+      error: err?.message || String(err)
+    });
+    return fail(req.id, "detect_failed", err?.message || String(err));
+  }
+}
+async function handleSdpDownload(req) {
+  const params = req.params || {};
+  const url = String(params.url || "");
+  const expectedSha256 = String(params.sha256 || "").toLowerCase();
+  const format = String(params.format || "");
+  const packageId = Number(params.packageId);
+  const sizeBytes = params.sizeBytes ? Number(params.sizeBytes) : null;
+  const timeoutSeconds = Number.isFinite(Number(params.timeoutSeconds)) ? Math.max(60, Math.floor(Number(params.timeoutSeconds))) : DEFAULT_DOWNLOAD_TIMEOUT_S;
+  if (!/^https:\/\//i.test(url)) {
+    return fail(req.id, "url_invalid", "downloadPath must be an https URL");
+  }
+  if (!/^[0-9a-f]{64}$/i.test(expectedSha256)) {
+    return fail(req.id, "url_invalid", "sha256 must be a 64-char hex string");
+  }
+  if (sizeBytes != null && (!Number.isInteger(sizeBytes) || sizeBytes <= 0 || sizeBytes > MAX_DOWNLOAD_BYTES)) {
+    return fail(req.id, "format_unsupported", `sizeBytes outside allowed range`);
+  }
+  if (!Number.isInteger(packageId) || packageId <= 0) {
+    return fail(req.id, "bad_request", "packageId required");
+  }
+  const supportedFormats = /* @__PURE__ */ new Set(["pkg", "dmg"]);
+  if (!supportedFormats.has(format)) {
+    return fail(req.id, "format_unsupported", `format ${format} not supported on macOS`);
+  }
+  ensureStagingDir();
+  sweepOldStagingFiles();
+  const nonce = import_crypto3.default.randomBytes(8).toString("hex");
+  const stagingPath = import_path4.default.join(STAGING_DIR, `pkg-${packageId}-${nonce}.${format}`);
+  const curlArgs = [
+    "-fSL",
+    "--max-time",
+    String(timeoutSeconds),
+    "--max-filesize",
+    String(MAX_DOWNLOAD_BYTES),
+    "-o",
+    stagingPath,
+    url
+  ];
+  const downloadStart = Date.now();
+  try {
+    await execFileAsync4("/usr/bin/curl", curlArgs, {
+      timeout: (timeoutSeconds + 30) * 1e3,
+      // curl is silent on success, so its stdout/stderr buffer is small.
+      maxBuffer: 1024 * 1024
+    });
+  } catch (err) {
+    try {
+      import_fs4.default.unlinkSync(stagingPath);
+    } catch {
+    }
+    const stderr = String(err?.stderr || "");
+    logger.warn("sdp_download_failed", {
+      packageId,
+      url,
+      stderrPreview: stderr.slice(0, 300),
+      code: err?.code
+    });
+    return fail(req.id, "download_failed", stderr.slice(0, 200) || (err?.message || "curl failed"));
+  }
+  let actualSha256;
+  try {
+    actualSha256 = (await sha256OfFile(stagingPath)).toLowerCase();
+  } catch (err) {
+    try {
+      import_fs4.default.unlinkSync(stagingPath);
+    } catch {
+    }
+    return fail(req.id, "download_failed", `sha256 read failed: ${err?.message || err}`);
+  }
+  if (actualSha256 !== expectedSha256) {
+    try {
+      import_fs4.default.unlinkSync(stagingPath);
+    } catch {
+    }
+    logger.error("sdp_download_sha256_mismatch", {
+      packageId,
+      expected: expectedSha256,
+      actual: actualSha256
+    });
+    return fail(req.id, "sha256_mismatch", `expected sha256 ${expectedSha256}, got ${actualSha256}`);
+  }
+  try {
+    import_fs4.default.chmodSync(stagingPath, 384);
+  } catch {
+  }
+  const stat = import_fs4.default.statSync(stagingPath);
+  logger.info("sdp_download_ok", {
+    packageId,
+    sizeBytes: stat.size,
+    sha256: actualSha256,
+    durationMs: Date.now() - downloadStart
+  });
+  return success(req.id, {
+    stagingPath,
+    sha256: actualSha256,
+    sizeBytes: stat.size,
+    durationMs: Date.now() - downloadStart
+  });
+}
+async function runPkgInstaller(stagingPath, timeoutSeconds) {
+  const start = Date.now();
+  try {
+    const { stdout, stderr } = await execFileAsync4(
+      "/usr/sbin/installer",
+      ["-pkg", stagingPath, "-target", "/"],
+      { timeout: timeoutSeconds * 1e3, maxBuffer: 8 * 1024 * 1024 }
+    );
+    return {
+      exitCode: 0,
+      stderrExcerpt: combinedExcerpt(stdout, stderr),
+      durationMs: Date.now() - start
+    };
+  } catch (err) {
+    if (err?.killed && err?.signal === "SIGTERM") {
+      throw Object.assign(new Error("installer timeout"), { code: "install_timeout" });
+    }
+    return {
+      exitCode: Number.isFinite(Number(err?.code)) ? Number(err.code) : 1,
+      stderrExcerpt: combinedExcerpt(err?.stdout, err?.stderr),
+      durationMs: Date.now() - start
+    };
+  }
+}
+async function runDmgInstaller(stagingPath, timeoutSeconds) {
+  const start = Date.now();
+  let mountPoint = null;
+  try {
+    const attachStart = Date.now();
+    const { stdout: attachOut } = await execFileAsync4(
+      "/usr/bin/hdiutil",
+      [
+        "attach",
+        "-nobrowse",
+        "-readonly",
+        "-noautoopen",
+        stagingPath
+      ],
+      { timeout: 9e4, maxBuffer: 1024 * 1024 }
+    );
+    for (const rawLine of attachOut.split("\n")) {
+      const m = rawLine.match(/(\/Volumes\/[^\t\n\r]+|\/private\/[^\t\n\r]+)\s*$/);
+      if (m) {
+        mountPoint = m[1].trim();
+      }
+    }
+    if (!mountPoint) {
+      throw new Error("no mount-point in hdiutil attach output");
+    }
+    logger.info("sdp_dmg_attached", {
+      mountPoint,
+      durationMs: Date.now() - attachStart
+    });
+    const entries = import_fs4.default.readdirSync(mountPoint);
+    const app = entries.find((n) => n.endsWith(".app"));
+    if (!app) {
+      throw new Error("no .app bundle found in dmg root");
+    }
+    const sourceApp = import_path4.default.join(mountPoint, app);
+    const targetApp = import_path4.default.join("/Applications", app);
+    try {
+      const st = import_fs4.default.statSync(targetApp);
+      if (st.isDirectory()) {
+        await execFileAsync4("/bin/rm", ["-rf", targetApp], {
+          timeout: 6e4,
+          maxBuffer: 1024 * 1024
+        });
+      }
+    } catch {
+    }
+    const remainingMs = Math.max(6e4, timeoutSeconds * 1e3 - (Date.now() - start));
+    const { stdout, stderr } = await execFileAsync4(
+      "/usr/bin/ditto",
+      [sourceApp, targetApp],
+      { timeout: remainingMs, maxBuffer: 8 * 1024 * 1024 }
+    );
+    return {
+      exitCode: 0,
+      stderrExcerpt: combinedExcerpt(stdout, stderr),
+      durationMs: Date.now() - start
+    };
+  } catch (err) {
+    if (err?.killed && err?.signal === "SIGTERM") {
+      throw Object.assign(new Error("dmg install timeout"), { code: "install_timeout" });
+    }
+    return {
+      exitCode: Number.isFinite(Number(err?.code)) ? Number(err.code) : 1,
+      stderrExcerpt: combinedExcerpt(err?.stdout, err?.stderr) || (err?.message || ""),
+      durationMs: Date.now() - start
+    };
+  } finally {
+    if (mountPoint) {
+      try {
+        await execFileAsync4(
+          "/usr/bin/hdiutil",
+          ["detach", "-force", mountPoint],
+          { timeout: 3e4, maxBuffer: 256 * 1024 }
+        );
+      } catch (detachErr) {
+        logger.warn("sdp_dmg_detach_failed", {
+          mountPoint,
+          error: detachErr?.message || String(detachErr)
+        });
+      }
+    }
+  }
+}
+function combinedExcerpt(stdout, stderr) {
+  const out = String(stdout || "").trim();
+  const err = String(stderr || "").trim();
+  const combined = [out, err].filter(Boolean).join(" | ");
+  if (!combined) return void 0;
+  return combined.slice(0, 1024);
+}
+async function handleSdpInstall(req) {
+  const params = req.params || {};
+  const stagingPath = String(params.stagingPath || "");
+  const format = String(params.format || "");
+  const timeoutSeconds = Number.isFinite(Number(params.timeoutSeconds)) ? Math.max(60, Math.floor(Number(params.timeoutSeconds))) : DEFAULT_INSTALL_TIMEOUT_S;
+  const packageId = Number(params.packageId) || 0;
+  const absStaging = import_path4.default.resolve(stagingPath);
+  if (!absStaging.startsWith(import_path4.default.resolve(STAGING_DIR) + import_path4.default.sep)) {
+    return fail(req.id, "bad_request", "stagingPath outside privsvc staging dir");
+  }
+  try {
+    import_fs4.default.accessSync(absStaging, import_fs4.default.constants.R_OK);
+  } catch {
+    return fail(req.id, "bad_request", "stagingPath not readable");
+  }
+  let result;
+  try {
+    if (format === "pkg") {
+      result = await runPkgInstaller(absStaging, timeoutSeconds);
+    } else if (format === "dmg") {
+      result = await runDmgInstaller(absStaging, timeoutSeconds);
+    } else {
+      return fail(req.id, "format_unsupported", `format ${format} not supported on macOS`);
+    }
+  } catch (err) {
+    if (err?.code === "install_timeout") {
+      try {
+        import_fs4.default.unlinkSync(absStaging);
+      } catch {
+      }
+      return fail(req.id, "install_timeout", err?.message || "installer timed out");
+    }
+    return fail(req.id, "install_failed", err?.message || String(err));
+  }
+  if (result.exitCode === 0 || result.exitCode === 3010) {
+    try {
+      import_fs4.default.unlinkSync(absStaging);
+    } catch {
+    }
+  }
+  logger.info("sdp_install_done", {
+    packageId,
+    format,
+    exitCode: result.exitCode,
+    durationMs: result.durationMs,
+    stderrPreview: result.stderrExcerpt?.slice(0, 200)
+  });
+  return success(req.id, {
+    exitCode: result.exitCode,
+    stderrExcerpt: result.stderrExcerpt,
+    durationMs: result.durationMs
+  });
+}
+
 // privsvc/macos/src/router.ts
 function isRoot() {
   return typeof process.getuid === "function" ? process.getuid() === 0 : false;
 }
 function requiresRoot(method) {
-  return method.startsWith("crypto.") || method.startsWith("grpc.") || method === "patch.install";
+  return method.startsWith("crypto.") || method.startsWith("grpc.") || method.startsWith("sdp.") || method.startsWith("pmp.") || method === "patch.install";
 }
 async function routeRequest(req, push2) {
   if (req.v !== 1) return fail(req.id, "bad_version", "Unsupported protocol version");
@@ -25992,6 +26619,22 @@ async function routeRequest(req, push2) {
       return handlePatchScan(req);
     case "patch.install":
       return handlePatchInstall(req);
+    // SDP — Phase 1-E. See privsvc/macos/src/sdp.ts.
+    case "sdp.detect":
+      return handleSdpDetect(req);
+    case "sdp.download":
+      return handleSdpDownload(req);
+    case "sdp.install":
+      return handleSdpInstall(req);
+    // PMv2 — non-patch security remediation. See privsvc/macos/src/
+    // pmp-remediation.ts. Phase 1 covers Windows-only checkIds —
+    // these handlers return `unsupported_check` for everything until
+    // Phase 2 lands macOS-applicable handlers (FileVault, Gatekeeper,
+    // screen lock, SIP).
+    case "pmp.read_check_state":
+      return handlePmpReadCheckState(req);
+    case "pmp.remediate":
+      return handlePmpRemediate(req);
     default:
       return fail(req.id, "not_supported", `Unsupported method: ${req.method}`);
   }
@@ -26051,28 +26694,28 @@ function handleClient(socket) {
 function startServer() {
   ensurePrivSvcDirs();
   try {
-    if (import_fs4.default.existsSync(SOCKET_PATH)) import_fs4.default.unlinkSync(SOCKET_PATH);
+    if (import_fs5.default.existsSync(SOCKET_PATH)) import_fs5.default.unlinkSync(SOCKET_PATH);
   } catch {
   }
   const server = import_net.default.createServer(handleClient);
   server.listen(SOCKET_PATH, () => {
     let ownerOk = false;
     try {
-      if (typeof import_fs4.default.chownSync === "function") {
-        import_fs4.default.chownSync(SOCKET_PATH, 0, 0);
+      if (typeof import_fs5.default.chownSync === "function") {
+        import_fs5.default.chownSync(SOCKET_PATH, 0, 0);
         ownerOk = true;
       }
     } catch (err) {
       logger.warn("socket_chown_failed", { error: err?.message || String(err) });
     }
     try {
-      import_fs4.default.chmodSync(SOCKET_PATH, 384);
+      import_fs5.default.chmodSync(SOCKET_PATH, 384);
     } catch (err) {
       logger.warn("socket_chmod_failed", { error: err?.message || String(err) });
     }
     let stat = null;
     try {
-      stat = import_fs4.default.statSync(SOCKET_PATH);
+      stat = import_fs5.default.statSync(SOCKET_PATH);
     } catch {
     }
     logger.info("privsvc_macos_listening", {
@@ -26093,7 +26736,7 @@ function startServer() {
     } catch {
     }
     try {
-      if (import_fs4.default.existsSync(SOCKET_PATH)) import_fs4.default.unlinkSync(SOCKET_PATH);
+      if (import_fs5.default.existsSync(SOCKET_PATH)) import_fs5.default.unlinkSync(SOCKET_PATH);
     } catch {
     }
     process.exit(0);
@@ -26104,6 +26747,11 @@ function startServer() {
 }
 
 // privsvc/macos/src/index.ts
+try {
+  process.stdout?._handle?.setBlocking?.(true);
+  process.stderr?._handle?.setBlocking?.(true);
+} catch {
+}
 startServer();
 /*! Bundled license information:
 

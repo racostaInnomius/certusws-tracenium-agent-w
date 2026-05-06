@@ -173,7 +173,7 @@ var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
     var fs17 = require("fs");
     var path13 = require("path");
-    var os17 = require("os");
+    var os21 = require("os");
     var crypto10 = require("crypto");
     var packageJson = require_package();
     var version = packageJson.version;
@@ -296,7 +296,7 @@ var require_main = __commonJS({
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path13.join(os17.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path13.join(os21.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = Boolean(options && options.debug);
@@ -538,7 +538,7 @@ var init_privsvc_client_windows = __esm({
         if (this.socket && !this.socket.destroyed) return;
         if (this.connecting) return this.connecting;
         if (this.closedByClient) throw new Error("PrivSvc client is closed");
-        this.connecting = new Promise((resolve, reject) => {
+        this.connecting = new Promise((resolve, reject2) => {
           const s = new import_net.default.Socket();
           s.on("data", (data) => this.onData(data));
           s.on("error", (err) => this.onSocketError(err));
@@ -555,7 +555,7 @@ var init_privsvc_client_windows = __esm({
             } catch {
             }
             this.connecting = null;
-            reject(new Error("PrivSvc connect timeout"));
+            reject2(new Error("PrivSvc connect timeout"));
           }, CONNECT_TIMEOUT_MS);
           s.once("connect", () => clearTimeout(t));
           s.once("error", () => clearTimeout(t));
@@ -714,21 +714,21 @@ var init_privsvc_client_windows = __esm({
           throw new Error(`PrivSvc pending requests overflow (${MAX_PENDING})`);
         }
         if (!req.id) req.id = (0, import_crypto4.randomUUID)();
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve, reject2) => {
           const id = req.id;
           const timeoutMs = getTimeoutForMethod(req.method);
           const timer = setTimeout(() => {
             this.pending.delete(id);
             this.emit("debug", { stage: "timeout", id, method: req.method });
-            reject(new Error("PrivSvc timeout"));
+            reject2(new Error("PrivSvc timeout"));
           }, timeoutMs);
-          this.pending.set(id, { resolve, reject, timer });
+          this.pending.set(id, { resolve, reject: reject2, timer });
           try {
             const sock = this.socket;
             if (!sock || sock.destroyed || sock.writable === false) {
               clearTimeout(timer);
               this.pending.delete(id);
-              reject(new Error("PrivSvc socket not available"));
+              reject2(new Error("PrivSvc socket not available"));
               return;
             }
             let wrote = false;
@@ -739,7 +739,7 @@ var init_privsvc_client_windows = __esm({
             } catch (e) {
               clearTimeout(timer);
               this.pending.delete(id);
-              reject(e);
+              reject2(e);
               return;
             }
             if (!wrote) {
@@ -749,7 +749,7 @@ var init_privsvc_client_windows = __esm({
           } catch (e) {
             clearTimeout(timer);
             this.pending.delete(id);
-            reject(e);
+            reject2(e);
           }
         });
       }
@@ -844,7 +844,7 @@ var init_privsvc_client_macos = __esm({
         if (this.socket && !this.socket.destroyed) return;
         if (this.connecting) return this.connecting;
         if (this.closedByClient) throw new Error("PrivSvc client is closed");
-        this.connecting = new Promise((resolve, reject) => {
+        this.connecting = new Promise((resolve, reject2) => {
           const s = new import_net2.default.Socket();
           s.on("data", (data) => this.onData(data));
           s.on("error", (err) => this.onSocketError(err));
@@ -861,7 +861,7 @@ var init_privsvc_client_macos = __esm({
             } catch {
             }
             this.connecting = null;
-            reject(new Error("PrivSvc connect timeout"));
+            reject2(new Error("PrivSvc connect timeout"));
           }, CONNECT_TIMEOUT_MS2);
           s.once("connect", () => clearTimeout(t));
           s.once("error", () => clearTimeout(t));
@@ -997,21 +997,21 @@ var init_privsvc_client_macos = __esm({
           throw new Error(`PrivSvc pending requests overflow (${MAX_PENDING2})`);
         }
         if (!req.id) req.id = (0, import_crypto5.randomUUID)();
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve, reject2) => {
           const id = req.id;
           const timeoutMs = getTimeoutForMethod2(req.method);
           const timer = setTimeout(() => {
             this.pending.delete(id);
             this.emit("debug", { stage: "timeout", id, method: req.method });
-            reject(new Error("PrivSvc timeout"));
+            reject2(new Error("PrivSvc timeout"));
           }, timeoutMs);
-          this.pending.set(id, { resolve, reject, timer });
+          this.pending.set(id, { resolve, reject: reject2, timer });
           try {
             const sock = this.socket;
             if (!sock || sock.destroyed || sock.writable === false) {
               clearTimeout(timer);
               this.pending.delete(id);
-              reject(new Error("PrivSvc socket not available"));
+              reject2(new Error("PrivSvc socket not available"));
               return;
             }
             let wrote = false;
@@ -1022,7 +1022,7 @@ var init_privsvc_client_macos = __esm({
             } catch (e) {
               clearTimeout(timer);
               this.pending.delete(id);
-              reject(e);
+              reject2(e);
               return;
             }
             if (!wrote) {
@@ -1032,7 +1032,7 @@ var init_privsvc_client_macos = __esm({
           } catch (e) {
             clearTimeout(timer);
             this.pending.delete(id);
-            reject(e);
+            reject2(e);
           }
         });
       }
@@ -1127,7 +1127,7 @@ var init_privsvc_client_linux = __esm({
         if (this.socket && !this.socket.destroyed) return;
         if (this.connecting) return this.connecting;
         if (this.closedByClient) throw new Error("PrivSvc client is closed");
-        this.connecting = new Promise((resolve, reject) => {
+        this.connecting = new Promise((resolve, reject2) => {
           const s = new import_net3.default.Socket();
           s.on("data", (data) => this.onData(data));
           s.on("error", (err) => this.onSocketError(err));
@@ -1144,7 +1144,7 @@ var init_privsvc_client_linux = __esm({
             } catch {
             }
             this.connecting = null;
-            reject(new Error("PrivSvc connect timeout"));
+            reject2(new Error("PrivSvc connect timeout"));
           }, CONNECT_TIMEOUT_MS3);
           s.once("connect", () => clearTimeout(t));
           s.once("error", () => clearTimeout(t));
@@ -1280,21 +1280,21 @@ var init_privsvc_client_linux = __esm({
           throw new Error(`PrivSvc pending requests overflow (${MAX_PENDING3})`);
         }
         if (!req.id) req.id = (0, import_crypto6.randomUUID)();
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve, reject2) => {
           const id = req.id;
           const timeoutMs = getTimeoutForMethod3(req.method);
           const timer = setTimeout(() => {
             this.pending.delete(id);
             this.emit("debug", { stage: "timeout", id, method: req.method });
-            reject(new Error("PrivSvc timeout"));
+            reject2(new Error("PrivSvc timeout"));
           }, timeoutMs);
-          this.pending.set(id, { resolve, reject, timer });
+          this.pending.set(id, { resolve, reject: reject2, timer });
           try {
             const sock = this.socket;
             if (!sock || sock.destroyed || sock.writable === false) {
               clearTimeout(timer);
               this.pending.delete(id);
-              reject(new Error("PrivSvc socket not available"));
+              reject2(new Error("PrivSvc socket not available"));
               return;
             }
             let wrote = false;
@@ -1305,7 +1305,7 @@ var init_privsvc_client_linux = __esm({
             } catch (e) {
               clearTimeout(timer);
               this.pending.delete(id);
-              reject(e);
+              reject2(e);
               return;
             }
             if (!wrote) {
@@ -1315,7 +1315,7 @@ var init_privsvc_client_linux = __esm({
           } catch (e) {
             clearTimeout(timer);
             this.pending.delete(id);
-            reject(e);
+            reject2(e);
           }
         });
       }
@@ -1453,7 +1453,7 @@ var require_package2 = __commonJS({
 var require_util = __commonJS({
   "node_modules/systeminformation/lib/util.js"(exports2) {
     "use strict";
-    var os17 = require("os");
+    var os21 = require("os");
     var fs17 = require("fs");
     var path13 = require("path");
     var spawn2 = require("child_process").spawn;
@@ -1560,7 +1560,7 @@ var require_util = __commonJS({
     }
     function cores() {
       if (_cores === 0) {
-        _cores = os17.cpus().length;
+        _cores = os21.cpus().length;
       }
       return _cores;
     }
@@ -1821,7 +1821,7 @@ var require_util = __commonJS({
     function powerShellRelease() {
       try {
         if (_psChild) {
-          _psChild.stdin.write("exit" + os17.EOL);
+          _psChild.stdin.write("exit" + os21.EOL);
           _psChild.stdin.end();
         }
       } catch {
@@ -1848,7 +1848,7 @@ var require_util = __commonJS({
             });
             try {
               if (_psChild && _psChild.pid) {
-                _psChild.stdin.write(_psToUTF8 + "echo " + _psCmdStart + id + _psIdSeperator + "; " + os17.EOL + cmd + os17.EOL + "echo " + _psCmdSeperator + os17.EOL);
+                _psChild.stdin.write(_psToUTF8 + "echo " + _psCmdStart + id + _psIdSeperator + "; " + os21.EOL + cmd + os21.EOL + "echo " + _psCmdSeperator + os21.EOL);
               }
             } catch {
               resolve("");
@@ -1860,7 +1860,7 @@ var require_util = __commonJS({
         return new Promise((resolve) => {
           process.nextTick(() => {
             try {
-              const osVersion = os17.release().split(".").map(Number);
+              const osVersion = os21.release().split(".").map(Number);
               const spanOptions = osVersion[0] < 10 ? ["-NoProfile", "-NoLogo", "-InputFormat", "Text", "-NoExit", "-ExecutionPolicy", "Unrestricted", "-Command", "-"] : ["-NoProfile", "-NoLogo", "-InputFormat", "Text", "-ExecutionPolicy", "Unrestricted", "-Command", _psToUTF8 + cmd];
               const child = spawn2(_powerShell, spanOptions, {
                 stdio: "pipe",
@@ -1892,8 +1892,8 @@ var require_util = __commonJS({
                 });
                 if (osVersion[0] < 10) {
                   try {
-                    child.stdin.write(_psToUTF8 + cmd + os17.EOL);
-                    child.stdin.write("exit" + os17.EOL);
+                    child.stdin.write(_psToUTF8 + cmd + os21.EOL);
+                    child.stdin.write("exit" + os21.EOL);
                     child.stdin.end();
                   } catch {
                     child.kill();
@@ -2442,10 +2442,10 @@ var require_util = __commonJS({
     function promisify3(nodeStyleFunction) {
       return () => {
         const args = Array.prototype.slice.call(arguments);
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve, reject2) => {
           args.push((err, data) => {
             if (err) {
-              reject(err);
+              reject2(err);
             } else {
               resolve(data);
             }
@@ -3961,7 +3961,7 @@ var require_util = __commonJS({
 var require_osinfo = __commonJS({
   "node_modules/systeminformation/lib/osinfo.js"(exports2) {
     "use strict";
-    var os17 = require("os");
+    var os21 = require("os");
     var fs17 = require("fs");
     var util = require_util();
     var exec2 = require("child_process").exec;
@@ -3984,14 +3984,14 @@ var require_osinfo = __commonJS({
       }
       const result2 = {
         current: Date.now(),
-        uptime: os17.uptime(),
+        uptime: os21.uptime(),
         timezone: t.length >= 7 ? t[5] : "",
         timezoneName
       };
       if (_darwin || _linux) {
         try {
           const stdout = execSync3("date +%Z && date +%z && ls -l /etc/localtime 2>/dev/null", util.execOptsLinux);
-          const lines = stdout.toString().split(os17.EOL);
+          const lines = stdout.toString().split(os21.EOL);
           if (lines.length > 3 && !lines[0]) {
             lines.shift();
           }
@@ -4001,7 +4001,7 @@ var require_osinfo = __commonJS({
           }
           return {
             current: Date.now(),
-            uptime: os17.uptime(),
+            uptime: os21.uptime(),
             timezone: lines[1] ? timezone + lines[1] : timezone,
             timezoneName: lines[2] && lines[2].indexOf("/zoneinfo/") > 0 ? lines[2].split("/zoneinfo/")[1] || "" : ""
           };
@@ -4120,11 +4120,11 @@ var require_osinfo = __commonJS({
       return "";
     }
     function getFQDN() {
-      let fqdn = os17.hostname;
+      let fqdn = os21.hostname;
       if (_linux || _darwin) {
         try {
           const stdout = execSync3("hostname -f 2>/dev/null", util.execOptsLinux);
-          fqdn = stdout.toString().split(os17.EOL)[0];
+          fqdn = stdout.toString().split(os21.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4132,7 +4132,7 @@ var require_osinfo = __commonJS({
       if (_freebsd || _openbsd || _netbsd) {
         try {
           const stdout = execSync3("hostname 2>/dev/null");
-          fqdn = stdout.toString().split(os17.EOL)[0];
+          fqdn = stdout.toString().split(os21.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4140,7 +4140,7 @@ var require_osinfo = __commonJS({
       if (_windows) {
         try {
           const stdout = execSync3("echo %COMPUTERNAME%.%USERDNSDOMAIN%", util.execOptsWin);
-          fqdn = stdout.toString().replace(".%USERDNSDOMAIN%", "").split(os17.EOL)[0];
+          fqdn = stdout.toString().replace(".%USERDNSDOMAIN%", "").split(os21.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4155,9 +4155,9 @@ var require_osinfo = __commonJS({
             distro: "unknown",
             release: "unknown",
             codename: "",
-            kernel: os17.release(),
-            arch: os17.arch(),
-            hostname: os17.hostname(),
+            kernel: os21.release(),
+            arch: os21.arch(),
+            hostname: os21.hostname(),
             fqdn: getFQDN(),
             codepage: "",
             logofile: "",
@@ -4366,7 +4366,7 @@ var require_osinfo = __commonJS({
     }
     function versions(apps, callback) {
       let versionObject = {
-        kernel: os17.release(),
+        kernel: os21.release(),
         apache: "",
         bash: "",
         bun: "",
@@ -5076,7 +5076,7 @@ var require_osinfo = __commonJS({
     function getUniqueMacAdresses() {
       let macs = [];
       try {
-        const ifaces = os17.networkInterfaces();
+        const ifaces = os21.networkInterfaces();
         for (let dev in ifaces) {
           if ({}.hasOwnProperty.call(ifaces, dev)) {
             ifaces[dev].forEach((details) => {
@@ -5198,7 +5198,7 @@ var require_system = __commonJS({
   "node_modules/systeminformation/lib/system.js"(exports2) {
     "use strict";
     var fs17 = require("fs");
-    var os17 = require("os");
+    var os21 = require("os");
     var util = require_util();
     var { uuid } = require_osinfo();
     var exec2 = require("child_process").exec;
@@ -5322,8 +5322,8 @@ var require_system = __commonJS({
                   util.noop();
                 }
               }
-              if (!result2.virtual && (os17.release().toLowerCase().indexOf("microsoft") >= 0 || os17.release().toLowerCase().endsWith("wsl2"))) {
-                const kernelVersion = parseFloat(os17.release().toLowerCase());
+              if (!result2.virtual && (os21.release().toLowerCase().indexOf("microsoft") >= 0 || os21.release().toLowerCase().endsWith("wsl2"))) {
+                const kernelVersion = parseFloat(os21.release().toLowerCase());
                 result2.virtual = true;
                 result2.manufacturer = "Microsoft";
                 result2.model = "WSL";
@@ -5733,7 +5733,7 @@ var require_system = __commonJS({
                 result2.model = "Raspberry Pi";
                 result2.serial = rpi.serial;
                 result2.version = rpi.type + " - " + rpi.revision;
-                result2.memMax = os17.totalmem();
+                result2.memMax = os21.totalmem();
                 result2.memSlots = 0;
               }
               if (callback) {
@@ -5759,9 +5759,9 @@ var require_system = __commonJS({
               }
               devices.shift();
               result2.memSlots = devices.length;
-              if (os17.arch() === "arm64") {
+              if (os21.arch() === "arm64") {
                 result2.memSlots = 0;
-                result2.memMax = os17.totalmem();
+                result2.memMax = os21.totalmem();
               }
               if (callback) {
                 callback(result2);
@@ -5778,7 +5778,7 @@ var require_system = __commonJS({
           if (_windows) {
             try {
               const workload = [];
-              const win10plus = parseInt(os17.release()) >= 10;
+              const win10plus = parseInt(os21.release()) >= 10;
               const maxCapacityAttribute = win10plus ? "MaxCapacityEx" : "MaxCapacity";
               workload.push(util.powerShell("Get-CimInstance Win32_baseboard | select Model,Manufacturer,Product,Version,SerialNumber,PartNumber,SKU | fl"));
               workload.push(util.powerShell(`Get-CimInstance Win32_physicalmemoryarray | select ${maxCapacityAttribute}, MemoryDevices | fl`));
@@ -5974,7 +5974,7 @@ var require_system = __commonJS({
 var require_cpu = __commonJS({
   "node_modules/systeminformation/lib/cpu.js"(exports2) {
     "use strict";
-    var os17 = require("os");
+    var os21 = require("os");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var fs17 = require("fs");
@@ -6837,7 +6837,7 @@ var require_cpu = __commonJS({
                 const countProcessors = util.getValue(lines, "hw.packages");
                 const countCores = util.getValue(lines, "hw.physicalcpu_max");
                 const countThreads = util.getValue(lines, "hw.ncpu");
-                if (os17.arch() === "arm64") {
+                if (os21.arch() === "arm64") {
                   result2.socket = "SOC";
                   try {
                     const clusters = execSync3("ioreg -c IOPlatformDevice -d 3 -r | grep cluster-type").toString().split("\n");
@@ -6865,8 +6865,8 @@ var require_cpu = __commonJS({
             if (_linux) {
               let modelline = "";
               let lines = [];
-              if (os17.cpus()[0] && os17.cpus()[0].model) {
-                modelline = os17.cpus()[0].model;
+              if (os21.cpus()[0] && os21.cpus()[0].model) {
+                modelline = os21.cpus()[0].model;
               }
               exec2('export LC_ALL=C; lscpu; echo -n "Governor: "; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null; echo; unset LC_ALL', (error, stdout) => {
                 if (!error) {
@@ -6955,8 +6955,8 @@ var require_cpu = __commonJS({
             if (_freebsd || _openbsd || _netbsd) {
               let modelline = "";
               let lines = [];
-              if (os17.cpus()[0] && os17.cpus()[0].model) {
-                modelline = os17.cpus()[0].model;
+              if (os21.cpus()[0] && os21.cpus()[0].model) {
+                modelline = os21.cpus()[0].model;
               }
               exec2("export LC_ALL=C; dmidecode -t 4; dmidecode -t 7 unset LC_ALL", (error, stdout) => {
                 let cache = [];
@@ -7116,7 +7116,7 @@ var require_cpu = __commonJS({
     }
     exports2.cpu = cpu;
     function getCpuCurrentSpeedSync() {
-      const cpus = os17.cpus();
+      const cpus = os21.cpus();
       let minFreq = 999999999;
       let maxFreq = 0;
       let avgFreq = 0;
@@ -7811,7 +7811,7 @@ var require_cpu = __commonJS({
     function getLoad() {
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const loads = os17.loadavg().map((x) => {
+          const loads = os21.loadavg().map((x) => {
             return x / util.cores();
           });
           const avgLoad = parseFloat(Math.max.apply(Math, loads).toFixed(2));
@@ -7819,7 +7819,7 @@ var require_cpu = __commonJS({
           const now = Date.now() - _current_cpu.ms;
           if (now >= 200) {
             _current_cpu.ms = Date.now();
-            const cpus = os17.cpus().map((cpu2) => {
+            const cpus = os21.cpus().map((cpu2) => {
               cpu2.times.steal = 0;
               cpu2.times.guest = 0;
               return cpu2;
@@ -8013,7 +8013,7 @@ var require_cpu = __commonJS({
     function getFullLoad() {
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const cpus = os17.cpus();
+          const cpus = os21.cpus();
           let totalUser = 0;
           let totalSystem = 0;
           let totalNice = 0;
@@ -8056,7 +8056,7 @@ var require_cpu = __commonJS({
 var require_memory = __commonJS({
   "node_modules/systeminformation/lib/memory.js"(exports2) {
     "use strict";
-    var os17 = require("os");
+    var os21 = require("os");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
@@ -8102,12 +8102,12 @@ var require_memory = __commonJS({
       return new Promise((resolve) => {
         process.nextTick(() => {
           let result2 = {
-            total: os17.totalmem(),
-            free: os17.freemem(),
-            used: os17.totalmem() - os17.freemem(),
-            active: os17.totalmem() - os17.freemem(),
+            total: os21.totalmem(),
+            free: os21.freemem(),
+            used: os21.totalmem() - os21.freemem(),
+            active: os21.totalmem() - os21.freemem(),
             // temporarily (fallback)
-            available: os17.freemem(),
+            available: os21.freemem(),
             // temporarily (fallback)
             buffers: 0,
             cached: 0,
@@ -8126,9 +8126,9 @@ var require_memory = __commonJS({
                 if (!error) {
                   const lines = stdout.toString().split("\n");
                   result2.total = parseInt(util.getValue(lines, "memtotal"), 10);
-                  result2.total = result2.total ? result2.total * 1024 : os17.totalmem();
+                  result2.total = result2.total ? result2.total * 1024 : os21.totalmem();
                   result2.free = parseInt(util.getValue(lines, "memfree"), 10);
-                  result2.free = result2.free ? result2.free * 1024 : os17.freemem();
+                  result2.free = result2.free ? result2.free * 1024 : os21.freemem();
                   result2.used = result2.total - result2.free;
                   result2.buffers = parseInt(util.getValue(lines, "buffers"), 10);
                   result2.buffers = result2.buffers ? result2.buffers * 1024 : 0;
@@ -8350,7 +8350,7 @@ var require_memory = __commonJS({
                 }
                 if (!result2.length) {
                   result2.push({
-                    size: os17.totalmem(),
+                    size: os21.totalmem(),
                     bank: "",
                     type: "",
                     ecc: null,
@@ -11498,7 +11498,7 @@ ${BSDName}|"; diskutil info /dev/${BSDName} | grep SMART;`;
 var require_network = __commonJS({
   "node_modules/systeminformation/lib/network.js"(exports2) {
     "use strict";
-    var os17 = require("os");
+    var os21 = require("os");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var fs17 = require("fs");
@@ -11522,7 +11522,7 @@ var require_network = __commonJS({
       let ifacename = "";
       let ifacenameFirst = "";
       try {
-        const ifaces = os17.networkInterfaces();
+        const ifaces = os21.networkInterfaces();
         let scopeid = 9999;
         for (let dev in ifaces) {
           if ({}.hasOwnProperty.call(ifaces, dev)) {
@@ -11542,7 +11542,7 @@ var require_network = __commonJS({
           let defaultIp = "";
           const cmd = "netstat -r";
           const result2 = execSync3(cmd, util.execOptsWin);
-          const lines = result2.toString().split(os17.EOL);
+          const lines = result2.toString().split(os21.EOL);
           lines.forEach((line) => {
             line = line.replace(/\s+/g, " ").trim();
             if (line.indexOf("0.0.0.0 0.0.0.0") > -1 && !/[a-zA-Z]/.test(line)) {
@@ -12175,7 +12175,7 @@ var require_network = __commonJS({
       defaultString = "" + defaultString;
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const ifaces = os17.networkInterfaces();
+          const ifaces = os21.networkInterfaces();
           let result2 = [];
           let nics = [];
           let dnsSuffixes = [];
@@ -13245,7 +13245,7 @@ var require_network = __commonJS({
           if (_windows) {
             try {
               exec2("netstat -r", util.execOptsWin, (error, stdout) => {
-                const lines = stdout.toString().split(os17.EOL);
+                const lines = stdout.toString().split(os21.EOL);
                 lines.forEach((line) => {
                   line = line.replace(/\s+/g, " ").trim();
                   if (line.indexOf("0.0.0.0 0.0.0.0") > -1 && !/[a-zA-Z]/.test(line)) {
@@ -13291,7 +13291,7 @@ var require_network = __commonJS({
 var require_wifi = __commonJS({
   "node_modules/systeminformation/lib/wifi.js"(exports2) {
     "use strict";
-    var os17 = require("os");
+    var os21 = require("os");
     var exec2 = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
@@ -13513,7 +13513,7 @@ var require_wifi = __commonJS({
         parts.shift();
         parts.forEach((part) => {
           part = "ACTIVE:" + part;
-          const lines = part.split(os17.EOL);
+          const lines = part.split(os21.EOL);
           const channel = util.getValue(lines, "CHAN");
           const frequency = util.getValue(lines, "FREQ").toLowerCase().replace("mhz", "").trim();
           const security = util.getValue(lines, "SECURITY").replace("(", "").replace(")", "");
@@ -13737,15 +13737,15 @@ var require_wifi = __commonJS({
           } else if (_windows) {
             const cmd = "netsh wlan show networks mode=Bssid";
             util.powerShell(cmd).then((stdout) => {
-              const ssidParts = stdout.toString("utf8").split(os17.EOL + os17.EOL + "SSID ");
+              const ssidParts = stdout.toString("utf8").split(os21.EOL + os21.EOL + "SSID ");
               ssidParts.shift();
               ssidParts.forEach((ssidPart) => {
-                const ssidLines = ssidPart.split(os17.EOL);
+                const ssidLines = ssidPart.split(os21.EOL);
                 if (ssidLines && ssidLines.length >= 8 && ssidLines[0].indexOf(":") >= 0) {
                   const bssidsParts = ssidPart.split(" BSSID");
                   bssidsParts.shift();
                   bssidsParts.forEach((bssidPart) => {
-                    const bssidLines = bssidPart.split(os17.EOL);
+                    const bssidLines = bssidPart.split(os21.EOL);
                     const bssidLine = bssidLines[0].split(":");
                     bssidLine.shift();
                     const bssid = bssidLine.join(":").trim().toLowerCase();
@@ -14069,7 +14069,7 @@ var require_wifi = __commonJS({
 var require_processes = __commonJS({
   "node_modules/systeminformation/lib/processes.js"(exports2) {
     "use strict";
-    var os17 = require("os");
+    var os21 = require("os");
     var fs17 = require("fs");
     var path13 = require("path");
     var exec2 = require("child_process").exec;
@@ -14720,7 +14720,7 @@ var require_processes = __commonJS({
             line = line.trim().replace(/ +/g, " ").replace(/,+/g, ".");
             const parts = line.split(" ");
             const command = parts.slice(9).join(" ");
-            const pmem = parseFloat((1 * parseInt(parts[3]) * 1024 / os17.totalmem()).toFixed(1));
+            const pmem = parseFloat((1 * parseInt(parts[3]) * 1024 / os21.totalmem()).toFixed(1));
             const started = parseElapsed(parts[5]);
             result2.push({
               pid: parseInt(parts[0]),
@@ -14923,7 +14923,7 @@ var require_processes = __commonJS({
                         cpu: 0,
                         cpuu: 0,
                         cpus: 0,
-                        mem: memw / os17.totalmem() * 100,
+                        mem: memw / os21.totalmem() * 100,
                         priority: element.Priority | null,
                         memVsz: element.PageFileUsage || null,
                         memRss: Math.floor((element.WorkingSetSize || 0) / 1024),
@@ -15077,7 +15077,7 @@ var require_processes = __commonJS({
                         result2.forEach((item) => {
                           if (item.proc.toLowerCase() === pname.toLowerCase()) {
                             item.pids.push(pid);
-                            item.mem += mem / os17.totalmem() * 100;
+                            item.mem += mem / os21.totalmem() * 100;
                             processFound = true;
                           }
                         });
@@ -15087,7 +15087,7 @@ var require_processes = __commonJS({
                             pid,
                             pids: [pid],
                             cpu: 0,
-                            mem: mem / os17.totalmem() * 100
+                            mem: mem / os21.totalmem() * 100
                           });
                         }
                       }
@@ -16828,7 +16828,7 @@ var require_docker = __commonJS({
 var require_virtualbox = __commonJS({
   "node_modules/systeminformation/lib/virtualbox.js"(exports2) {
     "use strict";
-    var os17 = require("os");
+    var os21 = require("os");
     var exec2 = require("child_process").exec;
     var util = require_util();
     function vboxInfo(callback) {
@@ -16837,10 +16837,10 @@ var require_virtualbox = __commonJS({
         process.nextTick(() => {
           try {
             exec2(util.getVboxmanage() + " list vms --long", (error, stdout) => {
-              let parts = (os17.EOL + stdout.toString()).split(os17.EOL + "Name:");
+              let parts = (os21.EOL + stdout.toString()).split(os21.EOL + "Name:");
               parts.shift();
               parts.forEach((part) => {
-                const lines = ("Name:" + part).split(os17.EOL);
+                const lines = ("Name:" + part).split(os21.EOL);
                 const state = util.getValue(lines, "State");
                 const running = state.startsWith("running");
                 const runningSinceString = running ? state.replace("running (since ", "").replace(")", "").trim() : "";
@@ -21381,12 +21381,25 @@ function updatePmpState(patch) {
   savePmpState(next);
   return next;
 }
-var import_fs11, import_path8;
+function tryStartRemediate(ctx) {
+  if (remediateInFlight) return false;
+  if (ctx && ctx._patchInstallInProgress === true) return false;
+  remediateInFlight = true;
+  return true;
+}
+function finishRemediate() {
+  remediateInFlight = false;
+}
+function isRemediateInFlight() {
+  return remediateInFlight;
+}
+var import_fs11, import_path8, remediateInFlight;
 var init_state = __esm({
   "src/plugins/pmp/state.ts"() {
     "use strict";
     import_fs11 = __toESM(require("fs"));
     import_path8 = __toESM(require("path"));
+    remediateInFlight = false;
   }
 });
 
@@ -22003,11 +22016,11 @@ function ensureDir4(dir) {
   import_fs16.default.mkdirSync(dir, { recursive: true });
 }
 function sha256File(filePath) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve, reject2) => {
     const hash = import_crypto11.default.createHash("sha256");
     const stream = import_fs16.default.createReadStream(filePath);
     stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("error", reject);
+    stream.on("error", reject2);
     stream.on("end", () => resolve(hash.digest("hex")));
   });
 }
@@ -22062,7 +22075,7 @@ function buildHeaders(ctx) {
   return headers;
 }
 function httpJson(urlString, opts) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve, reject2) => {
     const url = new URL(urlString);
     const lib = url.protocol === "https:" ? import_https.default : import_http.default;
     const req = lib.request(url, {
@@ -22074,20 +22087,20 @@ function httpJson(urlString, opts) {
       res.on("end", () => {
         const raw = Buffer.concat(chunks).toString("utf8");
         if ((res.statusCode || 500) >= 400) {
-          reject(new Error(`http_${res.statusCode || 500}: ${raw || "request_failed"}`));
+          reject2(new Error(`http_${res.statusCode || 500}: ${raw || "request_failed"}`));
           return;
         }
         try {
           resolve(JSON.parse(raw));
         } catch (err) {
-          reject(new Error(`invalid_json_response: ${String(err)}`));
+          reject2(new Error(`invalid_json_response: ${String(err)}`));
         }
       });
       res.on("error", (err) => {
-        reject(err);
+        reject2(err);
       });
       res.on("aborted", () => {
-        reject(new Error("http_aborted"));
+        reject2(new Error("http_aborted"));
       });
     });
     const timeoutMs = opts?.timeoutMs ?? 15e3;
@@ -22096,7 +22109,7 @@ function httpJson(urlString, opts) {
     }, timeoutMs);
     req.on("error", (err) => {
       clearTimeout(timeout);
-      reject(err);
+      reject2(err);
     });
     req.on("close", () => {
       clearTimeout(timeout);
@@ -22108,7 +22121,7 @@ function httpJson(urlString, opts) {
   });
 }
 function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3, idleTimeoutMs = 60 * 1e3) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve, reject2) => {
     const url = new URL(urlString);
     const lib = url.protocol === "https:" ? import_https.default : import_http.default;
     ensureDir4(import_path12.default.dirname(filePath));
@@ -22141,7 +22154,7 @@ function downloadToFile(urlString, filePath, timeoutMs = 5 * 60 * 1e3, idleTimeo
       }
       if (err) {
         cleanup();
-        reject(err);
+        reject2(err);
       } else {
         resolve({ size: size ?? 0 });
       }
@@ -23190,13 +23203,13 @@ async function waitForPrivSvcPipe(timeoutMs = 2e4) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      await new Promise((resolve, reject) => {
+      await new Promise((resolve, reject2) => {
         const socket = net4.createConnection({ path: getPrivSvcPipePath() });
         socket.once("connect", () => {
           socket.destroy();
           resolve(true);
         });
-        socket.once("error", reject);
+        socket.once("error", reject2);
       });
       return;
     } catch {
@@ -23226,12 +23239,12 @@ async function generateCsrViaPrivSvc() {
       deviceId
     }
   });
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve, reject2) => {
     const client = net4.createConnection({ path: getPrivSvcPipePath() });
     let response = "";
     const timeout = setTimeout(() => {
       client.destroy();
-      reject(new Error("PrivSvc CSR request timeout"));
+      reject2(new Error("PrivSvc CSR request timeout"));
     }, 3e4);
     client.on("connect", () => {
       client.write(request + "\n");
@@ -23248,12 +23261,12 @@ async function generateCsrViaPrivSvc() {
         try {
           const parsed = JSON.parse(line);
           if (!parsed.ok) {
-            reject(new Error(parsed.error?.message || "CSR generation failed"));
+            reject2(new Error(parsed.error?.message || "CSR generation failed"));
             client.destroy();
             return;
           }
           if (!parsed.result?.csrPem) {
-            reject(new Error("PrivSvc returned response without csrPem"));
+            reject2(new Error("PrivSvc returned response without csrPem"));
             client.destroy();
             return;
           }
@@ -23261,7 +23274,7 @@ async function generateCsrViaPrivSvc() {
           client.destroy();
           return;
         } catch (err) {
-          reject(err);
+          reject2(err);
           client.destroy();
           return;
         }
@@ -23269,7 +23282,7 @@ async function generateCsrViaPrivSvc() {
     });
     client.on("error", (err) => {
       clearTimeout(timeout);
-      reject(err);
+      reject2(err);
     });
   });
 }
@@ -23291,12 +23304,12 @@ async function installCertViaPrivSvc(clientCertPem, caBundlePem) {
       deviceId
     }
   });
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve, reject2) => {
     const client = net4.createConnection({ path: getPrivSvcPipePath() });
     let response = "";
     const timeout = setTimeout(() => {
       client.destroy();
-      reject(new Error("PrivSvc cert install timeout"));
+      reject2(new Error("PrivSvc cert install timeout"));
     }, 3e4);
     client.on("connect", () => {
       client.write(request + "\n");
@@ -23312,7 +23325,7 @@ async function installCertViaPrivSvc(clientCertPem, caBundlePem) {
         try {
           const parsed = JSON.parse(line);
           if (!parsed.ok) {
-            reject(new Error(parsed.error?.message || "Certificate install failed"));
+            reject2(new Error(parsed.error?.message || "Certificate install failed"));
             client.destroy();
             return;
           }
@@ -23324,7 +23337,7 @@ async function installCertViaPrivSvc(clientCertPem, caBundlePem) {
           });
           return;
         } catch (err) {
-          reject(err);
+          reject2(err);
           client.destroy();
           return;
         }
@@ -23332,7 +23345,7 @@ async function installCertViaPrivSvc(clientCertPem, caBundlePem) {
     });
     client.on("error", (err) => {
       clearTimeout(timeout);
-      reject(err);
+      reject2(err);
     });
   });
 }
@@ -25903,6 +25916,631 @@ function createGrpcClient(ctx) {
 
 // src/transport/grpc-stream.ts
 init_state();
+
+// src/plugins/pmp/remediation.ts
+var import_os18 = __toESM(require("os"));
+init_state();
+
+// src/plugins/pmp/remediation-checks.ts
+var import_os17 = __toESM(require("os"));
+var ENTRIES = [
+  {
+    checkId: "windows.cryptography.legacy_tls_disabled",
+    applicableTo: /* @__PURE__ */ new Set(["windows"])
+  },
+  {
+    checkId: "windows.cryptography.weak_ciphers_disabled",
+    applicableTo: /* @__PURE__ */ new Set(["windows"])
+  },
+  {
+    checkId: "windows.network_sharing.smbv1_disabled",
+    applicableTo: /* @__PURE__ */ new Set(["windows"])
+  },
+  {
+    checkId: "windows.firewall.profiles_enabled",
+    applicableTo: /* @__PURE__ */ new Set(["windows"])
+  }
+];
+var BY_CHECK_ID = new Map(
+  ENTRIES.map((e) => [e.checkId, e])
+);
+function localOs() {
+  const p = import_os17.default.platform();
+  if (p === "win32") return "windows";
+  if (p === "darwin") return "macos";
+  if (p === "linux") return "linux";
+  return null;
+}
+function isCheckRemediableHere(checkId) {
+  const entry = BY_CHECK_ID.get(checkId);
+  if (!entry) return { allowed: false, reason: "unknown_check_id" };
+  const here = localOs();
+  if (!here || !entry.applicableTo.has(here)) {
+    return { allowed: false, reason: "not_applicable_to_os" };
+  }
+  return { allowed: true };
+}
+
+// src/plugins/pmp/remediation.ts
+function sanitize(v, max = 200) {
+  return String(v ?? "").replace(/[;\n=]/g, " ").slice(0, max);
+}
+function encodeAckMessage(outcome, remediationId, extras = {}) {
+  const parts = [`patch_remediate:${outcome}`, `remediationId=${remediationId}`];
+  for (const [k, v] of Object.entries(extras)) {
+    if (v === void 0 || v === null || v === "") continue;
+    parts.push(`${k}=${sanitize(v)}`);
+  }
+  return parts.join(";");
+}
+async function runRemediation(ctx, jobId, payload) {
+  const remediationId = Number(payload?.remediationId);
+  const checkId = String(payload?.checkId || "").trim();
+  const mode = String(payload?.mode || "");
+  const snapshot = payload?.checkSnapshot;
+  if (!Number.isInteger(remediationId) || remediationId <= 0 || !checkId) {
+    return reject(0, "invalid_payload");
+  }
+  if (mode !== "apply" && mode !== "dry_run") {
+    return reject(remediationId, "invalid_mode");
+  }
+  const decision = isCheckRemediableHere(checkId);
+  if (!decision.allowed) {
+    return reject(remediationId, decision.reason, { checkId });
+  }
+  if (typeof ctx.policyRuntime?.pluginEnabled === "function" && ctx.policyRuntime.pluginEnabled("pmp") === false) {
+    return reject(remediationId, "pmp_plugin_disabled_by_policy", { checkId });
+  }
+  if (snapshot?.platform && !snapshotMatchesLocal(snapshot.platform)) {
+    return reject(remediationId, "platform_mismatch", { checkId });
+  }
+  const acquired = tryStartRemediate(ctx);
+  if (!acquired) {
+    return {
+      ackStatus: 1,
+      ackMessage: encodeAckMessage("failed", remediationId, {
+        checkId,
+        reason: "another_pmp_action_in_progress"
+      }),
+      outcome: "failed"
+    };
+  }
+  let outcome = "failed";
+  let exitCode;
+  let durationMs;
+  let extraReason;
+  try {
+    const preStart = Date.now();
+    const preResp = await ctx.priv.call({
+      v: 1,
+      id: `pmp-read-${jobId}-${Date.now()}`,
+      method: "pmp.read_check_state",
+      params: { checkId },
+      meta: {
+        tenantId: ctx.enrollment.tenantId,
+        deviceId: ctx.enrollment.deviceId
+      }
+    });
+    if (!preResp?.ok) {
+      const code = preResp?.error?.code || "read_state_failed";
+      outcome = code === "unsupported_check" ? "rejected" : "failed";
+      extraReason = code;
+      return ackFor(outcome, remediationId, {
+        checkId,
+        duration: Date.now() - preStart,
+        reason: extraReason
+      });
+    }
+    const preResult = preResp.result || {};
+    const preCompliant = preResult.isCompliant === true;
+    if (mode === "dry_run") {
+      outcome = preCompliant ? "dryrun_already_compliant" : "dryrun_would_apply";
+      durationMs = Date.now() - preStart;
+      return ackFor(outcome, remediationId, {
+        checkId,
+        duration: durationMs
+      });
+    }
+    if (preCompliant) {
+      outcome = "already_compliant";
+      durationMs = Date.now() - preStart;
+      return ackFor(outcome, remediationId, {
+        checkId,
+        duration: durationMs,
+        reason: "pre_state_compliant"
+      });
+    }
+    const applyStart = Date.now();
+    const applyResp = await ctx.priv.call({
+      v: 1,
+      id: `pmp-remediate-${jobId}-${Date.now()}`,
+      method: "pmp.remediate",
+      params: {
+        checkId,
+        // Pass through any catalog-supplied params (Phase 1 has
+        // none; Phase 2 might use them for things like "set min
+        // password length to N"). Privsvc still ignores anything
+        // not on its hardcoded handler signature.
+        params: payload?.params ?? {},
+        // Privsvc-side timeout: leave 60s headroom under the
+        // orchestrator job timeout (default 600s for remediate).
+        timeoutSeconds: 540
+      },
+      meta: {
+        tenantId: ctx.enrollment.tenantId,
+        deviceId: ctx.enrollment.deviceId
+      }
+    });
+    if (!applyResp?.ok) {
+      const code = applyResp?.error?.code || "remediate_failed";
+      outcome = code === "remediate_timeout" ? "timed_out" : "failed";
+      extraReason = code;
+      return ackFor(outcome, remediationId, {
+        checkId,
+        duration: Date.now() - applyStart,
+        reason: extraReason
+      });
+    }
+    const applyResult = applyResp.result || {};
+    exitCode = Number(applyResult.exitCode);
+    durationMs = Number(applyResult.durationMs ?? Date.now() - applyStart);
+    const requiresReboot = applyResult.requiresReboot === true;
+    const postResp = await ctx.priv.call({
+      v: 1,
+      id: `pmp-read-${jobId}-${Date.now()}`,
+      method: "pmp.read_check_state",
+      params: { checkId },
+      meta: {
+        tenantId: ctx.enrollment.tenantId,
+        deviceId: ctx.enrollment.deviceId
+      }
+    });
+    let postCompliant = false;
+    if (postResp?.ok) {
+      postCompliant = (postResp.result || {}).isCompliant === true;
+    }
+    if (!postCompliant && !requiresReboot) {
+      outcome = "failed";
+      extraReason = "post_state_mismatch";
+      return ackFor(outcome, remediationId, {
+        checkId,
+        exit: exitCode,
+        duration: durationMs,
+        reason: extraReason
+      });
+    }
+    outcome = requiresReboot ? "applied_reboot_required" : "applied";
+    return ackFor(outcome, remediationId, {
+      checkId,
+      exit: exitCode,
+      duration: durationMs
+    });
+  } catch (err) {
+    outcome = "failed";
+    extraReason = `exception:${(err?.message || "unknown").slice(0, 120)}`;
+    ctx.logger?.error?.("[pmp.remediate] unhandled exception", {
+      jobId,
+      checkId,
+      error: err?.message || String(err)
+    });
+    return {
+      ackStatus: 1,
+      // transient — orchestrator may retry
+      ackMessage: encodeAckMessage(outcome, remediationId, {
+        checkId,
+        reason: extraReason
+      }),
+      outcome
+    };
+  } finally {
+    finishRemediate();
+  }
+}
+function snapshotMatchesLocal(snapshotPlatform) {
+  const p = import_os18.default.platform();
+  if (snapshotPlatform === "cross") return true;
+  if (snapshotPlatform === "windows") return p === "win32";
+  if (snapshotPlatform === "macos") return p === "darwin";
+  if (snapshotPlatform === "linux") return p === "linux";
+  return false;
+}
+function reject(remediationId, reason, extras = {}) {
+  return {
+    ackStatus: 2,
+    ackMessage: encodeAckMessage("rejected", remediationId, {
+      ...extras,
+      reason
+    }),
+    outcome: "rejected"
+  };
+}
+function ackFor(outcome, remediationId, extras) {
+  let ackStatus = 2;
+  if (outcome === "applied" || outcome === "already_compliant" || outcome === "applied_reboot_required" || outcome === "dryrun_would_apply" || outcome === "dryrun_already_compliant") {
+    ackStatus = 0;
+  } else if (outcome === "timed_out") {
+    ackStatus = 1;
+  } else {
+    ackStatus = 2;
+  }
+  return {
+    ackStatus,
+    ackMessage: encodeAckMessage(outcome, remediationId, extras),
+    outcome
+  };
+}
+
+// src/plugins/sdp/index.ts
+var import_os20 = __toESM(require("os"));
+
+// src/plugins/sdp/state.ts
+var installInProgress = false;
+var lastInstall = null;
+function tryStartInstall(snapshot) {
+  if (installInProgress) return false;
+  installInProgress = true;
+  lastInstall = { ...snapshot, startedAtMs: Date.now() };
+  return true;
+}
+function finishInstall(outcome, exitCode) {
+  installInProgress = false;
+  if (lastInstall) {
+    lastInstall.finishedAtMs = Date.now();
+    lastInstall.outcome = outcome;
+    if (exitCode !== void 0) lastInstall.exitCode = exitCode;
+  }
+}
+
+// src/plugins/sdp/detection.ts
+var import_os19 = __toESM(require("os"));
+var PLATFORM_APPLICABILITY = {
+  registry_uninstall: /* @__PURE__ */ new Set(["win32"]),
+  bundle_version: /* @__PURE__ */ new Set(["darwin"]),
+  pkg_receipt: /* @__PURE__ */ new Set(["darwin"]),
+  // file_exists and command_exit work cross-platform.
+  file_exists: /* @__PURE__ */ new Set(["win32", "darwin", "linux"]),
+  command_exit: /* @__PURE__ */ new Set(["win32", "darwin", "linux"])
+};
+function normalizeRule(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const type = String(raw.type || "");
+  switch (type) {
+    case "registry_uninstall": {
+      if (typeof raw.displayNameLike !== "string") return null;
+      const out = { type, displayNameLike: raw.displayNameLike };
+      if (typeof raw.minVersion === "string" && raw.minVersion.trim()) {
+        out.minVersion = String(raw.minVersion).trim();
+      }
+      return out;
+    }
+    case "bundle_version": {
+      if (typeof raw.bundleId !== "string") return null;
+      const out = { type, bundleId: raw.bundleId };
+      if (typeof raw.minVersion === "string" && raw.minVersion.trim()) {
+        out.minVersion = String(raw.minVersion).trim();
+      }
+      return out;
+    }
+    case "pkg_receipt": {
+      if (typeof raw.pkgId !== "string") return null;
+      const out = { type, pkgId: raw.pkgId };
+      if (typeof raw.minVersion === "string" && raw.minVersion.trim()) {
+        out.minVersion = String(raw.minVersion).trim();
+      }
+      return out;
+    }
+    case "file_exists": {
+      if (typeof raw.path !== "string") return null;
+      return { type, path: raw.path };
+    }
+    case "command_exit": {
+      if (typeof raw.cmd !== "string") return null;
+      const out = { type, cmd: raw.cmd };
+      if (Array.isArray(raw.args)) {
+        out.args = raw.args.map((a) => String(a));
+      }
+      if (typeof raw.stdoutMatches === "string" && raw.stdoutMatches) {
+        out.stdoutMatches = raw.stdoutMatches;
+      }
+      return out;
+    }
+    default:
+      return null;
+  }
+}
+async function evaluate(ctx, rule, jobId) {
+  if (rule == null) {
+    return {
+      matched: false,
+      skipped: true,
+      skipReason: "no_rule"
+    };
+  }
+  const platform = import_os19.default.platform();
+  const applicable = PLATFORM_APPLICABILITY[rule.type]?.has(platform) ?? false;
+  if (!applicable) {
+    return {
+      matched: false,
+      skipped: true,
+      skipReason: `rule_type_not_applicable_on_${platform}`
+    };
+  }
+  try {
+    const resp = await ctx.priv.call({
+      v: 1,
+      id: `sdp-detect-${jobId}-${Date.now()}`,
+      method: "sdp.detect",
+      params: { rule },
+      meta: {
+        tenantId: ctx.enrollment.tenantId,
+        deviceId: ctx.enrollment.deviceId
+      }
+    });
+    if (!resp?.ok) {
+      ctx.logger?.warn?.("[sdp.detect] privsvc returned not ok", {
+        rule: rule.type,
+        error: resp?.error
+      });
+      return {
+        matched: false,
+        skipped: true,
+        skipReason: `privsvc_error:${resp?.error?.code || "unknown"}`
+      };
+    }
+    const result2 = resp.result || {};
+    return {
+      matched: result2.matched === true,
+      snapshot: result2.snapshot
+    };
+  } catch (err) {
+    ctx.logger?.warn?.("[sdp.detect] threw", {
+      rule: rule.type,
+      error: err?.message || String(err)
+    });
+    return {
+      matched: false,
+      skipped: true,
+      skipReason: `privsvc_threw:${err?.message || "unknown"}`
+    };
+  }
+}
+
+// src/plugins/sdp/index.ts
+function normalizePlatform() {
+  const p = import_os20.default.platform();
+  if (p === "win32") return "windows";
+  if (p === "darwin") return "macos";
+  if (p === "linux") return "linux";
+  return null;
+}
+function encodeAckMessage2(outcome, deploymentId, extras = {}) {
+  const parts = [`software_install:${outcome}`, `deploymentId=${deploymentId}`];
+  for (const [k, v] of Object.entries(extras)) {
+    if (v === void 0) continue;
+    parts.push(`${k}=${String(v).replace(/[;\n]/g, " ").slice(0, 200)}`);
+  }
+  return parts.join(";");
+}
+function trimStderr(stderr) {
+  if (typeof stderr !== "string" || stderr.length === 0) return void 0;
+  return stderr.replace(/\r/g, "").replace(/ /g, "").slice(0, 1024);
+}
+async function runSoftwareInstall(ctx, jobId, payload) {
+  const deploymentId = Number(payload?.deploymentId);
+  const snapshot = payload?.packageSnapshot;
+  if (!Number.isInteger(deploymentId) || deploymentId <= 0 || !snapshot) {
+    return {
+      ackStatus: 2,
+      ackMessage: encodeAckMessage2("failed", deploymentId || 0, {
+        reason: "invalid_payload"
+      }),
+      outcome: "failed"
+    };
+  }
+  const localPlatform = normalizePlatform();
+  if (localPlatform == null || localPlatform !== snapshot.platform) {
+    return {
+      ackStatus: 2,
+      ackMessage: encodeAckMessage2("rejected", deploymentId, {
+        reason: `platform_mismatch_${localPlatform}_vs_${snapshot.platform}`
+      }),
+      outcome: "rejected"
+    };
+  }
+  if (typeof ctx.policyRuntime?.pluginEnabled === "function" && ctx.policyRuntime.pluginEnabled("sdp") === false) {
+    return {
+      ackStatus: 2,
+      ackMessage: encodeAckMessage2("rejected", deploymentId, {
+        reason: "sdp_plugin_disabled_by_policy"
+      }),
+      outcome: "rejected"
+    };
+  }
+  const acquired = tryStartInstall({
+    packageId: snapshot.id,
+    packageName: snapshot.name,
+    packageVersion: snapshot.version
+  });
+  if (!acquired) {
+    return {
+      ackStatus: 1,
+      ackMessage: encodeAckMessage2("failed", deploymentId, {
+        reason: "another_install_in_progress"
+      }),
+      outcome: "failed"
+    };
+  }
+  let outcome = "failed";
+  let exitCode;
+  let extraReason;
+  let durationMs;
+  try {
+    const rule = normalizeRule(snapshot.detectionRule);
+    let preDetect = {
+      matched: false,
+      skipped: true,
+      skipReason: "no_rule"
+    };
+    if (rule) {
+      preDetect = await evaluate(ctx, rule, jobId);
+      if (preDetect.matched) {
+        outcome = "already_installed";
+        return {
+          ackStatus: 0,
+          ackMessage: encodeAckMessage2(outcome, deploymentId, {
+            reason: "pre_detect_matched"
+          }),
+          outcome
+        };
+      }
+    }
+    const downloadStart = Date.now();
+    const downloadResp = await ctx.priv.call({
+      v: 1,
+      id: `sdp-download-${jobId}-${Date.now()}`,
+      method: "sdp.download",
+      params: {
+        url: snapshot.downloadPath,
+        sha256: snapshot.sha256,
+        format: snapshot.format,
+        packageId: snapshot.id,
+        sizeBytes: snapshot.sizeBytes ?? void 0
+      },
+      meta: {
+        tenantId: ctx.enrollment.tenantId,
+        deviceId: ctx.enrollment.deviceId
+      }
+    });
+    if (!downloadResp?.ok) {
+      const errCode = downloadResp?.error?.code || "download_failed";
+      const isPermanent = errCode === "sha256_mismatch" || errCode === "signature_invalid" || errCode === "format_unsupported" || errCode === "url_invalid";
+      outcome = isPermanent ? "rejected" : "failed";
+      extraReason = errCode;
+      return {
+        ackStatus: isPermanent ? 2 : 1,
+        ackMessage: encodeAckMessage2(outcome, deploymentId, {
+          reason: errCode
+        }),
+        outcome
+      };
+    }
+    const downloadResult = downloadResp.result || {};
+    const stagingPath = String(downloadResult.stagingPath || "");
+    if (!stagingPath) {
+      outcome = "failed";
+      extraReason = "download_no_staging_path";
+      return {
+        ackStatus: 2,
+        ackMessage: encodeAckMessage2(outcome, deploymentId, {
+          reason: extraReason
+        }),
+        outcome
+      };
+    }
+    ctx.logger?.info?.("[sdp.install] download ok", {
+      jobId,
+      packageId: snapshot.id,
+      stagingPath,
+      durationMs: Date.now() - downloadStart
+    });
+    const installStart = Date.now();
+    const installResp = await ctx.priv.call({
+      v: 1,
+      id: `sdp-install-${jobId}-${Date.now()}`,
+      method: "sdp.install",
+      params: {
+        stagingPath,
+        format: snapshot.format,
+        args: snapshot.silentInstallArgs ?? void 0,
+        expectedExitCodes: Array.isArray(snapshot.expectedExitCodes) && snapshot.expectedExitCodes.length > 0 ? snapshot.expectedExitCodes : [0, 3010],
+        // Privsvc-side hard ceiling — leave 60s headroom under the
+        // orchestrator job timeout so we surface the timeout
+        // ourselves with a real outcome string.
+        timeoutSeconds: 1740,
+        packageId: snapshot.id
+      },
+      meta: {
+        tenantId: ctx.enrollment.tenantId,
+        deviceId: ctx.enrollment.deviceId
+      }
+    });
+    if (!installResp?.ok) {
+      const errCode = installResp?.error?.code || "install_failed";
+      outcome = errCode === "install_timeout" ? "timed_out" : "failed";
+      extraReason = errCode;
+      return {
+        ackStatus: outcome === "timed_out" ? 1 : 2,
+        ackMessage: encodeAckMessage2(outcome, deploymentId, {
+          reason: errCode
+        }),
+        outcome
+      };
+    }
+    const installResult = installResp.result || {};
+    exitCode = Number(installResult.exitCode);
+    const stderrExcerpt = trimStderr(installResult.stderrExcerpt);
+    durationMs = Number(installResult.durationMs ?? Date.now() - installStart);
+    const expected = snapshot.expectedExitCodes ?? [0, 3010];
+    const isExpected = Number.isFinite(exitCode) && expected.includes(exitCode);
+    const isReboot = exitCode === 3010;
+    if (!isExpected) {
+      outcome = "failed";
+      extraReason = stderrExcerpt ? `unexpected_exit_${exitCode}:${stderrExcerpt.slice(0, 80)}` : `unexpected_exit_${exitCode}`;
+      return {
+        ackStatus: 2,
+        ackMessage: encodeAckMessage2(outcome, deploymentId, {
+          exit: exitCode,
+          duration: durationMs,
+          reason: extraReason
+        }),
+        outcome
+      };
+    }
+    if (rule) {
+      const postDetect = await evaluate(ctx, rule, jobId);
+      if (!postDetect.skipped && !postDetect.matched) {
+        outcome = "failed";
+        extraReason = "post_detect_mismatch";
+        return {
+          ackStatus: 2,
+          ackMessage: encodeAckMessage2(outcome, deploymentId, {
+            exit: exitCode,
+            duration: durationMs,
+            reason: extraReason
+          }),
+          outcome
+        };
+      }
+    }
+    outcome = isReboot ? "reboot_required" : "success";
+    return {
+      ackStatus: 0,
+      ackMessage: encodeAckMessage2(outcome, deploymentId, {
+        exit: exitCode,
+        duration: durationMs
+      }),
+      outcome
+    };
+  } catch (err) {
+    outcome = "failed";
+    extraReason = `exception:${(err?.message || "unknown").slice(0, 120)}`;
+    ctx.logger?.error?.("[sdp.install] unhandled exception", {
+      jobId,
+      error: err?.message || String(err)
+    });
+    return {
+      ackStatus: 1,
+      ackMessage: encodeAckMessage2(outcome, deploymentId, {
+        reason: extraReason
+      }),
+      outcome
+    };
+  } finally {
+    finishInstall(outcome, exitCode);
+  }
+}
+
+// src/transport/grpc-stream.ts
 init_update_task();
 var MAX_IN_FLIGHT = 3;
 var HEARTBEAT_INTERVAL_MS = 6e4;
@@ -26192,6 +26830,12 @@ async function executeRunJob(ctx, runJob) {
           message: "patch_install retry: patch install already in progress"
         };
       }
+      if (isRemediateInFlight()) {
+        return {
+          status: 1,
+          message: "patch_install retry: patch_remediate in progress"
+        };
+      }
       const mode = String(payload?.mode || "install").trim().toLowerCase();
       const kbArticleIds = Array.isArray(payload?.kbArticleIds) ? payload.kbArticleIds.map((item) => String(item || "").trim()).filter(Boolean) : [];
       if (mode !== "install" && mode !== "download") {
@@ -26287,6 +26931,36 @@ async function executeRunJob(ctx, runJob) {
         ;
       } finally {
         ctx._patchInstallInProgress = false;
+      }
+    }
+    case "patch_remediate": {
+      try {
+        const ack = await runRemediation(ctx, jobId, payload);
+        return { status: ack.ackStatus, message: ack.ackMessage };
+      } catch (err) {
+        ctx.logger?.error?.("patch_remediate handler threw unexpectedly", {
+          jobId,
+          error: err?.message || String(err)
+        });
+        return {
+          status: 1,
+          message: `patch_remediate:failed;remediationId=${Number(payload?.remediationId) || 0};reason=handler_threw`
+        };
+      }
+    }
+    case "software_install": {
+      try {
+        const ack = await runSoftwareInstall(ctx, jobId, payload);
+        return { status: ack.ackStatus, message: ack.ackMessage };
+      } catch (err) {
+        ctx.logger?.error?.("software_install handler threw unexpectedly", {
+          jobId,
+          error: err?.message || String(err)
+        });
+        return {
+          status: 1,
+          message: `software_install:failed;deploymentId=${Number(payload?.deploymentId) || 0};reason=handler_threw`
+        };
       }
     }
     case "agent_update": {
@@ -26409,7 +27083,19 @@ function startGrpcStream(ctx) {
           armHeartbeat();
           return;
         }
-        if (!stream || !client.isConnected?.()) {
+        if (!stream) {
+          return;
+        }
+        if (!client.isConnected?.()) {
+          ctx.logger?.warn?.("gRPC stream: heartbeat tick saw stale connection, forcing reconnect");
+          try {
+            ctx.trayStatus.markGrpcDisconnected();
+          } catch {
+          }
+          try {
+            stream.emit("error", new Error("heartbeat_saw_stale_connection"));
+          } catch {
+          }
           return;
         }
         stream.write({
@@ -26929,7 +27615,7 @@ async function startService() {
             params: {},
             meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
           }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("PrivSvc ping timeout")), 3e3))
+          new Promise((_, reject2) => setTimeout(() => reject2(new Error("PrivSvc ping timeout")), 3e3))
         ]);
         if (resp.ok) {
           log.info("PrivSvc ping OK:");
