@@ -24601,19 +24601,11 @@ var grpc = __toESM(require_src3());
 var protoLoader = __toESM(require_src2());
 var PROTO_PATH = import_path3.default.resolve(__dirname, "../proto/controlplane.proto");
 var CHANNEL_OPTIONS = {
-  "grpc.keepalive_time_ms": 3e4,
-  // send a ping every 30s
-  "grpc.keepalive_timeout_ms": 1e4,
-  // fail if no pong in 10s
-  "grpc.keepalive_permit_without_calls": 1,
-  // ping even with no RPCs
-  "grpc.http2.max_pings_without_data": 0,
-  // unlimited idle pings
-  "grpc.http2.min_time_between_pings_ms": 3e4,
-  "grpc.http2.min_ping_interval_without_data_ms": 3e4
+  // Intentionally empty. See block comment above for rationale.
 };
 var WATCHDOG_INTERVAL_MS = 15e3;
 var DEAD_STREAM_THRESHOLD_MS = 15e4;
+var ALIVE_PUSH_INTERVAL_MS = 6e4;
 var BREAKER_TICK_MS = 3e4;
 var BREAKER_THRESHOLD_MS = 5 * 60 * 1e3;
 var state = {
@@ -24622,6 +24614,7 @@ var state = {
   chunks: /* @__PURE__ */ new Map(),
   channelWatchGen: 0,
   watchdogTimer: null,
+  alivePushTimer: null,
   everConnected: false,
   breakerTimer: null
 };
@@ -24739,6 +24732,35 @@ function startWatchdog() {
   }, WATCHDOG_INTERVAL_MS);
   state.watchdogTimer.unref?.();
 }
+function stopAlivePushes() {
+  if (state.alivePushTimer) {
+    try {
+      clearInterval(state.alivePushTimer);
+    } catch {
+    }
+    state.alivePushTimer = null;
+  }
+}
+function startAlivePushes() {
+  stopAlivePushes();
+  state.alivePushTimer = setInterval(() => {
+    if (!state.connected) return;
+    try {
+      state.push?.({
+        v: 1,
+        method: "grpc.alive",
+        params: { atUtc: (/* @__PURE__ */ new Date()).toISOString() },
+        meta: {
+          tenantId: state.tenantId,
+          deviceId: state.deviceId,
+          connectionId: state.target
+        }
+      });
+    } catch {
+    }
+  }, ALIVE_PUSH_INTERVAL_MS);
+  state.alivePushTimer.unref?.();
+}
 function teardownBridge(reason, details) {
   const wasConnected = state.connected || state.connecting;
   state.connected = false;
@@ -24748,6 +24770,7 @@ function teardownBridge(reason, details) {
   }
   state.channelWatchGen += 1;
   stopWatchdog();
+  stopAlivePushes();
   state.connectedAtMs = void 0;
   state.lastReceiveAtMs = void 0;
   state.lastSendAtMs = void 0;
@@ -25058,6 +25081,7 @@ async function startConnection(params, pushSink) {
     });
     watchChannelState(state.client, generation);
     startWatchdog();
+    startAlivePushes();
   } finally {
     state.connecting = false;
   }

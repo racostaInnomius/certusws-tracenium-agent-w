@@ -9,25 +9,63 @@ import { logger } from "./logger";
 
 const PROTO_PATH = path.resolve(__dirname, "../proto/controlplane.proto");
 
-// gRPC channel keepalive — forces the runtime to detect dead TCP
-// connections (e.g. Wi-Fi dropped and reconnected) by pinging the server
-// regardless of outbound traffic. Without these, the channel can stay in
-// a "zombie" state for hours with no way to tell the link is dead.
+// gRPC channel options.
 //
-// Note: in production we've seen cases where the @grpc/grpc-js HTTP/2
-// keepalive doesn't fire reliably after sleep/wake or ungraceful
-// backend restarts (SIGKILL, OOM). The application-level watchdog
-// below — see WATCHDOG_INTERVAL_MS / DEAD_STREAM_THRESHOLD_MS — is
-// the safety net for those cases. Same approach the Windows
-// (Tracenium.PrivSvc.Windows/Ipc/GrpcBridge.cs) bridge uses, with
-// matching numbers (15s tick, 150s threshold).
+// ── Patch M (May 2026) — undo the client-side keepalive added by
+//    Patch G's ill-fated "fix". This is the actual root cause of
+//    the macOS-only flapping that 6 production devices have been
+//    hitting across different ISPs. ──────────────────────────────
+//
+// The previous setting was:
+//   "grpc.keepalive_time_ms": 30_000,          // ping every 30s
+//   "grpc.keepalive_timeout_ms": 10_000,
+//   "grpc.keepalive_permit_without_calls": 1,
+//   "grpc.http2.max_pings_without_data": 0,
+//   "grpc.http2.min_time_between_pings_ms": 30_000,
+//   "grpc.http2.min_ping_interval_without_data_ms": 30_000
+//
+// Why it broke: with `keepalive_permit_without_calls: 1` plus a
+// 30 000 ms cadence, the @grpc/grpc-js client sends an HTTP/2 PING
+// every 30 s on the long-lived bidi `Connect()` stream regardless of
+// data activity. The backend server sets
+// `grpc.http2.min_ping_interval_without_data_ms: 30_000` (see
+// modules/grpc/server.ts Patch G), which means "any ping arriving
+// <30 s after the previous one counts as a bad-ping strike". The
+// gRPC default `MAX_PING_STRIKES` is 2 — after two bad pings the
+// server sends GOAWAY:ENHANCE_YOUR_CALM, the client surfaces this
+// as `UNAVAILABLE` (code 14), and the bridge tears down. Because
+// any clock skew, scheduling jitter, or network buffering between
+// the two endpoints can put a ping at 29.x s on the server clock,
+// the strike rate is low but nonzero (~5 % observed) which gives
+// the random 13–33 min drop pattern we've been chasing for weeks.
+//
+// Why Windows never tripped: `Grpc.Net.Client` defaults to
+// `KeepAlivePingPolicy.WithActiveRequests` AND
+// `KeepAlivePingDelay = Infinite`, so .NET never sends client-
+// initiated pings even on an active stream. The server therefore
+// never sees a strike from a Windows agent — only from us.
+//
+// Fix: revert to upstream @grpc/grpc-js defaults (no client-side
+// keepalive). The bridge's liveness now relies on:
+//
+//   1. Server-initiated keepalive (server pings every 60 s, see
+//      modules/grpc/server.ts Patch G/H). The kernel auto-pongs at
+//      the HTTP/2 layer, so half-open TCPs surface as channel
+//      `TRANSIENT_FAILURE` to `watchChannelState` below.
+//   2. Application-level dead-stream watchdog
+//      (`DEAD_STREAM_THRESHOLD_MS = 150 s`) — tears down + reconnects
+//      if `lastReceiveAtMs` ages past the threshold.
+//   3. Self-restart circuit breaker
+//      (`BREAKER_THRESHOLD_MS = 5 min`, Patch C+E+I) as last resort.
+//
+// Net behaviour: macOS now matches Windows on the wire — no client
+// pings, server-driven liveness, app watchdog as belt-and-braces.
+// The 30-s detection latency we lose by removing client pings is
+// well within tolerance: an idle bidi that's actually dead will be
+// caught by either (1) the next server ping (≤ 60 s) failing, or
+// (2) the app watchdog (≤ 150 s).
 const CHANNEL_OPTIONS: grpc.ChannelOptions = {
-  "grpc.keepalive_time_ms": 30_000,            // send a ping every 30s
-  "grpc.keepalive_timeout_ms": 10_000,         // fail if no pong in 10s
-  "grpc.keepalive_permit_without_calls": 1,    // ping even with no RPCs
-  "grpc.http2.max_pings_without_data": 0,      // unlimited idle pings
-  "grpc.http2.min_time_between_pings_ms": 30_000,
-  "grpc.http2.min_ping_interval_without_data_ms": 30_000
+  // Intentionally empty. See block comment above for rationale.
 };
 
 // Application-level dead-stream watchdog. Polls every WATCHDOG_INTERVAL_MS
@@ -44,6 +82,34 @@ const CHANNEL_OPTIONS: grpc.ChannelOptions = {
 //     ~150 + 15 = 165s.
 const WATCHDOG_INTERVAL_MS = 15_000;
 const DEAD_STREAM_THRESHOLD_MS = 150_000;
+
+// ── Patch K (May 2026, follow-up to Patches A–I) ─────────────────────
+//
+// Periodic liveness push to agent-core. The agent's grpc-client tracks
+// `lastServerActivityMs` for the agent-side watchdog (Patch B in
+// grpc-stream.ts, threshold 270s). That stamp is only refreshed when
+// the agent observes a RECOGNIZED push from privsvc — `grpc.ack`,
+// `grpc.connected`, `grpc.control.*`, `grpc.disconnected`. Server
+// HTTP/2 pings keep the TCP alive at the transport layer but @grpc/grpc-js
+// handles them internally and never surfaces them as application `data`
+// events here, so they don't update `state.lastReceiveAtMs` and never
+// produce an IPC push to the agent. Result on a healthy-but-idle bridge:
+// agent's `lastServerActivityMs` ages out, hits 270s, Patch B fires
+// "server silent past threshold" → spurious reconnect every ~5 min,
+// observable as the device flapping offline on the dashboard with
+// no real network or backend issue.
+//
+// Fix: emit a synthetic `grpc.alive` push every ALIVE_PUSH_INTERVAL_MS
+// while we believe the bridge is healthy (state.connected = true).
+// agent-core treats any recognized push as activity (line 127 of
+// grpc-client.ts), so this single line keeps the agent watchdog from
+// false-positive without touching the agent at all.
+//
+// We pick 60s so a single missed alive (network blip, IPC pause)
+// still leaves the agent's 270s window with ≥3 retry slots before it
+// trips. Cost: 1 IPC push per minute per device — negligible on the
+// IPC pipe (well under 1 msg/sec budget).
+const ALIVE_PUSH_INTERVAL_MS = 60_000;
 
 // ── Self-restart circuit breaker ──────────────────────────────────────
 //
@@ -109,6 +175,9 @@ type BridgeState = {
   lastReceiveAtMs?: number;
   lastSendAtMs?: number;
   watchdogTimer?: NodeJS.Timeout | null;
+  // Patch K — periodic liveness push to agent-core. Armed in
+  // startConnection (after watchdog), cleared in teardownBridge.
+  alivePushTimer?: NodeJS.Timeout | null;
   // Self-restart circuit breaker state. `lastSuccessfulConnectAtMs`
   // stamps the wall-clock of the most recent HELLO that brought us to
   // `connected=true`. `lastDisconnectedAtMs` stamps the moment we
@@ -129,6 +198,7 @@ const state: BridgeState = {
   chunks: new Map(),
   channelWatchGen: 0,
   watchdogTimer: null,
+  alivePushTimer: null,
   everConnected: false,
   breakerTimer: null
 };
@@ -363,6 +433,52 @@ function startWatchdog() {
   state.watchdogTimer.unref?.();
 }
 
+// Patch K — periodic liveness push to agent-core. See ALIVE_PUSH_INTERVAL_MS
+// comment for rationale. Lifecycle parallels the watchdog: armed at the
+// end of startConnection once the stream is live, torn down by
+// teardownBridge so we don't push `grpc.alive` for a bridge that's no
+// longer connected (which would confuse the agent into thinking it's
+// fine while it's actually waiting on a reconnect).
+function stopAlivePushes() {
+  if (state.alivePushTimer) {
+    try { clearInterval(state.alivePushTimer); } catch {}
+    state.alivePushTimer = null;
+  }
+}
+
+function startAlivePushes() {
+  // Belt-and-suspenders: reset before re-arming so a future double-arm
+  // doesn't leak a timer.
+  stopAlivePushes();
+
+  state.alivePushTimer = setInterval(() => {
+    // Defensive guard. teardownBridge calls stopAlivePushes synchronously
+    // so this branch normally won't be reached, but a teardown racing
+    // with this tick (different async paths) could leave a leftover
+    // tick; pushing `grpc.alive` for a bridge we already declared dead
+    // would falsely keep the agent's watchdog quiet.
+    if (!state.connected) return;
+    try {
+      state.push?.({
+        v: 1,
+        method: "grpc.alive",
+        params: { atUtc: new Date().toISOString() },
+        meta: {
+          tenantId: state.tenantId,
+          deviceId: state.deviceId,
+          connectionId: state.target
+        }
+      });
+    } catch {
+      // Best-effort. A failed push doesn't change correctness — agent's
+      // watchdog will eventually fire and trigger reconnect, which is
+      // exactly what we'd want if IPC is genuinely broken.
+    }
+  }, ALIVE_PUSH_INTERVAL_MS);
+
+  state.alivePushTimer.unref?.();
+}
+
 // Collapse all "tear down the current channel/stream" paths into one helper
 // so every transport-level failure ends the same way: no stale client/call
 // references, no stuck flags, and a single `grpc.disconnected` push so the
@@ -391,6 +507,12 @@ function teardownBridge(reason: string, details?: Record<string, any>) {
   // emit a spurious "dead_stream_watchdog" alongside whatever real
   // reason actually triggered teardown.
   stopWatchdog();
+  // Patch K — stop liveness pushes too. If we kept pushing `grpc.alive`
+  // here, the agent's lastServerActivityMs would stay fresh while the
+  // bridge is actually dead, suppressing the agent-side watchdog
+  // (Patch B) that's our defence-in-depth for the case where this
+  // teardown push (`grpc.disconnected`) gets dropped by IPC.
+  stopAlivePushes();
   state.connectedAtMs = undefined;
   state.lastReceiveAtMs = undefined;
   state.lastSendAtMs = undefined;
@@ -791,6 +913,14 @@ async function startConnection(params: Record<string, any>, pushSink: PushSink) 
     // sit zombie for hours otherwise. Mirrors what the Windows
     // bridge does.
     startWatchdog();
+
+    // Patch K — keep agent-side `lastServerActivityMs` from aging out
+    // when the stream is healthy but quiet. See ALIVE_PUSH_INTERVAL_MS
+    // block at the top of the file for the full rationale. Order
+    // matters only insofar as we want the watchdog armed first so a
+    // pathological "alive push runs but local liveness is broken"
+    // race can't paper over a real teardown.
+    startAlivePushes();
   } finally {
     state.connecting = false;
   }
