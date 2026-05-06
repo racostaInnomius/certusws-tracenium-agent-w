@@ -7,6 +7,7 @@ import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { Namespaces, DeviceFacts } from "../domain/device-facts";
 import type { PmpNamespace } from "../domain/pmp-types";
 import { updatePmpState } from "../plugins/pmp/state";
+import { runSoftwareInstall } from "../plugins/sdp";
 import { runUpdateTask } from "../update/update-task";
 
 const ACK_TIMEOUT_MS = 60_000;
@@ -564,6 +565,35 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
         };
       } finally {
         (ctx as any)._patchInstallInProgress = false;
+      }
+    }
+
+    case "software_install": {
+      // SDP — Phase 1. The plugin returns a structured ack contract
+      // (ackStatus / ackMessage / outcome) that we surface as-is to
+      // the orchestrator. The plugin is responsible for owning
+      // concurrency, retries decisions, and the privsvc dance — we
+      // only translate to the runJob ack envelope here.
+      //
+      // Outcome ∈ { success, already_installed, reboot_required,
+      //             failed, rejected, timed_out } is encoded in the
+      // ack message as `software_install:<outcome>;...` so the
+      // backend's P1-G ack handler can update software_install_results
+      // without needing a new gRPC field.
+      try {
+        const ack = await runSoftwareInstall(ctx, jobId, payload);
+        return { status: ack.ackStatus, message: ack.ackMessage };
+      } catch (err: any) {
+        // runSoftwareInstall is documented as non-throwing — if it
+        // does throw, treat as transient. Should not happen.
+        ctx.logger?.error?.("software_install handler threw unexpectedly", {
+          jobId,
+          error: err?.message || String(err),
+        });
+        return {
+          status: 1,
+          message: `software_install:failed;deploymentId=${Number(payload?.deploymentId) || 0};reason=handler_threw`,
+        };
       }
     }
 

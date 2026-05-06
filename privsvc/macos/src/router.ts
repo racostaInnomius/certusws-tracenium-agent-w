@@ -12,6 +12,7 @@ import {
 } from "./grpc-bridge";
 import { handlePatchInstall, handlePatchScan } from "./patch-management";
 import { handleSecurityPosture } from "./security-posture";
+import { handleSdpDetect, handleSdpDownload, handleSdpInstall } from "./sdp";
 import { logger } from "./logger";
 
 function isRoot() {
@@ -19,7 +20,15 @@ function isRoot() {
 }
 
 function requiresRoot(method: string) {
-  return method.startsWith("crypto.") || method.startsWith("grpc.") || method === "patch.install";
+  // sdp.detect could be argued as non-root (some rules — file_exists,
+  // command_exit — don't need root), but consistency wins: every SDP
+  // primitive runs in privsvc and we don't want a partial-privilege
+  // attack surface where an unprivileged caller can probe the
+  // detection runner with arbitrary commands. Same gate as crypto/grpc.
+  return method.startsWith("crypto.")
+      || method.startsWith("grpc.")
+      || method.startsWith("sdp.")
+      || method === "patch.install";
 }
 
 export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise<PrivSvcResponse> {
@@ -95,6 +104,16 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "patch.install":
       return handlePatchInstall(req);
+
+    // SDP — Phase 1-E. See privsvc/macos/src/sdp.ts.
+    case "sdp.detect":
+      return handleSdpDetect(req);
+
+    case "sdp.download":
+      return handleSdpDownload(req);
+
+    case "sdp.install":
+      return handleSdpInstall(req);
 
     default:
       return fail(req.id, "not_supported", `Unsupported method: ${req.method}`);

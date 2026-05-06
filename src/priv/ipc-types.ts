@@ -20,7 +20,24 @@ export type PrivSvcMethod =
   | "grpc.facts.send"
   | "grpc.facts.chunk"
   | "grpc.heartbeat"
-  | "grpc.close";
+  | "grpc.close"
+  // Software Delivery Plugin (SDP) — Phase 1. The plugin lives in
+  // src/plugins/sdp/ and orchestrates these three primitives:
+  //   * `sdp.detect`   — evaluate a DetectionRule (registry /
+  //                      bundle_version / pkg_receipt / file /
+  //                      command). Returns { matched, snapshot }.
+  //                      Used both pre-install (idempotency) and
+  //                      post-install (verification of silent
+  //                      installer success).
+  //   * `sdp.download` — fetch the package binary into a privileged
+  //                      staging dir and verify sha256. Returns
+  //                      { stagingPath, sha256 }.
+  //   * `sdp.install`  — exec the installer (msiexec / installer / etc)
+  //                      with privsvc privileges. Returns
+  //                      { exitCode, stderrExcerpt, durationMs }.
+  | "sdp.detect"
+  | "sdp.download"
+  | "sdp.install";
 
 export type GrpcAckParams = {
   eventId: string;

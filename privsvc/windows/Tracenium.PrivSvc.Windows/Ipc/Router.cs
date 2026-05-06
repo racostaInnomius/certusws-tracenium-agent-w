@@ -43,9 +43,14 @@ public sealed class Router
             req.Meta?.TenantId,
             req.Meta?.DeviceId);
 
-        // Enforce LocalSystem for sensitive operations (crypto + gRPC bridge)
+        // Enforce LocalSystem for sensitive operations (crypto + gRPC bridge + sdp).
+        // sdp.* (download / detect / install) all run privileged work
+        // — even sdp.detect's command_exit runs arbitrary commands the
+        // catalog operator specified, which is a privileged operation
+        // by definition. Same gate as crypto/grpc.
         if (req.Method.StartsWith("grpc.", StringComparison.OrdinalIgnoreCase) ||
-            req.Method.StartsWith("crypto.", StringComparison.OrdinalIgnoreCase))
+            req.Method.StartsWith("crypto.", StringComparison.OrdinalIgnoreCase) ||
+            req.Method.StartsWith("sdp.", StringComparison.OrdinalIgnoreCase))
         {
             if (!IsLocalSystem())
             {
@@ -90,6 +95,11 @@ public sealed class Router
             "grpc.close" => IpcGrpcHandlers.HandleClose(req),
             "grpc.ack" => IpcGrpcHandlers.HandleAck(req),
             "grpc.heartbeat" => IpcGrpcHandlers.HandleHeartbeat(req),
+
+            // SDP — Phase 1-E. See Ipc/Sdp.cs.
+            "sdp.detect" => Sdp.HandleDetect(req),
+            "sdp.download" => Sdp.HandleDownload(req),
+            "sdp.install" => Sdp.HandleInstall(req),
 
             _ => Task.FromResult(PrivSvcResponse.Fail(req.Id, "not_supported", $"Unsupported method: {req.Method}"))
         };
