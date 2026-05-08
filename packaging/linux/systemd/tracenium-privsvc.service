@@ -1,0 +1,75 @@
+[Unit]
+# Tracenium PrivSvc — root-privileged broker for the agent.
+#
+# Owns: gRPC mTLS bridge to backend, cert lifecycle, patch install,
+# system-posture queries that need root. The agent process talks to
+# this daemon over a Unix socket at /run/tracenium/privsvc.sock and
+# never opens those privileges itself.
+Description=Tracenium PrivSvc (privileged broker)
+Documentation=https://tracenium.com
+# After network-online ensures DNS works at first connect; gRPC
+# bridge needs to resolve grpc.tracenium.com.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as root by design — this daemon's whole purpose is to hold
+# the privileges the agent intentionally drops. The Unix socket it
+# exposes is locked to mode 0660 root:tracenium so only the agent
+# (which runs as the `tracenium` user, member of group `tracenium`)
+# can connect.
+User=root
+Group=root
+ExecStart=/usr/lib/tracenium/node /usr/lib/tracenium/privsvc/index.js
+
+# RuntimeDirectory creates /run/tracenium with mode 0750 owned
+# root:tracenium at start, and tears it down on stop. This is
+# where privsvc.sock lives; cleaned by systemd so a crashed daemon
+# can never leave a stale socket behind. The mode lets the
+# `tracenium` group traverse and connect to children.
+RuntimeDirectory=tracenium
+RuntimeDirectoryMode=0750
+
+# Restart=always is the Linux equivalent of macOS launchd's
+# KeepAlive=true. The privsvc circuit breaker (Patches C+E+I in
+# grpc-bridge.ts) deliberately calls process.exit(1) when reconnect
+# attempts have been failing for >5 min — without Restart=always
+# the daemon would just stop. RestartSec=5 is enough delay to let
+# the kernel close FDs cleanly without flooding the system on a
+# pathological crashloop.
+Restart=always
+RestartSec=5
+
+# Cap restart rate so a permanent failure mode (corrupt cert, missing
+# proto, etc.) doesn't drown journald. 5 restarts in 60s before
+# systemd starts ignoring the unit; a human on-call has to step in.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Logs go to journald (StandardOutput=journal) — operator's first
+# stop on incidents (`journalctl -u tracenium-privsvc -f`). The
+# daemon ALSO writes /var/log/tracenium/tracenium-privsvc-linux.log
+# directly via fs.appendFileSync (see logger.ts) — that's the
+# durable record that survives `journalctl --rotate`.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tracenium-privsvc
+
+# Hardening — defense in depth, not the primary boundary. Anything
+# that breaks the daemon's actual job (network access for gRPC,
+# /etc/tracenium/certs reads, /var/lib/tracenium writes, dpkg/dnf
+# spawns, journald writes) gets explicit allowlist. Anything not
+# listed is denied.
+#
+# We deliberately do NOT set ProtectSystem=strict or
+# ProtectHome=true here — the privsvc legitimately needs to write
+# to /etc/tracenium/certs (cert install/renew), /var/lib/tracenium
+# (state), /var/log/tracenium (logs), and /run/tracenium (socket).
+# A future Phase 10 will tighten these once we've measured what
+# patch.install / sdp.install actually touch in production.
+NoNewPrivileges=false
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

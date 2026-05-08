@@ -1,0 +1,82 @@
+# packaging/linux/selinux/tracenium.te
+#
+# SELinux Type Enforcement module for the Tracenium agent on
+# RHEL-family hosts (Rocky, Alma, RHEL, Fedora). Compiled to
+# tracenium.pp via:
+#
+#   make -f /usr/share/selinux/devel/Makefile tracenium.pp
+#
+# The Phase 4 packaging produces this .pp at build time and the
+# postinstall.sh applies it via `semodule -i tracenium.pp` on
+# RHEL-family hosts. Postremove `semodule -r tracenium`.
+#
+# Scope: this module defines the type label for our daemon and
+# its private files, plus the minimum allow rules to function.
+# We DO NOT define a custom domain transition for `node` —
+# that gets thorny when the bundled node binary updates and
+# the policy needs to recognize the new inode. Instead, we
+# label the per-file paths under /usr/lib/tracenium/ and let
+# the daemon run in the standard `init_t` context (inherited
+# from systemd) — same approach Docker and most third-party
+# RPM-shipped daemons use.
+#
+# What the module DOES enforce:
+#   * /etc/tracenium/certs/ private key files have type
+#     tracenium_cert_t — system_r:* contexts cannot read them
+#     (only this daemon and root maintenance tasks).
+#   * /var/lib/tracenium/ has type tracenium_var_lib_t — same
+#     idea, scoped by file context not by daemon domain.
+#   * /run/tracenium/ has type tracenium_run_t — the IPC
+#     socket inherits this label.
+#
+# This is a minimal "label so private files stay private" policy,
+# not a tight confinement profile. Phase 11 (future) could
+# graduate to a tracenium_t domain with full transition rules
+# once the access patterns stabilize across more customer envs.
+
+policy_module(tracenium, 1.0.0)
+
+require {
+    type init_t;
+    type unconfined_t;
+    type cert_t;
+    type var_lib_t;
+    type var_run_t;
+    type var_log_t;
+    type etc_t;
+    class file { read open getattr };
+    class dir  { read open getattr search };
+}
+
+# ── Custom types ──────────────────────────────────────────────────
+type tracenium_var_lib_t;
+files_type(tracenium_var_lib_t)
+
+type tracenium_run_t;
+files_pid_file(tracenium_run_t)
+
+type tracenium_log_t;
+logging_log_file(tracenium_log_t)
+
+type tracenium_cert_t;
+files_type(tracenium_cert_t)
+
+# ── Allow rules ───────────────────────────────────────────────────
+# init_t is the context systemd-spawned daemons inherit. The
+# privsvc runs under init_t (we don't transition); these rules
+# grant init_t the access it needs to our labelled files.
+
+# Read+write /var/lib/tracenium and /run/tracenium.
+allow init_t tracenium_var_lib_t:dir { read write add_name remove_name search getattr };
+allow init_t tracenium_var_lib_t:file { read write create unlink open getattr setattr lock };
+
+allow init_t tracenium_run_t:dir { read write add_name remove_name search getattr };
+allow init_t tracenium_run_t:sock_file { create unlink getattr setattr };
+
+# Logs.
+allow init_t tracenium_log_t:dir { read write add_name search };
+allow init_t tracenium_log_t:file { create read write append open getattr setattr };
+
+# Certs — read in normal operation, write on renewal.
+allow init_t tracenium_cert_t:dir { read search getattr };
+allow init_t tracenium_cert_t:file { read write open getattr setattr unlink rename };

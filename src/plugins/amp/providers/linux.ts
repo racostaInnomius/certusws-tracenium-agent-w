@@ -1,7 +1,22 @@
 // src/plugins/amp/providers/linux.ts
+//
+// Linux AMP (Asset Management Plugin) provider. Collects software
+// inventory via dpkg/rpm/snap/flatpak and reports security posture
+// (currently stubbed — Phase 5 wires it to privsvc security.compliance).
+//
+// Architectural note for future readers:
+//   The `hardware` block this provider returns is OVERWRITTEN by
+//   `buildDeviceFacts` in src/domain/device-facts-builder.ts (~line
+//   266) which builds its own hardware namespace via systeminformation
+//   cross-platform. So the `collectLinuxHardware()` work below is
+//   effectively dead code on the wire — the only fields that survive
+//   to FACTS_SNAPSHOT are software + security. We keep the hardware
+//   collection here because it's cheap and matches the macOS/windows
+//   provider shape, in case the builder is ever refactored to defer
+//   to providers for OS-specific details.
 import os from "os";
 import si from "systeminformation";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 
 import type { AgentContext } from "../../../core/agent-context";
@@ -16,8 +31,22 @@ import {
   deleteSoftwareByIds
 } from "../../../domain/software-baseline-repo";
 
+// execFile takes an argv array — no shell interpolation, so package
+// names returned by dpkg/rpm/snap/flatpak that happen to contain shell
+// metacharacters are harmless. (Previous version used `exec` with
+// shell strings, mirroring a small attack surface for any future
+// caller that ever passed user-controlled arguments. Migrating
+// matches the macOS provider's safer pattern.)
+const execFileAsync = promisify(execFile);
 
-const execAsync = promisify(exec);
+// Software-listing commands on big systems can take noticeable time.
+// On a stock RHEL 9 box with ~4 000 RPMs `rpm -qa` runs ~6-9 s; on a
+// 10 000-package developer workstation we've seen 12 s. The previous
+// 5 s timeout was tight enough to occasionally truncate the inventory
+// silently (run() returns "" on timeout → empty list → DELETE BASELINE
+// path, which churns deltas). Bump to 30 s — still well below the
+// scheduler tick window so a hung subprocess can't stall heartbeats.
+const PKG_LIST_TIMEOUT_MS = 30_000;
 
 let cachedPM: {
   hasDpkg: boolean;
@@ -61,19 +90,73 @@ async function collectLinuxHardware(): Promise<AmpNamespace["hardware"]> {
   };
 }
 
-function collectLinuxSecurity(): AmpNamespace["security"] {
-  return {
+// Mirrors the macOS provider shape: when privsvc has a
+// security.compliance handler it'll return real values; until Phase 5
+// lands those handlers on Linux, this stays "unknown" and the
+// dashboard treats the device as security-posture-pending. The
+// agent-side fallback here is cheap and consistent with how macOS
+// behaved before its own security-posture handler shipped.
+async function collectLinuxSecurity(ctx: AgentContext): Promise<AmpNamespace["security"]> {
+  const unknown: AmpNamespace["security"] = {
     bitlocker: { status: "unknown" },
     defender: { status: "unknown" },
-    firewall: { status: "unknown" }
+    firewall: { status: "unknown" },
   };
+
+  try {
+    const resp = await ctx.priv.call({
+      v: 1,
+      id: `security-posture-${Date.now()}`,
+      method: "security.compliance",
+      params: {},
+      meta: {
+        tenantId: ctx.enrollment.tenantId,
+        deviceId: ctx.enrollment.deviceId,
+      },
+    } as any);
+
+    // Phase 3 ships before Phase 5, so the privsvc handler returns
+    // `not_implemented` (router.ts) and resp.ok is false. That's not
+    // an error — silently fall back to "unknown" so the agent doesn't
+    // log noise at every inventory tick.
+    if (!resp?.ok) return unknown;
+
+    const posture = resp.result || {};
+
+    // Map Linux-specific fields into the cross-platform shape. Once
+    // Phase 5's security-posture.ts lands, the fields below will be:
+    //   posture.firewall  →  { status: "enabled"|"disabled", impl: "ufw"|"firewalld"|"nftables"|"iptables" }
+    //   posture.selinux   →  { mode: "enforcing"|"permissive"|"disabled" }   (rhel-family)
+    //   posture.apparmor  →  { mode: "enforcing"|"complain"|"disabled" }     (debian-family)
+    //
+    // bitlocker/defender don't apply on Linux — they stay "unknown",
+    // which is the documented signal for "this control is not
+    // applicable on this OS" rather than a real unknown.
+    return {
+      bitlocker: { status: "unknown" },
+      defender: { status: "unknown" },
+      firewall: {
+        status: posture.firewall?.status ?? "unknown",
+        raw: posture.firewall,
+      } as any,
+    };
+  } catch {
+    // priv.call can throw if the IPC pipe is mid-reconnect. That's a
+    // transient state — return unknown rather than letting it bubble
+    // up and abort the entire AMP collection (which would cost us
+    // the software inventory too).
+    return unknown;
+  }
 }
 
-async function run(cmd: string) {
+// Wraps execFile with our standard timeout + maxBuffer + swallow-on-
+// error semantics. Returns empty string on any failure so callers can
+// uniformly check `out.length === 0` without try/catch noise.
+async function run(bin: string, args: string[], timeoutMs = PKG_LIST_TIMEOUT_MS): Promise<string> {
   try {
-    const { stdout } = await execAsync(cmd, {
+    const { stdout } = await execFileAsync(bin, args, {
       maxBuffer: 1024 * 1024 * 10,
-      timeout: 5000
+      timeout: timeoutMs,
     });
     return stdout;
   } catch {
@@ -81,37 +164,53 @@ async function run(cmd: string) {
   }
 }
 
+// Cheap binary-presence check via fs.existsSync (no fork). The
+// previous `test -x ... && echo yes` shell trick worked but spawned
+// 4 shells per agent boot for nothing.
+function hasExecutable(path: string): boolean {
+  try {
+    const stat = require("fs").statSync(path);
+    // 0o111 = any execute bit (owner | group | other)
+    return stat.isFile() && (stat.mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
+}
+
 async function detectPackageManagers() {
   if (cachedPM) return cachedPM;
 
-  const checks = await Promise.all([
-    run("test -x /usr/bin/dpkg && echo yes"),
-    run("test -x /usr/bin/rpm && echo yes"),
-    run("test -x /usr/bin/snap && echo yes"),
-    run("test -x /usr/bin/flatpak && echo yes")
-  ]);
-
   cachedPM = {
-    hasDpkg: checks[0].includes("yes"),
-    hasRpm: checks[1].includes("yes"),
-    hasSnap: checks[2].includes("yes"),
-    hasFlatpak: checks[3].includes("yes")
+    hasDpkg: hasExecutable("/usr/bin/dpkg") || hasExecutable("/bin/dpkg"),
+    hasRpm: hasExecutable("/usr/bin/rpm") || hasExecutable("/bin/rpm"),
+    hasSnap: hasExecutable("/usr/bin/snap") || hasExecutable("/snap/bin/snap"),
+    hasFlatpak: hasExecutable("/usr/bin/flatpak") || hasExecutable("/var/lib/flatpak/bin/flatpak"),
   };
 
   return cachedPM;
 }
 
 async function collectDpkg(): Promise<SoftwareApplication[]> {
-  const out = await run("dpkg -l");
-  const lines = out.split("\n").slice(5);
+  // -W is the machine-readable form; `-f` controls the field layout.
+  // Tab-separated so we can split on \t (package names never contain
+  // tabs, but they CAN contain spaces in `Description` — old format).
+  // We don't ask for description here.
+  const out = await run("/usr/bin/dpkg-query", [
+    "-W",
+    "-f=${db:Status-Abbrev}\t${Package}\t${Version}\t${Architecture}\n",
+  ]);
+  const lines = out.split("\n").filter(Boolean);
   const res: SoftwareApplication[] = [];
 
   for (const line of lines) {
-    const parts = line.trim().split(/\s+/);
+    const parts = line.split("\t");
     if (parts.length < 3) continue;
 
-    // Only installed packages (ii)
-    if (parts[0] !== "ii") continue;
+    // Status-Abbrev is 3 chars: "ii " (installed) / "rc " (config files
+    // only after remove) / "un " (never installed) etc. We only want
+    // "ii" — fully installed and configured.
+    const status = parts[0].trim();
+    if (status !== "ii") continue;
 
     const name = parts[1];
     const version = parts[2];
@@ -122,7 +221,7 @@ async function collectDpkg(): Promise<SoftwareApplication[]> {
       publisher: "dpkg",
       installLocation: "/",
       packageFamilyName: name,
-      source: "dpkg"
+      source: "dpkg",
     });
 
     if (n && n.name) res.push(n as SoftwareApplication);
@@ -132,12 +231,28 @@ async function collectDpkg(): Promise<SoftwareApplication[]> {
 }
 
 async function collectRpm(): Promise<SoftwareApplication[]> {
-  const out = await run("rpm -qa --qf '%{NAME} %{VERSION}\\n'");
+  // Tab-separated — RPM names never contain tabs, but spaces can
+  // appear in version strings of unusual packages so we avoid
+  // space-splitting which broke parsing previously.
+  const out = await run("/usr/bin/rpm", [
+    "-qa",
+    "--qf",
+    "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n",
+  ]);
   const lines = out.split("\n").filter(Boolean);
   const res: SoftwareApplication[] = [];
 
   for (const line of lines) {
-    const [name, version] = line.split(" ");
+    const [name, version] = line.split("\t");
+    if (!name) continue;
+
+    // Filter `gpg-pubkey-*`: rpm tracks imported GPG keys via the same
+    // `rpm -qa` query, but they're not packages — they're trust
+    // material in the rpmdb. Including them as "software" inflates the
+    // inventory and creates spurious deltas every time a vendor adds
+    // a new repo signing key. They appear as e.g.:
+    //   gpg-pubkey  ec9c4172-65a90b91  (none)
+    if (name.startsWith("gpg-pubkey")) continue;
 
     const n = normalizeApp({
       name,
@@ -145,7 +260,7 @@ async function collectRpm(): Promise<SoftwareApplication[]> {
       publisher: "rpm",
       installLocation: "/",
       packageFamilyName: name,
-      source: "rpm"
+      source: "rpm",
     });
 
     if (n && n.name) res.push(n as SoftwareApplication);
@@ -155,7 +270,7 @@ async function collectRpm(): Promise<SoftwareApplication[]> {
 }
 
 async function collectSnap(): Promise<SoftwareApplication[]> {
-  const out = await run("snap list");
+  const out = await run("/usr/bin/snap", ["list"]);
   const lines = out.split("\n").slice(1);
   const res: SoftwareApplication[] = [];
 
@@ -172,7 +287,7 @@ async function collectSnap(): Promise<SoftwareApplication[]> {
       publisher: "snap",
       installLocation: "/snap",
       packageFamilyName: name,
-      source: "snap"
+      source: "snap",
     });
 
     if (n && n.name) res.push(n as SoftwareApplication);
@@ -182,12 +297,19 @@ async function collectSnap(): Promise<SoftwareApplication[]> {
 }
 
 async function collectFlatpak(): Promise<SoftwareApplication[]> {
-  const out = await run("flatpak list --columns=application,version");
+  // --columns=application,version pairs application id with version,
+  // tab-separated. We force the column order so a future flatpak
+  // version that changes default column ordering won't break parsing.
+  const out = await run("/usr/bin/flatpak", [
+    "list",
+    "--columns=application,version",
+  ]);
   const lines = out.split("\n").filter(Boolean);
   const res: SoftwareApplication[] = [];
 
   for (const line of lines) {
     const [name, version] = line.split("\t");
+    if (!name) continue;
 
     const n = normalizeApp({
       name,
@@ -195,7 +317,7 @@ async function collectFlatpak(): Promise<SoftwareApplication[]> {
       publisher: "flatpak",
       installLocation: "/var/lib/flatpak",
       packageFamilyName: name,
-      source: "flatpak"
+      source: "flatpak",
     });
 
     if (n && n.name) res.push(n as SoftwareApplication);
@@ -243,7 +365,7 @@ export const linuxProvider = {
     }
 
     const hardware = await collectLinuxHardware();
-    const security = collectLinuxSecurity();
+    const security = await collectLinuxSecurity(ctx);
 
     let software: AmpNamespace["software"] = {
       count: 0,

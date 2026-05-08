@@ -1,0 +1,23 @@
+0 verbose cli /work/certusws-tracenium-agent-w/build/linux/.node-cache/node-v24.10.0-linux-x64/bin/node /work/certusws-tracenium-agent-w/build/linux/.node-cache/node-v24.10.0-linux-x64/bin/npm
+1 info using npm@11.6.1
+2 info using node@v24.10.0
+3 silly config load:file:/work/certusws-tracenium-agent-w/build/linux/.node-cache/node-v24.10.0-linux-x64/lib/node_modules/npm/npmrc
+4 warn Unknown cli config "--build-from-source". This will stop working in the next major version of npm.
+5 silly config load:file:/work/certusws-tracenium-agent-w/.npmrc
+6 silly config load:file:/root/.npmrc
+7 silly config load:file:/work/certusws-tracenium-agent-w/build/linux/.node-cache/node-v24.10.0-linux-x64/etc/npmrc
+8 verbose title npm rebuild better-sqlite3
+9 verbose argv "rebuild" "better-sqlite3" "--build-from-source" "--cache" "/work/certusws-tracenium-agent-w/build/linux/.npm-cache"
+10 verbose logfile logs-max:10 dir:/work/certusws-tracenium-agent-w/build/linux/.npm-cache/_logs/2026-05-08T00_02_35_308Z-
+11 verbose logfile /work/certusws-tracenium-agent-w/build/linux/.npm-cache/_logs/2026-05-08T00_02_35_308Z-debug-0.log
+12 silly logfile done cleaning log files
+13 silly packumentCache heap:2348810240 maxSize:587202560 maxEntrySize:293601280
+14 verbose shrinkwrap failed to load node_modules/.package-lock.json out of date, updated: node_modules/better-sqlite3
+15 info run better-sqlite3@12.6.2 install node_modules/better-sqlite3 prebuild-install || node-gyp rebuild --release
+16 info run better-sqlite3@12.6.2 install { code: 0, signal: null }
+17 verbose cwd /work/certusws-tracenium-agent-w
+18 verbose os Linux 6.12.76-linuxkit
+19 verbose node v24.10.0
+20 verbose npm  v11.6.1
+21 verbose exit 0
+22 info ok

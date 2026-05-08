@@ -1,0 +1,74 @@
+[Unit]
+# Tracenium Agent — non-privileged collector + scheduler.
+#
+# Talks to the local privsvc daemon over /run/tracenium/privsvc.sock.
+# Never opens the network directly — every gRPC, REST, or system-
+# privilege op flows through privsvc. Runs as user `tracenium`,
+# which is in group `tracenium` (granting socket connect access).
+Description=Tracenium Agent
+Documentation=https://tracenium.com
+# Hard requirement on privsvc: without the IPC socket the agent
+# can't do anything useful. systemd will refuse to start the agent
+# until privsvc has reached `active`, and will stop the agent if
+# privsvc exits.
+Requires=tracenium-privsvc.service
+After=tracenium-privsvc.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tracenium
+Group=tracenium
+ExecStart=/usr/lib/tracenium/node /usr/lib/tracenium/agent/index.js
+WorkingDirectory=/var/lib/tracenium
+
+# Mirror of macOS launchd KeepAlive=true. The agent's outer error
+# handlers absorb almost everything, so a process exit here means
+# something genuinely catastrophic (uncaught exception in a startup
+# hook, SQLite corruption, OOM kill) — restart and try again.
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tracenium-agent
+
+# Hardening — the agent is the unprivileged half of the pair, so
+# we can lock it down harder than privsvc.
+#
+# ProtectSystem=strict makes / read-only except for explicit
+# ReadWritePaths entries. The agent only ever writes to
+# /var/lib/tracenium (outbox.db, baselines, policy.json,
+# enrollment.token) and /var/log/tracenium (file logs).
+# /etc/tracenium is read-only (cert paths, agent.json) — postinstall
+# and crypto.cert.install go through privsvc, which has its own
+# unit with broader permissions.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tracenium /var/log/tracenium
+ReadOnlyPaths=/etc/tracenium
+
+# /home is private — agent has no business reading user dirs.
+ProtectHome=true
+
+# Block privilege escalation. The tracenium user already has no
+# sudo entry but this is belt-and-braces against a future packaging
+# bug that accidentally adds it.
+NoNewPrivileges=true
+
+# Process namespace + tmpfs hardening. Cheap if the agent doesn't
+# need them; PrivateTmp gives us our own /tmp so a co-tenant on
+# the host can't snoop on temp files we'd write during chunked
+# FACTS reassembly (we don't today, but the future SDP download
+# path will).
+PrivateTmp=true
+
+# Reach the privsvc socket and talk to api.tracenium.com /
+# grpc.tracenium.com (REST + gRPC). The bind socket itself lives
+# at /run/tracenium/privsvc.sock — the RuntimeDirectory= in the
+# privsvc unit creates the dir 0750 root:tracenium, which we can
+# traverse because the agent is in the tracenium group.
+
+[Install]
+WantedBy=multi-user.target

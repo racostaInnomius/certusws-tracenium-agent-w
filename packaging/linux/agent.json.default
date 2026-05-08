@@ -1,0 +1,8 @@
+{
+  "_comment": "Tracenium agent config. Edit before installing or restart services after changes (systemctl restart tracenium-privsvc tracenium-agent). Marked as a config file in the package, so dpkg/rpm preserves edits across upgrades.",
+
+  "serverBaseUrl": "https://api.tracenium.com",
+  "certRenewalBaseUrl": "https://api.tracenium.com",
+  "grpcEndpoint": "grpc.tracenium.com",
+  "channel": "stable"
+}

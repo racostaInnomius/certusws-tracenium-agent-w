@@ -3,6 +3,7 @@ import type { AgentContext } from "../../core/agent-context";
 import type { PmpNamespace } from "../../domain/pmp-types";
 import { collectMacosPmp } from "./providers/macos";
 import { collectWindowsPmp } from "./providers/windows";
+import { collectLinuxPmp } from "./providers/linux";
 
 export async function collectPMP(ctx: AgentContext): Promise<PmpNamespace> {
   const platform = os.platform();
@@ -13,6 +14,10 @@ export async function collectPMP(ctx: AgentContext): Promise<PmpNamespace> {
 
   if (platform === "darwin") {
     return collectMacosPmp(ctx);
+  }
+
+  if (platform === "linux") {
+    return collectLinuxPmp(ctx);
   }
 
   return {

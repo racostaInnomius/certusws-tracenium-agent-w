@@ -31,6 +31,11 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "build:privsvc:linux": "tsc -p privsvc/linux/tsconfig.json",
+    "build:privsvc:macos": "tsc -p privsvc/macos/tsconfig.json",
+    "pkg:linux": "../scripts/build-linux-pkg.sh",
+    "pkg:linux:arm64": "TRACENIUM_AGENT_ARCH=arm64 ../scripts/build-linux-pkg.sh",
+    "pkg:macos": "../scripts/build-macos-pkg.sh"
   }
 }

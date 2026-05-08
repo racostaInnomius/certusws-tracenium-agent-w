@@ -1,0 +1,14 @@
+# packaging/linux/selinux/tracenium.fc
+#
+# File context mappings for the tracenium SELinux module. Applied
+# via `restorecon -RF` on the listed paths during postinstall.sh.
+#
+# Each line: <regex> <type spec> <context>
+#   gen_context(...) is a SELinux build helper that interpolates
+#   the running system's SELinux user and role.
+
+/etc/tracenium/certs(/.*)?         gen_context(system_u:object_r:tracenium_cert_t,s0)
+/var/lib/tracenium(/.*)?           gen_context(system_u:object_r:tracenium_var_lib_t,s0)
+/var/log/tracenium(/.*)?           gen_context(system_u:object_r:tracenium_log_t,s0)
+/run/tracenium(/.*)?               gen_context(system_u:object_r:tracenium_run_t,s0)
+/run/tracenium/privsvc\.sock       gen_context(system_u:object_r:tracenium_run_t,s0)

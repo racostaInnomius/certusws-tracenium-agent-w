@@ -4,6 +4,7 @@ import type { AgentContext } from "../../core/agent-context";
 import type { ScpNamespace } from "../../domain/scp-types";
 import { collectMacosScp } from "./providers/macos";
 import { collectWindowsScp } from "./providers/windows";
+import { collectLinuxScp } from "./providers/linux";
 
 export async function collectSCP(ctx: AgentContext): Promise<ScpNamespace> {
   const platform = os.platform();
@@ -14,6 +15,10 @@ export async function collectSCP(ctx: AgentContext): Promise<ScpNamespace> {
 
   if (platform === "darwin") {
     return collectMacosScp(ctx);
+  }
+
+  if (platform === "linux") {
+    return collectLinuxScp(ctx);
   }
 
   // Schema 2.0 fallback for unsupported platforms. No synthetic findings:

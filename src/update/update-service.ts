@@ -15,7 +15,8 @@ import type {
   DownloadedUpdateInfo
 } from "./update-types";
 import { updateUpdateState } from "./update-state";
-import { runMacosPkgUpdate, runWindowsMsiUpdate } from "./updater-runner";
+import { runMacosPkgUpdate, runWindowsMsiUpdate, runLinuxUpdate } from "./updater-runner";
+import { detectFamily } from "../platform/linux/distro";
 import { compareSemver, looksLikeSemver } from "./semver";
 
 function resolveBaseDir() {
@@ -775,6 +776,161 @@ export async function performMacosPkgUpdate(
   });
 
   const result = await runMacosPkgUpdate(downloaded.filePath);
+
+  return result;
+}
+
+// ── Phase 10 — Linux OTA self-update ─────────────────────────────
+//
+// Mirror of performMacosPkgUpdate / performWindowsMsiUpdate. The
+// only Linux-specific bit is the format selection: debian-family →
+// .deb, rhel-family + suse → .rpm. We detect at the agent layer
+// (here) so the same `files.deb` / `files.rpm` keys in the backend
+// metadata work across all rpm-based distros.
+
+export async function fetchLinuxPkgDownloadUrl(
+  ctx: AgentContext,
+  version = "latest"
+): Promise<AgentDownloadResponse> {
+  const base = getApiBaseUrl(ctx);
+  const arch = getArch();
+  const family = detectFamily().family;
+  const format = family === "debian" ? "deb" : "rpm";
+
+  const url =
+    `${base}/api/v1/binaries/agent` +
+    `?platform=linux&arch=${encodeURIComponent(arch)}&format=${format}&version=${encodeURIComponent(version)}`;
+
+  console.log("[update] requesting download url", {
+    version,
+    arch,
+    platform: "linux",
+    family,
+    format,
+  });
+
+  return httpJson<AgentDownloadResponse>(url, {
+    headers: buildHeaders(ctx),
+    timeoutMs: 15000,
+  });
+}
+
+export async function downloadLinuxPkg(
+  ctx: AgentContext,
+  latestVersion: string,
+  expectedHash?: string
+): Promise<DownloadedUpdateInfo> {
+  const dl = await fetchLinuxPkgDownloadUrl(ctx, latestVersion);
+
+  if (!dl?.downloadUrl) {
+    throw new Error("update_download_url_missing");
+  }
+
+  const dir = path.join(resolveBaseDir(), "updates");
+  ensureDir(dir);
+
+  const arch = getArch();
+  const family = detectFamily().family;
+  const ext = family === "debian" ? "deb" : "rpm";
+  const fileName = `tracenium-agent-${latestVersion}-${arch}.${ext}`;
+  const filePath = path.join(dir, fileName);
+
+  const { size } = await downloadToFile(dl.downloadUrl, filePath);
+  const sha256 = await sha256File(filePath);
+
+  if (!expectedHash) {
+    console.warn("[update] expected hash missing for arch", { arch, family });
+  }
+
+  if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
+    fs.rmSync(filePath, { force: true });
+    throw new Error("update_hash_mismatch");
+  }
+
+  updateUpdateState({
+    lastDownloadedPath: filePath,
+    lastDownloadedSha256: sha256,
+    arch: getArch(),
+  });
+
+  return {
+    filePath,
+    fileName,
+    sha256,
+    size,
+    latestVersion,
+  };
+}
+
+export async function performLinuxUpdate(
+  ctx: AgentContext,
+  latestVersion: string,
+  expectedHash?: string,
+  downloadUrlOverride?: string
+) {
+  let downloaded;
+
+  if (downloadUrlOverride) {
+    const dir = path.join(resolveBaseDir(), "updates");
+    ensureDir(dir);
+
+    const arch = getArch();
+    const family = detectFamily().family;
+    const ext = family === "debian" ? "deb" : "rpm";
+    const fileName = `tracenium-agent-${latestVersion}-${arch}.${ext}`;
+    const filePath = path.join(dir, fileName);
+
+    console.log("[update] downloading linux pkg from override url", {
+      url: downloadUrlOverride,
+      version: latestVersion,
+      family,
+      ext,
+    });
+
+    const { size } = await downloadToFile(downloadUrlOverride, filePath);
+    const sha256 = await sha256File(filePath);
+
+    if (expectedHash && expectedHash.toLowerCase() !== sha256.toLowerCase()) {
+      fs.rmSync(filePath, { force: true });
+      throw new Error("update_hash_mismatch");
+    }
+
+    downloaded = {
+      filePath,
+      fileName,
+      sha256,
+      size,
+      latestVersion,
+    };
+
+    updateUpdateState({
+      lastDownloadedPath: filePath,
+      lastDownloadedSha256: sha256,
+      arch: getArch(),
+    });
+  } else {
+    downloaded = await downloadLinuxPkg(ctx, latestVersion, expectedHash);
+  }
+
+  updateUpdateState({
+    updateInProgress: true,
+    status: "install_started",
+    installStartedAtUtc: new Date().toISOString(),
+    lastAttemptedAtUtc: new Date().toISOString(),
+    lastAttemptedVersion: latestVersion,
+    lastError: undefined,
+    arch: getArch(),
+  });
+
+  console.log("[update] executing linux package", {
+    path: downloaded.filePath,
+    version: latestVersion,
+    arch: getArch(),
+    family: detectFamily().family,
+  });
+
+  // runLinuxUpdate dispatches to dpkg or rpm by family.
+  const result = runLinuxUpdate(downloaded.filePath);
 
   return result;
 }

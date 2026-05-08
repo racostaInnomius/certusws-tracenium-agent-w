@@ -11,7 +11,8 @@ import {
   fetchAgentMetadata,
   checkForAvailableUpdate,
   performMacosPkgUpdate,
-  performWindowsMsiUpdate
+  performWindowsMsiUpdate,
+  performLinuxUpdate
 } from "./update-service";
 import { compareSemver, looksLikeSemver } from "./semver";
 
@@ -76,8 +77,9 @@ export async function runUpdateTask(
 
   const isWindows = ctx.agent?.platform === "windows" || process.platform === "win32";
   const isMacos = ctx.agent?.platform === "macos" || process.platform === "darwin";
+  const isLinux = ctx.agent?.platform === "linux" || process.platform === "linux";
 
-  if (!isWindows && !isMacos) {
+  if (!isWindows && !isMacos && !isLinux) {
     logger?.info?.("[update] skipping auto-update: platform not supported currently");
     return;
   }
@@ -180,9 +182,28 @@ export async function runUpdateTask(
     }
 
     const arch = resolveArch();
-    const fileMeta = isMacos
-      ? result.metadata?.files?.pkg?.[arch]
-      : result.metadata?.files?.msi?.[arch];
+    // Linux: pick deb (debian-family) or rpm (rhel/suse). The
+    // detection happens inside update-service's downloadLinuxPkg /
+    // performLinuxUpdate via detectFamily(); here we just pick the
+    // metadata key. We try `deb` first when a runtime probe of
+    // /etc/os-release is too heavy for this hot path — the backend's
+    // metadata endpoint is allowed to return a 404 / missing key,
+    // which we surface as "no compatible binary" below.
+    let fileMeta: any;
+    if (isMacos) {
+      fileMeta = result.metadata?.files?.pkg?.[arch];
+    } else if (isWindows) {
+      fileMeta = result.metadata?.files?.msi?.[arch];
+    } else {
+      // Linux: use the lazy-cached detectFamily() to select format.
+      // Imported inline to avoid pulling the platform module into the
+      // Windows/Mac compile units (it's a single sync read of
+      // /etc/os-release; the cache means subsequent calls are free).
+      const { detectFamily } = require("../platform/linux/distro");
+      const family = detectFamily().family;
+      const linuxKey = family === "debian" ? "deb" : "rpm";
+      fileMeta = result.metadata?.files?.[linuxKey]?.[arch];
+    }
 
     if (!fileMeta) {
       logger?.warn?.("[update] no compatible binary for this arch", { arch });
@@ -204,11 +225,13 @@ export async function runUpdateTask(
 
     const run = isMacos
       ? await performMacosPkgUpdate(ctx, effectiveVersion, expectedHash)
-      : await performWindowsMsiUpdate(ctx, effectiveVersion, expectedHash);
+      : isWindows
+        ? await performWindowsMsiUpdate(ctx, effectiveVersion, expectedHash)
+        : await performLinuxUpdate(ctx, effectiveVersion, expectedHash);
 
     logger?.warn?.("[update] update started", {
       latestVersion: effectiveVersion,
-      format: isMacos ? "pkg" : "msi",
+      format: isMacos ? "pkg" : isWindows ? "msi" : "deb-or-rpm",
       command: run.command,
       args: run.args
     });

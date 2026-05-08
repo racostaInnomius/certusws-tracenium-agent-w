@@ -18,6 +18,12 @@ export interface AgentMetadataResponse {
     exe?: Record<AgentBinaryArch, AgentBinaryFileMetadata>;
     msi?: Record<AgentBinaryArch, AgentBinaryFileMetadata>;
     pkg?: Record<AgentBinaryArch, AgentBinaryFileMetadata>;
+    // Phase 10 — Linux OTA. The backend metadata endpoint returns
+    // these for `platform=linux` queries, keyed by arch. update-task
+    // resolves which one to pick at runtime via detectFamily()
+    // (debian → deb, rhel/suse → rpm).
+    deb?: Record<AgentBinaryArch, AgentBinaryFileMetadata>;
+    rpm?: Record<AgentBinaryArch, AgentBinaryFileMetadata>;
   };
 }
 

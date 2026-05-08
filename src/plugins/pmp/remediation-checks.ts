@@ -34,10 +34,13 @@ interface AgentCheckEntry {
   applicableTo: ReadonlySet<CheckOsApplicability>;
 }
 
-// Phase 1 — 4 Windows checkIds. Names match the catalog seed
-// (`windows.<category>.<spec>`) so backend → agent → privsvc share
-// identical strings. Adding more in Phase 2 = a single new entry
-// here per check + the matching privsvc handler.
+// Phase 1 — 4 Windows checkIds.
+// Phase 8 — 4 Linux checkIds added (sshd hardening + firewall).
+//
+// Names match the catalog seed (`<os>.<category>.<spec>`) so
+// backend → agent → privsvc share identical strings. Adding more
+// in future phases = a single new entry here per check + the
+// matching privsvc handler in pmp-remediation.ts on each platform.
 const ENTRIES: AgentCheckEntry[] = [
   {
     checkId: "windows.cryptography.legacy_tls_disabled",
@@ -54,6 +57,36 @@ const ENTRIES: AgentCheckEntry[] = [
   {
     checkId: "windows.firewall.profiles_enabled",
     applicableTo: new Set<CheckOsApplicability>(["windows"]),
+  },
+
+  // ── Linux Phase 8 ───────────────────────────────────────────────
+  // These four checkIds are implemented in
+  // privsvc/linux/src/pmp-remediation.ts. Each remediation writes a
+  // directive to /etc/ssh/sshd_config.d/99-tracenium-hardening.conf
+  // (the drop-in approach — never touches the operator's main
+  // /etc/ssh/sshd_config). Drop-in changes are validated via
+  // `sshd -t` BEFORE atomic rename so a syntactically broken edit
+  // never lands. Pre-edit backup goes to <file>.tracenium.<ts>.bak.
+  //
+  // Catalog entries that drive these will live in the backend's
+  // compliance_catalog_seed migration with `agent_remediable=true`.
+  // Until those land, the dashboard's "Auto-fix" button stays
+  // disabled and the check shows up in Findings as manual-only.
+  {
+    checkId: "linux.ssh.root_login_disabled",
+    applicableTo: new Set<CheckOsApplicability>(["linux"]),
+  },
+  {
+    checkId: "linux.ssh.password_auth_disabled",
+    applicableTo: new Set<CheckOsApplicability>(["linux"]),
+  },
+  {
+    checkId: "linux.cryptography.weak_ssh_kex_disabled",
+    applicableTo: new Set<CheckOsApplicability>(["linux"]),
+  },
+  {
+    checkId: "linux.firewall.enabled",
+    applicableTo: new Set<CheckOsApplicability>(["linux"]),
   },
 ];
 

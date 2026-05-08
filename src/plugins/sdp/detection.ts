@@ -77,7 +77,10 @@ const PLATFORM_APPLICABILITY: Record<DetectionRule["type"], Set<NodeJS.Platform>
   registry_uninstall: new Set<NodeJS.Platform>(["win32"]),
   bundle_version: new Set<NodeJS.Platform>(["darwin"]),
   pkg_receipt: new Set<NodeJS.Platform>(["darwin"]),
-  // file_exists and command_exit work cross-platform.
+  // file_exists and command_exit work cross-platform — Linux Phase 9
+  // SDP relies on these as the only detection types it supports
+  // until backend catalog seeds add native dpkg_installed /
+  // rpm_installed types in a future migration.
   file_exists: new Set<NodeJS.Platform>(["win32", "darwin", "linux"]),
   command_exit: new Set<NodeJS.Platform>(["win32", "darwin", "linux"]),
 };

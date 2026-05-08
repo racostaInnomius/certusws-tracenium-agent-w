@@ -86,5 +86,35 @@ export type ScpNamespace = {
   softwareUpdate?: unknown;
   accounts?: unknown;
 
+  // Linux-specific evidence blocks. Same `unknown` discipline as the
+  // macOS blocks above — the privsvc shapes the raw posture into per-
+  // check objects, the agent passes them through verbatim, and the
+  // backend catalog evaluator (certusws-tracenium/db/migrations/...
+  // compliance_catalog_seed.sql) decides pass/fail server-side. New
+  // Linux catalog entries can land server-side without an agent
+  // rollout, exactly as schema 2.0 promises.
+  //
+  // Block guide (filled in by privsvc/linux/src/security-posture.ts):
+  //   ssh             effective sshd_config (output of `sshd -T`):
+  //                   PermitRootLogin, PasswordAuthentication,
+  //                   PubkeyAuthentication, KexAlgorithms, Ciphers,
+  //                   MACs, MaxAuthTries, PermitEmptyPasswords, etc.
+  //   selinux         mode (enforcing|permissive|disabled), policy
+  //                   name (targeted|mls). RHEL-family only;
+  //                   `{ applicable: false }` on Debian-family.
+  //   apparmor        mode + profile counts. Debian-family only;
+  //                   `{ applicable: false }` on RHEL-family.
+  //   passwordPolicy  /etc/login.defs values (PASS_MIN_LEN, PASS_MAX_DAYS,
+  //                   PASS_MIN_DAYS, PASS_WARN_AGE, ENCRYPT_METHOD).
+  //   auditd          installed / enabled / active state of the audit
+  //                   subsystem. Optional — many minimal images don't
+  //                   ship auditd at all and the catalog handles that
+  //                   via not_applicable.
+  ssh?: unknown;
+  selinux?: unknown;
+  apparmor?: unknown;
+  passwordPolicy?: unknown;
+  auditd?: unknown;
+
   collectorError?: ScpCollectorError;
 };

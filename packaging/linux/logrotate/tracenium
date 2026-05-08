@@ -1,0 +1,34 @@
+# /etc/logrotate.d/tracenium
+#
+# Rotates the file-side logs that the privsvc and agent emit at
+# /var/log/tracenium/. Both daemons ALSO write to journald via
+# StandardOutput=journal — that side is rotated by systemd's own
+# `journalctl --vacuum-*` policy, not by us. The file logs are
+# the durable forensic trail; we keep 14 days of compressed
+# archives.
+#
+# Daily rotation. compress (gzip) keeps disk pressure low —
+# the privsvc logs ~50 KB/day in normal operation, so 14 days
+# compressed is well under 1 MB total.
+#
+# postrotate: the daemons use `fs.appendFileSync` so they don't
+# hold an FD open on the file. After logrotate moves the file to
+# `<name>.1` and creates a fresh empty `<name>`, the next write
+# from the daemon finds the new file by path and resumes there.
+# No SIGHUP needed.
+
+/var/log/tracenium/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 tracenium tracenium
+
+    # postrotate intentionally empty — both daemons re-open the log
+    # file by path on every fs.appendFileSync call (see logger.ts)
+    # so the rotated file gets a fresh empty descriptor without us
+    # signalling the process. Adding a SIGHUP here would be a no-op
+    # at best and could race with an in-flight write at worst.
+}

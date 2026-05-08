@@ -1,0 +1,162 @@
+# /etc/apparmor.d/usr.lib.tracenium.privsvc
+#
+# AppArmor profile for the Tracenium privsvc daemon. Sits on top of
+# the systemd unit's hardening (User=root, RuntimeDirectory=, etc.)
+# as a kernel-enforced confinement layer — even if the daemon is
+# compromised at runtime, AppArmor prevents it from reading
+# /etc/shadow, writing /boot, executing /bin/sh, etc.
+#
+# Profile name = path to the binary's invoker. Since the daemon
+# launches as `node /usr/lib/tracenium/privsvc/index.js`, AppArmor
+# applies this profile based on the FIRST argv. We label the profile
+# by the canonical install path under /usr/lib/tracenium.
+#
+# Mode: enforce (kernel blocks denied operations + logs them via
+# auditd / dmesg). Operators can demote to complain mode for
+# debugging:
+#   sudo aa-complain /etc/apparmor.d/usr.lib.tracenium.privsvc
+#   sudo aa-enforce  /etc/apparmor.d/usr.lib.tracenium.privsvc
+#
+# Loading: postinstall.sh runs `apparmor_parser -r` if the parser is
+# present (Debian/Ubuntu always have it; RHEL doesn't and we silently
+# skip there).
+
+#include <tunables/global>
+
+profile tracenium-privsvc /usr/lib/tracenium/node {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/openssl>
+
+  # ── Self ─────────────────────────────────────────────────────────
+  # The Node binary we ship + the JS bundles it loads. Read+execute
+  # only — no rewriting our own binary at runtime.
+  /usr/lib/tracenium/node                          rmix,
+  /usr/lib/tracenium/**.js                          r,
+  /usr/lib/tracenium/**.json                        r,
+  /usr/lib/tracenium/proto/controlplane.proto       r,
+
+  # better-sqlite3 native binding. node loads it via dlopen.
+  /usr/lib/tracenium/agent/node_modules/**          mr,
+  /usr/lib/tracenium/agent/node_modules/**.node     mr,
+
+  # ── State ────────────────────────────────────────────────────────
+  /var/lib/tracenium/                               rw,
+  /var/lib/tracenium/**                             rwk,    # k = file locks (sqlite WAL)
+  /var/log/tracenium/                               rw,
+  /var/log/tracenium/**                             rwk,
+  /run/tracenium/                                   rw,
+  /run/tracenium/**                                 rw,
+
+  # ── Config ───────────────────────────────────────────────────────
+  /etc/tracenium/                                   r,
+  /etc/tracenium/agent.json                         r,
+  /etc/tracenium/certs/                             r,
+  /etc/tracenium/certs/*                            rw,    # cert renewal writes back
+
+  # ── System inventory + posture inputs ────────────────────────────
+  # Read-only access to the bits Phase 5 SCP and Phase 3 AMP
+  # collectors need. Each path explicit so a future code change that
+  # adds a new read target shows up as an AppArmor denial in the
+  # log instead of silently working — forcing the maintainer to
+  # update this profile deliberately.
+  /etc/os-release                                   r,
+  /etc/group                                        r,
+  /etc/passwd                                       r,
+  /etc/login.defs                                   r,
+  /etc/ssh/sshd_config                              r,
+  /etc/ssh/sshd_config.d/                           r,
+  /etc/ssh/sshd_config.d/*                          rw,    # Phase 8 drop-in writes
+  /etc/ssh/ssh_host_*_key                           r,
+  /etc/ssh/ssh_host_*_key.pub                       r,
+  /sys/kernel/security/apparmor/profiles            r,
+  /sys/class/dmi/id/                                r,
+  /sys/class/dmi/id/**                              r,
+  /proc/cpuinfo                                     r,
+  /proc/meminfo                                     r,
+  /proc/version                                     r,
+  /proc/uptime                                      r,
+  /proc/sys/kernel/hostname                         r,
+  /proc/[0-9]*/                                     r,
+  /proc/[0-9]*/cmdline                              r,
+  /proc/[0-9]*/stat                                 r,
+  /proc/[0-9]*/status                               r,
+
+  # /var/run is a symlink to /run on every modern systemd distro.
+  # If a customer's host has it as a real dir we still cover it.
+  /var/run/tracenium/                               rw,
+  /var/run/tracenium/**                             rw,
+
+  # ── Subprocess execs ─────────────────────────────────────────────
+  # Every binary the privsvc invokes via execFile in any phase.
+  # The `Px` qualifier (profile transition) means each child runs
+  # under its OWN unconfined profile (unconfined here is fine —
+  # apt-get/dnf/systemctl have their own complex permission
+  # surfaces and confining them via apparmor is out of scope and
+  # a long debugging exercise).
+  /usr/bin/curl                                     ix,
+  /usr/bin/openssl                                  ix,
+  /usr/bin/dpkg                                     ix,
+  /usr/bin/dpkg-query                               ix,
+  /usr/bin/apt                                      ix,
+  /usr/bin/apt-get                                  ix,
+  /usr/bin/dnf                                      ix,
+  /usr/bin/yum                                      ix,
+  /usr/bin/rpm                                      ix,
+  /usr/bin/snap                                     ix,
+  /usr/bin/flatpak                                  ix,
+  /usr/bin/systemctl                                ix,
+  /usr/bin/journalctl                               ix,
+  /usr/bin/firewall-cmd                             ix,
+  /usr/bin/needs-restarting                         ix,
+  /usr/bin/fuser                                    ix,
+  /usr/bin/uname                                    ix,
+  /usr/sbin/sshd                                    ix,
+  /usr/sbin/getenforce                              ix,
+  /usr/sbin/sestatus                                ix,
+  /usr/sbin/aa-status                               ix,
+  /usr/sbin/ufw                                     ix,
+  /usr/sbin/iptables                                ix,
+  /usr/sbin/nft                                     ix,
+  /sbin/auditd                                      ix,
+  /usr/sbin/auditd                                  ix,
+
+  # ── Network ──────────────────────────────────────────────────────
+  # Outbound IPv4/IPv6 TCP — gRPC to grpc.tracenium.com:443 + REST
+  # to api.tracenium.com:443. AppArmor has no port granularity in
+  # the legacy network rule shape we use here; egress to all ports
+  # is what the kernel enforces for any unconfined process anyway.
+  network inet stream,
+  network inet6 stream,
+  # Unix domain — IPC server bind/accept on /run/tracenium/privsvc.sock
+  network unix stream,
+
+  # ── Capabilities ─────────────────────────────────────────────────
+  # Minimum set to do our job. systemd already drops everything not
+  # listed here; AppArmor double-checks. Notable absences:
+  #   * sys_module    — never load kernel modules
+  #   * sys_admin     — never mount/unmount
+  #   * sys_ptrace    — never attach to other processes
+  #   * net_admin     — never reconfigure interfaces (firewall
+  #                     remediation shells out to ufw/firewall-cmd
+  #                     which run unconfined and have their own
+  #                     net_admin)
+  capability dac_read_search,    # read files we don't own (e.g. /etc/shadow not needed but /etc/group OK)
+  capability fowner,             # chown the IPC socket to root:tracenium
+  capability fsetid,             # preserve setgid bits across cert install
+  capability chown,              # chown across rename for atomic file replace
+  capability kill,                # send SIGTERM to subprocesses on timeout
+  capability setuid,              # spawn unprivileged children if ever needed
+  capability setgid,              # idem
+
+  # ── Deny rules — explicit, to make policy intent obvious ─────────
+  deny /boot/**                                     w,
+  deny /etc/shadow                                  rw,
+  deny /etc/sudoers                                 rw,
+  deny /etc/sudoers.d/                              rw,
+  deny /etc/sudoers.d/**                            rw,
+  deny /home/**                                     rw,
+  deny /root/.ssh/**                                rw,
+  deny mount,
+  deny umount,
+}
