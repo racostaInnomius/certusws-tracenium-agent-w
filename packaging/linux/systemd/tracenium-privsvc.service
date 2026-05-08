@@ -12,6 +12,16 @@ Documentation=https://tracenium.com
 After=network-online.target
 Wants=network-online.target
 
+# Cap restart rate so a permanent failure mode (corrupt cert,
+# missing proto, etc.) doesn't drown journald. 5 restarts in 60s
+# before systemd starts ignoring the unit; a human on-call has to
+# step in. NOTE: these MUST live in [Unit], not [Service]; a
+# previous version mistakenly put them under [Service] which made
+# systemd warn `Unknown key name 'StartLimitIntervalSec' in
+# section 'Service', ignoring.` and lose the rate limit.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
 [Service]
 Type=simple
 # Runs as root by design — this daemon's whole purpose is to hold
@@ -20,7 +30,36 @@ Type=simple
 # (which runs as the `tracenium` user, member of group `tracenium`)
 # can connect.
 User=root
-Group=root
+# Group=tracenium (NOT root) is intentional and load-bearing:
+#
+# RuntimeDirectory=tracenium below creates /run/tracenium with the
+# unit's User+Group as owner. With Group=root the dir would be
+# `0750 root:root`, which the agent (user `tracenium`, NOT in
+# group `root`) cannot traverse — it would fail to connect to
+# privsvc.sock with "PrivSvc pipe not ready within timeout" even
+# though the socket itself is `0660 root:tracenium`.
+#
+# Setting Group=tracenium makes the dir `0750 root:tracenium`,
+# letting the agent traverse it. The privsvc process still runs
+# with effective uid 0 (root) because User=root — Group= only
+# changes the primary gid for filesystem operations, not the
+# capability set.
+#
+# Side-effect: files created by privsvc with no explicit chmod end
+# up group=tracenium. Every cert/data file the privsvc writes goes
+# through explicit `chown` calls (see crypto-store.ts handleInstallCert
+# and server.ts socket setup), so this default doesn't accidentally
+# loosen any private files. Sockets are explicitly chowned to
+# root:tracenium via lookupSocketGid in server.ts; that's now a
+# no-op (already correct group) but harmless.
+Group=tracenium
+# Inject GRPC_ENDPOINT / SERVER_BASE_URL / CERT_RENEWAL_BASE_URL /
+# CHANNEL into process.env before exec. Leading `-` makes this
+# graceful — if /etc/tracenium/agent.env is missing (broken install,
+# operator wiped it), systemd starts the daemon anyway and the
+# agent's own config layer surfaces the missing-var error in the
+# log instead of systemd refusing to start at all.
+EnvironmentFile=-/etc/tracenium/agent.env
 ExecStart=/usr/lib/tracenium/node /usr/lib/tracenium/privsvc/index.js
 
 # RuntimeDirectory creates /run/tracenium with mode 0750 owned
@@ -40,12 +79,6 @@ RuntimeDirectoryMode=0750
 # pathological crashloop.
 Restart=always
 RestartSec=5
-
-# Cap restart rate so a permanent failure mode (corrupt cert, missing
-# proto, etc.) doesn't drown journald. 5 restarts in 60s before
-# systemd starts ignoring the unit; a human on-call has to step in.
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 # Logs go to journald (StandardOutput=journal) — operator's first
 # stop on incidents (`journalctl -u tracenium-privsvc -f`). The

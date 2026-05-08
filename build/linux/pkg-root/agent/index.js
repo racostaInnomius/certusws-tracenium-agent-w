@@ -20568,12 +20568,12 @@ async function collectMacSoftware() {
       if (!app.installId) continue;
       byInstallId.set(app.installId, app);
     }
-    const SOURCE_PRIORITY = {
+    const SOURCE_PRIORITY2 = {
       "macos-app-bundle": 3,
       "homebrew": 2,
       "pkgutil": 1
     };
-    const sourceRank = (s) => SOURCE_PRIORITY[s?.toLowerCase?.() || ""] ?? 0;
+    const sourceRank = (s) => SOURCE_PRIORITY2[s?.toLowerCase?.() || ""] ?? 0;
     const byPfn = /* @__PURE__ */ new Map();
     const unkeyed = [];
     for (const app of byInstallId.values()) {
@@ -20802,6 +20802,12 @@ var init_macos = __esm({
 });
 
 // src/plugins/amp/providers/linux.ts
+function isHardNoise(pkgName) {
+  for (const re of HARD_NOISE_PATTERNS) {
+    if (re.test(pkgName)) return true;
+  }
+  return false;
+}
 async function collectLinuxHardware() {
   const [system, cpu, mem, diskLayout, fsSize] = await Promise.all([
     import_systeminformation3.default.system(),
@@ -20895,7 +20901,29 @@ async function detectPackageManagers() {
   };
   return cachedPM;
 }
-async function collectDpkg() {
+async function getDebianManualPackages() {
+  const r = await run("/usr/bin/apt-mark", ["showmanual"]);
+  if (!r) return null;
+  const lines = r.split("\n").map((s) => s.trim()).filter(Boolean);
+  if (lines.length === 0) return null;
+  return new Set(lines);
+}
+async function getRhelManualPackages() {
+  const dnfBin = hasExecutable("/usr/bin/dnf") ? "/usr/bin/dnf" : hasExecutable("/usr/bin/dnf5") ? "/usr/bin/dnf5" : null;
+  if (!dnfBin) return null;
+  const r = await run(dnfBin, ["history", "userinstalled"]);
+  if (!r) return null;
+  const lines = r.split("\n").map((s) => s.trim()).filter((s) => s && !s.toLowerCase().startsWith("packages installed"));
+  if (lines.length === 0) return null;
+  const set = /* @__PURE__ */ new Set();
+  for (const line of lines) {
+    const bare = line.split(".")[0].split("-")[0];
+    if (bare) set.add(bare);
+    set.add(line);
+  }
+  return set;
+}
+async function collectDpkg(manualSet) {
   const out = await run("/usr/bin/dpkg-query", [
     "-W",
     "-f=${db:Status-Abbrev}	${Package}	${Version}	${Architecture}\n"
@@ -20909,6 +20937,8 @@ async function collectDpkg() {
     if (status !== "ii") continue;
     const name = parts[1];
     const version = parts[2];
+    if (isHardNoise(name)) continue;
+    if (manualSet && !manualSet.has(name)) continue;
     const n = normalizeApp({
       name,
       version,
@@ -20917,11 +20947,15 @@ async function collectDpkg() {
       packageFamilyName: name,
       source: "dpkg"
     });
-    if (n && n.name) res.push(n);
+    if (n && n.name) {
+      n.category = "application";
+      n.userFacing = true;
+      res.push(n);
+    }
   }
   return res;
 }
-async function collectRpm() {
+async function collectRpm(manualSet) {
   const out = await run("/usr/bin/rpm", [
     "-qa",
     "--qf",
@@ -20933,6 +20967,8 @@ async function collectRpm() {
     const [name, version] = line.split("	");
     if (!name) continue;
     if (name.startsWith("gpg-pubkey")) continue;
+    if (isHardNoise(name)) continue;
+    if (manualSet && !manualSet.has(name)) continue;
     const n = normalizeApp({
       name,
       version,
@@ -20941,7 +20977,11 @@ async function collectRpm() {
       packageFamilyName: name,
       source: "rpm"
     });
-    if (n && n.name) res.push(n);
+    if (n && n.name) {
+      n.category = "application";
+      n.userFacing = true;
+      res.push(n);
+    }
   }
   return res;
 }
@@ -20954,6 +20994,7 @@ async function collectSnap() {
     if (parts.length < 2) continue;
     const name = parts[0];
     const version = parts[1];
+    if (name === "snapd" || /^core[0-9]*$/.test(name) || name === "bare") continue;
     const n = normalizeApp({
       name,
       version,
@@ -20962,7 +21003,11 @@ async function collectSnap() {
       packageFamilyName: name,
       source: "snap"
     });
-    if (n && n.name) res.push(n);
+    if (n && n.name) {
+      n.category = "application";
+      n.userFacing = true;
+      res.push(n);
+    }
   }
   return res;
 }
@@ -20984,18 +21029,30 @@ async function collectFlatpak() {
       packageFamilyName: name,
       source: "flatpak"
     });
-    if (n && n.name) res.push(n);
+    if (n && n.name) {
+      n.category = "application";
+      n.userFacing = true;
+      res.push(n);
+    }
   }
   return res;
 }
+function canonicalNameForDedup(app) {
+  const base = (app.rawName || app.name || "").toLowerCase().trim();
+  return base.split(":")[0];
+}
 async function collectLinuxSoftware() {
   const pm = await detectPackageManagers();
+  const [debianManual, rhelManual] = await Promise.all([
+    pm.hasDpkg ? getDebianManualPackages() : Promise.resolve(null),
+    pm.hasRpm ? getRhelManualPackages() : Promise.resolve(null)
+  ]);
   const results = [];
   if (pm.hasDpkg) {
-    results.push(...await collectDpkg());
+    results.push(...await collectDpkg(debianManual));
   }
   if (pm.hasRpm) {
-    results.push(...await collectRpm());
+    results.push(...await collectRpm(rhelManual));
   }
   if (pm.hasSnap) {
     results.push(...await collectSnap());
@@ -21003,15 +21060,24 @@ async function collectLinuxSoftware() {
   if (pm.hasFlatpak) {
     results.push(...await collectFlatpak());
   }
-  const all = results;
-  const map = /* @__PURE__ */ new Map();
-  for (const app of all) {
-    if (!app.installId) continue;
-    map.set(app.installId, app);
+  const byCanonical = /* @__PURE__ */ new Map();
+  for (const app of results) {
+    const key = canonicalNameForDedup(app);
+    if (!key) continue;
+    const existing = byCanonical.get(key);
+    if (!existing) {
+      byCanonical.set(key, app);
+      continue;
+    }
+    const existingRank = SOURCE_PRIORITY[existing.source] ?? 99;
+    const newRank = SOURCE_PRIORITY[app.source] ?? 99;
+    if (newRank < existingRank) {
+      byCanonical.set(key, app);
+    }
   }
-  return Array.from(map.values());
+  return Array.from(byCanonical.values());
 }
-var import_os10, import_systeminformation3, import_child_process5, import_util2, execFileAsync2, PKG_LIST_TIMEOUT_MS, cachedPM, linuxProvider;
+var import_os10, import_systeminformation3, import_child_process5, import_util2, execFileAsync2, HARD_NOISE_PATTERNS, PKG_LIST_TIMEOUT_MS, cachedPM, SOURCE_PRIORITY, linuxProvider;
 var init_linux = __esm({
   "src/plugins/amp/providers/linux.ts"() {
     "use strict";
@@ -21023,8 +21089,64 @@ var init_linux = __esm({
     init_software_inventory_delta();
     init_software_baseline_repo();
     execFileAsync2 = (0, import_util2.promisify)(import_child_process5.execFile);
+    HARD_NOISE_PATTERNS = [
+      // Development packages — only relevant on developer machines, and
+      // the SDKs themselves (e.g. `gcc`, `python3`) are tracked separately.
+      /^.+-dev$/,
+      /^.+-dev:[^:]+$/,
+      // multi-arch suffix variant
+      /^.+-doc$/,
+      /^.+-dbg$/,
+      /^.+-dbgsym$/,
+      /^.+-source$/,
+      /^.+-data$/,
+      // pkgname-data is universally locale/data
+      // Kernel infrastructure — not operator-managed software, drives
+      // up package count by 5-15 per kernel version pinned on disk.
+      /^linux-headers-/,
+      /^linux-image-/,
+      /^linux-modules-/,
+      /^linux-tools-/,
+      /^linux-cloud-tools-/,
+      /^linux-aws$/,
+      /^linux-azure$/,
+      /^linux-gcp$/,
+      /^kernel-headers$/,
+      /^kernel-devel$/,
+      /^kernel-tools$/,
+      /^kernel-modules-/,
+      // Language pack locale data. `language-pack-en-base` etc.
+      /^language-pack-/,
+      /^locales-all$/,
+      // GObject introspection bindings — never user-relevant on a server.
+      /^gir1\.2-/,
+      // Per-arch firmware blobs.
+      /^firmware-/,
+      /^.*-firmware$/,
+      // tzdata, ca-certificates, base-files etc are essential plumbing
+      // operators don't think of as installed apps. The dashboard's
+      // PMP/SCP namespaces already track them for security purposes.
+      /^base-files$/,
+      /^base-passwd$/,
+      /^debconf$/,
+      /^debconf-i18n$/,
+      /^tzdata$/,
+      /^ca-certificates$/,
+      /^iso-codes$/,
+      /^ucf$/,
+      /^xkb-data$/,
+      /^console-setup-linux$/,
+      /^console-setup$/,
+      /^keyboard-configuration$/
+    ];
     PKG_LIST_TIMEOUT_MS = 3e4;
     cachedPM = null;
+    SOURCE_PRIORITY = {
+      dpkg: 0,
+      rpm: 1,
+      snap: 2,
+      flatpak: 3
+    };
     linuxProvider = {
       async collect(ctx) {
         if (import_os10.default.platform() !== "linux") {
@@ -23452,7 +23574,7 @@ var import_dotenv = __toESM(require_main());
 // package.json
 var package_default = {
   name: "certusws-tracenium-agent",
-  version: "1.1.13",
+  version: "1.1.14",
   description: "Tracenium Agent - Hardware & Software inventory collector",
   license: "MIT",
   author: {

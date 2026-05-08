@@ -39,6 +39,86 @@ import {
 // matches the macOS provider's safer pattern.)
 const execFileAsync = promisify(execFile);
 
+// ── Noise filtering ──────────────────────────────────────────────
+// Linux package managers expose every transitive library, every
+// language locale, every debug-symbol bundle as a "package". An
+// untouched Ubuntu 24 server reports ~1100-1500 packages; almost
+// all of them are kernel internals, dev headers, docs, locale
+// data, and library shims that no operator thinks of as
+// "applications". Shipping them all to the dashboard buries the
+// real user-installed apps in noise.
+//
+// Two-stage filter:
+//
+// 1. HARD_NOISE_PATTERNS → drop completely. Things nobody ever
+//    needs to see in an inventory dashboard. PMP scan already
+//    covers security visibility for these via the patch namespace,
+//    so we don't lose any operational signal.
+//
+// 2. Manual-vs-auto via `apt-mark showmanual` (dpkg) /
+//    `dnf history userinstalled` (rpm). Only ship the manual side.
+//    Auto-installed transitive deps are shadow infrastructure —
+//    visible to the package manager, invisible to operators.
+//
+// Snap + flatpak escape both filters: their entire premise is
+// "operator-installed apps", so by construction they're already the
+// userFacing set. We ship them whole.
+const HARD_NOISE_PATTERNS: RegExp[] = [
+  // Development packages — only relevant on developer machines, and
+  // the SDKs themselves (e.g. `gcc`, `python3`) are tracked separately.
+  /^.+-dev$/,
+  /^.+-dev:[^:]+$/,            // multi-arch suffix variant
+  /^.+-doc$/,
+  /^.+-dbg$/,
+  /^.+-dbgsym$/,
+  /^.+-source$/,
+  /^.+-data$/,                 // pkgname-data is universally locale/data
+  // Kernel infrastructure — not operator-managed software, drives
+  // up package count by 5-15 per kernel version pinned on disk.
+  /^linux-headers-/,
+  /^linux-image-/,
+  /^linux-modules-/,
+  /^linux-tools-/,
+  /^linux-cloud-tools-/,
+  /^linux-aws$/,
+  /^linux-azure$/,
+  /^linux-gcp$/,
+  /^kernel-headers$/,
+  /^kernel-devel$/,
+  /^kernel-tools$/,
+  /^kernel-modules-/,
+  // Language pack locale data. `language-pack-en-base` etc.
+  /^language-pack-/,
+  /^locales-all$/,
+  // GObject introspection bindings — never user-relevant on a server.
+  /^gir1\.2-/,
+  // Per-arch firmware blobs.
+  /^firmware-/,
+  /^.*-firmware$/,
+  // tzdata, ca-certificates, base-files etc are essential plumbing
+  // operators don't think of as installed apps. The dashboard's
+  // PMP/SCP namespaces already track them for security purposes.
+  /^base-files$/,
+  /^base-passwd$/,
+  /^debconf$/,
+  /^debconf-i18n$/,
+  /^tzdata$/,
+  /^ca-certificates$/,
+  /^iso-codes$/,
+  /^ucf$/,
+  /^xkb-data$/,
+  /^console-setup-linux$/,
+  /^console-setup$/,
+  /^keyboard-configuration$/,
+];
+
+function isHardNoise(pkgName: string): boolean {
+  for (const re of HARD_NOISE_PATTERNS) {
+    if (re.test(pkgName)) return true;
+  }
+  return false;
+}
+
 // Software-listing commands on big systems can take noticeable time.
 // On a stock RHEL 9 box with ~4 000 RPMs `rpm -qa` runs ~6-9 s; on a
 // 10 000-package developer workstation we've seen 12 s. The previous
@@ -190,7 +270,62 @@ async function detectPackageManagers() {
   return cachedPM;
 }
 
-async function collectDpkg(): Promise<SoftwareApplication[]> {
+// `apt-mark showmanual` lists packages explicitly installed by the
+// operator (or that came in the base distro image and were marked
+// manual on first apt run). Everything else was pulled as a
+// transitive dependency by another package and is "infrastructure"
+// from the operator's perspective.
+//
+// On a fresh Ubuntu 24 server this typically returns 200-350
+// entries vs 800-1200 in the full dpkg list. Combined with the
+// HARD_NOISE_PATTERNS filter we settle around ~250 user-facing
+// apps.
+//
+// Returns null on error (apt-mark missing, command failed) — the
+// caller falls back to "no manual filter" mode and ships the full
+// dpkg list (with HARD_NOISE_PATTERNS still applied). Better to
+// over-report than to ship zero apps if apt-mark glitches.
+async function getDebianManualPackages(): Promise<Set<string> | null> {
+  const r = await run("/usr/bin/apt-mark", ["showmanual"]);
+  if (!r) return null;
+  const lines = r.split("\n").map(s => s.trim()).filter(Boolean);
+  if (lines.length === 0) return null;
+  return new Set(lines);
+}
+
+// RHEL/Fedora equivalent. `dnf history userinstalled` lists
+// packages installed by the user (excluding deps). This requires
+// the dnf history db to be present — fresh kickstart images
+// sometimes ship without it. RHEL 7 uses `yum history info` with
+// a much messier output; we don't try to parse that and let RHEL 7
+// fall through to "no manual filter" mode.
+async function getRhelManualPackages(): Promise<Set<string> | null> {
+  const dnfBin = hasExecutable("/usr/bin/dnf") ? "/usr/bin/dnf"
+                : hasExecutable("/usr/bin/dnf5") ? "/usr/bin/dnf5"
+                : null;
+  if (!dnfBin) return null;
+  const r = await run(dnfBin, ["history", "userinstalled"]);
+  if (!r) return null;
+  // Output shape (dnf 4.x): bare list of package names, one per line,
+  // with a header line "Packages installed by user:" we drop. dnf 5
+  // omits the header.
+  const lines = r.split("\n")
+    .map(s => s.trim())
+    .filter(s => s && !s.toLowerCase().startsWith("packages installed"));
+  if (lines.length === 0) return null;
+  // Strip arch/version suffixes — dnf sometimes emits NVRA, sometimes
+  // bare name. We dedup to the bare-name set so collectRpm's lookup
+  // (which uses just `name`) finds matches regardless of dnf format.
+  const set = new Set<string>();
+  for (const line of lines) {
+    const bare = line.split(".")[0].split("-")[0];
+    if (bare) set.add(bare);
+    set.add(line);
+  }
+  return set;
+}
+
+async function collectDpkg(manualSet: Set<string> | null): Promise<SoftwareApplication[]> {
   // -W is the machine-readable form; `-f` controls the field layout.
   // Tab-separated so we can split on \t (package names never contain
   // tabs, but they CAN contain spaces in `Description` — old format).
@@ -215,6 +350,19 @@ async function collectDpkg(): Promise<SoftwareApplication[]> {
     const name = parts[1];
     const version = parts[2];
 
+    // Hard noise filter — dropped completely from inventory. Patterns
+    // documented at the top of the file.
+    if (isHardNoise(name)) continue;
+
+    // Manual-only mode: when apt-mark gave us a set, only ship
+    // packages the operator actually marked manual. Cuts inventory
+    // ~3-4x by hiding the deep transitive-dep graph.
+    //
+    // If manualSet is null (apt-mark unavailable), fall through to
+    // ship everything that survived the hard-noise filter — better
+    // to over-report than ship a half-empty inventory.
+    if (manualSet && !manualSet.has(name)) continue;
+
     const n = normalizeApp({
       name,
       version,
@@ -224,13 +372,21 @@ async function collectDpkg(): Promise<SoftwareApplication[]> {
       source: "dpkg",
     });
 
-    if (n && n.name) res.push(n as SoftwareApplication);
+    if (n && n.name) {
+      // Override the display normalizer's default category (which
+      // doesn't know about apt-mark status) with "application" +
+      // userFacing=true. We've established by passing the manual-set
+      // gate that the operator chose to install this package.
+      (n as SoftwareApplication).category = "application";
+      (n as SoftwareApplication).userFacing = true;
+      res.push(n as SoftwareApplication);
+    }
   }
 
   return res;
 }
 
-async function collectRpm(): Promise<SoftwareApplication[]> {
+async function collectRpm(manualSet: Set<string> | null): Promise<SoftwareApplication[]> {
   // Tab-separated — RPM names never contain tabs, but spaces can
   // appear in version strings of unusual packages so we avoid
   // space-splitting which broke parsing previously.
@@ -254,6 +410,13 @@ async function collectRpm(): Promise<SoftwareApplication[]> {
     //   gpg-pubkey  ec9c4172-65a90b91  (none)
     if (name.startsWith("gpg-pubkey")) continue;
 
+    // Hard noise filter — same patterns as dpkg, applies to RPM too.
+    if (isHardNoise(name)) continue;
+
+    // Manual-only mode: when dnf history gave us a set, only ship
+    // packages the operator explicitly installed.
+    if (manualSet && !manualSet.has(name)) continue;
+
     const n = normalizeApp({
       name,
       version,
@@ -263,7 +426,11 @@ async function collectRpm(): Promise<SoftwareApplication[]> {
       source: "rpm",
     });
 
-    if (n && n.name) res.push(n as SoftwareApplication);
+    if (n && n.name) {
+      (n as SoftwareApplication).category = "application";
+      (n as SoftwareApplication).userFacing = true;
+      res.push(n as SoftwareApplication);
+    }
   }
 
   return res;
@@ -281,6 +448,12 @@ async function collectSnap(): Promise<SoftwareApplication[]> {
     const name = parts[0];
     const version = parts[1];
 
+    // The `snapd` snap is the daemon itself, plus `core*` snaps are
+    // the snap runtime base. Both are infrastructure of the snap
+    // system rather than user-installed apps. Skip — operators don't
+    // think of `core22` or `snapd` as "apps they installed".
+    if (name === "snapd" || /^core[0-9]*$/.test(name) || name === "bare") continue;
+
     const n = normalizeApp({
       name,
       version,
@@ -290,7 +463,14 @@ async function collectSnap(): Promise<SoftwareApplication[]> {
       source: "snap",
     });
 
-    if (n && n.name) res.push(n as SoftwareApplication);
+    if (n && n.name) {
+      // Snap entries are by design user-installed. The whole snap
+      // distribution model is opt-in per-app; nothing is auto-pulled
+      // as a transitive dep the way apt does. Tag accordingly.
+      (n as SoftwareApplication).category = "application";
+      (n as SoftwareApplication).userFacing = true;
+      res.push(n as SoftwareApplication);
+    }
   }
 
   return res;
@@ -320,42 +500,107 @@ async function collectFlatpak(): Promise<SoftwareApplication[]> {
       source: "flatpak",
     });
 
-    if (n && n.name) res.push(n as SoftwareApplication);
+    if (n && n.name) {
+      // Same logic as snap: flatpak entries are explicit installs.
+      (n as SoftwareApplication).category = "application";
+      (n as SoftwareApplication).userFacing = true;
+      res.push(n as SoftwareApplication);
+    }
   }
 
   return res;
 }
 
+// Source priority for cross-source dedup. When the same app appears
+// via multiple package managers (e.g. `docker` from both apt and
+// snap), keep the higher-priority source. Lower index = higher
+// priority. Order rationale:
+//   * apt/dpkg first: it's the system package manager, manages
+//     dependencies + security updates natively, integrates with
+//     unattended-upgrades. Wins over user-space alternatives.
+//   * rpm second: same role on RHEL-family.
+//   * snap third: containerized, sandboxed; useful but secondary
+//     to the system PM where both have the same app.
+//   * flatpak last: same reasoning as snap. Rarely overlaps with
+//     apt anyway (flatpak app ids look like `com.spotify.Client`,
+//     apt names look like `spotify-client` — dedup is mostly
+//     irrelevant in practice).
+const SOURCE_PRIORITY: Record<string, number> = {
+  dpkg: 0,
+  rpm: 1,
+  snap: 2,
+  flatpak: 3,
+};
+
+function canonicalNameForDedup(app: SoftwareApplication): string {
+  // We dedup on the lowercased rawName (the package id from the
+  // collector, before display normalization). Display name
+  // transformations like "Apache2 Bin" → "Apache 2 Bin" would
+  // de-correlate dpkg `apache2-bin` from snap `apache2-bin`, so we
+  // explicitly use rawName when present.
+  const base = (app.rawName || app.name || "").toLowerCase().trim();
+  // Strip multi-arch suffixes that dpkg occasionally surfaces:
+  // "libc6:amd64" → "libc6". We don't want both arches counted
+  // as separate apps.
+  return base.split(":")[0];
+}
+
 async function collectLinuxSoftware(): Promise<SoftwareApplication[]> {
   const pm = await detectPackageManagers();
+
+  // Fetch the "user-installed" sets in parallel with the manager
+  // probes so we don't serialize what's already two separate
+  // commands per family. Both can be null on hosts where the tool
+  // isn't available — collectors fall back to "ship everything that
+  // survived the hard-noise filter" mode.
+  const [debianManual, rhelManual] = await Promise.all([
+    pm.hasDpkg ? getDebianManualPackages() : Promise.resolve(null),
+    pm.hasRpm ? getRhelManualPackages() : Promise.resolve(null),
+  ]);
 
   const results: SoftwareApplication[] = [];
 
   if (pm.hasDpkg) {
-    results.push(...await collectDpkg());
+    results.push(...await collectDpkg(debianManual));
   }
-
   if (pm.hasRpm) {
-    results.push(...await collectRpm());
+    results.push(...await collectRpm(rhelManual));
   }
-
   if (pm.hasSnap) {
     results.push(...await collectSnap());
   }
-
   if (pm.hasFlatpak) {
     results.push(...await collectFlatpak());
   }
 
-  const all = results;
+  // Cross-source dedup. Same canonical name → keep the highest-
+  // priority source (apt > rpm > snap > flatpak). Without this, an
+  // operator who has `docker` via both apt and snap shows up twice
+  // in the inventory donut, distorting the app count.
+  //
+  // We use canonicalNameForDedup (not installId) because installId
+  // includes the source string in its hash — two records of the
+  // same app from different sources have different installIds and
+  // wouldn't collapse with an installId-keyed map.
+  const byCanonical = new Map<string, SoftwareApplication>();
+  for (const app of results) {
+    const key = canonicalNameForDedup(app);
+    if (!key) continue;
 
-  const map = new Map<string, SoftwareApplication>();
-  for (const app of all) {
-    if (!app.installId) continue;
-    map.set(app.installId, app);
+    const existing = byCanonical.get(key);
+    if (!existing) {
+      byCanonical.set(key, app);
+      continue;
+    }
+
+    const existingRank = SOURCE_PRIORITY[existing.source] ?? 99;
+    const newRank = SOURCE_PRIORITY[app.source] ?? 99;
+    if (newRank < existingRank) {
+      byCanonical.set(key, app);
+    }
   }
 
-  return Array.from(map.values());
+  return Array.from(byCanonical.values());
 }
 
 export const linuxProvider = {

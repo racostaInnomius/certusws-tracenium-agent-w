@@ -38,34 +38,59 @@ exec >> "$LOG_FILE" 2>&1
 echo "==== $(date -u '+%Y-%m-%dT%H:%M:%SZ') tracenium preinstall start ===="
 
 # ── Enrollment token gate ──────────────────────────────────────────
-# Detect whether this is a fresh install vs an upgrade. Upgrades
-# don't need a fresh token — the existing /var/lib/tracenium/
-# enrollment.token + installed mTLS cert from the previous version
-# already provide identity continuity.
+# Detect whether this is a true first-time install vs a
+# reinstall/upgrade. Reinstalls don't need a fresh token because the
+# existing /var/lib/tracenium/enrollment.token + installed mTLS cert
+# (preserved across apt remove / dnf erase per our postremove
+# policy) already provide identity continuity.
 #
-# We detect "fresh install" by checking for the absence of the
-# tracenium user (preinst on first install runs BEFORE we create
-# the user later in this same script) AND the absence of any prior
-# enrollment artifacts in /var/lib/tracenium/.
+# Critical wrinkle: dpkg's preinst arg is "install" for BOTH a
+# never-installed-here case AND a reinstall after `apt remove`. We
+# can't trust the arg alone to mean "first time ever". Instead we
+# check the actual state on disk:
+#   * tracenium user exists  → previous install touched the system
+#   * /var/lib/tracenium/enrollment.token  → enrollment artifact
+#     preserved from prior install
+#   * /etc/tracenium/certs/client.crt.pem  → completed enrollment
+#     left mTLS cert behind
+# Any one of these means "we've been here before" → no fresh token
+# required. The only true fresh-install path is "all three absent".
 #
-# .deb args:  "install" / "upgrade <oldver>"
+# .deb args:  "install" / "upgrade <oldver>" / "abort-*"
 # .rpm arg:   1 (first install) / 2+ (upgrade)
+HAS_PRIOR_STATE=0
+if getent passwd tracenium >/dev/null 2>&1 \
+   || [ -f /var/lib/tracenium/enrollment.token ] \
+   || [ -f /etc/tracenium/certs/client.crt.pem ]; then
+    HAS_PRIOR_STATE=1
+fi
+
 IS_FRESH_INSTALL=1
 case "${1:-}" in
-    install)         IS_FRESH_INSTALL=1 ;;
-    upgrade)         IS_FRESH_INSTALL=0 ;;
-    1)               IS_FRESH_INSTALL=1 ;;   # rpm first install
-    2|3|4|5|6|7|8|9) IS_FRESH_INSTALL=0 ;;   # rpm upgrade (count ≥ 2)
+    upgrade|deconfigure|failed-upgrade|abort-upgrade|abort-install)
+        # Explicit upgrade paths — never gate, even on a transitional
+        # state where prior artifacts somehow vanished.
+        IS_FRESH_INSTALL=0
+        ;;
+    install|configure)
+        # apt's "install" covers both first-time and post-remove
+        # reinstall. Defer to disk state.
+        IS_FRESH_INSTALL=$([ "$HAS_PRIOR_STATE" = "1" ] && echo 0 || echo 1)
+        ;;
+    1)
+        # rpm: count of post-install instances == 1, but we can't
+        # tell first-install from reinstall any better than dpkg.
+        IS_FRESH_INSTALL=$([ "$HAS_PRIOR_STATE" = "1" ] && echo 0 || echo 1)
+        ;;
+    2|3|4|5|6|7|8|9)
+        IS_FRESH_INSTALL=0
+        ;;
     *)
-        # Unknown arg shape — be conservative: if a previous
-        # enrollment exists, treat as upgrade; otherwise fresh.
-        if [ -f /var/lib/tracenium/enrollment.token ] || \
-           [ -f /etc/tracenium/certs/client.crt.pem ] || \
-           getent passwd tracenium >/dev/null 2>&1; then
-            IS_FRESH_INSTALL=0
-        fi
+        IS_FRESH_INSTALL=$([ "$HAS_PRIOR_STATE" = "1" ] && echo 0 || echo 1)
         ;;
 esac
+
+echo "  preinstall arg=${1:-?}  HAS_PRIOR_STATE=$HAS_PRIOR_STATE  IS_FRESH_INSTALL=$IS_FRESH_INSTALL"
 
 TMP_TOKEN="/tmp/tracenium-enrollment.token"
 if [ "$IS_FRESH_INSTALL" = "1" ]; then
@@ -95,28 +120,39 @@ EOF
         exit 1
     fi
 
-    # Sanity-check the token has reasonable contents. JWTs are
-    # base64url-encoded segments separated by dots; smallest valid
-    # ones are well over 100 bytes. A 0-byte file is almost certainly
-    # an operator who `touch`ed the path expecting it to be filled.
+    # Sanity-check: file is non-empty after trimming whitespace.
+    # We DON'T validate the token format/length because:
+    #   * Tracenium enrollment tokens are opaque short secrets
+    #     (typically a 32-byte random encoded base64url, ~43 chars
+    #     + trailing newline = ~44 bytes). Adding a "looks like a
+    #     JWT" length check rejects valid tokens.
+    #   * The real validation happens at enrollment time — the
+    #     agent POSTs the token to api.tracenium.com which returns
+    #     401 if it's wrong, and that error surfaces clearly in
+    #     `journalctl -u tracenium-agent`.
+    # The only thing we catch here is "operator created an empty
+    # file by mistake" (e.g. `touch /tmp/tracenium-enrollment.token`
+    # without writing anything to it).
     TOKEN_SIZE=$(wc -c < "$TMP_TOKEN" 2>/dev/null || echo 0)
-    if [ "$TOKEN_SIZE" -lt 50 ]; then
+    TOKEN_TRIMMED=$(tr -d ' \t\n\r' < "$TMP_TOKEN" 2>/dev/null | wc -c)
+    if [ "$TOKEN_TRIMMED" -lt 1 ]; then
         cat >&4 <<EOF
 ==============================================================
-Tracenium agent install ABORTED — enrollment token looks invalid.
+Tracenium agent install ABORTED — enrollment token file is empty.
 
-  $TMP_TOKEN exists but is only $TOKEN_SIZE bytes.
-  A valid enrollment JWT is several hundred bytes.
+  $TMP_TOKEN exists but contains no content (only whitespace
+  or zero bytes).
 
-  Replace the file with the full token from the dashboard
-  and re-run the install.
+  Generate a token in the dashboard (Settings → Devices →
+  Add Device → copy token), paste it into the file, and
+  re-run the install.
 ==============================================================
 EOF
-        echo "  enrollment token at $TMP_TOKEN is suspiciously small ($TOKEN_SIZE bytes) — aborting"
+        echo "  enrollment token at $TMP_TOKEN is empty after trim — aborting"
         exit 1
     fi
 
-    echo "  enrollment token detected at $TMP_TOKEN (${TOKEN_SIZE} bytes)"
+    echo "  enrollment token detected at $TMP_TOKEN (${TOKEN_SIZE} bytes raw, ${TOKEN_TRIMMED} bytes trimmed)"
 else
     echo "  upgrade path — skipping enrollment-token check"
 fi

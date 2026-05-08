@@ -15,10 +15,24 @@ Requires=tracenium-privsvc.service
 After=tracenium-privsvc.service network-online.target
 Wants=network-online.target
 
+# Restart-rate cap (must live in [Unit], not [Service] — see the
+# note in tracenium-privsvc.service for the gotcha that motivated
+# this placement).
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
 [Service]
 Type=simple
 User=tracenium
 Group=tracenium
+# Inject GRPC_ENDPOINT / SERVER_BASE_URL / CERT_RENEWAL_BASE_URL /
+# CHANNEL into process.env before exec — the agent's
+# src/bootstrap/config.ts requires these (it dies early with
+# "Missing required environment variable: GRPC_ENDPOINT"
+# otherwise). Leading `-` lets systemd start the daemon even if
+# the file's missing, so the failure mode is a clear app-level
+# error rather than a unit refusing to start.
+EnvironmentFile=-/etc/tracenium/agent.env
 ExecStart=/usr/lib/tracenium/node /usr/lib/tracenium/agent/index.js
 WorkingDirectory=/var/lib/tracenium
 
@@ -28,8 +42,6 @@ WorkingDirectory=/var/lib/tracenium
 # hook, SQLite corruption, OOM kill) — restart and try again.
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 StandardOutput=journal
 StandardError=journal

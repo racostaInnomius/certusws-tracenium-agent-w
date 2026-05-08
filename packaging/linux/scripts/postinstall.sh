@@ -45,25 +45,23 @@ echo "==== $(date -u '+%Y-%m-%dT%H:%M:%SZ') tracenium postinstall start ===="
 # /run/tracenium is created by systemd at service start via
 # RuntimeDirectory= — not our concern here.
 
-if [ -d /etc/tracenium ]; then
-    chmod 0755 /etc/tracenium || true
-    chown root:root /etc/tracenium || true
-fi
+# Idempotent: create dirs that may have been removed (dpkg garbage-
+# collects empty dirs on `apt remove` even if they were declared
+# `type: dir` in the package — common gotcha for /etc/tracenium/certs
+# which is empty before first enrollment), then enforce ownership.
+mkdir -p /etc/tracenium/certs /var/lib/tracenium /var/lib/tracenium/assets /var/log/tracenium
 
-if [ -d /etc/tracenium/certs ]; then
-    chmod 0750 /etc/tracenium/certs || true
-    chown root:tracenium /etc/tracenium/certs || true
-fi
+chmod 0755 /etc/tracenium       2>/dev/null || true
+chown root:root /etc/tracenium  2>/dev/null || true
 
-if [ -d /var/lib/tracenium ]; then
-    chmod 0750 /var/lib/tracenium || true
-    chown -R tracenium:tracenium /var/lib/tracenium || true
-fi
+chmod 0750 /etc/tracenium/certs       2>/dev/null || true
+chown root:tracenium /etc/tracenium/certs 2>/dev/null || true
 
-if [ -d /var/log/tracenium ]; then
-    chmod 0750 /var/log/tracenium || true
-    chown -R tracenium:tracenium /var/log/tracenium || true
-fi
+chmod 0750 /var/lib/tracenium                          2>/dev/null || true
+chown -R tracenium:tracenium /var/lib/tracenium        2>/dev/null || true
+
+chmod 0750 /var/log/tracenium                          2>/dev/null || true
+chown -R tracenium:tracenium /var/log/tracenium        2>/dev/null || true
 
 # ── Enrollment token migration ─────────────────────────────────────
 # Operators obtain a one-time enrollment JWT from the dashboard,
@@ -104,19 +102,30 @@ fi
 # so a manual operator run later (after installing the dev tools)
 # completes the load without re-installing the package.
 
-# AppArmor (Debian/Ubuntu). The binary `apparmor_parser` ships in
-# package `apparmor` which is in the base layer of every Ubuntu
-# image. RHEL doesn't ship it.
-if command -v apparmor_parser >/dev/null 2>&1; then
+# AppArmor (Debian/Ubuntu). The profile file ships in the .deb at
+# /etc/apparmor.d/usr.lib.tracenium.privsvc but we DO NOT auto-load
+# it here. Initial production testing on Ubuntu 24.04 surfaced
+# Node-init aborts (SIGABRT during V8 startup) when the profile is
+# enforced — the profile is missing some `/proc/self/*` reads that
+# V8 does at init. Until we've refined the profile with real
+# `dmesg | grep apparmor.*denied` data, auto-loading it would brick
+# every fresh install. Auto-load lives behind an opt-in env var
+# while we iterate.
+#
+# Operators who want to enforce the current draft profile (and help
+# us catch denials):
+#   sudo apparmor_parser -r /etc/apparmor.d/usr.lib.tracenium.privsvc
+# Then reproduce normal agent activity for ~5 min and gather:
+#   sudo dmesg | grep apparmor.*denied
+# Send those denials and we'll bake them into the next .deb.
+if [ "${TRACENIUM_LOAD_APPARMOR:-0}" = "1" ] && command -v apparmor_parser >/dev/null 2>&1; then
     if [ -f /etc/apparmor.d/usr.lib.tracenium.privsvc ]; then
-        # -r (replace) reloads if already loaded, installs fresh
-        # otherwise. Failure here doesn't block the install — the
-        # daemon runs without AppArmor confinement, just less
-        # defense-in-depth.
         apparmor_parser -r /etc/apparmor.d/usr.lib.tracenium.privsvc 2>/dev/null \
-            && echo "  AppArmor profile loaded" \
+            && echo "  AppArmor profile loaded (TRACENIUM_LOAD_APPARMOR=1)" \
             || echo "  AppArmor profile load failed (continuing)"
     fi
+else
+    echo "  AppArmor profile installed at /etc/apparmor.d/usr.lib.tracenium.privsvc but NOT loaded (set TRACENIUM_LOAD_APPARMOR=1 to opt in)"
 fi
 
 # SELinux (RHEL-family). `semodule` is in `policycoreutils`
