@@ -1,6 +1,8 @@
 // src/domain/device-facts-builder.ts
 import os from "os";
 import si from "systeminformation";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import type { AgentContext } from "../core/agent-context";
 import type { DeviceFacts, Namespaces, AgentCapability } from "./device-facts";
 import crypto from "crypto";
@@ -11,6 +13,310 @@ import type {
   SecurityInfo,
   SoftwareInventory
 } from "./amp-types";
+
+const execFileAsync = promisify(execFile);
+
+type NormalizedUser = {
+  user: string;
+  domain?: string | null;
+  raw?: string;
+  isLoggedIn?: boolean;
+  lastLogon?: string | null;
+};
+
+type NormalizedNetworkInterface = {
+  name?: string;
+  displayName?: string;
+  mac?: string;
+  ip4?: string | null;
+  ip6?: string | null;
+  internal?: boolean;
+  default?: boolean;
+  type?: string;
+};
+
+
+function isIgnorableUser(value?: string | null): boolean {
+  const v = String(value || "").trim().toLowerCase();
+
+  return (
+    !v ||
+    v === "root" ||
+    v === "system" ||
+    v === "localservice" ||
+    v === "networkservice" ||
+    v === "_mbsetupuser" ||
+    v === "loginwindow"
+  );
+}
+
+function parseUserIdentity(raw?: string | null): NormalizedUser | null {
+  const value = String(raw || "").trim();
+
+  if (!value) return null;
+
+  // Windows usually returns DOMAIN\username from Win32_ComputerSystem.UserName.
+  const slashMatch = value.match(/^([^\\]+)\\(.+)$/);
+  if (slashMatch) {
+    const domain = slashMatch[1]?.trim() || null;
+    const user = slashMatch[2]?.trim() || "";
+
+    if (isIgnorableUser(user)) return null;
+
+    return {
+      user,
+      domain,
+      raw: value,
+      isLoggedIn: true,
+      lastLogon: null
+    };
+  }
+
+  // Keep user@domain useful, but split it when it looks like a login identity.
+  const atMatch = value.match(/^([^@\s]+)@([^@\s]+)$/);
+  if (atMatch) {
+    const user = atMatch[1]?.trim() || "";
+    const domain = atMatch[2]?.trim() || null;
+
+    if (isIgnorableUser(user)) return null;
+
+    return {
+      user,
+      domain,
+      raw: value,
+      isLoggedIn: true,
+      lastLogon: null
+    };
+  }
+
+  if (isIgnorableUser(value)) return null;
+
+  return {
+    user: value,
+    domain: null,
+    raw: value,
+    isLoggedIn: true,
+    lastLogon: null
+  };
+}
+
+async function runCommand(command: string, args: string[], timeout = 2500): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(command, args, {
+      timeout,
+      windowsHide: true,
+      maxBuffer: 1024 * 128
+    });
+
+    const value = String(stdout || "").trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getInteractiveUserFromOs(): Promise<NormalizedUser | null> {
+  const platform = os.platform();
+
+  if (platform === "win32") {
+    const ps = await runCommand("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      "try { (Get-CimInstance Win32_ComputerSystem).UserName } catch { $null }"
+    ], 3500);
+
+    const fromPs = parseUserIdentity(ps);
+    if (fromPs) return fromPs;
+
+    const whoami = await runCommand("whoami.exe", [], 2500);
+    return parseUserIdentity(whoami);
+  }
+
+  if (platform === "darwin") {
+    // Works when the agent runs as LaunchDaemon/root: it returns the console user, not root.
+    const consoleUser = await runCommand("/usr/bin/stat", ["-f", "%Su", "/dev/console"], 2500);
+    const fromConsole = parseUserIdentity(consoleUser);
+    if (fromConsole) return fromConsole;
+
+    const whoami = await runCommand("/usr/bin/whoami", [], 2500);
+    return parseUserIdentity(whoami);
+  }
+
+  // Linux: prefer an active login session when available.
+  const who = await runCommand("who", [], 2500);
+  if (who) {
+    const firstLine = who.split("\n").map(x => x.trim()).filter(Boolean)[0];
+    const firstUser = firstLine?.split(/\s+/)[0];
+    const fromWho = parseUserIdentity(firstUser);
+    if (fromWho) return fromWho;
+  }
+
+  const logname = await runCommand("logname", [], 2500);
+  const fromLogname = parseUserIdentity(logname);
+  if (fromLogname) return fromLogname;
+
+  const whoami = await runCommand("whoami", [], 2500);
+  return parseUserIdentity(whoami);
+}
+
+function normalizeSiUsers(siUsers: any): NormalizedUser[] {
+  if (!Array.isArray(siUsers)) return [];
+
+  const users: NormalizedUser[] = [];
+
+  for (const entry of siUsers) {
+    const raw = entry?.user || entry?.name || entry?.username;
+    const normalized = parseUserIdentity(raw);
+
+    if (!normalized) continue;
+
+    const date = entry?.date ? String(entry.date) : null;
+    const time = entry?.time ? String(entry.time) : null;
+
+    users.push({
+      ...normalized,
+      raw: normalized.raw || String(raw),
+      isLoggedIn: true,
+      lastLogon: date && time ? `${date} ${time}` : null
+    });
+  }
+
+  return users;
+}
+
+function dedupeUsers(users: NormalizedUser[]): NormalizedUser[] {
+  const seen = new Set<string>();
+  const out: NormalizedUser[] = [];
+
+  for (const user of users) {
+    const key = `${user.domain || ""}\\${user.user}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(user);
+  }
+
+  return out;
+}
+
+async function buildLoggedInUsers(siUsers: any): Promise<NormalizedUser[]> {
+  const preferred = await getInteractiveUserFromOs();
+  const fromSi = normalizeSiUsers(siUsers);
+
+  return dedupeUsers([
+    ...(preferred ? [preferred] : []),
+    ...fromSi
+  ]);
+}
+
+function isPrivateIpv4(ip?: string | null): boolean {
+  if (!ip) return false;
+
+  if (/^10\./.test(ip)) return true;
+  if (/^192\.168\./.test(ip)) return true;
+
+  const m = ip.match(/^172\.(\d{1,2})\./);
+  if (m) {
+    const second = Number(m[1]);
+    return second >= 16 && second <= 31;
+  }
+
+  return false;
+}
+
+function isUsableIpv4(ip?: string | null): boolean {
+  if (!ip) return false;
+  if (ip === "127.0.0.1") return false;
+  if (ip.startsWith("169.254.")) return false;
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip);
+}
+
+function inferInterfaceType(iface: any): string | undefined {
+  const text = `${iface?.iface || ""} ${iface?.ifaceName || ""} ${iface?.name || ""} ${iface?.type || ""}`.toLowerCase();
+
+  if (text.includes("wi-fi") || text.includes("wifi") || text.includes("wireless") || /^en0\b/.test(text) || /^wlan/.test(text)) {
+    return "wifi";
+  }
+
+  if (text.includes("ethernet") || /^eth/.test(text) || /^en\d+\b/.test(text)) {
+    return "ethernet";
+  }
+
+  if (text.includes("vpn") || text.includes("utun") || text.includes("tun") || text.includes("tap")) {
+    return "vpn";
+  }
+
+  if (text.includes("loopback") || text.includes("lo0") || text === "lo") {
+    return "loopback";
+  }
+
+  return iface?.type ? String(iface.type) : undefined;
+}
+
+function normalizeNetworkInterfaces(net: any, defaultInterface?: string | null): NormalizedNetworkInterface[] {
+  if (!Array.isArray(net)) return [];
+
+  const defaultName = String(defaultInterface || "").trim().toLowerCase();
+
+  const normalized = net
+    .map((iface: any): NormalizedNetworkInterface => {
+      const name = String(iface?.iface || iface?.name || iface?.ifaceName || "").trim() || undefined;
+      const displayName = String(iface?.ifaceName || iface?.name || iface?.iface || "").trim() || name;
+      const ip4 = String(iface?.ip4 || iface?.ipv4 || "").trim() || null;
+      const ip6 = String(iface?.ip6 || iface?.ipv6 || "").trim() || null;
+      const mac = String(iface?.mac || "").trim() || undefined;
+      const internal = Boolean(iface?.internal);
+      const isDefault = Boolean(defaultName && name && name.toLowerCase() === defaultName);
+
+      return {
+        name,
+        displayName,
+        mac,
+        ip4,
+        ip6,
+        internal,
+        default: isDefault,
+        type: inferInterfaceType(iface)
+      };
+    })
+    .filter(iface => iface.name || iface.ip4 || iface.ip6 || iface.mac);
+
+  const preferredIndex = normalized.findIndex(iface =>
+    !iface.internal &&
+    Boolean(iface.default) &&
+    isUsableIpv4(iface.ip4)
+  );
+
+  const privateIndex = normalized.findIndex(iface =>
+    !iface.internal &&
+    isUsableIpv4(iface.ip4) &&
+    isPrivateIpv4(iface.ip4)
+  );
+
+  const usableIndex = normalized.findIndex(iface =>
+    !iface.internal &&
+    isUsableIpv4(iface.ip4)
+  );
+
+  const selectedIndex = preferredIndex >= 0
+    ? preferredIndex
+    : privateIndex >= 0
+    ? privateIndex
+    : usableIndex;
+
+  if (selectedIndex >= 0) {
+    normalized.forEach((iface, index) => {
+      iface.default = index === selectedIndex;
+    });
+
+    const selected = normalized.splice(selectedIndex, 1)[0];
+    normalized.unshift(selected);
+  }
+
+  return normalized;
+}
 
 function buildDeviceIdentity(ctx: AgentContext) {
   const nodePlatform = os.platform();
@@ -43,6 +349,7 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
     diskLayout,
     graphics,
     net,
+    defaultNetworkInterface,
     time,
     cpuCurrentSpeed,
     audio,
@@ -66,14 +373,15 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
     si.memLayout(),
     si.diskLayout(),
     si.graphics(),
-    si.networkInterfaces(),
+    si.networkInterfaces().catch(() => [] as any[]),
+    si.networkInterfaceDefault().catch(() => null as any),
     si.time(),
     si.cpuCurrentSpeed(),
     si.audio(),
     si.bluetoothDevices(),
     si.usb(),
     si.printer(),
-    si.users(),
+    si.users().catch(() => [] as any[]),
     si.battery(),
     si.fsSize(),
     si.wifiNetworks(),
@@ -85,6 +393,9 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
     system.virtual === true ||
     (typeof system.virtual === "string" &&
       String(system.virtual).toLowerCase().includes("virtual"));
+
+  const normalizedUsers = await buildLoggedInUsers(users);
+  const networkInterfaces = normalizeNetworkInterfaces(net, defaultNetworkInterface);
 
   const staticPart: HardwareStatic = {
     system: {
@@ -117,7 +428,9 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
     cpu,
     graphics,
     memLayout,
-    diskLayout
+    diskLayout,
+    users: normalizedUsers,
+    networkInterfaces
   };
 
   const runtimePart: HardwareRuntime = {

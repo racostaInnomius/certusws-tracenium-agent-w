@@ -29,6 +29,25 @@ export type HardwareStatic = {
   memLayout?: any[];
   diskLayout?: any[];
 
+  users?: Array<{
+    user: string;
+    domain?: string | null;
+    raw?: string;
+    isLoggedIn?: boolean;
+    lastLogon?: string | null;
+  }>;
+
+  networkInterfaces?: Array<{
+    name?: string;
+    displayName?: string;
+    mac?: string;
+    ip4?: string | null;
+    ip6?: string | null;
+    internal?: boolean;
+    default?: boolean;
+    type?: string;
+  }>;
+
   versions?: Record<string, string>;
 };
 
