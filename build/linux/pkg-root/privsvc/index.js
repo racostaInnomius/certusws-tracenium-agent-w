@@ -5,8 +5,8 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __commonJS = (cb, mod2) => function __require() {
-  return mod2 || (0, cb[__getOwnPropNames(cb)[0]])((mod2 = { exports: {} }).exports, mod2), mod2.exports;
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -16,18 +16,18 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
-var __toESM = (mod2, isNodeMode, target) => (target = mod2 != null ? __create(__getProtoOf(mod2)) : {}, __copyProps(
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
   // If the importer is in node compatibility mode or this is not an ESM
   // file that has been converted to a CommonJS file using a Babel-
   // compatible transform (i.e. "__esModule" has not been set), then set
   // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod2 || !mod2.__esModule ? __defProp(target, "default", { value: mod2, enumerable: true }) : target,
-  mod2
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
 ));
 
-// node_modules/@grpc/grpc-js/build/src/constants.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/constants.js
 var require_constants = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/constants.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/constants.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DEFAULT_MAX_RECEIVE_MESSAGE_LENGTH = exports2.DEFAULT_MAX_SEND_MESSAGE_LENGTH = exports2.Propagate = exports2.LogVerbosity = exports2.Status = void 0;
@@ -71,9 +71,9 @@ var require_constants = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/package.json
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/package.json
 var require_package = __commonJS({
-  "node_modules/@grpc/grpc-js/package.json"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/package.json"(exports2, module2) {
     module2.exports = {
       name: "@grpc/grpc-js",
       version: "1.14.3",
@@ -166,9 +166,9 @@ var require_package = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/logging.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/logging.js
 var require_logging = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/logging.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/logging.js"(exports2) {
     "use strict";
     var _a;
     var _b;
@@ -267,9 +267,9 @@ var require_logging = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/error.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/error.js
 var require_error = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/error.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/error.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getErrorMessage = getErrorMessage;
@@ -291,9 +291,9 @@ var require_error = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/metadata.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/metadata.js
 var require_metadata = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/metadata.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/metadata.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.Metadata = void 0;
@@ -535,9 +535,9 @@ var require_metadata = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/call-credentials.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/call-credentials.js
 var require_call_credentials = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/call-credentials.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/call-credentials.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CallCredentials = void 0;
@@ -668,9 +668,9 @@ var require_call_credentials = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/tls-helpers.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/tls-helpers.js
 var require_tls_helpers = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/tls-helpers.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/tls-helpers.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CIPHER_SUITES = void 0;
@@ -691,9 +691,9 @@ var require_tls_helpers = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/uri-parser.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/uri-parser.js
 var require_uri_parser = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/uri-parser.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/uri-parser.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.parseUri = parseUri;
@@ -785,9 +785,9 @@ var require_uri_parser = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/resolver.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/resolver.js
 var require_resolver = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/resolver.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/resolver.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CHANNEL_ARGS_CONFIG_SELECTOR_KEY = void 0;
@@ -837,9 +837,9 @@ var require_resolver = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/channel-credentials.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/channel-credentials.js
 var require_channel_credentials = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/channel-credentials.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/channel-credentials.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ChannelCredentials = void 0;
@@ -1233,9 +1233,9 @@ var require_channel_credentials = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/load-balancer.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancer.js
 var require_load_balancer = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/load-balancer.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancer.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.createChildChannelControlHelper = createChildChannelControlHelper;
@@ -1324,9 +1324,9 @@ var require_load_balancer = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/service-config.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/service-config.js
 var require_service_config = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/service-config.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/service-config.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.validateRetryThrottling = validateRetryThrottling;
@@ -1667,9 +1667,9 @@ var require_service_config = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/connectivity-state.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/connectivity-state.js
 var require_connectivity_state = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/connectivity-state.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/connectivity-state.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ConnectivityState = void 0;
@@ -1684,9 +1684,9 @@ var require_connectivity_state = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/picker.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/picker.js
 var require_picker = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/picker.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/picker.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.QueuePicker = exports2.UnavailablePicker = exports2.PickResultType = void 0;
@@ -1745,9 +1745,9 @@ var require_picker = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/backoff-timeout.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/backoff-timeout.js
 var require_backoff_timeout = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/backoff-timeout.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/backoff-timeout.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.BackoffTimeout = void 0;
@@ -1891,9 +1891,9 @@ var require_backoff_timeout = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/load-balancer-child-handler.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancer-child-handler.js
 var require_load_balancer_child_handler = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/load-balancer-child-handler.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancer-child-handler.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ChildLoadBalancerHandler = void 0;
@@ -2021,9 +2021,9 @@ var require_load_balancer_child_handler = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/resolving-load-balancer.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/resolving-load-balancer.js
 var require_resolving_load_balancer = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/resolving-load-balancer.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/resolving-load-balancer.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ResolvingLoadBalancer = void 0;
@@ -2270,9 +2270,9 @@ var require_resolving_load_balancer = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/channel-options.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/channel-options.js
 var require_channel_options = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/channel-options.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/channel-options.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.recognizedOptions = void 0;
@@ -2328,9 +2328,9 @@ var require_channel_options = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/subchannel-address.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/subchannel-address.js
 var require_subchannel_address = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/subchannel-address.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/subchannel-address.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.EndpointMap = void 0;
@@ -2513,9 +2513,9 @@ var require_subchannel_address = __commonJS({
   }
 });
 
-// node_modules/@js-sdsl/ordered-map/dist/cjs/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@js-sdsl/ordered-map/dist/cjs/index.js
 var require_cjs = __commonJS({
-  "node_modules/@js-sdsl/ordered-map/dist/cjs/index.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@js-sdsl/ordered-map/dist/cjs/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "t", {
       value: true
@@ -3307,9 +3307,9 @@ var require_cjs = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/admin.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/admin.js
 var require_admin = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/admin.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/admin.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.registerAdminService = registerAdminService;
@@ -3326,9 +3326,9 @@ var require_admin = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/call.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/call.js
 var require_call = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/call.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/call.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ClientDuplexStreamImpl = exports2.ClientWritableStreamImpl = exports2.ClientReadableStreamImpl = exports2.ClientUnaryCallImpl = void 0;
@@ -3463,9 +3463,9 @@ ${callerStack}`;
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/call-interface.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/call-interface.js
 var require_call_interface = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/call-interface.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/call-interface.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.InterceptingListenerImpl = void 0;
@@ -3547,9 +3547,9 @@ var require_call_interface = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/client-interceptors.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/client-interceptors.js
 var require_client_interceptors = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/client-interceptors.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/client-interceptors.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.InterceptingCall = exports2.RequesterBuilder = exports2.ListenerBuilder = exports2.InterceptorConfigurationError = void 0;
@@ -3900,9 +3900,9 @@ var require_client_interceptors = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/client.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/client.js
 var require_client = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/client.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/client.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.Client = void 0;
@@ -4274,9 +4274,9 @@ var require_client = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/make-client.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/make-client.js
 var require_make_client = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/make-client.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/make-client.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.makeClientConstructor = makeClientConstructor;
@@ -4369,9 +4369,9 @@ var require_make_client = __commonJS({
   }
 });
 
-// node_modules/lodash.camelcase/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/lodash.camelcase/index.js
 var require_lodash = __commonJS({
-  "node_modules/lodash.camelcase/index.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/lodash.camelcase/index.js"(exports2, module2) {
     var INFINITY = 1 / 0;
     var symbolTag = "[object Symbol]";
     var reAsciiWord = /[^\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\x7f]+/g;
@@ -4744,9 +4744,9 @@ var require_lodash = __commonJS({
   }
 });
 
-// node_modules/@protobufjs/aspromise/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/aspromise/index.js
 var require_aspromise = __commonJS({
-  "node_modules/@protobufjs/aspromise/index.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/aspromise/index.js"(exports2, module2) {
     "use strict";
     module2.exports = asPromise;
     function asPromise(fn, ctx) {
@@ -4780,9 +4780,9 @@ var require_aspromise = __commonJS({
   }
 });
 
-// node_modules/@protobufjs/base64/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/base64/index.js
 var require_base64 = __commonJS({
-  "node_modules/@protobufjs/base64/index.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/base64/index.js"(exports2) {
     "use strict";
     var base64 = exports2;
     base64.length = function length(string) {
@@ -4880,9 +4880,9 @@ var require_base64 = __commonJS({
   }
 });
 
-// node_modules/@protobufjs/eventemitter/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/eventemitter/index.js
 var require_eventemitter = __commonJS({
-  "node_modules/@protobufjs/eventemitter/index.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/eventemitter/index.js"(exports2, module2) {
     "use strict";
     module2.exports = EventEmitter;
     function EventEmitter() {
@@ -4926,9 +4926,9 @@ var require_eventemitter = __commonJS({
   }
 });
 
-// node_modules/@protobufjs/float/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/float/index.js
 var require_float = __commonJS({
-  "node_modules/@protobufjs/float/index.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/float/index.js"(exports2, module2) {
     "use strict";
     module2.exports = factory(factory);
     function factory(exports3) {
@@ -5120,28 +5120,32 @@ var require_float = __commonJS({
   }
 });
 
-// node_modules/@protobufjs/inquire/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/inquire/index.js
 var require_inquire = __commonJS({
-  "node_modules/@protobufjs/inquire/index.js"(exports, module) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/inquire/index.js"(exports2, module2) {
     "use strict";
-    module.exports = inquire;
+    module2.exports = inquire;
     function inquire(moduleName) {
       try {
-        var mod = eval("quire".replace(/^/, "re"))(moduleName);
-        if (mod && (mod.length || Object.keys(mod).length))
-          return mod;
-      } catch (e) {
+        if (typeof require !== "function") {
+          return null;
+        }
+        var mod = require(moduleName);
+        if (mod && (mod.length || Object.keys(mod).length)) return mod;
+        return null;
+      } catch (err) {
+        return null;
       }
-      return null;
     }
   }
 });
 
-// node_modules/@protobufjs/utf8/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/utf8/index.js
 var require_utf8 = __commonJS({
-  "node_modules/@protobufjs/utf8/index.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/utf8/index.js"(exports2) {
     "use strict";
     var utf8 = exports2;
+    var replacementChar = "\uFFFD";
     utf8.length = function utf8_length(string) {
       var len = 0, c = 0;
       for (var i = 0; i < string.length; ++i) {
@@ -5159,33 +5163,32 @@ var require_utf8 = __commonJS({
       return len;
     };
     utf8.read = function utf8_read(buffer, start, end) {
-      var len = end - start;
-      if (len < 1)
+      if (end - start < 1) {
         return "";
-      var parts = null, chunk = [], i = 0, t;
-      while (start < end) {
-        t = buffer[start++];
-        if (t < 128)
-          chunk[i++] = t;
-        else if (t > 191 && t < 224)
-          chunk[i++] = (t & 31) << 6 | buffer[start++] & 63;
-        else if (t > 239 && t < 365) {
-          t = ((t & 7) << 18 | (buffer[start++] & 63) << 12 | (buffer[start++] & 63) << 6 | buffer[start++] & 63) - 65536;
-          chunk[i++] = 55296 + (t >> 10);
-          chunk[i++] = 56320 + (t & 1023);
-        } else
-          chunk[i++] = (t & 15) << 12 | (buffer[start++] & 63) << 6 | buffer[start++] & 63;
-        if (i > 8191) {
-          (parts || (parts = [])).push(String.fromCharCode.apply(String, chunk));
-          i = 0;
+      }
+      var str = "";
+      for (var i = start; i < end; ) {
+        var t = buffer[i++];
+        if (t <= 127) {
+          str += String.fromCharCode(t);
+        } else if (t >= 192 && t < 224) {
+          var c2 = (t & 31) << 6 | buffer[i++] & 63;
+          str += c2 >= 128 ? String.fromCharCode(c2) : replacementChar;
+        } else if (t >= 224 && t < 240) {
+          var c3 = (t & 15) << 12 | (buffer[i++] & 63) << 6 | buffer[i++] & 63;
+          str += c3 >= 2048 ? String.fromCharCode(c3) : replacementChar;
+        } else if (t >= 240) {
+          var t2 = (t & 7) << 18 | (buffer[i++] & 63) << 12 | (buffer[i++] & 63) << 6 | buffer[i++] & 63;
+          if (t2 < 65536 || t2 > 1114111)
+            str += replacementChar;
+          else {
+            t2 -= 65536;
+            str += String.fromCharCode(55296 + (t2 >> 10));
+            str += String.fromCharCode(56320 + (t2 & 1023));
+          }
         }
       }
-      if (parts) {
-        if (i)
-          parts.push(String.fromCharCode.apply(String, chunk.slice(0, i)));
-        return parts.join("");
-      }
-      return String.fromCharCode.apply(String, chunk.slice(0, i));
+      return str;
     };
     utf8.write = function utf8_write(string, buffer, offset) {
       var start = offset, c1, c2;
@@ -5214,9 +5217,9 @@ var require_utf8 = __commonJS({
   }
 });
 
-// node_modules/@protobufjs/pool/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/pool/index.js
 var require_pool = __commonJS({
-  "node_modules/@protobufjs/pool/index.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/pool/index.js"(exports2, module2) {
     "use strict";
     module2.exports = pool;
     function pool(alloc, slice, size) {
@@ -5240,9 +5243,9 @@ var require_pool = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/util/longbits.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/util/longbits.js
 var require_longbits = __commonJS({
-  "node_modules/protobufjs/src/util/longbits.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/util/longbits.js"(exports2, module2) {
     "use strict";
     module2.exports = LongBits;
     var util = require_minimal();
@@ -5342,9 +5345,9 @@ var require_longbits = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/util/minimal.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/util/minimal.js
 var require_minimal = __commonJS({
-  "node_modules/protobufjs/src/util/minimal.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/util/minimal.js"(exports2) {
     "use strict";
     var util = exports2;
     util.asPromise = require_aspromise();
@@ -5422,11 +5425,21 @@ var require_minimal = __commonJS({
     };
     function merge(dst, src, ifNotSet) {
       for (var keys = Object.keys(src), i = 0; i < keys.length; ++i)
-        if (dst[keys[i]] === void 0 || !ifNotSet)
-          dst[keys[i]] = src[keys[i]];
+        if (dst[keys[i]] === void 0 || !ifNotSet) {
+          if (keys[i] !== "__proto__")
+            dst[keys[i]] = src[keys[i]];
+        }
       return dst;
     }
     util.merge = merge;
+    util.recursionLimit = 100;
+    util.makeProp = function makeProp(obj, key) {
+      Object.defineProperty(obj, key, {
+        enumerable: true,
+        configurable: true,
+        writable: true
+      });
+    };
     util.lcFirst = function lcFirst(str) {
       return str.charAt(0).toLowerCase() + str.substring(1);
     };
@@ -5517,9 +5530,9 @@ var require_minimal = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/writer.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/writer.js
 var require_writer = __commonJS({
-  "node_modules/protobufjs/src/writer.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/writer.js"(exports2, module2) {
     "use strict";
     module2.exports = Writer;
     var util = require_minimal();
@@ -5708,9 +5721,9 @@ var require_writer = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/writer_buffer.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/writer_buffer.js
 var require_writer_buffer = __commonJS({
-  "node_modules/protobufjs/src/writer_buffer.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/writer_buffer.js"(exports2, module2) {
     "use strict";
     module2.exports = BufferWriter;
     var Writer = require_writer();
@@ -5758,9 +5771,9 @@ var require_writer_buffer = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/reader.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/reader.js
 var require_reader = __commonJS({
-  "node_modules/protobufjs/src/reader.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/reader.js"(exports2, module2) {
     "use strict";
     module2.exports = Reader;
     var util = require_minimal();
@@ -5928,7 +5941,11 @@ var require_reader = __commonJS({
       }
       return this;
     };
-    Reader.prototype.skipType = function(wireType) {
+    Reader.recursionLimit = util.recursionLimit;
+    Reader.prototype.skipType = function(wireType, depth) {
+      if (depth === void 0) depth = 0;
+      if (depth > Reader.recursionLimit)
+        throw Error("maximum nesting depth exceeded");
       switch (wireType) {
         case 0:
           this.skip();
@@ -5941,7 +5958,7 @@ var require_reader = __commonJS({
           break;
         case 3:
           while ((wireType = this.uint32() & 7) !== 4) {
-            this.skipType(wireType);
+            this.skipType(wireType, depth + 1);
           }
           break;
         case 5:
@@ -5982,9 +5999,9 @@ var require_reader = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/reader_buffer.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/reader_buffer.js
 var require_reader_buffer = __commonJS({
-  "node_modules/protobufjs/src/reader_buffer.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/reader_buffer.js"(exports2, module2) {
     "use strict";
     module2.exports = BufferReader;
     var Reader = require_reader();
@@ -6005,9 +6022,9 @@ var require_reader_buffer = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/rpc/service.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/rpc/service.js
 var require_service = __commonJS({
-  "node_modules/protobufjs/src/rpc/service.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/rpc/service.js"(exports2, module2) {
     "use strict";
     module2.exports = Service;
     var util = require_minimal();
@@ -6080,26 +6097,26 @@ var require_service = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/rpc.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/rpc.js
 var require_rpc = __commonJS({
-  "node_modules/protobufjs/src/rpc.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/rpc.js"(exports2) {
     "use strict";
     var rpc = exports2;
     rpc.Service = require_service();
   }
 });
 
-// node_modules/protobufjs/src/roots.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/roots.js
 var require_roots = __commonJS({
-  "node_modules/protobufjs/src/roots.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/roots.js"(exports2, module2) {
     "use strict";
     module2.exports = {};
   }
 });
 
-// node_modules/protobufjs/src/index-minimal.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/index-minimal.js
 var require_index_minimal = __commonJS({
-  "node_modules/protobufjs/src/index-minimal.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/index-minimal.js"(exports2) {
     "use strict";
     var protobuf = exports2;
     protobuf.build = "minimal";
@@ -6120,11 +6137,12 @@ var require_index_minimal = __commonJS({
   }
 });
 
-// node_modules/@protobufjs/codegen/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/codegen/index.js
 var require_codegen = __commonJS({
-  "node_modules/@protobufjs/codegen/index.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/codegen/index.js"(exports2, module2) {
     "use strict";
     module2.exports = codegen;
+    var reservedRe = /^(?:do|if|in|for|let|new|try|var|case|else|enum|eval|false|null|this|true|void|with|break|catch|class|const|super|throw|while|yield|delete|export|import|public|return|static|switch|typeof|default|extends|finally|package|private|continue|debugger|function|arguments|interface|protected|implements|instanceof)$/;
     function codegen(functionParams, functionName) {
       if (typeof functionParams === "string") {
         functionName = functionParams;
@@ -6173,23 +6191,33 @@ var require_codegen = __commonJS({
         return Codegen;
       }
       function toString(functionNameOverride) {
-        return "function " + (functionNameOverride || functionName || "") + "(" + (functionParams && functionParams.join(",") || "") + "){\n  " + body.join("\n  ") + "\n}";
+        return "function " + safeFunctionName(functionNameOverride || functionName) + "(" + (functionParams && functionParams.join(",") || "") + "){\n  " + body.join("\n  ") + "\n}";
       }
       Codegen.toString = toString;
       return Codegen;
     }
     codegen.verbose = false;
+    function safeFunctionName(name) {
+      if (!name)
+        return "";
+      name = String(name).replace(/[^\w$]/g, "");
+      if (!name)
+        return "";
+      if (/^\d/.test(name))
+        name = "_" + name;
+      return reservedRe.test(name) ? name + "_" : name;
+    }
   }
 });
 
-// node_modules/@protobufjs/fetch/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/fetch/index.js
 var require_fetch = __commonJS({
-  "node_modules/@protobufjs/fetch/index.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/fetch/index.js"(exports2, module2) {
     "use strict";
     module2.exports = fetch;
     var asPromise = require_aspromise();
-    var inquire2 = require_inquire();
-    var fs11 = inquire2("fs");
+    var inquire = require_inquire();
+    var fs11 = inquire("fs");
     function fetch(filename, options, callback) {
       if (typeof options === "function") {
         callback = options;
@@ -6233,9 +6261,9 @@ var require_fetch = __commonJS({
   }
 });
 
-// node_modules/@protobufjs/path/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/path/index.js
 var require_path = __commonJS({
-  "node_modules/@protobufjs/path/index.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/path/index.js"(exports2) {
     "use strict";
     var path6 = exports2;
     var isAbsolute = (
@@ -6287,9 +6315,21 @@ var require_path = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/namespace.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/util/patterns.js
+var require_patterns = __commonJS({
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/util/patterns.js"(exports2) {
+    "use strict";
+    var patterns = exports2;
+    patterns.numberRe = /^(?![eE])[0-9]*(?:\.[0-9]*)?(?:[eE][+-]?[0-9]+)?$/;
+    patterns.typeRefRe = /^(?:\.?[a-zA-Z_][a-zA-Z_0-9]*)(?:\.[a-zA-Z_][a-zA-Z_0-9]*)*$/;
+    patterns.reservedRe = /^(?:do|if|in|for|let|new|try|var|case|else|enum|eval|false|null|this|true|void|with|break|catch|class|const|super|throw|while|yield|delete|export|import|public|return|static|switch|typeof|default|extends|finally|package|private|continue|debugger|function|arguments|interface|protected|implements|instanceof)$/;
+    patterns.unsafePropertyRe = /^(?:__proto__|prototype|constructor)$/;
+  }
+});
+
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/namespace.js
 var require_namespace = __commonJS({
-  "node_modules/protobufjs/src/namespace.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/namespace.js"(exports2, module2) {
     "use strict";
     module2.exports = Namespace;
     var ReflectionObject = require_object();
@@ -6332,16 +6372,16 @@ var require_namespace = __commonJS({
       ReflectionObject.call(this, name, options);
       this.nested = void 0;
       this._nestedArray = null;
-      this._lookupCache = {};
+      this._lookupCache = /* @__PURE__ */ Object.create(null);
       this._needsRecursiveFeatureResolution = true;
       this._needsRecursiveResolve = true;
     }
     function clearCache(namespace) {
       namespace._nestedArray = null;
-      namespace._lookupCache = {};
+      namespace._lookupCache = /* @__PURE__ */ Object.create(null);
       var parent = namespace;
       while (parent = parent.parent) {
-        parent._lookupCache = {};
+        parent._lookupCache = /* @__PURE__ */ Object.create(null);
       }
       return namespace;
     }
@@ -6372,16 +6412,18 @@ var require_namespace = __commonJS({
       return this;
     };
     Namespace.prototype.get = function get(name) {
-      return this.nested && this.nested[name] || null;
+      return this.nested && Object.prototype.hasOwnProperty.call(this.nested, name) ? this.nested[name] : null;
     };
     Namespace.prototype.getEnum = function getEnum(name) {
-      if (this.nested && this.nested[name] instanceof Enum)
+      if (this.nested && Object.prototype.hasOwnProperty.call(this.nested, name) && this.nested[name] instanceof Enum)
         return this.nested[name].values;
       throw Error("no such enum: " + name);
     };
     Namespace.prototype.add = function add(object) {
       if (!(object instanceof Field && object.extend !== void 0 || object instanceof Type || object instanceof OneOf || object instanceof Enum || object instanceof Service || object instanceof Namespace))
         throw TypeError("object must be a valid nested object");
+      if (object.name === "__proto__")
+        return this;
       if (!this.nested)
         this.nested = {};
       else {
@@ -6520,8 +6562,10 @@ var require_namespace = __commonJS({
         }
       } else {
         for (var i = 0; i < this.nestedArray.length; ++i)
-          if (this._nestedArray[i] instanceof Namespace && (found = this._nestedArray[i]._lookupImpl(path6, flatPath)))
+          if (this._nestedArray[i] instanceof Namespace && (found = this._nestedArray[i]._lookupImpl(path6, flatPath))) {
             exact = found;
+            break;
+          }
       }
       this._lookupCache[flatPath] = exact;
       return exact;
@@ -6558,9 +6602,9 @@ var require_namespace = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/mapfield.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/mapfield.js
 var require_mapfield = __commonJS({
-  "node_modules/protobufjs/src/mapfield.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/mapfield.js"(exports2, module2) {
     "use strict";
     module2.exports = MapField;
     var Field = require_field();
@@ -6614,9 +6658,9 @@ var require_mapfield = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/method.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/method.js
 var require_method = __commonJS({
-  "node_modules/protobufjs/src/method.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/method.js"(exports2, module2) {
     "use strict";
     module2.exports = Method;
     var ReflectionObject = require_object();
@@ -6682,9 +6726,9 @@ var require_method = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/service.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/service.js
 var require_service2 = __commonJS({
-  "node_modules/protobufjs/src/service.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/service.js"(exports2, module2) {
     "use strict";
     module2.exports = Service;
     var Namespace = require_namespace();
@@ -6692,6 +6736,7 @@ var require_service2 = __commonJS({
     var Method = require_method();
     var util = require_util();
     var rpc = require_rpc();
+    var reservedRe = util.patterns.reservedRe;
     function Service(name, options) {
       Namespace.call(this, name, options);
       this.methods = {};
@@ -6737,7 +6782,7 @@ var require_service2 = __commonJS({
       return service;
     }
     Service.prototype.get = function get(name) {
-      return this.methods[name] || Namespace.prototype.get.call(this, name);
+      return Object.prototype.hasOwnProperty.call(this.methods, name) ? this.methods[name] : Namespace.prototype.get.call(this, name);
     };
     Service.prototype.resolveAll = function resolveAll() {
       if (!this._needsRecursiveResolve) return this;
@@ -6760,6 +6805,8 @@ var require_service2 = __commonJS({
       if (this.get(object.name))
         throw Error("duplicate name '" + object.name + "' in " + this);
       if (object instanceof Method) {
+        if (object.name === "__proto__")
+          return this;
         this.methods[object.name] = object;
         object.parent = this;
         return clearCache(this);
@@ -6781,7 +6828,7 @@ var require_service2 = __commonJS({
       for (var i = 0, method; i < /* initializes */
       this.methodsArray.length; ++i) {
         var methodName = util.lcFirst((method = this._methodsArray[i]).resolve().name).replace(/[^$\w_]/g, "");
-        rpcService[methodName] = util.codegen(["r", "c"], util.isReserved(methodName) ? methodName + "_" : methodName)("return this.rpcCall(m,q,s,r,c)")({
+        rpcService[methodName] = util.codegen(["r", "c"], reservedRe.test(methodName) ? methodName + "_" : methodName)("return this.rpcCall(m,q,s,r,c)")({
           m: method,
           q: method.resolvedRequestType.ctor,
           s: method.resolvedResponseType.ctor
@@ -6792,9 +6839,9 @@ var require_service2 = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/message.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/message.js
 var require_message = __commonJS({
-  "node_modules/protobufjs/src/message.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/message.js"(exports2, module2) {
     "use strict";
     module2.exports = Message;
     var util = require_minimal();
@@ -6837,9 +6884,9 @@ var require_message = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/decoder.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/decoder.js
 var require_decoder = __commonJS({
-  "node_modules/protobufjs/src/decoder.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/decoder.js"(exports2, module2) {
     "use strict";
     module2.exports = decoder;
     var Enum = require_enum();
@@ -6849,7 +6896,7 @@ var require_decoder = __commonJS({
       return "missing required '" + field.name + "'";
     }
     function decoder(mtype) {
-      var gen = util.codegen(["r", "l", "e"], mtype.name + "$decode")("if(!(r instanceof Reader))")("r=Reader.create(r)")("var c=l===undefined?r.len:r.pos+l,m=new this.ctor" + (mtype.fieldsArray.filter(function(field2) {
+      var gen = util.codegen(["r", "l", "e", "n"], mtype.name + "$decode")("if(!(r instanceof Reader))")("r=Reader.create(r)")("if(n===undefined)n=0")("if(n>Reader.recursionLimit)")('throw Error("maximum nesting depth exceeded")')("var c=l===undefined?r.len:r.pos+l,m=new this.ctor" + (mtype.fieldsArray.filter(function(field2) {
         return field2.map;
       }).length ? ",k,value" : ""))("while(r.pos<c){")("var t=r.uint32()")("if(t===e)")("break")("switch(t>>>3){");
       var i = 0;
@@ -6864,21 +6911,24 @@ var require_decoder = __commonJS({
           if (types.defaults[type] !== void 0) gen("value=%j", types.defaults[type]);
           else gen("value=null");
           gen("while(r.pos<c2){")("var tag2=r.uint32()")("switch(tag2>>>3){")("case 1: k=r.%s(); break", field.keyType)("case 2:");
-          if (types.basic[type] === void 0) gen("value=types[%i].decode(r,r.uint32())", i);
+          if (types.basic[type] === void 0) gen("value=types[%i].decode(r,r.uint32(),undefined,n+1)", i);
           else gen("value=r.%s()", type);
-          gen("break")("default:")("r.skipType(tag2&7)")("break")("}")("}");
+          gen("break")("default:")("r.skipType(tag2&7,n)")("break")("}")("}");
           if (types.long[field.keyType] !== void 0) gen('%s[typeof k==="object"?util.longToHash(k):k]=value', ref);
-          else gen("%s[k]=value", ref);
+          else {
+            if (field.keyType === "string") gen('if(k==="__proto__")')("util.makeProp(%s,k)", ref);
+            gen("%s[k]=value", ref);
+          }
         } else if (field.repeated) {
           gen("if(!(%s&&%s.length))", ref, ref)("%s=[]", ref);
           if (types.packed[type] !== void 0) gen("if((t&7)===2){")("var c2=r.uint32()+r.pos")("while(r.pos<c2)")("%s.push(r.%s())", ref, type)("}else");
-          if (types.basic[type] === void 0) gen(field.delimited ? "%s.push(types[%i].decode(r,undefined,((t&~7)|4)))" : "%s.push(types[%i].decode(r,r.uint32()))", ref, i);
+          if (types.basic[type] === void 0) gen(field.delimited ? "%s.push(types[%i].decode(r,undefined,((t&~7)|4),n+1))" : "%s.push(types[%i].decode(r,r.uint32(),undefined,n+1))", ref, i);
           else gen("%s.push(r.%s())", ref, type);
-        } else if (types.basic[type] === void 0) gen(field.delimited ? "%s=types[%i].decode(r,undefined,((t&~7)|4))" : "%s=types[%i].decode(r,r.uint32())", ref, i);
+        } else if (types.basic[type] === void 0) gen(field.delimited ? "%s=types[%i].decode(r,undefined,((t&~7)|4),n+1)" : "%s=types[%i].decode(r,r.uint32(),undefined,n+1)", ref, i);
         else gen("%s=r.%s()", ref, type);
         gen("break")("}");
       }
-      gen("default:")("r.skipType(t&7)")("break")("}")("}");
+      gen("default:")("r.skipType(t&7,n)")("break")("}")("}");
       for (i = 0; i < mtype._fieldsArray.length; ++i) {
         var rfield = mtype._fieldsArray[i];
         if (rfield.required) gen("if(!m.hasOwnProperty(%j))", rfield.name)("throw util.ProtocolError(%j,{instance:m})", missing(rfield));
@@ -6888,9 +6938,9 @@ var require_decoder = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/verifier.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/verifier.js
 var require_verifier = __commonJS({
-  "node_modules/protobufjs/src/verifier.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/verifier.js"(exports2, module2) {
     "use strict";
     module2.exports = verifier;
     var Enum = require_enum();
@@ -6905,7 +6955,7 @@ var require_verifier = __commonJS({
           for (var keys = Object.keys(field.resolvedType.values), j = 0; j < keys.length; ++j) gen("case %i:", field.resolvedType.values[keys[j]]);
           gen("break")("}");
         } else {
-          gen("{")("var e=types[%i].verify(%s);", fieldIndex, ref)("if(e)")("return%j+e", field.name + ".")("}");
+          gen("{")("var e=types[%i].verify(%s,n+1);", fieldIndex, ref)("if(e)")("return%j+e", field.name + ".")("}");
         }
       } else {
         switch (field.type) {
@@ -6963,7 +7013,7 @@ var require_verifier = __commonJS({
       return gen;
     }
     function verifier(mtype) {
-      var gen = util.codegen(["m"], mtype.name + "$verify")('if(typeof m!=="object"||m===null)')("return%j", "object expected");
+      var gen = util.codegen(["m", "n"], mtype.name + "$verify")('if(typeof m!=="object"||m===null)')("return%j", "object expected")("if(n===undefined)n=0")("if(n>util.recursionLimit)")("return%j", "maximum nesting depth exceeded");
       var oneofs = mtype.oneofsArray, seenFirstField = {};
       if (oneofs.length) gen("var p={}");
       for (var i = 0; i < /* initializes */
@@ -6993,9 +7043,9 @@ var require_verifier = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/converter.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/converter.js
 var require_converter = __commonJS({
-  "node_modules/protobufjs/src/converter.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/converter.js"(exports2) {
     "use strict";
     var converter = exports2;
     var Enum = require_enum();
@@ -7014,7 +7064,7 @@ var require_converter = __commonJS({
             gen("case%j:", keys[i])("case %i:", values[keys[i]])("m%s=%j", prop, values[keys[i]])("break");
           }
           gen("}");
-        } else gen('if(typeof d%s!=="object")', prop)("throw TypeError(%j)", field.fullName + ": object expected")("m%s=types[%i].fromObject(d%s)", prop, fieldIndex, prop);
+        } else gen('if(typeof d%s!=="object")', prop)("throw TypeError(%j)", field.fullName + ": object expected")("m%s=types[%i].fromObject(d%s,n+1)", prop, fieldIndex, prop);
       } else {
         var isUnsigned = false;
         switch (field.type) {
@@ -7055,13 +7105,14 @@ var require_converter = __commonJS({
     }
     converter.fromObject = function fromObject(mtype) {
       var fields = mtype.fieldsArray;
-      var gen = util.codegen(["d"], mtype.name + "$fromObject")("if(d instanceof this.ctor)")("return d");
+      var gen = util.codegen(["d", "n"], mtype.name + "$fromObject")("if(d instanceof this.ctor)")("return d")("if(n===undefined)n=0")("if(n>util.recursionLimit)")('throw Error("maximum nesting depth exceeded")');
       if (!fields.length) return gen("return new this.ctor");
       gen("var m=new this.ctor");
       for (var i = 0; i < fields.length; ++i) {
         var field = fields[i].resolve(), prop = util.safeProp(field.name);
         if (field.map) {
           gen("if(d%s){", prop)('if(typeof d%s!=="object")', prop)("throw TypeError(%j)", field.fullName + ": object expected")("m%s={}", prop)("for(var ks=Object.keys(d%s),i=0;i<ks.length;++i){", prop);
+          gen('if(ks[i]==="__proto__")')("util.makeProp(m%s,ks[i])", prop);
           genValuePartial_fromObject(
             gen,
             field,
@@ -7148,8 +7199,8 @@ var require_converter = __commonJS({
           if (field.resolvedType instanceof Enum) gen("d%s=o.enums===String?%j:%j", prop, field.resolvedType.valuesById[field.typeDefault], field.typeDefault);
           else if (field.long) gen("if(util.Long){")("var n=new util.Long(%i,%i,%j)", field.typeDefault.low, field.typeDefault.high, field.typeDefault.unsigned)("d%s=o.longs===String?n.toString():o.longs===Number?n.toNumber():n", prop)("}else")("d%s=o.longs===String?%j:%i", prop, field.typeDefault.toString(), field.typeDefault.toNumber());
           else if (field.bytes) {
-            var arrayDefault = "[" + Array.prototype.slice.call(field.typeDefault).join(",") + "]";
-            gen("if(o.bytes===String)d%s=%j", prop, String.fromCharCode.apply(String, field.typeDefault))("else{")("d%s=%s", prop, arrayDefault)("if(o.bytes!==Array)d%s=util.newBuffer(d%s)", prop, prop)("}");
+            var arrayDefault = Array.prototype.slice.call(field.typeDefault);
+            gen("if(o.bytes===String)d%s=%j", prop, String.fromCharCode.apply(String, field.typeDefault))("else{")("d%s=%j", prop, arrayDefault)("if(o.bytes!==Array)d%s=util.newBuffer(d%s)", prop, prop)("}");
           } else gen("d%s=%j", prop, field.typeDefault);
         }
         gen("}");
@@ -7163,6 +7214,7 @@ var require_converter = __commonJS({
             gen("var ks2");
           }
           gen("if(m%s&&(ks2=Object.keys(m%s)).length){", prop, prop)("d%s={}", prop)("for(var j=0;j<ks2.length;++j){");
+          gen('if(ks2[j]==="__proto__")')("util.makeProp(d%s,ks2[j])", prop);
           genValuePartial_toObject(
             gen,
             field,
@@ -7197,14 +7249,14 @@ var require_converter = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/wrappers.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/wrappers.js
 var require_wrappers = __commonJS({
-  "node_modules/protobufjs/src/wrappers.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/wrappers.js"(exports2) {
     "use strict";
     var wrappers = exports2;
     var Message = require_message();
     wrappers[".google.protobuf.Any"] = {
-      fromObject: function(object) {
+      fromObject: function(object, depth) {
         if (object && object["@type"]) {
           var name = object["@type"].substring(object["@type"].lastIndexOf("/") + 1);
           var type = this.lookup(name);
@@ -7213,13 +7265,14 @@ var require_wrappers = __commonJS({
             if (type_url.indexOf("/") === -1) {
               type_url = "/" + type_url;
             }
+            var nextDepth = depth === void 0 ? 1 : depth + 1;
             return this.create({
               type_url,
-              value: type.encode(type.fromObject(object)).finish()
+              value: type.encode(type.fromObject(object, nextDepth)).finish()
             });
           }
         }
-        return this.fromObject(object);
+        return this.fromObject(object, depth);
       },
       toObject: function(message, options) {
         var googleApi = "type.googleapis.com/";
@@ -7248,9 +7301,9 @@ var require_wrappers = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/type.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/type.js
 var require_type = __commonJS({
-  "node_modules/protobufjs/src/type.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/type.js"(exports2, module2) {
     "use strict";
     module2.exports = Type;
     var Namespace = require_namespace();
@@ -7365,7 +7418,7 @@ var require_type = __commonJS({
       for (var i = 0, field; i < mtype.fieldsArray.length; ++i)
         if ((field = mtype._fieldsArray[i]).map) gen("this%s={}", util.safeProp(field.name));
         else if (field.repeated) gen("this%s=[]", util.safeProp(field.name));
-      return gen("if(p)for(var ks=Object.keys(p),i=0;i<ks.length;++i)if(p[ks[i]]!=null)")("this[ks[i]]=p[ks[i]]");
+      return gen('if(p)for(var ks=Object.keys(p),i=0;i<ks.length;++i)if(p[ks[i]]!=null&&ks[i]!=="__proto__")')("this[ks[i]]=p[ks[i]]");
     };
     function clearCache(type) {
       type._fieldsById = type._fieldsArray = type._oneofsArray = null;
@@ -7458,7 +7511,13 @@ var require_type = __commonJS({
       return this;
     };
     Type.prototype.get = function get(name) {
-      return this.fields[name] || this.oneofs && this.oneofs[name] || this.nested && this.nested[name] || null;
+      if (Object.prototype.hasOwnProperty.call(this.fields, name))
+        return this.fields[name];
+      if (this.oneofs && Object.prototype.hasOwnProperty.call(this.oneofs, name))
+        return this.oneofs[name];
+      if (this.nested && Object.prototype.hasOwnProperty.call(this.nested, name))
+        return this.nested[name];
+      return null;
     };
     Type.prototype.add = function add(object) {
       if (this.get(object.name))
@@ -7473,6 +7532,8 @@ var require_type = __commonJS({
           throw Error("id " + object.id + " is reserved in " + this);
         if (this.isReservedName(object.name))
           throw Error("name '" + object.name + "' is reserved in " + this);
+        if (object.name === "__proto__")
+          return this;
         if (object.parent)
           object.parent.remove(object);
         this.fields[object.name] = object;
@@ -7481,6 +7542,8 @@ var require_type = __commonJS({
         return clearCache(this);
       }
       if (object instanceof OneOf) {
+        if (object.name === "__proto__")
+          return this;
         if (!this.oneofs)
           this.oneofs = {};
         this.oneofs[object.name] = object;
@@ -7560,19 +7623,19 @@ var require_type = __commonJS({
     Type.prototype.encodeDelimited = function encodeDelimited(message, writer) {
       return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
     };
-    Type.prototype.decode = function decode_setup(reader, length) {
-      return this.setup().decode(reader, length);
+    Type.prototype.decode = function decode_setup(reader, length, end, depth) {
+      return this.setup().decode(reader, length, end, depth);
     };
     Type.prototype.decodeDelimited = function decodeDelimited(reader) {
       if (!(reader instanceof Reader))
         reader = Reader.create(reader);
       return this.decode(reader, reader.uint32());
     };
-    Type.prototype.verify = function verify_setup(message) {
-      return this.setup().verify(message);
+    Type.prototype.verify = function verify_setup(message, depth) {
+      return this.setup().verify(message, depth);
     };
-    Type.prototype.fromObject = function fromObject(object) {
-      return this.setup().fromObject(object);
+    Type.prototype.fromObject = function fromObject(object, depth) {
+      return this.setup().fromObject(object, depth);
     };
     Type.prototype.toObject = function toObject(message, options) {
       return this.setup().toObject(message, options);
@@ -7585,9 +7648,9 @@ var require_type = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/root.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/root.js
 var require_root = __commonJS({
-  "node_modules/protobufjs/src/root.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/root.js"(exports2, module2) {
     "use strict";
     module2.exports = Root;
     var Namespace = require_namespace();
@@ -7834,9 +7897,9 @@ var require_root = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/util.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/util.js
 var require_util = __commonJS({
-  "node_modules/protobufjs/src/util.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/util.js"(exports2, module2) {
     "use strict";
     var util = module2.exports = require_minimal();
     var roots = require_roots();
@@ -7845,6 +7908,9 @@ var require_util = __commonJS({
     util.codegen = require_codegen();
     util.fetch = require_fetch();
     util.path = require_path();
+    util.patterns = require_patterns();
+    var reservedRe = util.patterns.reservedRe;
+    var unsafePropertyRe = util.patterns.unsafePropertyRe;
     util.fs = util.inquire("fs");
     util.toArray = function toArray(object) {
       if (object) {
@@ -7864,14 +7930,12 @@ var require_util = __commonJS({
       }
       return object;
     };
-    var safePropBackslashRe = /\\/g;
-    var safePropQuoteRe = /"/g;
     util.isReserved = function isReserved(name) {
-      return /^(?:do|if|in|for|let|new|try|var|case|else|enum|eval|false|null|this|true|void|with|break|catch|class|const|super|throw|while|yield|delete|export|import|public|return|static|switch|typeof|default|extends|finally|package|private|continue|debugger|function|arguments|interface|protected|implements|instanceof)$/.test(name);
+      return reservedRe.test(name);
     };
     util.safeProp = function safeProp(prop) {
-      if (!/^[$\w_]+$/.test(prop) || util.isReserved(prop))
-        return '["' + prop.replace(safePropBackslashRe, "\\\\").replace(safePropQuoteRe, '\\"') + '"]';
+      if (!/^[$\w_]+$/.test(prop) || reservedRe.test(prop))
+        return "[" + JSON.stringify(prop) + "]";
       return "." + prop;
     };
     util.ucFirst = function ucFirst(str) {
@@ -7918,9 +7982,8 @@ var require_util = __commonJS({
     util.setProperty = function setProperty(dst, path6, value, ifNotSet) {
       function setProp(dst2, path7, value2) {
         var part = path7.shift();
-        if (part === "__proto__" || part === "prototype") {
+        if (unsafePropertyRe.test(part))
           return dst2;
-        }
         if (path7.length > 0) {
           dst2[part] = setProp(dst2[part] || {}, path7, value2);
         } else {
@@ -7948,9 +8011,9 @@ var require_util = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/types.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/types.js
 var require_types = __commonJS({
-  "node_modules/protobufjs/src/types.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/types.js"(exports2) {
     "use strict";
     var types = exports2;
     var util = require_util();
@@ -7987,7 +8050,7 @@ var require_types = __commonJS({
       // 14
     ];
     function bake(values, offset) {
-      var i = 0, o = {};
+      var i = 0, o = /* @__PURE__ */ Object.create(null);
       offset |= 0;
       while (i < values.length) o[s[i + offset]] = values[i++];
       return o;
@@ -8127,9 +8190,9 @@ var require_types = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/field.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/field.js
 var require_field = __commonJS({
-  "node_modules/protobufjs/src/field.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/field.js"(exports2, module2) {
     "use strict";
     module2.exports = Field;
     var ReflectionObject = require_object();
@@ -8324,9 +8387,9 @@ var require_field = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/oneof.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/oneof.js
 var require_oneof = __commonJS({
-  "node_modules/protobufjs/src/oneof.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/oneof.js"(exports2, module2) {
     "use strict";
     module2.exports = OneOf;
     var ReflectionObject = require_object();
@@ -8432,9 +8495,9 @@ var require_oneof = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/object.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/object.js
 var require_object = __commonJS({
-  "node_modules/protobufjs/src/object.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/object.js"(exports2, module2) {
     "use strict";
     module2.exports = ReflectionObject;
     ReflectionObject.className = "ReflectionObject";
@@ -8573,6 +8636,8 @@ var require_object = __commonJS({
       return void 0;
     };
     ReflectionObject.prototype.setOption = function setOption(name, value, ifNotSet) {
+      if (name === "__proto__")
+        return this;
       if (!this.options)
         this.options = {};
       if (/^features\./.test(name)) {
@@ -8584,6 +8649,8 @@ var require_object = __commonJS({
       return this;
     };
     ReflectionObject.prototype.setParsedOption = function setParsedOption(name, value, propName) {
+      if (name === "__proto__")
+        return this;
       if (!this.parsedOptions) {
         this.parsedOptions = [];
       }
@@ -8631,9 +8698,9 @@ var require_object = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/enum.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/enum.js
 var require_enum = __commonJS({
-  "node_modules/protobufjs/src/enum.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/enum.js"(exports2, module2) {
     "use strict";
     module2.exports = Enum;
     var ReflectionObject = require_object();
@@ -8653,7 +8720,7 @@ var require_enum = __commonJS({
       this.reserved = void 0;
       if (values) {
         for (var keys = Object.keys(values), i = 0; i < keys.length; ++i)
-          if (typeof values[keys[i]] === "number")
+          if (keys[i] !== "__proto__" && typeof values[keys[i]] === "number")
             this.valuesById[this.values[keys[i]] = values[keys[i]]] = keys[i];
       }
     }
@@ -8698,6 +8765,8 @@ var require_enum = __commonJS({
         throw TypeError("name must be a string");
       if (!util.isInteger(id))
         throw TypeError("id must be an integer");
+      if (name === "__proto__")
+        return this;
       if (this.values[name] !== void 0)
         throw Error("duplicate name '" + name + "' in " + this);
       if (this.isReservedId(id))
@@ -8740,9 +8809,9 @@ var require_enum = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/encoder.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/encoder.js
 var require_encoder = __commonJS({
-  "node_modules/protobufjs/src/encoder.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/encoder.js"(exports2, module2) {
     "use strict";
     module2.exports = encoder;
     var Enum = require_enum();
@@ -8789,9 +8858,9 @@ var require_encoder = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/index-light.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/index-light.js
 var require_index_light = __commonJS({
-  "node_modules/protobufjs/src/index-light.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/index-light.js"(exports2, module2) {
     "use strict";
     var protobuf = module2.exports = require_index_minimal();
     protobuf.build = "light";
@@ -8835,9 +8904,9 @@ var require_index_light = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/tokenize.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/tokenize.js
 var require_tokenize = __commonJS({
-  "node_modules/protobufjs/src/tokenize.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/tokenize.js"(exports2, module2) {
     "use strict";
     module2.exports = tokenize;
     var delimRe = /[\s{}=;:[\],'"()<>]/g;
@@ -9082,9 +9151,9 @@ var require_tokenize = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/parse.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/parse.js
 var require_parse = __commonJS({
-  "node_modules/protobufjs/src/parse.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/parse.js"(exports2, module2) {
     "use strict";
     module2.exports = parse;
     parse.filename = null;
@@ -9107,9 +9176,9 @@ var require_parse = __commonJS({
     var base16NegRe = /^-?0[x][0-9a-fA-F]+$/;
     var base8Re = /^0[0-7]+$/;
     var base8NegRe = /^-?0[0-7]+$/;
-    var numberRe = /^(?![eE])[0-9]*(?:\.[0-9]*)?(?:[eE][+-]?[0-9]+)?$/;
+    var numberRe = util.patterns.numberRe;
     var nameRe = /^[a-zA-Z_][a-zA-Z_0-9]*$/;
-    var typeRefRe = /^(?:\.?[a-zA-Z_][a-zA-Z_0-9]*)(?:\.[a-zA-Z_][a-zA-Z_0-9]*)*$/;
+    var typeRefRe = util.patterns.typeRefRe;
     function parse(source, root, options) {
       if (!(root instanceof Root)) {
         options = root;
@@ -9647,7 +9716,8 @@ var require_parse = __commonJS({
             var prevValue = objectResult[propName];
             if (prevValue)
               value = [].concat(prevValue).concat(value);
-            objectResult[propName] = value;
+            if (propName !== "__proto__")
+              objectResult[propName] = value;
             skip(",", true);
             skip(";", true);
           }
@@ -9801,9 +9871,9 @@ var require_parse = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/common.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/common.js
 var require_common = __commonJS({
-  "node_modules/protobufjs/src/common.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/common.js"(exports2, module2) {
     "use strict";
     module2.exports = common;
     var commonRe = /\/|\./;
@@ -10133,9 +10203,9 @@ var require_common = __commonJS({
   }
 });
 
-// node_modules/protobufjs/src/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/index.js
 var require_src = __commonJS({
-  "node_modules/protobufjs/src/index.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/src/index.js"(exports2, module2) {
     "use strict";
     var protobuf = module2.exports = require_index_light();
     protobuf.build = "full";
@@ -10146,17 +10216,17 @@ var require_src = __commonJS({
   }
 });
 
-// node_modules/protobufjs/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/index.js
 var require_protobufjs = __commonJS({
-  "node_modules/protobufjs/index.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/index.js"(exports2, module2) {
     "use strict";
     module2.exports = require_src();
   }
 });
 
-// node_modules/protobufjs/google/protobuf/descriptor.json
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/google/protobuf/descriptor.json
 var require_descriptor = __commonJS({
-  "node_modules/protobufjs/google/protobuf/descriptor.json"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/google/protobuf/descriptor.json"(exports2, module2) {
     module2.exports = {
       nested: {
         google: {
@@ -11542,9 +11612,9 @@ var require_descriptor = __commonJS({
   }
 });
 
-// node_modules/protobufjs/ext/descriptor/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/ext/descriptor/index.js
 var require_descriptor2 = __commonJS({
-  "node_modules/protobufjs/ext/descriptor/index.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/ext/descriptor/index.js"(exports2, module2) {
     "use strict";
     var $protobuf = require_protobufjs();
     module2.exports = exports2 = $protobuf.descriptor = $protobuf.Root.fromJSON(require_descriptor()).lookup(".google.protobuf");
@@ -11557,6 +11627,9 @@ var require_descriptor2 = __commonJS({
     var OneOf = $protobuf.OneOf;
     var Service = $protobuf.Service;
     var Method = $protobuf.Method;
+    var patterns = $protobuf.util.patterns;
+    var numberRe = patterns.numberRe;
+    var typeRefRe = patterns.typeRefRe;
     Root.fromDescriptor = function fromDescriptor(descriptor) {
       if (typeof descriptor.length === "number")
         descriptor = exports2.FileDescriptorSet.decode(descriptor);
@@ -11705,16 +11778,17 @@ var require_descriptor2 = __commonJS({
       descriptor.options = toDescriptorOptions(this.options, exports2.MessageOptions);
       return descriptor;
     };
-    var numberRe = /^(?![eE])[0-9]*(?:\.[0-9]*)?(?:[eE][+-]?[0-9]+)?$/;
     Field.fromDescriptor = function fromDescriptor(descriptor, edition, nested) {
       if (typeof descriptor.length === "number")
         descriptor = exports2.DescriptorProto.decode(descriptor);
       if (typeof descriptor.number !== "number")
         throw Error("missing field id");
-      var fieldType;
-      if (descriptor.typeName && descriptor.typeName.length)
-        fieldType = descriptor.typeName;
-      else
+      var typeName = descriptor.typeName, fieldType;
+      if (typeName != null && typeName !== "") {
+        if (typeof typeName !== "string" || !typeRefRe.test(typeName))
+          throw Error("illegal type name: " + typeName);
+        fieldType = typeName;
+      } else
         fieldType = fromDescriptorType(descriptor.type);
       var fieldRule;
       switch (descriptor.label) {
@@ -11732,9 +11806,11 @@ var require_descriptor2 = __commonJS({
           throw Error("illegal label: " + descriptor.label);
       }
       var extendee = descriptor.extendee;
-      if (descriptor.extendee !== void 0) {
-        extendee = extendee.length ? extendee : void 0;
-      }
+      if (extendee != null && extendee !== "") {
+        if (typeof extendee !== "string" || !typeRefRe.test(extendee))
+          throw Error("illegal type name: " + extendee);
+      } else
+        extendee = void 0;
       var field = new Field(
         descriptor.name.length ? descriptor.name : "field" + descriptor.number,
         descriptor.number,
@@ -11800,7 +11876,7 @@ var require_descriptor2 = __commonJS({
         }
       }
       descriptor.extendee = this.extensionField ? this.extensionField.parent.fullName : this.extend;
-      if (this.partOf) {
+      if (this.partOf && this.parent instanceof Type) {
         if ((descriptor.oneofIndex = this.parent.oneofsArray.indexOf(this.partOf)) < 0)
           throw Error("missing oneof");
       }
@@ -11889,12 +11965,21 @@ var require_descriptor2 = __commonJS({
     Method.fromDescriptor = function fromDescriptor(descriptor) {
       if (typeof descriptor.length === "number")
         descriptor = exports2.MethodDescriptorProto.decode(descriptor);
+      var inputType = descriptor.inputType, outputType = descriptor.outputType;
+      if (inputType != null && inputType !== "") {
+        if (typeof inputType !== "string" || !typeRefRe.test(inputType))
+          throw Error("illegal type name: " + inputType);
+      }
+      if (outputType != null && outputType !== "") {
+        if (typeof outputType !== "string" || !typeRefRe.test(outputType))
+          throw Error("illegal type name: " + outputType);
+      }
       return new Method(
         // unnamedMethodIndex is global, not per service, because we have no ref to a service here
         descriptor.name && descriptor.name.length ? descriptor.name : "Method" + unnamedMethodIndex++,
         "rpc",
-        descriptor.inputType,
-        descriptor.outputType,
+        inputType,
+        outputType,
         Boolean(descriptor.clientStreaming),
         Boolean(descriptor.serverStreaming),
         fromDescriptorOptions(descriptor.options, exports2.MethodOptions)
@@ -12114,9 +12199,9 @@ var require_descriptor2 = __commonJS({
   }
 });
 
-// node_modules/protobufjs/google/protobuf/api.json
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/google/protobuf/api.json
 var require_api = __commonJS({
-  "node_modules/protobufjs/google/protobuf/api.json"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/google/protobuf/api.json"(exports2, module2) {
     module2.exports = {
       nested: {
         google: {
@@ -12238,9 +12323,9 @@ var require_api = __commonJS({
   }
 });
 
-// node_modules/protobufjs/google/protobuf/source_context.json
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/google/protobuf/source_context.json
 var require_source_context = __commonJS({
-  "node_modules/protobufjs/google/protobuf/source_context.json"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/google/protobuf/source_context.json"(exports2, module2) {
     module2.exports = {
       nested: {
         google: {
@@ -12264,9 +12349,9 @@ var require_source_context = __commonJS({
   }
 });
 
-// node_modules/protobufjs/google/protobuf/type.json
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/google/protobuf/type.json
 var require_type2 = __commonJS({
-  "node_modules/protobufjs/google/protobuf/type.json"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/protobufjs/google/protobuf/type.json"(exports2, module2) {
     module2.exports = {
       nested: {
         google: {
@@ -12472,9 +12557,9 @@ var require_type2 = __commonJS({
   }
 });
 
-// node_modules/@grpc/proto-loader/build/src/util.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/proto-loader/build/src/util.js
 var require_util2 = __commonJS({
-  "node_modules/@grpc/proto-loader/build/src/util.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/proto-loader/build/src/util.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.addCommonProtos = exports2.loadProtosWithOptionsSync = exports2.loadProtosWithOptions = void 0;
@@ -12542,9 +12627,9 @@ var require_util2 = __commonJS({
   }
 });
 
-// node_modules/long/umd/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/long/umd/index.js
 var require_umd = __commonJS({
-  "node_modules/long/umd/index.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/long/umd/index.js"(exports2, module2) {
     (function(global2, factory) {
       function preferDefault(exports3) {
         return exports3.default || exports3;
@@ -13520,9 +13605,9 @@ var require_umd = __commonJS({
   }
 });
 
-// node_modules/@grpc/proto-loader/build/src/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/proto-loader/build/src/index.js
 var require_src2 = __commonJS({
-  "node_modules/@grpc/proto-loader/build/src/index.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/proto-loader/build/src/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.loadFileDescriptorSetFromObject = exports2.loadFileDescriptorSetFromBuffer = exports2.fromJSON = exports2.loadSync = exports2.load = exports2.IdempotencyLevel = exports2.isAnyExtension = exports2.Long = void 0;
@@ -13710,9 +13795,9 @@ var require_src2 = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/channelz.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/channelz.js
 var require_channelz = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/channelz.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/channelz.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.registerChannelzSocket = exports2.registerChannelzServer = exports2.registerChannelzSubchannel = exports2.registerChannelzChannel = exports2.ChannelzCallTrackerStub = exports2.ChannelzCallTracker = exports2.ChannelzChildrenTrackerStub = exports2.ChannelzChildrenTracker = exports2.ChannelzTrace = exports2.ChannelzTraceStub = void 0;
@@ -14294,9 +14379,9 @@ var require_channelz = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/call-number.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/call-number.js
 var require_call_number = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/call-number.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/call-number.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getNextCallNumber = getNextCallNumber;
@@ -14307,9 +14392,9 @@ var require_call_number = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/compression-algorithms.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/compression-algorithms.js
 var require_compression_algorithms = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/compression-algorithms.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/compression-algorithms.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CompressionAlgorithms = void 0;
@@ -14322,9 +14407,9 @@ var require_compression_algorithms = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/filter.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/filter.js
 var require_filter = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/filter.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/filter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.BaseFilter = void 0;
@@ -14349,9 +14434,9 @@ var require_filter = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/compression-filter.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/compression-filter.js
 var require_compression_filter = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/compression-filter.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/compression-filter.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CompressionFilterFactory = exports2.CompressionFilter = void 0;
@@ -14606,9 +14691,9 @@ var require_compression_filter = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/control-plane-status.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/control-plane-status.js
 var require_control_plane_status = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/control-plane-status.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/control-plane-status.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.restrictControlPlaneStatusCode = restrictControlPlaneStatusCode;
@@ -14636,9 +14721,9 @@ var require_control_plane_status = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/deadline.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/deadline.js
 var require_deadline = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/deadline.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/deadline.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.minDeadline = minDeadline;
@@ -14707,9 +14792,9 @@ var require_deadline = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/filter-stack.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/filter-stack.js
 var require_filter_stack = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/filter-stack.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/filter-stack.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FilterStackFactory = exports2.FilterStack = void 0;
@@ -14778,9 +14863,9 @@ var require_filter_stack = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/single-subchannel-channel.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/single-subchannel-channel.js
 var require_single_subchannel_channel = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/single-subchannel-channel.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/single-subchannel-channel.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SingleSubchannelChannel = void 0;
@@ -14998,9 +15083,9 @@ var require_single_subchannel_channel = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/subchannel.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/subchannel.js
 var require_subchannel = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/subchannel.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/subchannel.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.Subchannel = void 0;
@@ -15326,9 +15411,9 @@ var require_subchannel = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/environment.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/environment.js
 var require_environment = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/environment.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/environment.js"(exports2) {
     "use strict";
     var _a;
     Object.defineProperty(exports2, "__esModule", { value: true });
@@ -15337,9 +15422,9 @@ var require_environment = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/resolver-dns.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/resolver-dns.js
 var require_resolver_dns = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/resolver-dns.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/resolver-dns.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.DEFAULT_PORT = void 0;
@@ -15625,9 +15710,9 @@ var require_resolver_dns = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/http_proxy.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/http_proxy.js
 var require_http_proxy = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/http_proxy.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/http_proxy.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.parseCIDR = parseCIDR;
@@ -15844,9 +15929,9 @@ var require_http_proxy = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/stream-decoder.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/stream-decoder.js
 var require_stream_decoder = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/stream-decoder.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/stream-decoder.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.StreamDecoder = void 0;
@@ -15929,9 +16014,9 @@ var require_stream_decoder = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/subchannel-call.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/subchannel-call.js
 var require_subchannel_call = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/subchannel-call.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/subchannel-call.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.Http2SubchannelCall = void 0;
@@ -16335,9 +16420,9 @@ var require_subchannel_call = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/transport.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/transport.js
 var require_transport = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/transport.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/transport.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.Http2SubchannelConnector = void 0;
@@ -16862,9 +16947,9 @@ var require_transport = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/subchannel-pool.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/subchannel-pool.js
 var require_subchannel_pool = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/subchannel-pool.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/subchannel-pool.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SubchannelPool = void 0;
@@ -16960,9 +17045,9 @@ var require_subchannel_pool = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/load-balancing-call.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancing-call.js
 var require_load_balancing_call = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/load-balancing-call.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancing-call.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.LoadBalancingCall = void 0;
@@ -17203,9 +17288,9 @@ var require_load_balancing_call = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/resolving-call.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/resolving-call.js
 var require_resolving_call = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/resolving-call.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/resolving-call.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ResolvingCall = void 0;
@@ -17488,9 +17573,9 @@ var require_resolving_call = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/retrying-call.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/retrying-call.js
 var require_retrying_call = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/retrying-call.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/retrying-call.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.RetryingCall = exports2.MessageBufferTracker = exports2.RetryThrottler = void 0;
@@ -18114,9 +18199,9 @@ var require_retrying_call = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/subchannel-interface.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/subchannel-interface.js
 var require_subchannel_interface = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/subchannel-interface.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/subchannel-interface.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.BaseSubchannelWrapper = void 0;
@@ -18213,9 +18298,9 @@ var require_subchannel_interface = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/internal-channel.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/internal-channel.js
 var require_internal_channel = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/internal-channel.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/internal-channel.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.InternalChannel = exports2.SUBCHANNEL_ARGS_EXCLUDE_KEY_PREFIX = void 0;
@@ -18727,9 +18812,9 @@ var require_internal_channel = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/channel.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/channel.js
 var require_channel = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/channel.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/channel.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ChannelImplementation = void 0;
@@ -18784,9 +18869,9 @@ var require_channel = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/server-call.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/server-call.js
 var require_server_call = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/server-call.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/server-call.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ServerDuplexStreamImpl = exports2.ServerWritableStreamImpl = exports2.ServerReadableStreamImpl = exports2.ServerUnaryCallImpl = void 0;
@@ -18993,9 +19078,9 @@ var require_server_call = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/server-credentials.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/server-credentials.js
 var require_server_credentials = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/server-credentials.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/server-credentials.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ServerCredentials = void 0;
@@ -19283,9 +19368,9 @@ var require_server_credentials = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/duration.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/duration.js
 var require_duration = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/duration.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/duration.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.durationMessageToDuration = durationMessageToDuration;
@@ -19344,9 +19429,9 @@ var require_duration = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/orca.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/orca.js
 var require_orca = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/orca.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/orca.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.OrcaOobMetricsSubchannelWrapper = exports2.GRPC_METRICS_HEADER = exports2.ServerMetricRecorder = exports2.PerRequestMetricRecorder = void 0;
@@ -19639,9 +19724,9 @@ var require_orca = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/server-interceptors.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/server-interceptors.js
 var require_server_interceptors = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/server-interceptors.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/server-interceptors.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.BaseServerInterceptingCall = exports2.ServerInterceptingCall = exports2.ResponderBuilder = exports2.ServerListenerBuilder = void 0;
@@ -20387,9 +20472,9 @@ var require_server_interceptors = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/server.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/server.js
 var require_server = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/server.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/server.js"(exports2) {
     "use strict";
     var __runInitializers = exports2 && exports2.__runInitializers || function(thisArg, initializers, value) {
       var useValue = arguments.length > 2;
@@ -21833,9 +21918,9 @@ var require_server = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/status-builder.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/status-builder.js
 var require_status_builder = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/status-builder.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/status-builder.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.StatusBuilder = void 0;
@@ -21887,9 +21972,9 @@ var require_status_builder = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/load-balancer-pick-first.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancer-pick-first.js
 var require_load_balancer_pick_first = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/load-balancer-pick-first.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancer-pick-first.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.LeafLoadBalancer = exports2.PickFirstLoadBalancer = exports2.PickFirstLoadBalancingConfig = void 0;
@@ -22306,9 +22391,9 @@ var require_load_balancer_pick_first = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/certificate-provider.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/certificate-provider.js
 var require_certificate_provider = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/certificate-provider.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/certificate-provider.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileWatcherCertificateProvider = void 0;
@@ -22429,9 +22514,9 @@ var require_certificate_provider = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/experimental.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/experimental.js
 var require_experimental = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/experimental.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/experimental.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SUBCHANNEL_ARGS_EXCLUDE_KEY_PREFIX = exports2.createCertificateProviderChannelCredentials = exports2.FileWatcherCertificateProvider = exports2.createCertificateProviderServerCredentials = exports2.createServerCredentialsWithInterceptors = exports2.BaseSubchannelWrapper = exports2.registerAdminService = exports2.FilterStackFactory = exports2.BaseFilter = exports2.statusOrFromError = exports2.statusOrFromValue = exports2.PickResultType = exports2.QueuePicker = exports2.UnavailablePicker = exports2.ChildLoadBalancerHandler = exports2.EndpointMap = exports2.endpointHasAddress = exports2.endpointToString = exports2.subchannelAddressToString = exports2.LeafLoadBalancer = exports2.isLoadBalancerNameRegistered = exports2.parseLoadBalancingConfig = exports2.selectLbConfigFromList = exports2.registerLoadBalancerType = exports2.createChildChannelControlHelper = exports2.BackoffTimeout = exports2.parseDuration = exports2.durationToMs = exports2.splitHostPort = exports2.uriToString = exports2.CHANNEL_ARGS_CONFIG_SELECTOR_KEY = exports2.createResolver = exports2.registerResolver = exports2.log = exports2.trace = void 0;
@@ -22562,9 +22647,9 @@ var require_experimental = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/resolver-uds.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/resolver-uds.js
 var require_resolver_uds = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/resolver-uds.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/resolver-uds.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.setup = setup;
@@ -22602,9 +22687,9 @@ var require_resolver_uds = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/resolver-ip.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/resolver-ip.js
 var require_resolver_ip = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/resolver-ip.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/resolver-ip.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.setup = setup;
@@ -22693,9 +22778,9 @@ var require_resolver_ip = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/load-balancer-round-robin.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancer-round-robin.js
 var require_load_balancer_round_robin = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/load-balancer-round-robin.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancer-round-robin.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.RoundRobinLoadBalancer = void 0;
@@ -22868,9 +22953,9 @@ var require_load_balancer_round_robin = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/load-balancer-outlier-detection.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancer-outlier-detection.js
 var require_load_balancer_outlier_detection = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/load-balancer-outlier-detection.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancer-outlier-detection.js"(exports2) {
     "use strict";
     var _a;
     Object.defineProperty(exports2, "__esModule", { value: true });
@@ -23365,9 +23450,9 @@ var require_load_balancer_outlier_detection = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/priority-queue.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/priority-queue.js
 var require_priority_queue = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/priority-queue.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/priority-queue.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.PriorityQueue = void 0;
@@ -23469,9 +23554,9 @@ var require_priority_queue = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/load-balancer-weighted-round-robin.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancer-weighted-round-robin.js
 var require_load_balancer_weighted_round_robin = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/load-balancer-weighted-round-robin.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/load-balancer-weighted-round-robin.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.WeightedRoundRobinLoadBalancingConfig = void 0;
@@ -23821,9 +23906,9 @@ var require_load_balancer_weighted_round_robin = __commonJS({
   }
 });
 
-// node_modules/@grpc/grpc-js/build/src/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/index.js
 var require_src3 = __commonJS({
-  "node_modules/@grpc/grpc-js/build/src/index.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/@grpc/grpc-js/build/src/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.experimental = exports2.ServerMetricRecorder = exports2.ServerInterceptingCall = exports2.ResponderBuilder = exports2.ServerListenerBuilder = exports2.addAdminServicesToServer = exports2.getChannelzHandlers = exports2.getChannelzServiceDefinition = exports2.InterceptorConfigurationError = exports2.InterceptingCall = exports2.RequesterBuilder = exports2.ListenerBuilder = exports2.StatusBuilder = exports2.getClientChannel = exports2.ServerCredentials = exports2.Server = exports2.setLogVerbosity = exports2.setLogger = exports2.load = exports2.loadObject = exports2.CallCredentials = exports2.ChannelCredentials = exports2.waitForClientReady = exports2.closeClient = exports2.Channel = exports2.makeGenericClientConstructor = exports2.makeClientConstructor = exports2.loadPackageDefinition = exports2.Client = exports2.compressionAlgorithms = exports2.propagate = exports2.connectivityState = exports2.status = exports2.logVerbosity = exports2.Metadata = exports2.credentials = void 0;
@@ -24003,11 +24088,11 @@ var require_src3 = __commonJS({
   }
 });
 
-// privsvc/linux/src/server.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/server.ts
 var import_fs10 = __toESM(require("fs"));
 var import_net = __toESM(require("net"));
 
-// privsvc/linux/src/paths.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/paths.ts
 var import_fs = __toESM(require("fs"));
 var import_path = __toESM(require("path"));
 var configuredSocketPath = process.env.TRACENIUM_PRIVSVC_SOCKET_PATH;
@@ -24066,7 +24151,7 @@ function lookupSocketGid() {
   return null;
 }
 
-// privsvc/linux/src/protocol.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/protocol.ts
 function success(id, result) {
   return { v: 1, id, ok: true, result, error: null };
 }
@@ -24074,10 +24159,10 @@ function fail(id, code, message) {
   return { v: 1, id: id || "unknown", ok: false, result: null, error: { code, message } };
 }
 
-// privsvc/linux/src/router.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/router.ts
 var import_os2 = __toESM(require("os"));
 
-// privsvc/linux/src/logger.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/logger.ts
 var import_fs2 = __toESM(require("fs"));
 var import_path2 = __toESM(require("path"));
 function line(level, message, details) {
@@ -24105,7 +24190,7 @@ var logger = {
   error: (message, details) => log("error", message, details)
 };
 
-// privsvc/linux/src/crypto-store.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/crypto-store.ts
 var import_crypto = __toESM(require("crypto"));
 var import_fs3 = __toESM(require("fs"));
 var import_https = __toESM(require("https"));
@@ -24468,7 +24553,7 @@ function loadInstalledIdentity() {
   };
 }
 
-// privsvc/linux/src/grpc-bridge.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/grpc-bridge.ts
 var import_crypto2 = __toESM(require("crypto"));
 var import_fs4 = __toESM(require("fs"));
 var import_path3 = __toESM(require("path"));
@@ -25129,12 +25214,12 @@ async function handleClose(req) {
   }
 }
 
-// privsvc/linux/src/security-posture.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/security-posture.ts
 var import_child_process2 = require("child_process");
 var import_fs6 = __toESM(require("fs"));
 var import_util2 = require("util");
 
-// privsvc/linux/src/distro.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/distro.ts
 var import_fs5 = __toESM(require("fs"));
 var FAMILY_BY_ID = {
   debian: "debian",
@@ -25205,7 +25290,7 @@ function detectFamily() {
   return cached;
 }
 
-// privsvc/linux/src/security-posture.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/security-posture.ts
 var execFileAsync2 = (0, import_util2.promisify)(import_child_process2.execFile);
 var CHECK_TIMEOUT_MS = 5e3;
 var RAW_MAX_BYTES = 4 * 1024;
@@ -25476,7 +25561,7 @@ async function handleSecurityPosture(req) {
   }
 }
 
-// privsvc/linux/src/patch-management.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/patch-management.ts
 var import_child_process3 = require("child_process");
 var import_util3 = require("util");
 var import_fs7 = __toESM(require("fs"));
@@ -26001,7 +26086,7 @@ async function handlePatchInstall(req) {
   }
 }
 
-// privsvc/linux/src/pmp-remediation.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/pmp-remediation.ts
 var import_child_process4 = require("child_process");
 var import_fs8 = __toESM(require("fs"));
 var import_path4 = __toESM(require("path"));
@@ -26334,7 +26419,7 @@ async function handlePmpRemediate(req) {
   }
 }
 
-// privsvc/linux/src/sdp.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/sdp.ts
 var import_child_process5 = require("child_process");
 var import_util5 = require("util");
 var import_crypto3 = __toESM(require("crypto"));
@@ -26745,7 +26830,7 @@ async function handleSdpInstall(req) {
   });
 }
 
-// privsvc/linux/src/router.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/router.ts
 function isRoot() {
   return typeof process.getuid === "function" ? process.getuid() === 0 : false;
 }
@@ -26856,7 +26941,7 @@ async function routeRequest(req, push2) {
   }
 }
 
-// privsvc/linux/src/server.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/server.ts
 var MAX_LINE_CHARS = 2 * 1024 * 1024;
 function writeLine(socket, value) {
   socket.write(JSON.stringify(value) + "\n");
@@ -26974,7 +27059,7 @@ function startServer() {
   return server;
 }
 
-// privsvc/linux/src/index.ts
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/index.ts
 try {
   process.stdout?._handle?.setBlocking?.(true);
   process.stderr?._handle?.setBlocking?.(true);

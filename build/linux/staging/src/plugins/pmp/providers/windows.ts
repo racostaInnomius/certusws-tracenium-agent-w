@@ -1,0 +1,183 @@
+import type { AgentContext } from "../../../core/agent-context";
+import type { PmpNamespace, PmpScanItem, PmpSeverity } from "../../../domain/pmp-types";
+import { loadPmpState } from "../state";
+
+// MSRC severity strings that come from `IUpdate.MsrcSeverity` (the
+// canonical set Microsoft publishes for security updates). The wire
+// value is a free-form string in WUA's COM API; we normalize to our
+// PmpSeverity enum so the backend / UI never needs to care which
+// platform reported it.
+function normalizeMsrcSeverity(raw: unknown): PmpSeverity {
+  const s = String(raw || "").trim().toLowerCase();
+  if (s === "critical") return "critical";
+  if (s === "important") return "important";
+  if (s === "moderate") return "moderate";
+  if (s === "low") return "low";
+  return "unknown";
+}
+
+function normalizeArray(value: unknown): any[] {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") return [value];
+  return [];
+}
+
+async function readSecurityCompliance(ctx: AgentContext): Promise<any> {
+  const resp = await ctx.priv.call({
+    v: 1,
+    id: `pmp_${Date.now()}`,
+    method: "patch.scan",
+    params: {},
+    meta: {
+      tenantId: ctx.enrollment.tenantId,
+      deviceId: ctx.enrollment.deviceId
+    }
+  });
+
+  if (!resp?.ok) {
+    throw new Error(resp?.error?.message || "patch.scan failed");
+  }
+
+  return resp.result || {};
+}
+
+function normalizePatchItems(items: any[]): PmpScanItem[] {
+  return items.map((item) => ({
+    hotFixId: Array.isArray(item?.kbArticleIds) && item.kbArticleIds.length > 0
+      ? String(item.kbArticleIds[0])
+      : undefined,
+    title: item?.title ? String(item.title) : undefined,
+    // PrivSvc reads `IUpdate.MsrcSeverity` and forwards it as a string
+    // in the `msrcSeverity` field. Older PrivSvc builds may omit it —
+    // fall through to `unknown` in that case so the schema stays
+    // consistent across deployments mid-rollout.
+    severity: normalizeMsrcSeverity(item?.msrcSeverity),
+    installedBy: undefined,
+    installedOn: undefined,
+    source: "windows_update_agent"
+  }));
+}
+
+function deriveOverallStatus(
+  scanStatus: "healthy" | "updates_available" | "inventory_only" | "error",
+  remediation: PmpNamespace["remediation"]
+): PmpNamespace["overall"]["status"] {
+  if (remediation?.status === "in_progress") {
+    return "installing";
+  }
+
+  if (remediation?.rebootRequired) {
+    return "reboot_required";
+  }
+
+  return scanStatus;
+}
+
+function deriveOverallScore(status: PmpNamespace["overall"]["status"]): number {
+  switch (status) {
+    case "healthy":
+      return 100;
+    case "reboot_required":
+      return 60;
+    case "updates_available":
+      return 40;
+    case "inventory_only":
+      return 20;
+    case "installing":
+      return 30;
+    case "scan_pending":
+    case "idle":
+      return 10;
+    case "error":
+    default:
+      return 0;
+  }
+}
+
+export async function collectWindowsPmp(ctx: AgentContext): Promise<PmpNamespace> {
+  const remediationState = loadPmpState();
+  const remediation: NonNullable<PmpNamespace["remediation"]> = {
+    status: remediationState.status || "idle",
+    mode: remediationState.mode,
+    startedAtUtc: remediationState.startedAtUtc,
+    finishedAtUtc: remediationState.finishedAtUtc,
+    rebootRequired: remediationState.rebootRequired === true,
+    installedCount: Number(remediationState.installedCount ?? 0),
+    failedCount: Number(remediationState.failedCount ?? 0),
+    selectedCount: Number(remediationState.selectedCount ?? 0),
+    lastError: remediationState.lastError,
+    results: remediationState.results || []
+  };
+
+  let posture: any = {};
+  let scanItems: PmpScanItem[] = [];
+  let scanStatus: "healthy" | "updates_available" | "inventory_only" | "error" = "inventory_only";
+
+  try {
+    posture = await readSecurityCompliance(ctx);
+    scanItems = normalizePatchItems(normalizeArray(posture?.items));
+    scanStatus = posture?.status === "updates_available"
+      ? "updates_available"
+      : posture?.status === "healthy"
+        ? "healthy"
+        : "inventory_only";
+  } catch (err: any) {
+    const message = err?.message || String(err);
+    return {
+      schemaVersion: "1.0",
+      collector: {
+        plugin: "pmp",
+        version: ctx.config.agentVersion
+      },
+      hasChanges: true,
+      overall: {
+        status: "error",
+        score: 0
+      },
+      scan: {
+        scannedAtUtc: new Date().toISOString(),
+        source: "windows_update_agent",
+        mode: "inventory_only",
+        installedPatchCount: 0,
+        securityPatchCount: 0,
+        items: []
+      },
+      remediation: remediation.status === "idle" && !(remediation.results || []).length
+        ? {
+            ...remediation,
+            lastError: message,
+            results: [
+              {
+                result: "failed",
+                message
+              }
+            ]
+          }
+        : remediation
+    };
+  }
+
+  const overallStatus = deriveOverallStatus(scanStatus, remediation);
+
+  return {
+    schemaVersion: "1.0",
+    collector: {
+      plugin: "pmp",
+      version: ctx.config.agentVersion
+    },
+    hasChanges: true,
+    overall: {
+      status: overallStatus,
+      score: deriveOverallScore(overallStatus)
+    },
+    scan: {
+      scannedAtUtc: posture?.scannedAtUtc ?? new Date().toISOString(),
+      source: "windows_update_agent",
+      mode: "inventory_only",
+      installedPatchCount: Number(posture?.updateCount ?? scanItems.length),
+      securityPatchCount: Number(posture?.securityUpdateCount ?? scanItems.length),
+      items: scanItems
+    },
+    remediation
+  };
+}

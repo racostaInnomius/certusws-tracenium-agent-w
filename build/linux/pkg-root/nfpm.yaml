@@ -5,9 +5,9 @@
 #
 #   1.1.14       semver from package.json (or env override)
 #   amd64          "amd64" / "arm64" — matches deb naming
-#   /work/certusws-tracenium-agent-w/build/linux/pkg-root     absolute path to the staged bundle layout
+#   /workspace/certusws-tracenium-agent-w/build/linux/pkg-root     absolute path to the staged bundle layout
 #                     (typically <repo>/build/linux/pkg-root)
-#   /work/certusws-tracenium-agent-w     absolute path to the agent repo, for refs to
+#   /workspace/certusws-tracenium-agent-w     absolute path to the agent repo, for refs to
 #                     packaging/linux/{systemd,scripts}/* that live
 #                     outside the staged bundle
 #
@@ -95,7 +95,7 @@ contents:
   # Cross-distro compatibility is the reason we ship our own:
   # better-sqlite3 has ABI-locked native bindings, and the customer's
   # /usr/bin/node could be anything from 12 to 22.
-  - src: /work/certusws-tracenium-agent-w/build/linux/pkg-root/node
+  - src: /workspace/certusws-tracenium-agent-w/build/linux/pkg-root/node
     dst: /usr/lib/tracenium/node
     file_info:
       mode: 0755
@@ -103,7 +103,7 @@ contents:
       group: root
 
   # Privsvc bundle — esbuild-bundled JS produced by build-linux-pkg.sh.
-  - src: /work/certusws-tracenium-agent-w/build/linux/pkg-root/privsvc/index.js
+  - src: /workspace/certusws-tracenium-agent-w/build/linux/pkg-root/privsvc/index.js
     dst: /usr/lib/tracenium/privsvc/index.js
     file_info:
       mode: 0644
@@ -111,7 +111,7 @@ contents:
       group: root
 
   # Agent bundle — same.
-  - src: /work/certusws-tracenium-agent-w/build/linux/pkg-root/agent/index.js
+  - src: /workspace/certusws-tracenium-agent-w/build/linux/pkg-root/agent/index.js
     dst: /usr/lib/tracenium/agent/index.js
     file_info:
       mode: 0644
@@ -123,7 +123,7 @@ contents:
   # be 100x slower on the FACTS write path. We ship the entire
   # better-sqlite3 npm package (not just the .node binary) so its
   # main entry can require its own deps.
-  - src: /work/certusws-tracenium-agent-w/build/linux/pkg-root/agent/node_modules
+  - src: /workspace/certusws-tracenium-agent-w/build/linux/pkg-root/agent/node_modules
     dst: /usr/lib/tracenium/agent/node_modules
     file_info:
       mode: 0644
@@ -133,7 +133,7 @@ contents:
   # Proto file. grpc-bridge.ts loads it at startup via
   # protoLoader.loadSync(). The Phase 2 path resolver tries
   # __dirname/../proto/... first — that's where we put it.
-  - src: /work/certusws-tracenium-agent-w/build/linux/pkg-root/proto/controlplane.proto
+  - src: /workspace/certusws-tracenium-agent-w/build/linux/pkg-root/proto/controlplane.proto
     dst: /usr/lib/tracenium/proto/controlplane.proto
     file_info:
       mode: 0644
@@ -144,7 +144,7 @@ contents:
   # CA bundle on every grpc.connect — a renewal that updates the
   # issuing CA without redeploying the agent still chains to a
   # known root.
-  - src: /work/certusws-tracenium-agent-w/build/linux/pkg-root/assets/root-ca.crt
+  - src: /workspace/certusws-tracenium-agent-w/build/linux/pkg-root/assets/root-ca.crt
     dst: /var/lib/tracenium/assets/root-ca.crt
     file_info:
       mode: 0644
@@ -154,13 +154,13 @@ contents:
   # systemd units — installed under /lib/systemd/system/ which is
   # a symlink to /usr/lib/systemd/system/ on every modern distro.
   # nfpm sets mode 0644 by default for these. Sourced directly from
-  # the repo via /work/certusws-tracenium-agent-w — no need to copy them into the
+  # the repo via /workspace/certusws-tracenium-agent-w — no need to copy them into the
   # staging dir first.
-  - src: /work/certusws-tracenium-agent-w/packaging/linux/systemd/tracenium-privsvc.service
+  - src: /workspace/certusws-tracenium-agent-w/packaging/linux/systemd/tracenium-privsvc.service
     dst: /lib/systemd/system/tracenium-privsvc.service
     file_info:
       mode: 0644
-  - src: /work/certusws-tracenium-agent-w/packaging/linux/systemd/tracenium-agent.service
+  - src: /workspace/certusws-tracenium-agent-w/packaging/linux/systemd/tracenium-agent.service
     dst: /lib/systemd/system/tracenium-agent.service
     file_info:
       mode: 0644
@@ -206,7 +206,7 @@ contents:
   # endpoints), and we don't want an upgrade to silently overwrite
   # their changes. nfpm's `type: config` flag makes dpkg prompt +
   # rpm save .rpmsave on conflict.
-  - src: /work/certusws-tracenium-agent-w/packaging/linux/agent.env.default
+  - src: /workspace/certusws-tracenium-agent-w/packaging/linux/agent.env.default
     dst: /etc/tracenium/agent.env
     type: config|noreplace
     file_info:
@@ -219,7 +219,7 @@ contents:
   # apparmor_parser binary; postinstall.sh handles that gracefully
   # by skipping the profile load — the file is still present on
   # disk but inert.
-  - src: /work/certusws-tracenium-agent-w/packaging/linux/apparmor/usr.lib.tracenium.privsvc
+  - src: /workspace/certusws-tracenium-agent-w/packaging/linux/apparmor/usr.lib.tracenium.privsvc
     dst: /etc/apparmor.d/usr.lib.tracenium.privsvc
     file_info:
       mode: 0644
@@ -231,13 +231,13 @@ contents:
   # `make -f /usr/share/selinux/devel/Makefile tracenium.pp`,
   # then loaded with `semodule -i tracenium.pp`. Debian hosts
   # without SELinux dev pkgs skip this step silently.
-  - src: /work/certusws-tracenium-agent-w/packaging/linux/selinux/tracenium.te
+  - src: /workspace/certusws-tracenium-agent-w/packaging/linux/selinux/tracenium.te
     dst: /usr/share/tracenium/selinux/tracenium.te
     file_info:
       mode: 0644
       owner: root
       group: root
-  - src: /work/certusws-tracenium-agent-w/packaging/linux/selinux/tracenium.fc
+  - src: /workspace/certusws-tracenium-agent-w/packaging/linux/selinux/tracenium.fc
     dst: /usr/share/tracenium/selinux/tracenium.fc
     file_info:
       mode: 0644
@@ -248,7 +248,7 @@ contents:
   # Debian and RHEL include logrotate by default (cron-driven on
   # both); the file just needs to be in /etc/logrotate.d/ and
   # the next daily run picks it up.
-  - src: /work/certusws-tracenium-agent-w/packaging/linux/logrotate/tracenium
+  - src: /workspace/certusws-tracenium-agent-w/packaging/linux/logrotate/tracenium
     dst: /etc/logrotate.d/tracenium
     file_info:
       mode: 0644
@@ -262,7 +262,7 @@ contents:
 #   preremove   → debian prerm,    rpm %preun
 #   postremove  → debian postrm,   rpm %postun
 scripts:
-  preinstall: /work/certusws-tracenium-agent-w/packaging/linux/scripts/preinstall.sh
-  postinstall: /work/certusws-tracenium-agent-w/packaging/linux/scripts/postinstall.sh
-  preremove: /work/certusws-tracenium-agent-w/packaging/linux/scripts/preremove.sh
-  postremove: /work/certusws-tracenium-agent-w/packaging/linux/scripts/postremove.sh
+  preinstall: /workspace/certusws-tracenium-agent-w/packaging/linux/scripts/preinstall.sh
+  postinstall: /workspace/certusws-tracenium-agent-w/packaging/linux/scripts/postinstall.sh
+  preremove: /workspace/certusws-tracenium-agent-w/packaging/linux/scripts/preremove.sh
+  postremove: /workspace/certusws-tracenium-agent-w/packaging/linux/scripts/postremove.sh

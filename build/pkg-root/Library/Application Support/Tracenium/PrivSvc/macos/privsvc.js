@@ -5,8 +5,8 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __commonJS = (cb, mod2) => function __require() {
-  return mod2 || (0, cb[__getOwnPropNames(cb)[0]])((mod2 = { exports: {} }).exports, mod2), mod2.exports;
+var __commonJS = (cb, mod) => function __require() {
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -16,13 +16,13 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
-var __toESM = (mod2, isNodeMode, target) => (target = mod2 != null ? __create(__getProtoOf(mod2)) : {}, __copyProps(
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
   // If the importer is in node compatibility mode or this is not an ESM
   // file that has been converted to a CommonJS file using a Babel-
   // compatible transform (i.e. "__esModule" has not been set), then set
   // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod2 || !mod2.__esModule ? __defProp(target, "default", { value: mod2, enumerable: true }) : target,
-  mod2
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
 ));
 
 // node_modules/@grpc/grpc-js/build/src/constants.js
@@ -5122,17 +5122,20 @@ var require_float = __commonJS({
 
 // node_modules/@protobufjs/inquire/index.js
 var require_inquire = __commonJS({
-  "node_modules/@protobufjs/inquire/index.js"(exports, module) {
+  "node_modules/@protobufjs/inquire/index.js"(exports2, module2) {
     "use strict";
-    module.exports = inquire;
+    module2.exports = inquire;
     function inquire(moduleName) {
       try {
-        var mod = eval("quire".replace(/^/, "re"))(moduleName);
-        if (mod && (mod.length || Object.keys(mod).length))
-          return mod;
-      } catch (e) {
+        if (typeof require !== "function") {
+          return null;
+        }
+        var mod = require(moduleName);
+        if (mod && (mod.length || Object.keys(mod).length)) return mod;
+        return null;
+      } catch (err) {
+        return null;
       }
-      return null;
     }
   }
 });
@@ -5142,6 +5145,7 @@ var require_utf8 = __commonJS({
   "node_modules/@protobufjs/utf8/index.js"(exports2) {
     "use strict";
     var utf8 = exports2;
+    var replacementChar = "\uFFFD";
     utf8.length = function utf8_length(string) {
       var len = 0, c = 0;
       for (var i = 0; i < string.length; ++i) {
@@ -5159,33 +5163,32 @@ var require_utf8 = __commonJS({
       return len;
     };
     utf8.read = function utf8_read(buffer, start, end) {
-      var len = end - start;
-      if (len < 1)
+      if (end - start < 1) {
         return "";
-      var parts = null, chunk = [], i = 0, t;
-      while (start < end) {
-        t = buffer[start++];
-        if (t < 128)
-          chunk[i++] = t;
-        else if (t > 191 && t < 224)
-          chunk[i++] = (t & 31) << 6 | buffer[start++] & 63;
-        else if (t > 239 && t < 365) {
-          t = ((t & 7) << 18 | (buffer[start++] & 63) << 12 | (buffer[start++] & 63) << 6 | buffer[start++] & 63) - 65536;
-          chunk[i++] = 55296 + (t >> 10);
-          chunk[i++] = 56320 + (t & 1023);
-        } else
-          chunk[i++] = (t & 15) << 12 | (buffer[start++] & 63) << 6 | buffer[start++] & 63;
-        if (i > 8191) {
-          (parts || (parts = [])).push(String.fromCharCode.apply(String, chunk));
-          i = 0;
+      }
+      var str = "";
+      for (var i = start; i < end; ) {
+        var t = buffer[i++];
+        if (t <= 127) {
+          str += String.fromCharCode(t);
+        } else if (t >= 192 && t < 224) {
+          var c2 = (t & 31) << 6 | buffer[i++] & 63;
+          str += c2 >= 128 ? String.fromCharCode(c2) : replacementChar;
+        } else if (t >= 224 && t < 240) {
+          var c3 = (t & 15) << 12 | (buffer[i++] & 63) << 6 | buffer[i++] & 63;
+          str += c3 >= 2048 ? String.fromCharCode(c3) : replacementChar;
+        } else if (t >= 240) {
+          var t2 = (t & 7) << 18 | (buffer[i++] & 63) << 12 | (buffer[i++] & 63) << 6 | buffer[i++] & 63;
+          if (t2 < 65536 || t2 > 1114111)
+            str += replacementChar;
+          else {
+            t2 -= 65536;
+            str += String.fromCharCode(55296 + (t2 >> 10));
+            str += String.fromCharCode(56320 + (t2 & 1023));
+          }
         }
       }
-      if (parts) {
-        if (i)
-          parts.push(String.fromCharCode.apply(String, chunk.slice(0, i)));
-        return parts.join("");
-      }
-      return String.fromCharCode.apply(String, chunk.slice(0, i));
+      return str;
     };
     utf8.write = function utf8_write(string, buffer, offset) {
       var start = offset, c1, c2;
@@ -5422,11 +5425,21 @@ var require_minimal = __commonJS({
     };
     function merge(dst, src, ifNotSet) {
       for (var keys = Object.keys(src), i = 0; i < keys.length; ++i)
-        if (dst[keys[i]] === void 0 || !ifNotSet)
-          dst[keys[i]] = src[keys[i]];
+        if (dst[keys[i]] === void 0 || !ifNotSet) {
+          if (keys[i] !== "__proto__")
+            dst[keys[i]] = src[keys[i]];
+        }
       return dst;
     }
     util.merge = merge;
+    util.recursionLimit = 100;
+    util.makeProp = function makeProp(obj, key) {
+      Object.defineProperty(obj, key, {
+        enumerable: true,
+        configurable: true,
+        writable: true
+      });
+    };
     util.lcFirst = function lcFirst(str) {
       return str.charAt(0).toLowerCase() + str.substring(1);
     };
@@ -5928,7 +5941,11 @@ var require_reader = __commonJS({
       }
       return this;
     };
-    Reader.prototype.skipType = function(wireType) {
+    Reader.recursionLimit = util.recursionLimit;
+    Reader.prototype.skipType = function(wireType, depth) {
+      if (depth === void 0) depth = 0;
+      if (depth > Reader.recursionLimit)
+        throw Error("maximum nesting depth exceeded");
       switch (wireType) {
         case 0:
           this.skip();
@@ -5941,7 +5958,7 @@ var require_reader = __commonJS({
           break;
         case 3:
           while ((wireType = this.uint32() & 7) !== 4) {
-            this.skipType(wireType);
+            this.skipType(wireType, depth + 1);
           }
           break;
         case 5:
@@ -6125,6 +6142,7 @@ var require_codegen = __commonJS({
   "node_modules/@protobufjs/codegen/index.js"(exports2, module2) {
     "use strict";
     module2.exports = codegen;
+    var reservedRe = /^(?:do|if|in|for|let|new|try|var|case|else|enum|eval|false|null|this|true|void|with|break|catch|class|const|super|throw|while|yield|delete|export|import|public|return|static|switch|typeof|default|extends|finally|package|private|continue|debugger|function|arguments|interface|protected|implements|instanceof)$/;
     function codegen(functionParams, functionName) {
       if (typeof functionParams === "string") {
         functionName = functionParams;
@@ -6173,12 +6191,22 @@ var require_codegen = __commonJS({
         return Codegen;
       }
       function toString(functionNameOverride) {
-        return "function " + (functionNameOverride || functionName || "") + "(" + (functionParams && functionParams.join(",") || "") + "){\n  " + body.join("\n  ") + "\n}";
+        return "function " + safeFunctionName(functionNameOverride || functionName) + "(" + (functionParams && functionParams.join(",") || "") + "){\n  " + body.join("\n  ") + "\n}";
       }
       Codegen.toString = toString;
       return Codegen;
     }
     codegen.verbose = false;
+    function safeFunctionName(name) {
+      if (!name)
+        return "";
+      name = String(name).replace(/[^\w$]/g, "");
+      if (!name)
+        return "";
+      if (/^\d/.test(name))
+        name = "_" + name;
+      return reservedRe.test(name) ? name + "_" : name;
+    }
   }
 });
 
@@ -6188,8 +6216,8 @@ var require_fetch = __commonJS({
     "use strict";
     module2.exports = fetch;
     var asPromise = require_aspromise();
-    var inquire2 = require_inquire();
-    var fs6 = inquire2("fs");
+    var inquire = require_inquire();
+    var fs6 = inquire("fs");
     function fetch(filename, options, callback) {
       if (typeof options === "function") {
         callback = options;
@@ -6287,6 +6315,18 @@ var require_path = __commonJS({
   }
 });
 
+// node_modules/protobufjs/src/util/patterns.js
+var require_patterns = __commonJS({
+  "node_modules/protobufjs/src/util/patterns.js"(exports2) {
+    "use strict";
+    var patterns = exports2;
+    patterns.numberRe = /^(?![eE])[0-9]*(?:\.[0-9]*)?(?:[eE][+-]?[0-9]+)?$/;
+    patterns.typeRefRe = /^(?:\.?[a-zA-Z_][a-zA-Z_0-9]*)(?:\.[a-zA-Z_][a-zA-Z_0-9]*)*$/;
+    patterns.reservedRe = /^(?:do|if|in|for|let|new|try|var|case|else|enum|eval|false|null|this|true|void|with|break|catch|class|const|super|throw|while|yield|delete|export|import|public|return|static|switch|typeof|default|extends|finally|package|private|continue|debugger|function|arguments|interface|protected|implements|instanceof)$/;
+    patterns.unsafePropertyRe = /^(?:__proto__|prototype|constructor)$/;
+  }
+});
+
 // node_modules/protobufjs/src/namespace.js
 var require_namespace = __commonJS({
   "node_modules/protobufjs/src/namespace.js"(exports2, module2) {
@@ -6332,16 +6372,16 @@ var require_namespace = __commonJS({
       ReflectionObject.call(this, name, options);
       this.nested = void 0;
       this._nestedArray = null;
-      this._lookupCache = {};
+      this._lookupCache = /* @__PURE__ */ Object.create(null);
       this._needsRecursiveFeatureResolution = true;
       this._needsRecursiveResolve = true;
     }
     function clearCache(namespace) {
       namespace._nestedArray = null;
-      namespace._lookupCache = {};
+      namespace._lookupCache = /* @__PURE__ */ Object.create(null);
       var parent = namespace;
       while (parent = parent.parent) {
-        parent._lookupCache = {};
+        parent._lookupCache = /* @__PURE__ */ Object.create(null);
       }
       return namespace;
     }
@@ -6372,16 +6412,18 @@ var require_namespace = __commonJS({
       return this;
     };
     Namespace.prototype.get = function get(name) {
-      return this.nested && this.nested[name] || null;
+      return this.nested && Object.prototype.hasOwnProperty.call(this.nested, name) ? this.nested[name] : null;
     };
     Namespace.prototype.getEnum = function getEnum(name) {
-      if (this.nested && this.nested[name] instanceof Enum)
+      if (this.nested && Object.prototype.hasOwnProperty.call(this.nested, name) && this.nested[name] instanceof Enum)
         return this.nested[name].values;
       throw Error("no such enum: " + name);
     };
     Namespace.prototype.add = function add(object) {
       if (!(object instanceof Field && object.extend !== void 0 || object instanceof Type || object instanceof OneOf || object instanceof Enum || object instanceof Service || object instanceof Namespace))
         throw TypeError("object must be a valid nested object");
+      if (object.name === "__proto__")
+        return this;
       if (!this.nested)
         this.nested = {};
       else {
@@ -6520,8 +6562,10 @@ var require_namespace = __commonJS({
         }
       } else {
         for (var i = 0; i < this.nestedArray.length; ++i)
-          if (this._nestedArray[i] instanceof Namespace && (found = this._nestedArray[i]._lookupImpl(path5, flatPath)))
+          if (this._nestedArray[i] instanceof Namespace && (found = this._nestedArray[i]._lookupImpl(path5, flatPath))) {
             exact = found;
+            break;
+          }
       }
       this._lookupCache[flatPath] = exact;
       return exact;
@@ -6692,6 +6736,7 @@ var require_service2 = __commonJS({
     var Method = require_method();
     var util = require_util();
     var rpc = require_rpc();
+    var reservedRe = util.patterns.reservedRe;
     function Service(name, options) {
       Namespace.call(this, name, options);
       this.methods = {};
@@ -6737,7 +6782,7 @@ var require_service2 = __commonJS({
       return service;
     }
     Service.prototype.get = function get(name) {
-      return this.methods[name] || Namespace.prototype.get.call(this, name);
+      return Object.prototype.hasOwnProperty.call(this.methods, name) ? this.methods[name] : Namespace.prototype.get.call(this, name);
     };
     Service.prototype.resolveAll = function resolveAll() {
       if (!this._needsRecursiveResolve) return this;
@@ -6760,6 +6805,8 @@ var require_service2 = __commonJS({
       if (this.get(object.name))
         throw Error("duplicate name '" + object.name + "' in " + this);
       if (object instanceof Method) {
+        if (object.name === "__proto__")
+          return this;
         this.methods[object.name] = object;
         object.parent = this;
         return clearCache(this);
@@ -6781,7 +6828,7 @@ var require_service2 = __commonJS({
       for (var i = 0, method; i < /* initializes */
       this.methodsArray.length; ++i) {
         var methodName = util.lcFirst((method = this._methodsArray[i]).resolve().name).replace(/[^$\w_]/g, "");
-        rpcService[methodName] = util.codegen(["r", "c"], util.isReserved(methodName) ? methodName + "_" : methodName)("return this.rpcCall(m,q,s,r,c)")({
+        rpcService[methodName] = util.codegen(["r", "c"], reservedRe.test(methodName) ? methodName + "_" : methodName)("return this.rpcCall(m,q,s,r,c)")({
           m: method,
           q: method.resolvedRequestType.ctor,
           s: method.resolvedResponseType.ctor
@@ -6849,7 +6896,7 @@ var require_decoder = __commonJS({
       return "missing required '" + field.name + "'";
     }
     function decoder(mtype) {
-      var gen = util.codegen(["r", "l", "e"], mtype.name + "$decode")("if(!(r instanceof Reader))")("r=Reader.create(r)")("var c=l===undefined?r.len:r.pos+l,m=new this.ctor" + (mtype.fieldsArray.filter(function(field2) {
+      var gen = util.codegen(["r", "l", "e", "n"], mtype.name + "$decode")("if(!(r instanceof Reader))")("r=Reader.create(r)")("if(n===undefined)n=0")("if(n>Reader.recursionLimit)")('throw Error("maximum nesting depth exceeded")')("var c=l===undefined?r.len:r.pos+l,m=new this.ctor" + (mtype.fieldsArray.filter(function(field2) {
         return field2.map;
       }).length ? ",k,value" : ""))("while(r.pos<c){")("var t=r.uint32()")("if(t===e)")("break")("switch(t>>>3){");
       var i = 0;
@@ -6864,21 +6911,24 @@ var require_decoder = __commonJS({
           if (types.defaults[type] !== void 0) gen("value=%j", types.defaults[type]);
           else gen("value=null");
           gen("while(r.pos<c2){")("var tag2=r.uint32()")("switch(tag2>>>3){")("case 1: k=r.%s(); break", field.keyType)("case 2:");
-          if (types.basic[type] === void 0) gen("value=types[%i].decode(r,r.uint32())", i);
+          if (types.basic[type] === void 0) gen("value=types[%i].decode(r,r.uint32(),undefined,n+1)", i);
           else gen("value=r.%s()", type);
-          gen("break")("default:")("r.skipType(tag2&7)")("break")("}")("}");
+          gen("break")("default:")("r.skipType(tag2&7,n)")("break")("}")("}");
           if (types.long[field.keyType] !== void 0) gen('%s[typeof k==="object"?util.longToHash(k):k]=value', ref);
-          else gen("%s[k]=value", ref);
+          else {
+            if (field.keyType === "string") gen('if(k==="__proto__")')("util.makeProp(%s,k)", ref);
+            gen("%s[k]=value", ref);
+          }
         } else if (field.repeated) {
           gen("if(!(%s&&%s.length))", ref, ref)("%s=[]", ref);
           if (types.packed[type] !== void 0) gen("if((t&7)===2){")("var c2=r.uint32()+r.pos")("while(r.pos<c2)")("%s.push(r.%s())", ref, type)("}else");
-          if (types.basic[type] === void 0) gen(field.delimited ? "%s.push(types[%i].decode(r,undefined,((t&~7)|4)))" : "%s.push(types[%i].decode(r,r.uint32()))", ref, i);
+          if (types.basic[type] === void 0) gen(field.delimited ? "%s.push(types[%i].decode(r,undefined,((t&~7)|4),n+1))" : "%s.push(types[%i].decode(r,r.uint32(),undefined,n+1))", ref, i);
           else gen("%s.push(r.%s())", ref, type);
-        } else if (types.basic[type] === void 0) gen(field.delimited ? "%s=types[%i].decode(r,undefined,((t&~7)|4))" : "%s=types[%i].decode(r,r.uint32())", ref, i);
+        } else if (types.basic[type] === void 0) gen(field.delimited ? "%s=types[%i].decode(r,undefined,((t&~7)|4),n+1)" : "%s=types[%i].decode(r,r.uint32(),undefined,n+1)", ref, i);
         else gen("%s=r.%s()", ref, type);
         gen("break")("}");
       }
-      gen("default:")("r.skipType(t&7)")("break")("}")("}");
+      gen("default:")("r.skipType(t&7,n)")("break")("}")("}");
       for (i = 0; i < mtype._fieldsArray.length; ++i) {
         var rfield = mtype._fieldsArray[i];
         if (rfield.required) gen("if(!m.hasOwnProperty(%j))", rfield.name)("throw util.ProtocolError(%j,{instance:m})", missing(rfield));
@@ -6905,7 +6955,7 @@ var require_verifier = __commonJS({
           for (var keys = Object.keys(field.resolvedType.values), j = 0; j < keys.length; ++j) gen("case %i:", field.resolvedType.values[keys[j]]);
           gen("break")("}");
         } else {
-          gen("{")("var e=types[%i].verify(%s);", fieldIndex, ref)("if(e)")("return%j+e", field.name + ".")("}");
+          gen("{")("var e=types[%i].verify(%s,n+1);", fieldIndex, ref)("if(e)")("return%j+e", field.name + ".")("}");
         }
       } else {
         switch (field.type) {
@@ -6963,7 +7013,7 @@ var require_verifier = __commonJS({
       return gen;
     }
     function verifier(mtype) {
-      var gen = util.codegen(["m"], mtype.name + "$verify")('if(typeof m!=="object"||m===null)')("return%j", "object expected");
+      var gen = util.codegen(["m", "n"], mtype.name + "$verify")('if(typeof m!=="object"||m===null)')("return%j", "object expected")("if(n===undefined)n=0")("if(n>util.recursionLimit)")("return%j", "maximum nesting depth exceeded");
       var oneofs = mtype.oneofsArray, seenFirstField = {};
       if (oneofs.length) gen("var p={}");
       for (var i = 0; i < /* initializes */
@@ -7014,7 +7064,7 @@ var require_converter = __commonJS({
             gen("case%j:", keys[i])("case %i:", values[keys[i]])("m%s=%j", prop, values[keys[i]])("break");
           }
           gen("}");
-        } else gen('if(typeof d%s!=="object")', prop)("throw TypeError(%j)", field.fullName + ": object expected")("m%s=types[%i].fromObject(d%s)", prop, fieldIndex, prop);
+        } else gen('if(typeof d%s!=="object")', prop)("throw TypeError(%j)", field.fullName + ": object expected")("m%s=types[%i].fromObject(d%s,n+1)", prop, fieldIndex, prop);
       } else {
         var isUnsigned = false;
         switch (field.type) {
@@ -7055,13 +7105,14 @@ var require_converter = __commonJS({
     }
     converter.fromObject = function fromObject(mtype) {
       var fields = mtype.fieldsArray;
-      var gen = util.codegen(["d"], mtype.name + "$fromObject")("if(d instanceof this.ctor)")("return d");
+      var gen = util.codegen(["d", "n"], mtype.name + "$fromObject")("if(d instanceof this.ctor)")("return d")("if(n===undefined)n=0")("if(n>util.recursionLimit)")('throw Error("maximum nesting depth exceeded")');
       if (!fields.length) return gen("return new this.ctor");
       gen("var m=new this.ctor");
       for (var i = 0; i < fields.length; ++i) {
         var field = fields[i].resolve(), prop = util.safeProp(field.name);
         if (field.map) {
           gen("if(d%s){", prop)('if(typeof d%s!=="object")', prop)("throw TypeError(%j)", field.fullName + ": object expected")("m%s={}", prop)("for(var ks=Object.keys(d%s),i=0;i<ks.length;++i){", prop);
+          gen('if(ks[i]==="__proto__")')("util.makeProp(m%s,ks[i])", prop);
           genValuePartial_fromObject(
             gen,
             field,
@@ -7148,8 +7199,8 @@ var require_converter = __commonJS({
           if (field.resolvedType instanceof Enum) gen("d%s=o.enums===String?%j:%j", prop, field.resolvedType.valuesById[field.typeDefault], field.typeDefault);
           else if (field.long) gen("if(util.Long){")("var n=new util.Long(%i,%i,%j)", field.typeDefault.low, field.typeDefault.high, field.typeDefault.unsigned)("d%s=o.longs===String?n.toString():o.longs===Number?n.toNumber():n", prop)("}else")("d%s=o.longs===String?%j:%i", prop, field.typeDefault.toString(), field.typeDefault.toNumber());
           else if (field.bytes) {
-            var arrayDefault = "[" + Array.prototype.slice.call(field.typeDefault).join(",") + "]";
-            gen("if(o.bytes===String)d%s=%j", prop, String.fromCharCode.apply(String, field.typeDefault))("else{")("d%s=%s", prop, arrayDefault)("if(o.bytes!==Array)d%s=util.newBuffer(d%s)", prop, prop)("}");
+            var arrayDefault = Array.prototype.slice.call(field.typeDefault);
+            gen("if(o.bytes===String)d%s=%j", prop, String.fromCharCode.apply(String, field.typeDefault))("else{")("d%s=%j", prop, arrayDefault)("if(o.bytes!==Array)d%s=util.newBuffer(d%s)", prop, prop)("}");
           } else gen("d%s=%j", prop, field.typeDefault);
         }
         gen("}");
@@ -7163,6 +7214,7 @@ var require_converter = __commonJS({
             gen("var ks2");
           }
           gen("if(m%s&&(ks2=Object.keys(m%s)).length){", prop, prop)("d%s={}", prop)("for(var j=0;j<ks2.length;++j){");
+          gen('if(ks2[j]==="__proto__")')("util.makeProp(d%s,ks2[j])", prop);
           genValuePartial_toObject(
             gen,
             field,
@@ -7204,7 +7256,7 @@ var require_wrappers = __commonJS({
     var wrappers = exports2;
     var Message = require_message();
     wrappers[".google.protobuf.Any"] = {
-      fromObject: function(object) {
+      fromObject: function(object, depth) {
         if (object && object["@type"]) {
           var name = object["@type"].substring(object["@type"].lastIndexOf("/") + 1);
           var type = this.lookup(name);
@@ -7213,13 +7265,14 @@ var require_wrappers = __commonJS({
             if (type_url.indexOf("/") === -1) {
               type_url = "/" + type_url;
             }
+            var nextDepth = depth === void 0 ? 1 : depth + 1;
             return this.create({
               type_url,
-              value: type.encode(type.fromObject(object)).finish()
+              value: type.encode(type.fromObject(object, nextDepth)).finish()
             });
           }
         }
-        return this.fromObject(object);
+        return this.fromObject(object, depth);
       },
       toObject: function(message, options) {
         var googleApi = "type.googleapis.com/";
@@ -7365,7 +7418,7 @@ var require_type = __commonJS({
       for (var i = 0, field; i < mtype.fieldsArray.length; ++i)
         if ((field = mtype._fieldsArray[i]).map) gen("this%s={}", util.safeProp(field.name));
         else if (field.repeated) gen("this%s=[]", util.safeProp(field.name));
-      return gen("if(p)for(var ks=Object.keys(p),i=0;i<ks.length;++i)if(p[ks[i]]!=null)")("this[ks[i]]=p[ks[i]]");
+      return gen('if(p)for(var ks=Object.keys(p),i=0;i<ks.length;++i)if(p[ks[i]]!=null&&ks[i]!=="__proto__")')("this[ks[i]]=p[ks[i]]");
     };
     function clearCache(type) {
       type._fieldsById = type._fieldsArray = type._oneofsArray = null;
@@ -7458,7 +7511,13 @@ var require_type = __commonJS({
       return this;
     };
     Type.prototype.get = function get(name) {
-      return this.fields[name] || this.oneofs && this.oneofs[name] || this.nested && this.nested[name] || null;
+      if (Object.prototype.hasOwnProperty.call(this.fields, name))
+        return this.fields[name];
+      if (this.oneofs && Object.prototype.hasOwnProperty.call(this.oneofs, name))
+        return this.oneofs[name];
+      if (this.nested && Object.prototype.hasOwnProperty.call(this.nested, name))
+        return this.nested[name];
+      return null;
     };
     Type.prototype.add = function add(object) {
       if (this.get(object.name))
@@ -7473,6 +7532,8 @@ var require_type = __commonJS({
           throw Error("id " + object.id + " is reserved in " + this);
         if (this.isReservedName(object.name))
           throw Error("name '" + object.name + "' is reserved in " + this);
+        if (object.name === "__proto__")
+          return this;
         if (object.parent)
           object.parent.remove(object);
         this.fields[object.name] = object;
@@ -7481,6 +7542,8 @@ var require_type = __commonJS({
         return clearCache(this);
       }
       if (object instanceof OneOf) {
+        if (object.name === "__proto__")
+          return this;
         if (!this.oneofs)
           this.oneofs = {};
         this.oneofs[object.name] = object;
@@ -7560,19 +7623,19 @@ var require_type = __commonJS({
     Type.prototype.encodeDelimited = function encodeDelimited(message, writer) {
       return this.encode(message, writer && writer.len ? writer.fork() : writer).ldelim();
     };
-    Type.prototype.decode = function decode_setup(reader, length) {
-      return this.setup().decode(reader, length);
+    Type.prototype.decode = function decode_setup(reader, length, end, depth) {
+      return this.setup().decode(reader, length, end, depth);
     };
     Type.prototype.decodeDelimited = function decodeDelimited(reader) {
       if (!(reader instanceof Reader))
         reader = Reader.create(reader);
       return this.decode(reader, reader.uint32());
     };
-    Type.prototype.verify = function verify_setup(message) {
-      return this.setup().verify(message);
+    Type.prototype.verify = function verify_setup(message, depth) {
+      return this.setup().verify(message, depth);
     };
-    Type.prototype.fromObject = function fromObject(object) {
-      return this.setup().fromObject(object);
+    Type.prototype.fromObject = function fromObject(object, depth) {
+      return this.setup().fromObject(object, depth);
     };
     Type.prototype.toObject = function toObject(message, options) {
       return this.setup().toObject(message, options);
@@ -7845,6 +7908,9 @@ var require_util = __commonJS({
     util.codegen = require_codegen();
     util.fetch = require_fetch();
     util.path = require_path();
+    util.patterns = require_patterns();
+    var reservedRe = util.patterns.reservedRe;
+    var unsafePropertyRe = util.patterns.unsafePropertyRe;
     util.fs = util.inquire("fs");
     util.toArray = function toArray(object) {
       if (object) {
@@ -7864,14 +7930,12 @@ var require_util = __commonJS({
       }
       return object;
     };
-    var safePropBackslashRe = /\\/g;
-    var safePropQuoteRe = /"/g;
     util.isReserved = function isReserved(name) {
-      return /^(?:do|if|in|for|let|new|try|var|case|else|enum|eval|false|null|this|true|void|with|break|catch|class|const|super|throw|while|yield|delete|export|import|public|return|static|switch|typeof|default|extends|finally|package|private|continue|debugger|function|arguments|interface|protected|implements|instanceof)$/.test(name);
+      return reservedRe.test(name);
     };
     util.safeProp = function safeProp(prop) {
-      if (!/^[$\w_]+$/.test(prop) || util.isReserved(prop))
-        return '["' + prop.replace(safePropBackslashRe, "\\\\").replace(safePropQuoteRe, '\\"') + '"]';
+      if (!/^[$\w_]+$/.test(prop) || reservedRe.test(prop))
+        return "[" + JSON.stringify(prop) + "]";
       return "." + prop;
     };
     util.ucFirst = function ucFirst(str) {
@@ -7918,9 +7982,8 @@ var require_util = __commonJS({
     util.setProperty = function setProperty(dst, path5, value, ifNotSet) {
       function setProp(dst2, path6, value2) {
         var part = path6.shift();
-        if (part === "__proto__" || part === "prototype") {
+        if (unsafePropertyRe.test(part))
           return dst2;
-        }
         if (path6.length > 0) {
           dst2[part] = setProp(dst2[part] || {}, path6, value2);
         } else {
@@ -7987,7 +8050,7 @@ var require_types = __commonJS({
       // 14
     ];
     function bake(values, offset) {
-      var i = 0, o = {};
+      var i = 0, o = /* @__PURE__ */ Object.create(null);
       offset |= 0;
       while (i < values.length) o[s[i + offset]] = values[i++];
       return o;
@@ -8573,6 +8636,8 @@ var require_object = __commonJS({
       return void 0;
     };
     ReflectionObject.prototype.setOption = function setOption(name, value, ifNotSet) {
+      if (name === "__proto__")
+        return this;
       if (!this.options)
         this.options = {};
       if (/^features\./.test(name)) {
@@ -8584,6 +8649,8 @@ var require_object = __commonJS({
       return this;
     };
     ReflectionObject.prototype.setParsedOption = function setParsedOption(name, value, propName) {
+      if (name === "__proto__")
+        return this;
       if (!this.parsedOptions) {
         this.parsedOptions = [];
       }
@@ -8653,7 +8720,7 @@ var require_enum = __commonJS({
       this.reserved = void 0;
       if (values) {
         for (var keys = Object.keys(values), i = 0; i < keys.length; ++i)
-          if (typeof values[keys[i]] === "number")
+          if (keys[i] !== "__proto__" && typeof values[keys[i]] === "number")
             this.valuesById[this.values[keys[i]] = values[keys[i]]] = keys[i];
       }
     }
@@ -8698,6 +8765,8 @@ var require_enum = __commonJS({
         throw TypeError("name must be a string");
       if (!util.isInteger(id))
         throw TypeError("id must be an integer");
+      if (name === "__proto__")
+        return this;
       if (this.values[name] !== void 0)
         throw Error("duplicate name '" + name + "' in " + this);
       if (this.isReservedId(id))
@@ -9107,9 +9176,9 @@ var require_parse = __commonJS({
     var base16NegRe = /^-?0[x][0-9a-fA-F]+$/;
     var base8Re = /^0[0-7]+$/;
     var base8NegRe = /^-?0[0-7]+$/;
-    var numberRe = /^(?![eE])[0-9]*(?:\.[0-9]*)?(?:[eE][+-]?[0-9]+)?$/;
+    var numberRe = util.patterns.numberRe;
     var nameRe = /^[a-zA-Z_][a-zA-Z_0-9]*$/;
-    var typeRefRe = /^(?:\.?[a-zA-Z_][a-zA-Z_0-9]*)(?:\.[a-zA-Z_][a-zA-Z_0-9]*)*$/;
+    var typeRefRe = util.patterns.typeRefRe;
     function parse(source, root, options) {
       if (!(root instanceof Root)) {
         options = root;
@@ -9647,7 +9716,8 @@ var require_parse = __commonJS({
             var prevValue = objectResult[propName];
             if (prevValue)
               value = [].concat(prevValue).concat(value);
-            objectResult[propName] = value;
+            if (propName !== "__proto__")
+              objectResult[propName] = value;
             skip(",", true);
             skip(";", true);
           }
@@ -11557,6 +11627,9 @@ var require_descriptor2 = __commonJS({
     var OneOf = $protobuf.OneOf;
     var Service = $protobuf.Service;
     var Method = $protobuf.Method;
+    var patterns = $protobuf.util.patterns;
+    var numberRe = patterns.numberRe;
+    var typeRefRe = patterns.typeRefRe;
     Root.fromDescriptor = function fromDescriptor(descriptor) {
       if (typeof descriptor.length === "number")
         descriptor = exports2.FileDescriptorSet.decode(descriptor);
@@ -11705,16 +11778,17 @@ var require_descriptor2 = __commonJS({
       descriptor.options = toDescriptorOptions(this.options, exports2.MessageOptions);
       return descriptor;
     };
-    var numberRe = /^(?![eE])[0-9]*(?:\.[0-9]*)?(?:[eE][+-]?[0-9]+)?$/;
     Field.fromDescriptor = function fromDescriptor(descriptor, edition, nested) {
       if (typeof descriptor.length === "number")
         descriptor = exports2.DescriptorProto.decode(descriptor);
       if (typeof descriptor.number !== "number")
         throw Error("missing field id");
-      var fieldType;
-      if (descriptor.typeName && descriptor.typeName.length)
-        fieldType = descriptor.typeName;
-      else
+      var typeName = descriptor.typeName, fieldType;
+      if (typeName != null && typeName !== "") {
+        if (typeof typeName !== "string" || !typeRefRe.test(typeName))
+          throw Error("illegal type name: " + typeName);
+        fieldType = typeName;
+      } else
         fieldType = fromDescriptorType(descriptor.type);
       var fieldRule;
       switch (descriptor.label) {
@@ -11732,9 +11806,11 @@ var require_descriptor2 = __commonJS({
           throw Error("illegal label: " + descriptor.label);
       }
       var extendee = descriptor.extendee;
-      if (descriptor.extendee !== void 0) {
-        extendee = extendee.length ? extendee : void 0;
-      }
+      if (extendee != null && extendee !== "") {
+        if (typeof extendee !== "string" || !typeRefRe.test(extendee))
+          throw Error("illegal type name: " + extendee);
+      } else
+        extendee = void 0;
       var field = new Field(
         descriptor.name.length ? descriptor.name : "field" + descriptor.number,
         descriptor.number,
@@ -11800,7 +11876,7 @@ var require_descriptor2 = __commonJS({
         }
       }
       descriptor.extendee = this.extensionField ? this.extensionField.parent.fullName : this.extend;
-      if (this.partOf) {
+      if (this.partOf && this.parent instanceof Type) {
         if ((descriptor.oneofIndex = this.parent.oneofsArray.indexOf(this.partOf)) < 0)
           throw Error("missing oneof");
       }
@@ -11889,12 +11965,21 @@ var require_descriptor2 = __commonJS({
     Method.fromDescriptor = function fromDescriptor(descriptor) {
       if (typeof descriptor.length === "number")
         descriptor = exports2.MethodDescriptorProto.decode(descriptor);
+      var inputType = descriptor.inputType, outputType = descriptor.outputType;
+      if (inputType != null && inputType !== "") {
+        if (typeof inputType !== "string" || !typeRefRe.test(inputType))
+          throw Error("illegal type name: " + inputType);
+      }
+      if (outputType != null && outputType !== "") {
+        if (typeof outputType !== "string" || !typeRefRe.test(outputType))
+          throw Error("illegal type name: " + outputType);
+      }
       return new Method(
         // unnamedMethodIndex is global, not per service, because we have no ref to a service here
         descriptor.name && descriptor.name.length ? descriptor.name : "Method" + unnamedMethodIndex++,
         "rpc",
-        descriptor.inputType,
-        descriptor.outputType,
+        inputType,
+        outputType,
         Boolean(descriptor.clientStreaming),
         Boolean(descriptor.serverStreaming),
         fromDescriptorOptions(descriptor.options, exports2.MethodOptions)

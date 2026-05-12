@@ -33,7 +33,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// src/bootstrap/paths.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/bootstrap/paths.ts
 function resolveProgramData() {
   return process.env.PROGRAMDATA || process.env.ProgramData || "C:\\ProgramData";
 }
@@ -89,7 +89,7 @@ function getTrayStatusFilePath() {
 }
 var import_os, import_path, import_fs, MACOS_AGENT_DATA_DIR, AGENT_STATUS_DIR_NAME, TRAY_STATUS_FILE_NAME;
 var init_paths = __esm({
-  "src/bootstrap/paths.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/bootstrap/paths.ts"() {
     "use strict";
     import_os = __toESM(require("os"));
     import_path = __toESM(require("path"));
@@ -100,9 +100,9 @@ var init_paths = __esm({
   }
 });
 
-// node_modules/dotenv/package.json
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/dotenv/package.json
 var require_package = __commonJS({
-  "node_modules/dotenv/package.json"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/dotenv/package.json"(exports2, module2) {
     module2.exports = {
       name: "dotenv",
       version: "16.6.1",
@@ -168,9 +168,9 @@ var require_package = __commonJS({
   }
 });
 
-// node_modules/dotenv/lib/main.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
-  "node_modules/dotenv/lib/main.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/dotenv/lib/main.js"(exports2, module2) {
     var fs18 = require("fs");
     var path13 = require("path");
     var os21 = require("os");
@@ -458,7 +458,7 @@ var require_main = __commonJS({
   }
 });
 
-// src/priv/privsvc-client-windows.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/priv/privsvc-client-windows.ts
 var privsvc_client_windows_exports = {};
 __export(privsvc_client_windows_exports, {
   PrivSvcClient: () => PrivSvcClient
@@ -488,7 +488,7 @@ function getTimeoutForMethod(method) {
 }
 var import_net, import_crypto4, import_events, PIPE_PATH, DEFAULT_TIMEOUT_MS, CONNECT_TIMEOUT_MS, MAX_PENDING, MAX_BUFFER_CHARS, PrivSvcClient;
 var init_privsvc_client_windows = __esm({
-  "src/priv/privsvc-client-windows.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/priv/privsvc-client-windows.ts"() {
     "use strict";
     import_net = __toESM(require("net"));
     import_crypto4 = require("crypto");
@@ -776,7 +776,7 @@ var init_privsvc_client_windows = __esm({
   }
 });
 
-// src/priv/privsvc-client-macos.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/priv/privsvc-client-macos.ts
 var privsvc_client_macos_exports = {};
 __export(privsvc_client_macos_exports, {
   PrivSvcClient: () => PrivSvcClient2
@@ -805,7 +805,7 @@ function getTimeoutForMethod2(method) {
 }
 var import_net2, import_crypto5, import_events2, SOCKET_PATH, DEFAULT_TIMEOUT_MS2, CONNECT_TIMEOUT_MS2, MAX_PENDING2, MAX_BUFFER_CHARS2, PrivSvcClient2;
 var init_privsvc_client_macos = __esm({
-  "src/priv/privsvc-client-macos.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/priv/privsvc-client-macos.ts"() {
     "use strict";
     import_net2 = __toESM(require("net"));
     import_crypto5 = require("crypto");
@@ -1059,7 +1059,7 @@ var init_privsvc_client_macos = __esm({
   }
 });
 
-// src/priv/privsvc-client-linux.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/priv/privsvc-client-linux.ts
 var privsvc_client_linux_exports = {};
 __export(privsvc_client_linux_exports, {
   PrivSvcClient: () => PrivSvcClient3
@@ -1088,7 +1088,7 @@ function getTimeoutForMethod3(method) {
 }
 var import_net3, import_crypto6, import_events3, SOCKET_PATH2, DEFAULT_TIMEOUT_MS3, CONNECT_TIMEOUT_MS3, MAX_PENDING3, MAX_BUFFER_CHARS3, PrivSvcClient3;
 var init_privsvc_client_linux = __esm({
-  "src/priv/privsvc-client-linux.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/priv/privsvc-client-linux.ts"() {
     "use strict";
     import_net3 = __toESM(require("net"));
     import_crypto6 = require("crypto");
@@ -1342,12 +1342,12 @@ var init_privsvc_client_linux = __esm({
   }
 });
 
-// node_modules/systeminformation/package.json
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/package.json
 var require_package2 = __commonJS({
-  "node_modules/systeminformation/package.json"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/package.json"(exports2, module2) {
     module2.exports = {
       name: "systeminformation",
-      version: "5.31.1",
+      version: "5.31.6",
       description: "Advanced, lightweight system and OS information library",
       license: "MIT",
       author: "Sebastian Hildebrandt <hildebrandt@plus-innovations.com> (https://plus-innovations.com)",
@@ -1449,9 +1449,9 @@ var require_package2 = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/util.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/util.js
 var require_util = __commonJS({
-  "node_modules/systeminformation/lib/util.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/util.js"(exports2) {
     "use strict";
     var os21 = require("os");
     var fs18 = require("fs");
@@ -2154,6 +2154,20 @@ var require_util = __commonJS({
       }
       return !notPolluted;
     }
+    function sanitizeString(str, strict) {
+      if (typeof strict === "undefined") {
+        strict = false;
+      }
+      let result2 = "";
+      const s = isPrototypePolluted() ? "---" : sanitizeShellString(str, strict);
+      const l = mathMin(s.length, 2e3);
+      for (let i = 0; i <= l; i++) {
+        if (s[i] !== void 0) {
+          result2 = result2 + s[i];
+        }
+      }
+      return result2;
+    }
     function hex2bin(hex) {
       return ("00000000" + parseInt(hex, 16).toString(2)).substr(-8);
     }
@@ -2439,7 +2453,7 @@ var require_util = __commonJS({
         };
       });
     }
-    function promisify3(nodeStyleFunction) {
+    function promisify4(nodeStyleFunction) {
       return () => {
         const args = Array.prototype.slice.call(arguments);
         return new Promise((resolve, reject2) => {
@@ -2682,6 +2696,86 @@ var require_util = __commonJS({
     }
     function getAppleModel(key) {
       const appleModelIds = [
+        {
+          key: "Mac17,7",
+          name: "MacBook Pro",
+          size: "16-inch",
+          processor: "M5 Max",
+          year: "2026",
+          additional: ""
+        },
+        {
+          key: "Mac17,6",
+          name: "MacBook Pro",
+          size: "14-inch",
+          processor: "M5 Max",
+          year: "2026",
+          additional: ""
+        },
+        {
+          key: "Mac17,5",
+          name: "MacBook Pro",
+          size: "16-inch",
+          processor: "M5 Pro",
+          year: "2026",
+          additional: ""
+        },
+        {
+          key: "Mac17,4",
+          name: "MacBook Pro",
+          size: "14-inch",
+          processor: "M5 Pro",
+          year: "2026",
+          additional: ""
+        },
+        {
+          key: "Mac17,1",
+          name: "MacBook Neo",
+          size: "14-inch",
+          processor: "A18 Pro",
+          year: "2026",
+          additional: ""
+        },
+        {
+          key: "Mac17,3",
+          name: "MacBook Pro",
+          size: "16-inch",
+          processor: "M5",
+          year: "2025",
+          additional: ""
+        },
+        {
+          key: "Mac17,2",
+          name: "MacBook Pro",
+          size: "14-inch",
+          processor: "M5",
+          year: "2025",
+          additional: ""
+        },
+        {
+          key: "Mac16,13",
+          name: "MacBook Air",
+          size: "15-inch",
+          processor: "M4",
+          year: "2025",
+          additional: ""
+        },
+        {
+          key: "Mac16,12",
+          name: "MacBook Air",
+          size: "13-inch",
+          processor: "M4",
+          year: "2025",
+          additional: ""
+        },
+        {
+          key: "Mac15,13",
+          name: "MacBook Air",
+          size: "15-inch",
+          processor: "M3",
+          year: "2024",
+          additional: ""
+        },
         {
           key: "Mac15,12",
           name: "MacBook Air",
@@ -3898,6 +3992,10 @@ var require_util = __commonJS({
     function cleanString2(str) {
       return str.replace(/To Be Filled By O.E.M./g, "");
     }
+    function grep(str, pattern) {
+      const result2 = str.split("\n").filter((line) => line.includes(pattern)).join("\n");
+      return result2;
+    }
     function noop() {
     }
     exports2.toInt = toInt;
@@ -3929,10 +4027,11 @@ var require_util = __commonJS({
     exports2.isRaspbian = isRaspbian;
     exports2.sanitizeShellString = sanitizeShellString;
     exports2.isPrototypePolluted = isPrototypePolluted;
+    exports2.sanitizeString = sanitizeString;
     exports2.decodePiCpuinfo = decodePiCpuinfo;
     exports2.getRpiGpu = getRpiGpu;
     exports2.promiseAll = promiseAll;
-    exports2.promisify = promisify3;
+    exports2.promisify = promisify4;
     exports2.promisifySave = promisifySave;
     exports2.smartMonToolsInstalled = smartMonToolsInstalled;
     exports2.linuxVersion = linuxVersion;
@@ -3953,19 +4052,21 @@ var require_util = __commonJS({
     exports2.getAppleModel = getAppleModel;
     exports2.checkWebsite = checkWebsite;
     exports2.cleanString = cleanString2;
+    exports2.grep = grep;
     exports2.getPowershell = getPowershell;
   }
 });
 
-// node_modules/systeminformation/lib/osinfo.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/osinfo.js
 var require_osinfo = __commonJS({
-  "node_modules/systeminformation/lib/osinfo.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/osinfo.js"(exports2) {
     "use strict";
     var os21 = require("os");
     var fs18 = require("fs");
     var util = require_util();
     var exec = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
+    var execFile4 = require("child_process").execFile;
     var _platform = process.platform;
     var _linux = _platform === "linux" || _platform === "android";
     var _darwin = _platform === "darwin";
@@ -4682,7 +4783,7 @@ var require_osinfo = __commonJS({
                     const safePath = /^[a-zA-Z0-9/_.-]+$/;
                     const postgresqlBin = stdout.toString().split("\n").filter((p) => safePath.test(p.trim())).sort();
                     if (postgresqlBin.length) {
-                      execFile(postgresqlBin[postgresqlBin.length - 1], ["-V"], (error2, stdout2) => {
+                      execFile4(postgresqlBin[postgresqlBin.length - 1], ["-V"], (error2, stdout2) => {
                         if (!error2) {
                           const postgresql = stdout2.toString().split("\n")[0].split(" ") || [];
                           appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : "";
@@ -4726,11 +4827,17 @@ var require_osinfo = __commonJS({
                     if (!error) {
                       const postgresql = stdout.toString().split("\n")[0].split(" ") || [];
                       appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : "";
+                      if (appsObj.versions.postgresql.includes("(") && postgresql.length >= 2 && !postgresql[postgresql.length - 2].includes("(")) {
+                        appsObj.versions.postgresql = postgresql[postgresql.length - 2];
+                      }
                     } else {
                       exec("pg_config --version", (error2, stdout2) => {
                         if (!error2) {
                           const postgresql = stdout2.toString().split("\n")[0].split(" ") || [];
                           appsObj.versions.postgresql = postgresql.length ? postgresql[postgresql.length - 1] : "";
+                          if (appsObj.versions.postgresql.includes("(") && postgresql.length >= 2 && !postgresql[postgresql.length - 2].includes("(")) {
+                            appsObj.versions.postgresql = postgresql[postgresql.length - 2];
+                          }
                         }
                       });
                     }
@@ -5193,9 +5300,9 @@ echo -n "hardware: "; cat /sys/class/dmi/id/product_uuid 2> /dev/null; echo;`;
   }
 });
 
-// node_modules/systeminformation/lib/system.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/system.js
 var require_system = __commonJS({
-  "node_modules/systeminformation/lib/system.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/system.js"(exports2) {
     "use strict";
     var fs18 = require("fs");
     var os21 = require("os");
@@ -5970,9 +6077,9 @@ var require_system = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/cpu.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/cpu.js
 var require_cpu = __commonJS({
-  "node_modules/systeminformation/lib/cpu.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/cpu.js"(exports2) {
     "use strict";
     var os21 = require("os");
     var exec = require("child_process").exec;
@@ -8052,9 +8159,9 @@ var require_cpu = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/memory.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/memory.js
 var require_memory = __commonJS({
-  "node_modules/systeminformation/lib/memory.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/memory.js"(exports2) {
     "use strict";
     var os21 = require("os");
     var exec = require("child_process").exec;
@@ -8547,9 +8654,9 @@ var require_memory = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/battery.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/battery.js
 var require_battery = __commonJS({
-  "node_modules/systeminformation/lib/battery.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/battery.js"(exports2, module2) {
     "use strict";
     var exec = require("child_process").exec;
     var fs18 = require("fs");
@@ -8839,9 +8946,9 @@ var require_battery = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/graphics.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/graphics.js
 var require_graphics = __commonJS({
-  "node_modules/systeminformation/lib/graphics.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/graphics.js"(exports2) {
     "use strict";
     var fs18 = require("fs");
     var path13 = require("path");
@@ -9919,12 +10026,13 @@ var require_graphics = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/filesystem.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/filesystem.js
 var require_filesystem = __commonJS({
-  "node_modules/systeminformation/lib/filesystem.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/filesystem.js"(exports2) {
     "use strict";
     var util = require_util();
     var fs18 = require("fs");
+    var os21 = require("os");
     var exec = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var execPromiseSave = util.promisifySave(require("child_process").exec);
@@ -11118,7 +11226,7 @@ ${BSDName}|"; smartctl -H ${BSDName} | grep overall;`;
           }
           if (_darwin) {
             let cmdFullSmart = "";
-            exec("system_profiler SPSerialATADataType SPNVMeDataType SPUSBDataType", { maxBuffer: 1024 * 1024 }, (error, stdout) => {
+            exec(`system_profiler SPSerialATADataType SPNVMeDataType ${parseInt(os21.release(), 10) > 24 ? "SPUSBHostDataType" : "SPUSBDataType"} `, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().split("\n");
                 const linesSATA = [];
@@ -11494,13 +11602,14 @@ ${BSDName}|"; diskutil info /dev/${BSDName} | grep SMART;`;
   }
 });
 
-// node_modules/systeminformation/lib/network.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/network.js
 var require_network = __commonJS({
-  "node_modules/systeminformation/lib/network.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/network.js"(exports2) {
     "use strict";
     var os21 = require("os");
     var exec = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
+    var execFileSync = require("child_process").execFileSync;
     var fs18 = require("fs");
     var util = require_util();
     var _platform = process.platform;
@@ -11865,17 +11974,10 @@ var require_network = __commonJS({
         try {
           const SSID = getWindowsWirelessIfaceSSID(iface);
           if (SSID !== "Unknown") {
-            let ifaceSanitized = "";
-            const s = util.isPrototypePolluted() ? "---" : util.sanitizeShellString(SSID);
-            const l = util.mathMin(s.length, 32);
-            for (let i = 0; i <= l; i++) {
-              if (s[i] !== void 0) {
-                ifaceSanitized = ifaceSanitized + s[i];
-              }
-            }
+            const ifaceSanitized = util.sanitizeString(SSID);
             const profiles = execSync3(`netsh wlan show profiles "${ifaceSanitized}"`, util.execOptsWin).split("\r\n");
-            i8021xState = (profiles.find((l2) => l2.indexOf("802.1X") >= 0) || "").trim();
-            i8021xProtocol = (profiles.find((l2) => l2.indexOf("EAP") >= 0) || "").trim();
+            i8021xState = (profiles.find((l) => l.indexOf("802.1X") >= 0) || "").trim();
+            i8021xProtocol = (profiles.find((l) => l.indexOf("EAP") >= 0) || "").trim();
           }
           if (i8021xState.includes(":") && i8021xProtocol.includes(":")) {
             i8021x.state = i8021xState.split(":").pop();
@@ -11976,13 +12078,14 @@ var require_network = __commonJS({
       }
     }
     function getLinuxIfaceConnectionName(interfaceName) {
-      const cmd = `nmcli device status 2>/dev/null | grep ${interfaceName}`;
       try {
-        const result2 = execSync3(cmd, util.execOptsLinux).toString();
+        const output = execFileSync("nmcli", ["device", "status"], { ...util.execOptsLinux, stdio: ["ignore", "pipe", "ignore"] }).toString();
+        const result2 = util.grep(output, interfaceName);
         const resultFormat = result2.replace(/\s+/g, " ").trim();
         const connectionNameLines = resultFormat.split(" ").slice(3);
         const connectionName = connectionNameLines.join(" ");
-        return connectionName !== "--" ? connectionName : "";
+        const connectionNameSanitized = util.sanitizeString(connectionName, false);
+        return connectionNameSanitized !== "--" ? connectionNameSanitized : "";
       } catch {
         return "";
       }
@@ -12050,9 +12153,9 @@ var require_network = __commonJS({
     function getLinuxIfaceDHCPstatus(iface, connectionName, DHCPNics) {
       let result2 = false;
       if (connectionName) {
-        const cmd = `nmcli connection show "${connectionName}" 2>/dev/null | grep ipv4.method;`;
         try {
-          const lines = execSync3(cmd, util.execOptsLinux).toString();
+          const output = execFileSync("nmcli", ["connection", "show", connectionName], { ...util.execOptsLinux, stdio: ["ignore", "pipe", "ignore"] }).toString();
+          const lines = util.grep(output, "ipv4.method");
           const resultFormat = lines.replace(/\s+/g, " ").trim();
           const dhcStatus = resultFormat.split(" ").slice(1).toString();
           switch (dhcStatus) {
@@ -12073,9 +12176,9 @@ var require_network = __commonJS({
     }
     function getDarwinIfaceDHCPstatus(iface) {
       let result2 = false;
-      const cmd = `ipconfig getpacket "${iface}" 2>/dev/null | grep lease_time;`;
       try {
-        const lines = execSync3(cmd).toString().split("\n");
+        const output = execFileSync("ipconfig", ["getpacket", iface], { ...util.execOptsLinux, stdio: ["ignore", "pipe", "ignore"] }).toString();
+        const lines = util.grep(output, "lease_time");
         if (lines.length && lines[0].startsWith("lease_time")) {
           result2 = true;
         }
@@ -12086,9 +12189,9 @@ var require_network = __commonJS({
     }
     function getLinuxIfaceDNSsuffix(connectionName) {
       if (connectionName) {
-        const cmd = `nmcli connection show "${connectionName}" 2>/dev/null | grep ipv4.dns-search;`;
         try {
-          const result2 = execSync3(cmd, util.execOptsLinux).toString();
+          const output = execFileSync("nmcli", ["connection", "show", connectionName], { ...util.execOptsLinux, stdio: ["ignore", "pipe", "ignore"] }).toString();
+          const result2 = util.grep(output, "ipv4.dns-search");
           const resultFormat = result2.replace(/\s+/g, " ").trim();
           const dnsSuffix = resultFormat.split(" ").slice(1).toString();
           return dnsSuffix === "--" ? "Not defined" : dnsSuffix;
@@ -12101,9 +12204,9 @@ var require_network = __commonJS({
     }
     function getLinuxIfaceIEEE8021xAuth(connectionName) {
       if (connectionName) {
-        const cmd = `nmcli connection show "${connectionName}" 2>/dev/null | grep 802-1x.eap;`;
         try {
-          const result2 = execSync3(cmd, util.execOptsLinux).toString();
+          const output = execFileSync("nmcli", ["connection", "show", connectionName], { ...util.execOptsLinux, stdio: ["ignore", "pipe", "ignore"] }).toString();
+          const result2 = util.grep(output, "802-1x.eap");
           const resultFormat = result2.replace(/\s+/g, " ").trim();
           const authenticationProtocol = resultFormat.split(" ").slice(1).toString();
           return authenticationProtocol === "--" ? "" : authenticationProtocol;
@@ -12230,14 +12333,7 @@ var require_network = __commonJS({
                   nic.ip6 = ip6link;
                   nic.ip6subnet = ip6linksubnet;
                 }
-                let ifaceSanitized = "";
-                const s = util.isPrototypePolluted() ? "---" : util.sanitizeShellString(nic.iface);
-                const l = util.mathMin(s.length, 2e3);
-                for (let i = 0; i <= l; i++) {
-                  if (s[i] !== void 0) {
-                    ifaceSanitized = ifaceSanitized + s[i];
-                  }
-                }
+                const ifaceSanitized = util.sanitizeString(nic.iface);
                 result2.push({
                   iface: nic.iface,
                   ifaceName: nic.iface,
@@ -12347,14 +12443,7 @@ var require_network = __commonJS({
                     ip6subnet = ip6linksubnet;
                   }
                   const iface = dev.split(":")[0].trim();
-                  let ifaceSanitized = "";
-                  const s = util.isPrototypePolluted() ? "---" : util.sanitizeShellString(iface);
-                  const l = util.mathMin(s.length, 2e3);
-                  for (let i = 0; i <= l; i++) {
-                    if (s[i] !== void 0) {
-                      ifaceSanitized = ifaceSanitized + s[i];
-                    }
-                  }
+                  const ifaceSanitized = util.sanitizeString(iface);
                   const cmd = `echo -n "addr_assign_type: "; cat /sys/class/net/${ifaceSanitized}/addr_assign_type 2>/dev/null; echo;
             echo -n "address: "; cat /sys/class/net/${ifaceSanitized}/address 2>/dev/null; echo;
             echo -n "addr_len: "; cat /sys/class/net/${ifaceSanitized}/addr_len 2>/dev/null; echo;
@@ -12480,14 +12569,7 @@ var require_network = __commonJS({
                 nics8021xInfo = getWindowsWiredProfilesInformation();
                 dnsSuffixes = getWindowsDNSsuffixes();
                 for (let dev in ifaces) {
-                  let ifaceSanitized = "";
-                  const s = util.isPrototypePolluted() ? "---" : util.sanitizeShellString(dev);
-                  const l = util.mathMin(s.length, 2e3);
-                  for (let i = 0; i <= l; i++) {
-                    if (s[i] !== void 0) {
-                      ifaceSanitized = ifaceSanitized + s[i];
-                    }
-                  }
+                  const ifaceSanitized = util.sanitizeString(dev);
                   let iface = dev;
                   let ip4 = "";
                   let ip4subnet = "";
@@ -12721,14 +12803,7 @@ var require_network = __commonJS({
       }
       return new Promise((resolve) => {
         process.nextTick(() => {
-          let ifaceSanitized = "";
-          const s = util.isPrototypePolluted() ? "---" : util.sanitizeShellString(iface);
-          const l = util.mathMin(s.length, 2e3);
-          for (let i = 0; i <= l; i++) {
-            if (s[i] !== void 0) {
-              ifaceSanitized = ifaceSanitized + s[i];
-            }
-          }
+          const ifaceSanitized = util.sanitizeString(iface);
           let result2 = {
             iface: ifaceSanitized,
             operstate: "unknown",
@@ -12808,7 +12883,7 @@ var require_network = __commonJS({
                 result2.operstate = (stdout.toString().split(":")[1] || "").trim();
                 result2.operstate = (result2.operstate || "").toLowerCase();
                 result2.operstate = result2.operstate === "active" ? "up" : result2.operstate === "inactive" ? "down" : "unknown";
-                cmd = "netstat -bdI " + ifaceSanitized;
+                cmd = "netstat -bdnI " + ifaceSanitized;
                 exec(cmd, (error2, stdout2) => {
                   if (!error2) {
                     lines = stdout2.toString().split("\n");
@@ -13287,9 +13362,9 @@ var require_network = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/wifi.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/wifi.js
 var require_wifi = __commonJS({
-  "node_modules/systeminformation/lib/wifi.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/wifi.js"(exports2) {
     "use strict";
     var os21 = require("os");
     var exec = require("child_process").exec;
@@ -13680,14 +13755,7 @@ var require_wifi = __commonJS({
                   }
                 });
                 if (iface) {
-                  let ifaceSanitized = "";
-                  const s = util.isPrototypePolluted() ? "---" : util.sanitizeShellString(iface, true);
-                  const l = util.mathMin(s.length, 2e3);
-                  for (let i = 0; i <= l; i++) {
-                    if (s[i] !== void 0) {
-                      ifaceSanitized = ifaceSanitized + s[i];
-                    }
-                  }
+                  const ifaceSanitized = util.sanitizeString(iface, true);
                   const res = getWifiNetworkListIw(ifaceSanitized);
                   if (res === -1) {
                     setTimeout(() => {
@@ -13821,26 +13889,12 @@ var require_wifi = __commonJS({
             const ifaces = ifaceListLinux();
             const networkList = getWifiNetworkListNmi();
             ifaces.forEach((ifaceDetail) => {
-              let ifaceSanitized = "";
-              const s = util.isPrototypePolluted() ? "---" : util.sanitizeShellString(ifaceDetail.iface, true);
-              const ll = util.mathMin(s.length, 2e3);
-              for (let i = 0; i <= ll; i++) {
-                if (s[i] !== void 0) {
-                  ifaceSanitized = ifaceSanitized + s[i];
-                }
-              }
+              const ifaceSanitized = util.sanitizeString(ifaceDetail.iface, true);
               const nmiDetails = nmiDeviceLinux(ifaceSanitized);
               const wpaDetails = wpaConnectionLinux(ifaceSanitized);
               const ssid = nmiDetails.ssid || wpaDetails.ssid;
               const network = networkList.filter((nw) => nw.ssid === ssid);
-              let ssidSanitized = "";
-              const t = util.isPrototypePolluted() ? "---" : util.sanitizeShellString(ssid, true);
-              const l = util.mathMin(t.length, 32);
-              for (let i = 0; i <= l; i++) {
-                if (t[i] !== void 0) {
-                  ssidSanitized = ssidSanitized + t[i];
-                }
-              }
+              const ssidSanitized = util.sanitizeString(ssid, true);
               const nmiConnection = nmiConnectionLinux(ssidSanitized);
               const channel = network && network.length && network[0].channel ? network[0].channel : wpaDetails.channel ? wpaDetails.channel : null;
               const bssid = network && network.length && network[0].bssid ? network[0].bssid : wpaDetails.bssid ? wpaDetails.bssid : null;
@@ -13982,7 +14036,8 @@ var require_wifi = __commonJS({
           if (_linux) {
             const ifaces = ifaceListLinux();
             ifaces.forEach((ifaceDetail) => {
-              const nmiDetails = nmiDeviceLinux(ifaceDetail.iface);
+              const ifaceSanitized = util.sanitizeString(ifaceDetail.iface, true);
+              const nmiDetails = nmiDeviceLinux(ifaceSanitized);
               result2.push({
                 id: ifaceDetail.id,
                 iface: ifaceDetail.iface,
@@ -14065,9 +14120,9 @@ var require_wifi = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/processes.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/processes.js
 var require_processes = __commonJS({
-  "node_modules/systeminformation/lib/processes.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/processes.js"(exports2) {
     "use strict";
     var os21 = require("os");
     var fs18 = require("fs");
@@ -15297,9 +15352,9 @@ var require_processes = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/users.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/users.js
 var require_users = __commonJS({
-  "node_modules/systeminformation/lib/users.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/users.js"(exports2) {
     "use strict";
     var exec = require("child_process").exec;
     var util = require_util();
@@ -15659,9 +15714,9 @@ var require_users = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/internet.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/internet.js
 var require_internet = __commonJS({
-  "node_modules/systeminformation/lib/internet.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/internet.js"(exports2) {
     "use strict";
     var util = require_util();
     var _platform = process.platform;
@@ -15869,9 +15924,9 @@ var require_internet = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/dockerSocket.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/dockerSocket.js
 var require_dockerSocket = __commonJS({
-  "node_modules/systeminformation/lib/dockerSocket.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/dockerSocket.js"(exports2, module2) {
     "use strict";
     var net4 = require("net");
     var isWin = require("os").type() === "Windows_NT";
@@ -16142,9 +16197,9 @@ var require_dockerSocket = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/docker.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/docker.js
 var require_docker = __commonJS({
-  "node_modules/systeminformation/lib/docker.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/docker.js"(exports2) {
     "use strict";
     var util = require_util();
     var DockerSocket = require_dockerSocket();
@@ -16824,9 +16879,9 @@ var require_docker = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/virtualbox.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/virtualbox.js
 var require_virtualbox = __commonJS({
-  "node_modules/systeminformation/lib/virtualbox.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/virtualbox.js"(exports2) {
     "use strict";
     var os21 = require("os");
     var exec = require("child_process").exec;
@@ -16922,9 +16977,9 @@ var require_virtualbox = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/printer.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/printer.js
 var require_printer = __commonJS({
-  "node_modules/systeminformation/lib/printer.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/printer.js"(exports2) {
     "use strict";
     var exec = require("child_process").exec;
     var util = require_util();
@@ -17106,9 +17161,9 @@ var require_printer = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/usb.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/usb.js
 var require_usb = __commonJS({
-  "node_modules/systeminformation/lib/usb.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/usb.js"(exports2) {
     "use strict";
     var exec = require("child_process").exec;
     var util = require_util();
@@ -17383,9 +17438,9 @@ var require_usb = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/audio.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/audio.js
 var require_audio = __commonJS({
-  "node_modules/systeminformation/lib/audio.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/audio.js"(exports2) {
     "use strict";
     var exec = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
@@ -17628,9 +17683,9 @@ var require_audio = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/bluetoothVendors.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/bluetoothVendors.js
 var require_bluetoothVendors = __commonJS({
-  "node_modules/systeminformation/lib/bluetoothVendors.js"(exports2, module2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/bluetoothVendors.js"(exports2, module2) {
     "use strict";
     module2.exports = {
       0: "Ericsson Technology Licensing",
@@ -18771,9 +18826,9 @@ var require_bluetoothVendors = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/bluetooth.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/bluetooth.js
 var require_bluetooth = __commonJS({
-  "node_modules/systeminformation/lib/bluetooth.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/bluetooth.js"(exports2) {
     "use strict";
     var exec = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
@@ -19023,9 +19078,9 @@ var require_bluetooth = __commonJS({
   }
 });
 
-// node_modules/systeminformation/lib/index.js
+// certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/index.js
 var require_lib = __commonJS({
-  "node_modules/systeminformation/lib/index.js"(exports2) {
+  "certusws-tracenium-agent-w/build/linux/staging/node_modules/systeminformation/lib/index.js"(exports2) {
     "use strict";
     var lib_version = require_package2().version;
     var util = require_util();
@@ -19421,7 +19476,7 @@ var require_lib = __commonJS({
   }
 });
 
-// src/domain/software-display-normalizer.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/domain/software-display-normalizer.ts
 function normalizeSoftwareDisplayMetadata(input) {
   const rawName = clean(input.name) || "Unknown Software";
   const technicalName = clean(input.packageFamilyName) || rawName;
@@ -19544,7 +19599,7 @@ function applyRegexDisplayName(pattern, template, value) {
 }
 var SOURCE_ONLY_PUBLISHERS, PRESERVE_UPPERCASE_WORDS, KNOWN_PUBLISHERS, VENDOR_RULES, NAME_RULES, DRIVER_OR_COMPONENT_HINTS;
 var init_software_display_normalizer = __esm({
-  "src/domain/software-display-normalizer.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/domain/software-display-normalizer.ts"() {
     "use strict";
     SOURCE_ONLY_PUBLISHERS = /* @__PURE__ */ new Set([
       "pkgutil",
@@ -19757,7 +19812,7 @@ var init_software_display_normalizer = __esm({
   }
 });
 
-// src/domain/normalize-app.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/domain/normalize-app.ts
 function cleanString(value) {
   if (!value) return void 0;
   const cleaned = value.replace(/\s+/g, " ").trim();
@@ -19827,7 +19882,7 @@ function normalizeApp(input) {
 }
 var import_crypto9, SOURCE_ONLY_PUBLISHERS2;
 var init_normalize_app = __esm({
-  "src/domain/normalize-app.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/domain/normalize-app.ts"() {
     "use strict";
     import_crypto9 = __toESM(require("crypto"));
     init_software_display_normalizer();
@@ -19847,7 +19902,7 @@ var init_normalize_app = __esm({
   }
 });
 
-// src/domain/software-inventory-delta.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/domain/software-inventory-delta.ts
 function computeSoftwareDelta(current, previous) {
   const prevMap = /* @__PURE__ */ new Map();
   const currMap = /* @__PURE__ */ new Map();
@@ -19930,12 +19985,12 @@ function toBaselineOps(delta) {
   return { upserts, deletes };
 }
 var init_software_inventory_delta = __esm({
-  "src/domain/software-inventory-delta.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/domain/software-inventory-delta.ts"() {
     "use strict";
   }
 });
 
-// src/domain/software-baseline-repo.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/domain/software-baseline-repo.ts
 var software_baseline_repo_exports = {};
 __export(software_baseline_repo_exports, {
   deleteSoftwareByIds: () => deleteSoftwareByIds,
@@ -20124,7 +20179,7 @@ function deleteSoftwareByIds(installIds) {
 }
 var import_better_sqlite3, import_path7, import_fs9, DB_PATH, LEGACY_DB_PATH, DB_DIR, dbInstance;
 var init_software_baseline_repo = __esm({
-  "src/domain/software-baseline-repo.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/domain/software-baseline-repo.ts"() {
     "use strict";
     import_better_sqlite3 = __toESM(require("better-sqlite3"));
     import_path7 = __toESM(require("path"));
@@ -20137,7 +20192,7 @@ var init_software_baseline_repo = __esm({
   }
 });
 
-// src/plugins/amp/providers/windows.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/amp/providers/windows.ts
 function invDebug(...args) {
   if (INVENTORY_DEBUG) console.log(...args);
 }
@@ -20244,7 +20299,7 @@ async function collectWindowsSoftwareInventory(ctx) {
 }
 var import_os8, import_systeminformation, INVENTORY_DEBUG, windowsProvider;
 var init_windows = __esm({
-  "src/plugins/amp/providers/windows.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/amp/providers/windows.ts"() {
     "use strict";
     import_os8 = __toESM(require("os"));
     import_systeminformation = __toESM(require_lib());
@@ -20371,7 +20426,7 @@ var init_windows = __esm({
   }
 });
 
-// src/plugins/amp/providers/macos.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/amp/providers/macos.ts
 function isApplePkgutilNoise(pkgId) {
   if (!pkgId) return false;
   for (const prefix of APPLE_PKGUTIL_NOISE_PREFIXES) {
@@ -20668,7 +20723,7 @@ async function collectMacSecurity(ctx) {
 }
 var import_os9, import_systeminformation2, import_child_process4, import_util, import_fs10, execFileAsync, APPLE_PKGUTIL_NOISE_PREFIXES, PKGUTIL_NOISE_SUFFIX_PATTERNS, macProvider;
 var init_macos = __esm({
-  "src/plugins/amp/providers/macos.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/amp/providers/macos.ts"() {
     "use strict";
     import_os9 = __toESM(require("os"));
     import_systeminformation2 = __toESM(require_lib());
@@ -20801,7 +20856,7 @@ var init_macos = __esm({
   }
 });
 
-// src/plugins/amp/providers/linux.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/amp/providers/linux.ts
 function isHardNoise(pkgName) {
   for (const re of HARD_NOISE_PATTERNS) {
     if (re.test(pkgName)) return true;
@@ -21079,7 +21134,7 @@ async function collectLinuxSoftware() {
 }
 var import_os10, import_systeminformation3, import_child_process5, import_util2, execFileAsync2, HARD_NOISE_PATTERNS, PKG_LIST_TIMEOUT_MS, cachedPM, SOURCE_PRIORITY, linuxProvider;
 var init_linux = __esm({
-  "src/plugins/amp/providers/linux.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/amp/providers/linux.ts"() {
     "use strict";
     import_os10 = __toESM(require("os"));
     import_systeminformation3 = __toESM(require_lib());
@@ -21228,7 +21283,7 @@ var init_linux = __esm({
   }
 });
 
-// src/plugins/amp/providers/index.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/amp/providers/index.ts
 function getProvider(platform) {
   switch (platform) {
     case "win32":
@@ -21242,7 +21297,7 @@ function getProvider(platform) {
   }
 }
 var init_providers = __esm({
-  "src/plugins/amp/providers/index.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/amp/providers/index.ts"() {
     "use strict";
     init_windows();
     init_macos();
@@ -21250,7 +21305,7 @@ var init_providers = __esm({
   }
 });
 
-// src/plugins/amp/index.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/amp/index.ts
 var amp_exports = {};
 __export(amp_exports, {
   collectAMP: () => collectAMP
@@ -21266,14 +21321,14 @@ async function collectAMP(ctx) {
 }
 var import_os11;
 var init_amp = __esm({
-  "src/plugins/amp/index.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/amp/index.ts"() {
     "use strict";
     import_os11 = __toESM(require("os"));
     init_providers();
   }
 });
 
-// src/plugins/scp/providers/macos.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/scp/providers/macos.ts
 function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -21341,12 +21396,12 @@ async function collectMacosScp(ctx) {
   };
 }
 var init_macos2 = __esm({
-  "src/plugins/scp/providers/macos.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/scp/providers/macos.ts"() {
     "use strict";
   }
 });
 
-// src/plugins/scp/providers/windows.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/scp/providers/windows.ts
 function normalizeArray(value) {
   if (Array.isArray(value)) return value;
   if (value && typeof value === "object") return [value];
@@ -21442,7 +21497,7 @@ async function collectWindowsScp(ctx) {
 }
 var WEAK_CIPHER_PATTERNS;
 var init_windows2 = __esm({
-  "src/plugins/scp/providers/windows.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/scp/providers/windows.ts"() {
     "use strict";
     WEAK_CIPHER_PATTERNS = [
       /RC4/i,
@@ -21456,7 +21511,7 @@ var init_windows2 = __esm({
   }
 });
 
-// src/plugins/scp/providers/linux.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/scp/providers/linux.ts
 async function readSecurityCompliance3(ctx) {
   const resp = await ctx.priv.call({
     v: 1,
@@ -21504,12 +21559,12 @@ async function collectLinuxScp(ctx) {
   };
 }
 var init_linux2 = __esm({
-  "src/plugins/scp/providers/linux.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/scp/providers/linux.ts"() {
     "use strict";
   }
 });
 
-// src/plugins/scp/index.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/scp/index.ts
 var scp_exports = {};
 __export(scp_exports, {
   collectSCP: () => collectSCP
@@ -21540,7 +21595,7 @@ async function collectSCP(ctx) {
 }
 var import_os12;
 var init_scp = __esm({
-  "src/plugins/scp/index.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/scp/index.ts"() {
     "use strict";
     import_os12 = __toESM(require("os"));
     init_macos2();
@@ -21549,7 +21604,7 @@ var init_scp = __esm({
   }
 });
 
-// src/plugins/pmp/state.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/pmp/state.ts
 function ensureDir(dir) {
   import_fs11.default.mkdirSync(dir, { recursive: true });
 }
@@ -21615,7 +21670,7 @@ function isRemediateInFlight() {
 }
 var import_fs11, import_path8, remediateInFlight;
 var init_state = __esm({
-  "src/plugins/pmp/state.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/pmp/state.ts"() {
     "use strict";
     import_fs11 = __toESM(require("fs"));
     import_path8 = __toESM(require("path"));
@@ -21623,7 +21678,7 @@ var init_state = __esm({
   }
 });
 
-// src/plugins/pmp/providers/macos.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/pmp/providers/macos.ts
 function normalizeArray2(value) {
   if (Array.isArray(value)) return value;
   if (value && typeof value === "object") return [value];
@@ -21769,13 +21824,13 @@ async function collectMacosPmp(ctx) {
   };
 }
 var init_macos3 = __esm({
-  "src/plugins/pmp/providers/macos.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/pmp/providers/macos.ts"() {
     "use strict";
     init_state();
   }
 });
 
-// src/plugins/pmp/providers/windows.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/pmp/providers/windows.ts
 function normalizeMsrcSeverity(raw) {
   const s = String(raw || "").trim().toLowerCase();
   if (s === "critical") return "critical";
@@ -21926,13 +21981,13 @@ async function collectWindowsPmp(ctx) {
   };
 }
 var init_windows3 = __esm({
-  "src/plugins/pmp/providers/windows.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/pmp/providers/windows.ts"() {
     "use strict";
     init_state();
   }
 });
 
-// src/plugins/pmp/providers/linux.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/pmp/providers/linux.ts
 function normalizeArray4(value) {
   if (Array.isArray(value)) return value;
   if (value && typeof value === "object") return [value];
@@ -22087,13 +22142,13 @@ async function collectLinuxPmp(ctx) {
   };
 }
 var init_linux3 = __esm({
-  "src/plugins/pmp/providers/linux.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/pmp/providers/linux.ts"() {
     "use strict";
     init_state();
   }
 });
 
-// src/plugins/pmp/index.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/pmp/index.ts
 var pmp_exports = {};
 __export(pmp_exports, {
   collectPMP: () => collectPMP
@@ -22139,7 +22194,7 @@ async function collectPMP(ctx) {
 }
 var import_os13;
 var init_pmp = __esm({
-  "src/plugins/pmp/index.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/plugins/pmp/index.ts"() {
     "use strict";
     import_os13 = __toESM(require("os"));
     init_macos3();
@@ -22148,7 +22203,7 @@ var init_pmp = __esm({
   }
 });
 
-// src/update/update-state.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/update/update-state.ts
 function ensureDir2(dir) {
   import_fs12.default.mkdirSync(dir, { recursive: true });
 }
@@ -22229,14 +22284,14 @@ function markUpdateFailed(error) {
 }
 var import_fs12, import_path9;
 var init_update_state = __esm({
-  "src/update/update-state.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/update/update-state.ts"() {
     "use strict";
     import_fs12 = __toESM(require("fs"));
     import_path9 = __toESM(require("path"));
   }
 });
 
-// src/platform/linux/distro.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/platform/linux/distro.ts
 var distro_exports = {};
 __export(distro_exports, {
   _resetForTests: () => _resetForTests,
@@ -22289,7 +22344,7 @@ function _resetForTests() {
 }
 var import_fs15, FAMILY_BY_ID, cached;
 var init_distro = __esm({
-  "src/platform/linux/distro.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/platform/linux/distro.ts"() {
     "use strict";
     import_fs15 = __toESM(require("fs"));
     FAMILY_BY_ID = {
@@ -22328,14 +22383,14 @@ var init_distro = __esm({
   }
 });
 
-// src/update/updater-runner.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/update/updater-runner.ts
 function runWindowsMsiUpdate(msiPath) {
   if (!import_fs16.default.existsSync(msiPath)) {
     throw new Error(`msi_not_found: ${msiPath}`);
   }
   const args = ["/i", msiPath, "/qn", "/norestart"];
   try {
-    const child = (0, import_child_process6.spawn)("msiexec", args, {
+    const child = (0, import_child_process7.spawn)("msiexec", args, {
       detached: true,
       stdio: "ignore",
       windowsHide: true
@@ -22370,7 +22425,7 @@ function runMacosPkgUpdate(pkgPath) {
   }
   const args = ["-pkg", pkgPath, "-target", "/"];
   try {
-    const child = (0, import_child_process6.spawn)("/usr/sbin/installer", args, {
+    const child = (0, import_child_process7.spawn)("/usr/sbin/installer", args, {
       detached: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -22454,7 +22509,7 @@ function runLinuxDebUpdate(debPath) {
     debPath
   ];
   try {
-    const child = (0, import_child_process6.spawn)("/usr/bin/dpkg", args, {
+    const child = (0, import_child_process7.spawn)("/usr/bin/dpkg", args, {
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, DEBIAN_FRONTEND: "noninteractive", LANG: "C", LC_ALL: "C" }
@@ -22489,7 +22544,7 @@ function runLinuxRpmUpdate(rpmPath) {
     rpmPath
   ];
   try {
-    const child = (0, import_child_process6.spawn)("/usr/bin/rpm", args, {
+    const child = (0, import_child_process7.spawn)("/usr/bin/rpm", args, {
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, LANG: "C", LC_ALL: "C" }
@@ -22575,18 +22630,18 @@ function runLinuxUpdate(packagePath) {
   }
   throw new Error(`linux_update_unsupported_family: ${distro.family}`);
 }
-var import_child_process6, import_fs16;
+var import_child_process7, import_fs16;
 var init_updater_runner = __esm({
-  "src/update/updater-runner.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/update/updater-runner.ts"() {
     "use strict";
-    import_child_process6 = require("child_process");
+    import_child_process7 = require("child_process");
     import_fs16 = __toESM(require("fs"));
     init_update_state();
     init_distro();
   }
 });
 
-// src/update/semver.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/update/semver.ts
 function compareSemver(a, b) {
   const parse = (v) => v.split(".").map((x) => {
     const n = Number(x);
@@ -22608,12 +22663,12 @@ function looksLikeSemver(v) {
   return /^\d+\.\d+\.\d+([.-][A-Za-z0-9]+)?$/.test(v);
 }
 var init_semver = __esm({
-  "src/update/semver.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/update/semver.ts"() {
     "use strict";
   }
 });
 
-// src/update/update-service.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/update/update-service.ts
 function resolveBaseDir3() {
   if (process.platform === "win32") {
     return import_path12.default.join(process.env.ProgramData || "C:\\ProgramData", "Tracenium");
@@ -23267,7 +23322,7 @@ async function performLinuxUpdate(ctx, latestVersion, expectedHash, downloadUrlO
 }
 var import_fs17, import_path12, import_crypto11, import_http, import_https;
 var init_update_service = __esm({
-  "src/update/update-service.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/update/update-service.ts"() {
     "use strict";
     import_fs17 = __toESM(require("fs"));
     import_path12 = __toESM(require("path"));
@@ -23281,7 +23336,7 @@ var init_update_service = __esm({
   }
 });
 
-// src/update/update-task.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/update/update-task.ts
 var update_task_exports = {};
 __export(update_task_exports, {
   runUpdateTask: () => runUpdateTask
@@ -23435,7 +23490,7 @@ async function runUpdateTask(ctx, opts) {
   }
 }
 var init_update_task = __esm({
-  "src/update/update-task.ts"() {
+  "certusws-tracenium-agent-w/build/linux/staging/src/update/update-task.ts"() {
     "use strict";
     init_update_state();
     init_update_service();
@@ -23443,11 +23498,11 @@ var init_update_task = __esm({
   }
 });
 
-// src/bootstrap/enroll.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/bootstrap/enroll.ts
 var import_fs6 = __toESM(require("fs"));
 var import_crypto3 = __toESM(require("crypto"));
 
-// src/bootstrap/enrollment-store.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/bootstrap/enrollment-store.ts
 var import_fs2 = __toESM(require("fs"));
 var import_path2 = __toESM(require("path"));
 var import_os2 = __toESM(require("os"));
@@ -23568,10 +23623,10 @@ var EnrollmentStore = class {
   }
 };
 
-// src/bootstrap/config.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/bootstrap/config.ts
 var import_dotenv = __toESM(require_main());
 
-// package.json
+// certusws-tracenium-agent-w/build/linux/staging/package.json
 var package_default = {
   name: "certusws-tracenium-agent",
   version: "1.1.14",
@@ -23608,13 +23663,13 @@ var package_default = {
     build: "tsc",
     "build:privsvc:linux": "tsc -p privsvc/linux/tsconfig.json",
     "build:privsvc:macos": "tsc -p privsvc/macos/tsconfig.json",
-    "pkg:linux": "../scripts/build-linux-pkg.sh",
-    "pkg:linux:arm64": "TRACENIUM_AGENT_ARCH=arm64 ../scripts/build-linux-pkg.sh",
+    "pkg:linux": "../scripts/build-linux-binaries.sh",
+    "pkg:linux:arm64": "TRACENIUM_AGENT_ARCH=arm64 ../scripts/build-linux-binaries.sh",
     "pkg:macos": "../scripts/build-macos-pkg.sh"
   }
 };
 
-// src/bootstrap/config.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/bootstrap/config.ts
 import_dotenv.default.config();
 function resolveGrpcEndpoint(raw) {
   const value = (raw || "").trim();
@@ -23707,7 +23762,7 @@ var config = {
   channel: process.env.CHANNEL || "stable"
 };
 
-// src/bootstrap/token-source.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/bootstrap/token-source.ts
 var import_child_process = require("child_process");
 var import_crypto = __toESM(require("crypto"));
 var import_fs3 = __toESM(require("fs"));
@@ -23799,7 +23854,7 @@ function clearEnrollmentTokenFile() {
   }
 }
 
-// src/platform/device-id.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/platform/device-id.ts
 var import_os4 = __toESM(require("os"));
 var import_fs4 = __toESM(require("fs"));
 var import_path3 = __toESM(require("path"));
@@ -23851,7 +23906,7 @@ function getDeviceId() {
   throw new Error(`Unsupported platform for deviceId: ${platform}`);
 }
 
-// src/platform/enrollment-meta.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/platform/enrollment-meta.ts
 var import_os5 = __toESM(require("os"));
 var import_fs5 = __toESM(require("fs"));
 var import_path4 = __toESM(require("path"));
@@ -23895,7 +23950,7 @@ async function writeEnrollmentMetadata(meta) {
   throw new Error(`Unsupported platform for enrollment metadata: ${platform}`);
 }
 
-// src/platform/privsvc-path.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/platform/privsvc-path.ts
 var import_os6 = __toESM(require("os"));
 function getPrivSvcPipePath() {
   const platform = import_os6.default.platform();
@@ -23911,7 +23966,7 @@ function getPrivSvcPipePath() {
   throw new Error(`Unsupported platform for PrivSvc: ${platform}`);
 }
 
-// src/bootstrap/enroll.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/bootstrap/enroll.ts
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -24294,7 +24349,7 @@ async function ensureEnrolled() {
   }
 }
 
-// src/priv/index.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/priv/index.ts
 function createPrivSvcClient() {
   switch (process.platform) {
     case "win32": {
@@ -24314,7 +24369,7 @@ function createPrivSvcClient() {
   }
 }
 
-// src/bootstrap/cert-renewal.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/bootstrap/cert-renewal.ts
 var import_crypto7 = __toESM(require("crypto"));
 var import_fs7 = __toESM(require("fs"));
 var import_path5 = __toESM(require("path"));
@@ -24443,7 +24498,7 @@ async function maybeRenewClientCertificate(input) {
   return nextState;
 }
 
-// src/core/policy-store.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/core/policy-store.ts
 var import_fs8 = __toESM(require("fs"));
 var import_path6 = __toESM(require("path"));
 var import_os7 = __toESM(require("os"));
@@ -24565,7 +24620,7 @@ function stableStringify(value) {
   return "null";
 }
 
-// src/core/policy-runtime.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/core/policy-runtime.ts
 var import_events4 = require("events");
 var DEFAULT_POLICY = {
   inventory: {
@@ -24750,7 +24805,7 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
   }
 };
 
-// src/core/plugin-manager.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/core/plugin-manager.ts
 var PluginManager = class {
   plugins = /* @__PURE__ */ new Map();
   ctx = null;
@@ -24861,14 +24916,14 @@ var PluginManager = class {
   }
 };
 
-// src/bootstrap/logger.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/bootstrap/logger.ts
 var logger = {
   info: (...args) => console.log("[INFO]", ...args),
   error: (...args) => console.error("[ERROR]", ...args),
   warn: (...args) => console.warn("[WARN]", ...args)
 };
 
-// src/status/tray-status-store.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/status/tray-status-store.ts
 var import_fs13 = __toESM(require("fs"));
 var import_os14 = __toESM(require("os"));
 var import_path10 = __toESM(require("path"));
@@ -25051,7 +25106,7 @@ var TrayStatusStore = class {
   }
 };
 
-// src/core/bootstrap.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/core/bootstrap.ts
 async function bootstrapContext() {
   const store = new EnrollmentStore();
   let enrollment = await ensureEnrolled();
@@ -25092,7 +25147,7 @@ async function bootstrapContext() {
   return ctx;
 }
 
-// src/queue/sqlite-outbox.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/queue/sqlite-outbox.ts
 var import_os15 = __toESM(require("os"));
 var import_path11 = __toESM(require("path"));
 var import_fs14 = __toESM(require("fs"));
@@ -25496,10 +25551,215 @@ var SqliteOutbox = class {
 };
 var outbox = new SqliteOutbox();
 
-// src/domain/device-facts-builder.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/domain/device-facts-builder.ts
 var import_os16 = __toESM(require("os"));
 var import_systeminformation4 = __toESM(require_lib());
+var import_child_process6 = require("child_process");
+var import_util3 = require("util");
 var import_crypto10 = __toESM(require("crypto"));
+var execFileAsync3 = (0, import_util3.promisify)(import_child_process6.execFile);
+function isIgnorableUser(value) {
+  const v = String(value || "").trim().toLowerCase();
+  return !v || v === "root" || v === "system" || v === "localservice" || v === "networkservice" || v === "_mbsetupuser" || v === "loginwindow";
+}
+function parseUserIdentity(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  const slashMatch = value.match(/^([^\\]+)\\(.+)$/);
+  if (slashMatch) {
+    const domain = slashMatch[1]?.trim() || null;
+    const user = slashMatch[2]?.trim() || "";
+    if (isIgnorableUser(user)) return null;
+    return {
+      user,
+      domain,
+      raw: value,
+      isLoggedIn: true,
+      lastLogon: null
+    };
+  }
+  const atMatch = value.match(/^([^@\s]+)@([^@\s]+)$/);
+  if (atMatch) {
+    const user = atMatch[1]?.trim() || "";
+    const domain = atMatch[2]?.trim() || null;
+    if (isIgnorableUser(user)) return null;
+    return {
+      user,
+      domain,
+      raw: value,
+      isLoggedIn: true,
+      lastLogon: null
+    };
+  }
+  if (isIgnorableUser(value)) return null;
+  return {
+    user: value,
+    domain: null,
+    raw: value,
+    isLoggedIn: true,
+    lastLogon: null
+  };
+}
+async function runCommand(command, args, timeout = 2500) {
+  try {
+    const { stdout } = await execFileAsync3(command, args, {
+      timeout,
+      windowsHide: true,
+      maxBuffer: 1024 * 128
+    });
+    const value = String(stdout || "").trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+async function getInteractiveUserFromOs() {
+  const platform = import_os16.default.platform();
+  if (platform === "win32") {
+    const ps = await runCommand("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      "try { (Get-CimInstance Win32_ComputerSystem).UserName } catch { $null }"
+    ], 3500);
+    const fromPs = parseUserIdentity(ps);
+    if (fromPs) return fromPs;
+    const whoami2 = await runCommand("whoami.exe", [], 2500);
+    return parseUserIdentity(whoami2);
+  }
+  if (platform === "darwin") {
+    const consoleUser = await runCommand("/usr/bin/stat", ["-f", "%Su", "/dev/console"], 2500);
+    const fromConsole = parseUserIdentity(consoleUser);
+    if (fromConsole) return fromConsole;
+    const whoami2 = await runCommand("/usr/bin/whoami", [], 2500);
+    return parseUserIdentity(whoami2);
+  }
+  const who = await runCommand("who", [], 2500);
+  if (who) {
+    const firstLine = who.split("\n").map((x) => x.trim()).filter(Boolean)[0];
+    const firstUser = firstLine?.split(/\s+/)[0];
+    const fromWho = parseUserIdentity(firstUser);
+    if (fromWho) return fromWho;
+  }
+  const logname = await runCommand("logname", [], 2500);
+  const fromLogname = parseUserIdentity(logname);
+  if (fromLogname) return fromLogname;
+  const whoami = await runCommand("whoami", [], 2500);
+  return parseUserIdentity(whoami);
+}
+function normalizeSiUsers(siUsers) {
+  if (!Array.isArray(siUsers)) return [];
+  const users = [];
+  for (const entry of siUsers) {
+    const raw = entry?.user || entry?.name || entry?.username;
+    const normalized = parseUserIdentity(raw);
+    if (!normalized) continue;
+    const date = entry?.date ? String(entry.date) : null;
+    const time = entry?.time ? String(entry.time) : null;
+    users.push({
+      ...normalized,
+      raw: normalized.raw || String(raw),
+      isLoggedIn: true,
+      lastLogon: date && time ? `${date} ${time}` : null
+    });
+  }
+  return users;
+}
+function dedupeUsers(users) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const user of users) {
+    const key = `${user.domain || ""}\\${user.user}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(user);
+  }
+  return out;
+}
+async function buildLoggedInUsers(siUsers) {
+  const preferred = await getInteractiveUserFromOs();
+  const fromSi = normalizeSiUsers(siUsers);
+  return dedupeUsers([
+    ...preferred ? [preferred] : [],
+    ...fromSi
+  ]);
+}
+function isPrivateIpv4(ip) {
+  if (!ip) return false;
+  if (/^10\./.test(ip)) return true;
+  if (/^192\.168\./.test(ip)) return true;
+  const m = ip.match(/^172\.(\d{1,2})\./);
+  if (m) {
+    const second = Number(m[1]);
+    return second >= 16 && second <= 31;
+  }
+  return false;
+}
+function isUsableIpv4(ip) {
+  if (!ip) return false;
+  if (ip === "127.0.0.1") return false;
+  if (ip.startsWith("169.254.")) return false;
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip);
+}
+function inferInterfaceType(iface) {
+  const text = `${iface?.iface || ""} ${iface?.ifaceName || ""} ${iface?.name || ""} ${iface?.type || ""}`.toLowerCase();
+  if (text.includes("wi-fi") || text.includes("wifi") || text.includes("wireless") || /^en0\b/.test(text) || /^wlan/.test(text)) {
+    return "wifi";
+  }
+  if (text.includes("ethernet") || /^eth/.test(text) || /^en\d+\b/.test(text)) {
+    return "ethernet";
+  }
+  if (text.includes("vpn") || text.includes("utun") || text.includes("tun") || text.includes("tap")) {
+    return "vpn";
+  }
+  if (text.includes("loopback") || text.includes("lo0") || text === "lo") {
+    return "loopback";
+  }
+  return iface?.type ? String(iface.type) : void 0;
+}
+function normalizeNetworkInterfaces(net4, defaultInterface) {
+  if (!Array.isArray(net4)) return [];
+  const defaultName = String(defaultInterface || "").trim().toLowerCase();
+  const normalized = net4.map((iface) => {
+    const name = String(iface?.iface || iface?.name || iface?.ifaceName || "").trim() || void 0;
+    const displayName = String(iface?.ifaceName || iface?.name || iface?.iface || "").trim() || name;
+    const ip4 = String(iface?.ip4 || iface?.ipv4 || "").trim() || null;
+    const ip6 = String(iface?.ip6 || iface?.ipv6 || "").trim() || null;
+    const mac = String(iface?.mac || "").trim() || void 0;
+    const internal = Boolean(iface?.internal);
+    const isDefault = Boolean(defaultName && name && name.toLowerCase() === defaultName);
+    return {
+      name,
+      displayName,
+      mac,
+      ip4,
+      ip6,
+      internal,
+      default: isDefault,
+      type: inferInterfaceType(iface)
+    };
+  }).filter((iface) => iface.name || iface.ip4 || iface.ip6 || iface.mac);
+  const preferredIndex = normalized.findIndex(
+    (iface) => !iface.internal && Boolean(iface.default) && isUsableIpv4(iface.ip4)
+  );
+  const privateIndex = normalized.findIndex(
+    (iface) => !iface.internal && isUsableIpv4(iface.ip4) && isPrivateIpv4(iface.ip4)
+  );
+  const usableIndex = normalized.findIndex(
+    (iface) => !iface.internal && isUsableIpv4(iface.ip4)
+  );
+  const selectedIndex = preferredIndex >= 0 ? preferredIndex : privateIndex >= 0 ? privateIndex : usableIndex;
+  if (selectedIndex >= 0) {
+    normalized.forEach((iface, index) => {
+      iface.default = index === selectedIndex;
+    });
+    const selected = normalized.splice(selectedIndex, 1)[0];
+    normalized.unshift(selected);
+  }
+  return normalized;
+}
 function buildDeviceIdentity(ctx) {
   const nodePlatform = import_os16.default.platform();
   const platform = nodePlatform === "win32" ? "windows" : nodePlatform === "darwin" ? "macos" : "linux";
@@ -25525,6 +25785,7 @@ async function buildHardwareNamespace() {
     diskLayout,
     graphics,
     net4,
+    defaultNetworkInterface,
     time,
     cpuCurrentSpeed,
     audio,
@@ -25548,14 +25809,15 @@ async function buildHardwareNamespace() {
     import_systeminformation4.default.memLayout(),
     import_systeminformation4.default.diskLayout(),
     import_systeminformation4.default.graphics(),
-    import_systeminformation4.default.networkInterfaces(),
+    import_systeminformation4.default.networkInterfaces().catch(() => []),
+    import_systeminformation4.default.networkInterfaceDefault().catch(() => null),
     import_systeminformation4.default.time(),
     import_systeminformation4.default.cpuCurrentSpeed(),
     import_systeminformation4.default.audio(),
     import_systeminformation4.default.bluetoothDevices(),
     import_systeminformation4.default.usb(),
     import_systeminformation4.default.printer(),
-    import_systeminformation4.default.users(),
+    import_systeminformation4.default.users().catch(() => []),
     import_systeminformation4.default.battery(),
     import_systeminformation4.default.fsSize(),
     import_systeminformation4.default.wifiNetworks(),
@@ -25563,6 +25825,8 @@ async function buildHardwareNamespace() {
     import_systeminformation4.default.inetLatency("8.8.8.8")
   ]);
   const isVirtual = system.virtual === true || typeof system.virtual === "string" && String(system.virtual).toLowerCase().includes("virtual");
+  const normalizedUsers = await buildLoggedInUsers(users);
+  const networkInterfaces = normalizeNetworkInterfaces(net4, defaultNetworkInterface);
   const staticPart = {
     system: {
       manufacturer: system.manufacturer,
@@ -25594,7 +25858,9 @@ async function buildHardwareNamespace() {
     cpu,
     graphics,
     memLayout,
-    diskLayout
+    diskLayout,
+    users: normalizedUsers,
+    networkInterfaces
   };
   const runtimePart = {
     memoryBytes: mem?.total,
@@ -25716,7 +25982,7 @@ async function buildDeviceFacts(ctx, namespaces) {
   };
 }
 
-// src/core/scheduler.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/core/scheduler.ts
 init_update_task();
 var import_crypto12 = __toESM(require("crypto"));
 function normalizeForHash(value) {
@@ -26198,7 +26464,7 @@ var Scheduler = class {
 };
 var scheduler = new Scheduler();
 
-// src/transport/grpc-client.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/transport/grpc-client.ts
 var import_events5 = require("events");
 function normalizeTarget(url) {
   return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
@@ -26649,14 +26915,14 @@ function createGrpcClient(ctx) {
   return client;
 }
 
-// src/transport/grpc-stream.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/transport/grpc-stream.ts
 init_state();
 
-// src/plugins/pmp/remediation.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/pmp/remediation.ts
 var import_os18 = __toESM(require("os"));
 init_state();
 
-// src/plugins/pmp/remediation-checks.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/pmp/remediation-checks.ts
 var import_os17 = __toESM(require("os"));
 var ENTRIES = [
   {
@@ -26725,7 +26991,7 @@ function isCheckRemediableHere(checkId) {
   return { allowed: true };
 }
 
-// src/plugins/pmp/remediation.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/pmp/remediation.ts
 function sanitize(v, max = 200) {
   return String(v ?? "").replace(/[;\n=]/g, " ").slice(0, max);
 }
@@ -26934,10 +27200,10 @@ function ackFor(outcome, remediationId, extras) {
   };
 }
 
-// src/plugins/sdp/index.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/sdp/index.ts
 var import_os20 = __toESM(require("os"));
 
-// src/plugins/sdp/state.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/sdp/state.ts
 var installInProgress = false;
 var lastInstall = null;
 function tryStartInstall(snapshot) {
@@ -26955,7 +27221,7 @@ function finishInstall(outcome, exitCode) {
   }
 }
 
-// src/plugins/sdp/detection.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/sdp/detection.ts
 var import_os19 = __toESM(require("os"));
 var PLATFORM_APPLICABILITY = {
   registry_uninstall: /* @__PURE__ */ new Set(["win32"]),
@@ -27072,7 +27338,7 @@ async function evaluate(ctx, rule, jobId) {
   }
 }
 
-// src/plugins/sdp/index.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/plugins/sdp/index.ts
 function normalizePlatform() {
   const p = import_os20.default.platform();
   if (p === "win32") return "windows";
@@ -27307,7 +27573,7 @@ async function runSoftwareInstall(ctx, jobId, payload) {
   }
 }
 
-// src/transport/grpc-stream.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/transport/grpc-stream.ts
 init_update_task();
 var MAX_IN_FLIGHT = 3;
 var HEARTBEAT_INTERVAL_MS = 6e4;
@@ -28321,7 +28587,7 @@ function startGrpcStream(ctx) {
   };
 }
 
-// src/core/service.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/core/service.ts
 var shuttingDown = false;
 var currentCtx = null;
 var cleanupTimer;
@@ -28494,7 +28760,7 @@ process.on("unhandledRejection", (reason) => {
   logger.error("Unhandled rejection:", reason);
 });
 
-// src/index.ts
+// certusws-tracenium-agent-w/build/linux/staging/src/index.ts
 startService().catch((err) => {
   console.error("Fatal error:", err);
   process.exit(1);

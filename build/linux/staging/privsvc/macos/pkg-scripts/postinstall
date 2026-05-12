@@ -1,0 +1,247 @@
+#!/bin/sh
+set -eu
+
+LOG_DIR="/Library/Application Support/Tracenium/Logs"
+LOG_FILE="$LOG_DIR/installer.pkg.log"
+/bin/mkdir -p "$LOG_DIR"
+/usr/bin/touch "$LOG_FILE"
+/bin/chmod 644 "$LOG_FILE" || true
+exec >> "$LOG_FILE" 2>&1
+
+echo "==== $(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ') postinstall start ===="
+set -x
+trap 'rc=$?; set +x; echo "==== $(/bin/date -u "+%Y-%m-%dT%H:%M:%SZ") postinstall exit rc=$rc ===="; exit $rc' EXIT
+
+BASE="/Library/Application Support/Tracenium"
+AGENT_DIR="$BASE/Agent"
+PRIVSVC_DIR="$BASE/PrivSvc"
+LOG_DIR="$BASE/Logs"
+TOKEN_FILE="$AGENT_DIR/enrollment.token"
+ENV_FILE="$AGENT_DIR/.env"
+TMP_TOKEN_FILE="/private/tmp/tracenium-enrollment.token"
+ENROLLMENT_FILE="$AGENT_DIR/enrollment.json"
+LEGACY_AGENT_DIR="/var/root/.tracenium/agent"
+
+SERVER_BASE_URL="${TRACENIUM_SERVER_BASE_URL:-https://api.tracenium.com}"
+CERT_RENEWAL_BASE_URL="${TRACENIUM_CERT_RENEWAL_BASE_URL:-$SERVER_BASE_URL}"
+# Default endpoint sin puerto explícito → el agent (config.ts
+# resolveGrpcEndpoint) lo resuelve a :443. Razón: corporate firewalls
+# ya tienen 443 outbound abierto (HTTPS estándar), evitando ticket de
+# change-control para abrir puertos custom como 50051. El backend gRPC
+# escucha en ambos puertos durante la transición (ver GRPC_PORTS en el
+# backend .env). Operadores que necesiten un puerto explícito pueden
+# pasar TRACENIUM_GRPC_ENDPOINT="host:port" antes del install.
+GRPC_ENDPOINT="${TRACENIUM_GRPC_ENDPOINT:-grpc.tracenium.com}"
+# AGENT_VERSION / CORE_VERSION are intentionally NOT written to the
+# .env file. Previously this script wrote them ("AGENT_VERSION=1.1.2")
+# which dotenv would then load into process.env at boot, and the
+# agent's config.ts (process.env.AGENT_VERSION || pkg.version) would
+# pick the persisted file value over the bundled pkg.version. Net
+# effect: every successful self-update wrote new agent-core.js with
+# the new pkg.version, but the .env stayed pinned to whatever string
+# this hardcoded fallback had at install time — so an installed
+# 1.1.4 .pkg ran the new bundle and STILL self-reported 1.1.2 over
+# gRPC because the .env never got rewritten.
+#
+# The agent now uses package.json's `version` (inlined by esbuild)
+# as the only source of truth. Operators can still override at run
+# time by setting process.env.AGENT_VERSION before launchd starts
+# the daemon (e.g. in the LaunchDaemon plist's EnvironmentVariables
+# block) — but the installer no longer persists a stale value.
+CHANNEL="${TRACENIUM_CHANNEL:-stable}"
+
+# =============================================================================
+# Defensive pre-flight cleanup — endpoints que vienen de instalaciones
+# anteriores pueden tener state half-stuck. Sanitizamos antes de tocar
+# nada nuevo. Cada bloque es idempotente: si no había nada que limpiar,
+# es no-op.
+# =============================================================================
+
+# (a) Apaga preventivamente CUALQUIER instancia previa del status app —
+#     si quedó half-bootstrapped en una sesión gráfica anterior, la
+#     próxima `bootstrap` del nuevo install puede colgarse esperando
+#     estado limpio (lo vivimos en pkg 1.1.5: `kickstart -k` colgado
+#     20 minutos hasta el timeout de 10 min de macOS Installer). Hacemos
+#     bootout per-user de forma exhaustiva sobre cada UID con sesión
+#     gráfica activa.
+for console_uid in $(/usr/bin/dscl . -list /Users UniqueID 2>/dev/null | /usr/bin/awk '$2 >= 500 && $2 < 60000 {print $2}'); do
+  /bin/launchctl bootout "gui/$console_uid/com.certusws.tracenium.agentstatus" >/dev/null 2>&1 || true
+done
+
+# (b) Sanea daemons del sistema antes del replace de archivos por
+#     PackageKit. Aunque PackageKit puede sobrescribir mientras corre,
+#     en algunos macOS Tahoe (15+) hemos visto que el `bootout` posterior
+#     se cuelga si el daemon original ya estaba en respawn loop. Mejor
+#     dejarlo limpio aquí y que `bootstrap` después arranque con el
+#     binario nuevo. `|| true` porque en first-install no existen.
+/bin/launchctl bootout system/com.certusws.tracenium.agent     >/dev/null 2>&1 || true
+/bin/launchctl bootout system/com.certusws.tracenium.privsvc   >/dev/null 2>&1 || true
+/bin/launchctl bootout system/com.certusws.tracenium.logrotate >/dev/null 2>&1 || true
+
+# (c) Mata cualquier `launchctl kickstart` que haya quedado colgado de
+#     una instalación anterior cancelada por timeout. Si no hay ninguno,
+#     `pkill` retorna 1 (no error real). El `|| true` lo silencia.
+/usr/bin/pkill -9 -f "launchctl kickstart .*com.certusws.tracenium" >/dev/null 2>&1 || true
+
+# (d) Migración del status/ directory: en versiones anteriores el agente
+#     escribía tray-status.json dentro de /Library/Application Support/
+#     Tracenium/Agent/status/, pero ese path tenía perms 700 (Agent dir
+#     completo es root-only por enrollment.token y certs mTLS) y el tray
+#     user-session no podía leerlo. La nueva ubicación es hermana del
+#     Agent dir: /Library/Application Support/Tracenium/status/ con perms
+#     755 + JSON 644.
+#
+#     Borramos el legacy status/ adentro de Agent/ para evitar dejar
+#     archivos huérfanos y un tray confuso que pudiera leer ambos paths.
+/bin/rm -rf "$AGENT_DIR/status" 2>/dev/null || true
+
+# =============================================================================
+
+mkdir -p "$BASE/Runtime"
+mkdir -p "$AGENT_DIR"
+mkdir -p "$PRIVSVC_DIR/macos"
+mkdir -p "$PRIVSVC_DIR/certs"
+mkdir -p "$LOG_DIR"
+mkdir -p "/Library/LaunchAgents"
+mkdir -p "/var/run/tracenium"
+
+/bin/ls -la "/Library/Application Support" || true
+/bin/ls -la "$BASE" || true
+
+chown -R root:wheel "$BASE"
+chmod 755 "$BASE"
+chmod 755 "$BASE/Runtime/node"
+chmod 700 "$AGENT_DIR"
+chmod 700 "$PRIVSVC_DIR"
+chmod 700 "$PRIVSVC_DIR/certs"
+chmod 755 "$LOG_DIR"
+
+cat > "$ENV_FILE" <<EOF
+SERVER_BASE_URL=$SERVER_BASE_URL
+CERT_RENEWAL_BASE_URL=$CERT_RENEWAL_BASE_URL
+GRPC_ENDPOINT=$GRPC_ENDPOINT
+CHANNEL=$CHANNEL
+TRACENIUM_ENROLLMENT_TOKEN_FILE=$TOKEN_FILE
+EOF
+
+chown root:wheel "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+
+/bin/ls -la "$AGENT_DIR" || true
+/bin/ls -la "$PRIVSVC_DIR/macos" || true
+/bin/ls -la /Library/LaunchDaemons || true
+
+prompt_token() {
+  CONSOLE_USER="$(/usr/bin/stat -f %Su /dev/console 2>/dev/null || true)"
+  if [ -z "$CONSOLE_USER" ] || [ "$CONSOLE_USER" = "root" ]; then
+    return 1
+  fi
+
+  CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER" 2>/dev/null || true)"
+  if [ -z "$CONSOLE_UID" ]; then
+    return 1
+  fi
+
+  /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/osascript <<'APPLESCRIPT'
+set dialogResult to display dialog "Ingresa el Enrollment Token de Tracenium para registrar este equipo." default answer "" with hidden answer buttons {"Cancelar", "Continuar"} default button "Continuar" cancel button "Cancelar" with title "Tracenium Agent Enrollment"
+return text returned of dialogResult
+APPLESCRIPT
+}
+
+migrate_legacy_agent_state() {
+  if [ ! -d "$LEGACY_AGENT_DIR" ]; then
+    return 0
+  fi
+
+  for name in enrollment.json mtls-client.crt.pem mtls-client.key.pem mtls-ca.pem agent.db; do
+    src="$LEGACY_AGENT_DIR/$name"
+    dst="$AGENT_DIR/$name"
+    if [ -f "$src" ] && [ ! -f "$dst" ]; then
+      /bin/cp "$src" "$dst"
+      /usr/sbin/chown root:wheel "$dst" || true
+      case "$name" in
+        agent.db) /bin/chmod 600 "$dst" || true ;;
+        *) /bin/chmod 600 "$dst" || true ;;
+      esac
+    fi
+  done
+}
+
+migrate_legacy_agent_state
+
+if [ ! -f "$ENROLLMENT_FILE" ]; then
+  TOKEN="${TRACENIUM_ENROLLMENT_TOKEN:-}"
+
+  if [ -z "$TOKEN" ] && [ -f "$TMP_TOKEN_FILE" ]; then
+    TOKEN="$(/bin/cat "$TMP_TOKEN_FILE" | /usr/bin/sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  fi
+
+  if [ -z "$TOKEN" ]; then
+    TOKEN="$(prompt_token || true)"
+  fi
+
+  echo "prompt token length: $(/usr/bin/printf "%s" "$TOKEN" | /usr/bin/wc -c | /usr/bin/awk '{print $1}')"
+
+  TOKEN="$(/usr/bin/printf "%s" "$TOKEN" | /usr/bin/sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+  if [ -z "$TOKEN" ]; then
+    echo "Tracenium enrollment token is required for first install." >&2
+    exit 1
+  fi
+
+  /usr/bin/printf "%s\n" "$TOKEN" > "$TOKEN_FILE"
+  chown root:wheel "$TOKEN_FILE"
+  chmod 600 "$TOKEN_FILE"
+  /bin/rm -f "$TMP_TOKEN_FILE"
+fi
+
+chown root:wheel /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
+chown root:wheel /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
+chown root:wheel /Library/LaunchDaemons/com.certusws.tracenium.logrotate.plist
+chown root:wheel /Library/LaunchAgents/com.certusws.tracenium.agentstatus.plist
+chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
+chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
+chmod 644 /Library/LaunchDaemons/com.certusws.tracenium.logrotate.plist
+chmod 644 /Library/LaunchAgents/com.certusws.tracenium.agentstatus.plist
+
+/usr/bin/plutil -lint /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
+/usr/bin/plutil -lint /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
+/usr/bin/plutil -lint /Library/LaunchDaemons/com.certusws.tracenium.logrotate.plist
+/usr/bin/plutil -lint /Library/LaunchAgents/com.certusws.tracenium.agentstatus.plist
+
+/bin/launchctl bootout system/com.certusws.tracenium.agent >/dev/null 2>&1 || true
+/bin/launchctl bootout system/com.certusws.tracenium.privsvc >/dev/null 2>&1 || true
+/bin/launchctl bootout system/com.certusws.tracenium.logrotate >/dev/null 2>&1 || true
+
+/bin/launchctl bootstrap system /Library/LaunchDaemons/com.certusws.tracenium.privsvc.plist
+/bin/launchctl enable system/com.certusws.tracenium.privsvc
+/bin/launchctl kickstart -k system/com.certusws.tracenium.privsvc
+
+/bin/launchctl bootstrap system /Library/LaunchDaemons/com.certusws.tracenium.agent.plist
+/bin/launchctl enable system/com.certusws.tracenium.agent
+/bin/launchctl kickstart -k system/com.certusws.tracenium.agent
+
+/bin/launchctl bootstrap system /Library/LaunchDaemons/com.certusws.tracenium.logrotate.plist
+/bin/launchctl enable system/com.certusws.tracenium.logrotate
+
+/bin/launchctl print system/com.certusws.tracenium.privsvc || true
+/bin/launchctl print system/com.certusws.tracenium.agent || true
+/bin/launchctl print system/com.certusws.tracenium.logrotate || true
+
+CONSOLE_USER="$(/usr/bin/stat -f %Su /dev/console 2>/dev/null || true)"
+if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
+  CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER" 2>/dev/null || true)"
+  if [ -n "$CONSOLE_UID" ]; then
+    /bin/launchctl bootout "gui/$CONSOLE_UID/com.certusws.tracenium.agentstatus" >/dev/null 2>&1 || true
+    /bin/launchctl bootstrap "gui/$CONSOLE_UID" /Library/LaunchAgents/com.certusws.tracenium.agentstatus.plist
+    /bin/launchctl enable "gui/$CONSOLE_UID/com.certusws.tracenium.agentstatus"
+    /bin/launchctl kickstart -k "gui/$CONSOLE_UID/com.certusws.tracenium.agentstatus" || true
+    /bin/launchctl print "gui/$CONSOLE_UID/com.certusws.tracenium.agentstatus" || true
+  else
+    echo "Skipping agent status LaunchAgent bootstrap: unable to resolve console UID"
+  fi
+else
+  echo "Skipping agent status LaunchAgent bootstrap: no interactive console user"
+fi
+
+exit 0

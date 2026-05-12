@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.certusws.tracenium.agentstatus</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Applications/Tracenium Agent Status.app/Contents/MacOS/TraceniumAgentStatus</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>LimitLoadToSessionType</key>
+  <array>
+    <string>Aqua</string>
+  </array>
+
+  <key>ProcessType</key>
+  <string>Interactive</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TRACENIUM_AGENT_DATA_DIR</key>
+    <string>/Library/Application Support/Tracenium/Agent</string>
+    <!--
+      status/ vive como hermano de Agent/ (no dentro), porque Agent/
+      es mode 700 (root only) y el tray no puede traversearlo. La ruta
+      explícita aquí gana sobre el fallback derivado de
+      TRACENIUM_AGENT_DATA_DIR/status/ — eso garantiza que el tray
+      lea de la ruta correcta sin depender del codepath de fallback.
+    -->
+    <key>TRACENIUM_TRAY_STATUS_PATH</key>
+    <string>/Library/Application Support/Tracenium/status/tray-status.json</string>
+  </dict>
+</dict>
+</plist>

@@ -1,0 +1,613 @@
+// src/transport/grpc-client.ts
+import { EventEmitter } from "events";
+import { AgentContext } from "../core/agent-context";
+import { logger } from "../bootstrap/logger";
+import { outbox } from "../queue/sqlite-outbox";
+
+function normalizeTarget(url: string): string {
+  return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+}
+
+const MAX_FACTS_IPC_BYTES = 64 * 1024;
+
+const FACTS_CHUNK_SIZE = 48 * 1024; // 48KB safe chunk size
+
+function chunkString(str: string, size: number): string[] {
+  const chunks: string[] = [];
+  for (let i = 0; i < str.length; i += size) {
+    chunks.push(str.slice(i, i + size));
+  }
+  return chunks;
+}
+
+type StreamLike = EventEmitter & {
+  write: (msg: any) => void;
+  end: () => void;
+};
+
+type GrpcBridgeClient = {
+  Connect: () => StreamLike;
+  isConnected: () => boolean;
+};
+
+function attachPrivPushHandler(ctx: AgentContext, onPush: (msg: any) => void) {
+  const priv: any = ctx.priv as any;
+
+  if (priv.__pushHandlerAttached) {
+    ctx.logger?.warn?.("[grpc-client] push handler already attached, skipping re-registration");
+    return;
+  }
+  priv.__pushHandlerAttached = true;
+
+  ctx.logger?.info?.("[grpc-client] attaching PrivSvc push handler", {
+    hasOnPush: typeof priv.onPush === "function",
+    hasOn: typeof priv.on === "function"
+  });
+
+  let attached = false;
+
+  if (typeof priv.onPush === "function") {
+    ctx.logger?.info?.("[grpc-client] subscribing via priv.onPush()");
+    priv.onPush(onPush);
+    attached = true;
+  } else if (typeof priv.on === "function") {
+    ctx.logger?.info?.("[grpc-client] subscribing via priv.on('push')");
+    priv.on("push", onPush);
+    attached = true;
+  }
+
+  if (!attached) {
+    ctx.logger?.warn(
+      "[grpc-client] PrivSvcClient has no push subscription method"
+    );
+  }
+}
+
+export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
+  // Ensure singleton instance per AgentContext
+  if ((ctx as any).__grpcClientInstance) {
+    ctx.logger?.warn?.("[grpc-client] reusing existing grpc client instance");
+    return (ctx as any).__grpcClientInstance;
+  }
+
+  const target = normalizeTarget(ctx.config.grpcEndpoint);
+  ctx.logger?.info(`[grpc-client] Using PrivSvc gRPC bridge → ${target}`);
+
+  const stream = new EventEmitter() as StreamLike;
+  let connectedEmitted = false;
+
+  let connected = false;
+  let connectPromise: Promise<void> | null = null;
+  let ended = false;
+  let localClose = false;
+
+  // serialize IPC writes to PrivSvc to avoid concurrent pipe writes
+  let writeChain: Promise<void> = Promise.resolve();
+
+  // track in-flight events to avoid duplicate sends before ACK
+  const inFlightEvents = new Set<string>();
+
+  // ── Server activity tracker (P0 fix for stream-zombie bug) ───────
+  //
+  // Stamps the wall-clock timestamp of the most recent message we
+  // received from the server, ANY message — server pings, ACKs,
+  // policy updates, jobs, the lot. The grpc-stream watchdog reads
+  // this via `stream.getLastServerActivityMs()` and declares the
+  // stream zombie if it goes longer than ~270s without any update,
+  // which forces a reconnect.
+  //
+  // Why we set this in attachPrivPushHandler instead of inside each
+  // method branch: the activity signal is "I heard from the server",
+  // and that's true for every push regardless of what payload it
+  // carries. Updating in one central place means a future new
+  // message type doesn't accidentally bypass the watchdog.
+  //
+  // Initialized to "now" so a freshly-created stream isn't seen as
+  // zombie before the first server ping arrives.
+  let lastServerActivityMs = Date.now();
+  (stream as any).getLastServerActivityMs = () => lastServerActivityMs;
+
+  // Mirror of grpc-stream.ts SILENCE_THRESHOLD_MS. Kept here as a
+  // local constant (not imported) to avoid a circular dep — grpc-stream
+  // already imports from this file. If the threshold changes there,
+  // change it here too. The important invariant is: this MUST be ≥ the
+  // watchdog threshold, otherwise `isConnected()` would start lying
+  // "false" before the watchdog fires its reconnect, which would make
+  // heartbeats stop short of triggering any recovery.
+  const SILENCE_THRESHOLD_MS = 270_000;
+
+  // Push from PrivSvc → re-emit as "data"
+  attachPrivPushHandler(ctx, (pushMsg: any) => {
+    try {
+      const method = pushMsg?.method;
+      if (!method) return;
+
+      // Mark activity for ANY recognized push from the server. This
+      // is the canonical liveness signal for the watchdog.
+      lastServerActivityMs = Date.now();
+
+      const params = pushMsg?.params ?? {};
+      ctx.logger?.info("[grpc-client] push message", { method, params });
+
+      // Server ping (sent every ~90s by controlplane.ts). We don't
+      // need to do anything with it — the activity stamp above is
+      // already updated. The explicit early-return keeps it from
+      // falling through to the unmatched-method passthrough log
+      // (which would spam at the new 90s cadence).
+      if (method === "grpc.ping" || method === "grpc.control.ping") {
+        ctx.logger?.debug?.("[grpc-client] server ping received");
+        return;
+      }
+
+      if (method === "grpc.ack") {
+        ctx.logger?.info?.("[grpc-client] ACK push received", {
+          rawEventId: params?.eventId,
+          status: params?.status,
+          message: params?.message
+        });
+
+        const normalized = {
+          ...params,
+          eventId: String(params?.eventId ?? "").trim()
+        };
+
+        // clear in-flight tracking
+        try {
+          if (normalized.eventId) {
+            inFlightEvents.delete(normalized.eventId);
+          }
+        } catch {}
+
+        // Remote ACK is the delivery boundary. IPC acceptance only means PrivSvc queued
+        // the message locally; the outbox must remain retryable until backend ACK.
+        try {
+          const eventId = normalized.eventId;
+          if (eventId) {
+            const parts = eventId.split(":");
+            const outboxId = Number(parts[parts.length - 1]);
+
+            if (!isNaN(outboxId)) {
+              const status = Number(normalized.status ?? 0);
+              const message = String(normalized.message || "");
+
+              if (status === 0) {
+                outbox.markSent(outboxId);
+                ctx.logger?.info?.("[grpc-client] ACK → markSent", { eventId, outboxId });
+              } else if (status === 1) {
+                outbox.markFailed(outboxId, message || "ACK requested retry");
+                ctx.logger?.warn?.("[grpc-client] ACK → retry", { eventId, outboxId, status });
+              } else {
+                outbox.markRejected(outboxId, message || `ACK rejected with status ${status}`);
+                ctx.logger?.warn?.("[grpc-client] ACK → rejected", { eventId, outboxId, status });
+              }
+            }
+          }
+        } catch (err: any) {
+          ctx.logger?.error?.("[grpc-client] ACK handling failed", err?.message || err);
+        }
+
+        stream.emit("data", { ack: normalized });
+        return;
+      }
+
+      if (method === "grpc.connected") {
+        if (connectedEmitted) return;
+        connectedEmitted = true;
+
+        connected = true;
+        ctx.logger?.info("[grpc-client] PrivSvc confirmed gRPC connected (READY)");
+        try {
+          ctx.trayStatus.markGrpcConnected();
+        } catch {}
+        stream.emit("data", { connected: true });
+        return;
+      }
+
+      if (method === "grpc.control.runJob") {
+        stream.emit("data", { runJob: params });
+        return;
+      }
+
+      if (method === "grpc.control.rotateCert") {
+        stream.emit("data", { rotateCert: params });
+        return;
+      }
+
+      if (method === "grpc.control.policyUpdate") {
+        stream.emit("data", { policyUpdate: params });
+        return;
+      }
+
+      if (method === "grpc.control.disconnect") {
+        stream.emit("data", { disconnect: params });
+        return;
+      }
+
+      if (method === "grpc.control.agentUpdate") {
+        stream.emit("data", { agentUpdate: params });
+        return;
+      }
+
+      if (method === "grpc.control.streamClosed" || method === "grpc.disconnected") {
+        ctx.logger?.warn("[grpc-client] gRPC bridge reported disconnect");
+        connected = false;
+        connectPromise = null;
+        ended = false;
+        try {
+          ctx.trayStatus.markGrpcDisconnected();
+        } catch {}
+
+        // Remote disconnect: notify listeners, but do NOT mark this stream as locally ended
+        // and do NOT send grpc.close back to PrivSvc.
+        stream.emit("end");
+        return;
+      }
+
+      // debug passthrough si quieres
+      // stream.emit("data", { debug: { method, params } });
+    } catch (e: any) {
+      ctx.logger?.error("[grpc-client] push handler error:", e?.message || e);
+    }
+  });
+
+  async function ensureConnected() {
+    if (ended && localClose) throw new Error("stream ended");
+    if (connected) return;
+
+    if (connectPromise) {
+      await connectPromise;
+      return;
+    }
+
+    connectPromise = (async () => {
+      try {
+        const tenantId = String(ctx.enrollment.tenantId || "");
+        const deviceId = String(ctx.enrollment.deviceId || "");
+        const agentVersion = String(ctx.config.agentVersion || "");
+        const capabilities = Array.from(new Set([
+          ...(ctx.enrollment.bootstrap.capabilities || []),
+          ...ctx.policyRuntime.getEnabledPlugins()
+        ]));
+
+        const clientCertThumbprint = String((ctx.enrollment as any)?.mtls?.clientCertThumbprint || "");
+        const issuingCaThumbprint = String((ctx.enrollment as any)?.mtls?.issuingCaThumbprint || "");
+
+        if (!tenantId || !deviceId) throw new Error("Missing enrollment tenantId/deviceId");
+        if (!clientCertThumbprint) throw new Error("Missing mtls.clientCertThumbprint in enrollment");
+        if (!issuingCaThumbprint) throw new Error("Missing mtls.issuingCaThumbprint in enrollment");
+
+        // PrivSvc owns the gRPC stream and emits HELLO on its own. Without
+        // this field, PrivSvc fills `policyVersion: ""` in HELLO and the
+        // server flags every reconnect as policy drift — re-shipping the
+        // full policyJson, writing two `policy_*` rows + an
+        // `policy_hello_drift_detected` audit event per connect, and
+        // drowning real drift events in noise. Forwarding the locally
+        // persisted version closes the loop: server compares, finds them
+        // equal on healthy reconnects, and only ships an update when the
+        // operator actually changed the policy while the agent was offline.
+        const policyVersion = String(ctx.policy.getVersion() || "");
+
+        ctx.logger?.info("[grpc-client] requesting PrivSvc gRPC connect");
+
+        const resp = await (ctx.priv as any).call({
+          v: 1,
+          id: "grpc-connect",
+          method: "grpc.connect",
+          params: {
+            target,
+            clientCertThumbprint,
+            issuingCaThumbprint,
+            tenantId,
+            deviceId,
+            agentVersion,
+            capabilities,
+            policyVersion
+          },
+          meta: { tenantId, deviceId }
+        });
+
+        if (!resp?.ok) {
+          throw new Error(resp?.error?.message || resp?.error || "PrivSvc connect failed");
+        }
+
+        const result = resp?.result ?? {};
+
+        if (result.connected === true && result.ready === true) {
+        connected = true;
+        ctx.logger?.info("[grpc-client] PrivSvc bridge READY (from connect response)");
+        try {
+          ctx.trayStatus.markGrpcConnected();
+        } catch {}
+
+        stream.emit("data", {
+          connected: true,
+          source: "connect_response"
+        });
+
+        return;
+      }  
+
+      if (result.connected === true) {
+        connected = false;
+        ctx.logger?.info("[grpc-client] bridge accepted connect request, waiting for grpc.connected");
+        return;
+      }
+
+        // Otherwise wait for the push notification from the bridge.
+        connected = false;
+        ctx.logger?.info("[grpc-client] connect request accepted, waiting for grpc.connected confirmation");
+      } catch (e: any) {
+        connected = false;
+        ctx.logger?.error("[grpc-client] connect failed", e?.message || e);
+        stream.emit("error", e);
+        throw e;
+      } finally {
+        connectPromise = null;
+      }
+    })();
+
+    await connectPromise;
+  }
+
+  stream.write = (msg: any) => {
+    writeChain = writeChain
+      .then(async () => {
+        await ensureConnected();
+
+        if (ended && localClose) {
+          ctx.logger?.warn("[grpc-client] write skipped: stream already ended locally");
+          return;
+        }
+
+        if (!connected) {
+          ctx.logger?.warn("[grpc-client] write skipped: bridge not fully ready yet");
+          return;
+        }
+
+        // HELLO is handled by PrivSvc on connect; ignore hello from node
+        if (msg?.hello) return;
+
+        if (msg?.facts) {
+          const eventId = String(msg.facts.eventId || "");
+          if (inFlightEvents.has(eventId)) {
+            ctx.logger?.warn("[grpc-client] duplicate send prevented (in-flight)", { eventId });
+            return;
+          }
+          inFlightEvents.add(eventId);
+
+          if (!eventId) throw new Error("facts.eventId required");
+          const factNamespace = String(msg.facts.namespace || "");
+          const factNamespaces = Array.isArray(msg.facts.namespaces)
+            ? msg.facts.namespaces.filter((ns: unknown) => typeof ns === "string" && ns.length > 0)
+            : [];
+          ctx.logger?.info("[grpc-client] sending FACTS event", {
+            eventId,
+            namespace: factNamespace,
+            namespaces: factNamespaces
+          });
+
+          let payloadJsonStr: string;
+          if (Buffer.isBuffer(msg.facts.payloadJson)) payloadJsonStr = msg.facts.payloadJson.toString("utf8");
+          else if (typeof msg.facts.payloadJson === "string") payloadJsonStr = msg.facts.payloadJson;
+          else throw new Error("facts.payloadJson must be Buffer or string");
+
+          const payloadSizeBytes = Buffer.byteLength(payloadJsonStr, "utf8");
+          ctx.logger?.info("[grpc-client] FACTS payload size", payloadSizeBytes);
+
+          // If payload fits, send normally
+          if (payloadSizeBytes <= MAX_FACTS_IPC_BYTES) {
+            const resp = await (ctx.priv as any).call({
+              v: 1,
+              id: `facts-${eventId}`,
+              method: "grpc.facts.send",
+              params: {
+                eventId,
+                namespace: factNamespace,
+                namespaces: factNamespaces,
+                payloadJson: payloadJsonStr
+              },
+              meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+            });
+
+            if (!resp?.ok) {
+              const errorCode = String(resp?.error?.code || "");
+              const errorMessage = String(resp?.error?.message || resp?.error || "facts.send failed");
+
+              if (errorCode === "request_too_large") {
+                ctx.logger?.warn("[grpc-client] switching to chunked FACTS send", { eventId, payloadSizeBytes });
+              } else {
+                throw new Error(errorMessage);
+              }
+            } else {
+              // Release in-memory dedupe after PrivSvc accepts the IPC write. The
+              // persisted outbox stays IN_FLIGHT until the backend ACK arrives, so a
+              // stale-flight TTL can retry if the bridge dies before remote ACK.
+              inFlightEvents.delete(eventId);
+              ctx.logger?.info?.("[grpc-client] IPC accepted; awaiting remote ACK", { eventId });
+              return;
+            }
+          }
+
+          // Chunked send fallback or large payload
+          const chunks = chunkString(payloadJsonStr, FACTS_CHUNK_SIZE);
+          ctx.logger?.info("[grpc-client] sending FACTS in chunks", {
+            eventId,
+            totalChunks: chunks.length
+          });
+
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+
+            const resp = await (ctx.priv as any).call({
+              v: 1,
+              id: `facts-chunk-${eventId}-${i}`,
+              method: "grpc.facts.chunk",
+              params: {
+                eventId,
+                namespace: factNamespace,
+                namespaces: factNamespaces,
+                chunkIndex: i,
+                totalChunks: chunks.length,
+                payloadChunk: chunk
+              },
+              meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+            });
+
+            if (!resp?.ok) {
+              const errorMessage = String(resp?.error?.message || resp?.error || "facts.chunk failed");
+              throw new Error(`FACTS_CHUNK_FAILED:${errorMessage}`);
+            }
+          }
+
+          ctx.logger?.info("[grpc-client] FACTS chunked send completed", { eventId });
+
+          // Release local dedupe only; backend ACK remains responsible for SENT.
+          inFlightEvents.delete(eventId);
+          ctx.logger?.info("[grpc-client] FACTS chunked IPC accepted; awaiting remote ACK", { eventId });
+
+          return;
+        }
+
+        if (msg?.heartbeat) {
+          const deviceId = String(
+            msg.heartbeat.deviceId ||
+            ctx.enrollment.deviceId ||
+            ""
+          );
+          const uptimeSeconds = Number(msg.heartbeat.uptimeSeconds || 0);
+          const agentVersion = String(msg.heartbeat.agentVersion || ctx.config.agentVersion || "");
+          const policyVersion = String(msg.heartbeat.policyVersion || "");
+
+          if (!deviceId) {
+            ctx.logger?.warn("[grpc-client] heartbeat ignored: deviceId missing");
+            return;
+          }
+
+          // Forward the heartbeat to PrivSvc so it reaches the gRPC stream
+          // and the server can refresh device_sessions.last_heartbeat. If
+          // the IPC call fails (bridge dead, stream down) we mark the
+          // connection broken so the reconnect loop kicks in — this is a
+          // cheap liveness check every HEARTBEAT_INTERVAL_MS.
+          try {
+            const resp = await (ctx.priv as any).call({
+              v: 1,
+              id: `hb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              method: "grpc.heartbeat",
+              params: {
+                deviceId,
+                uptimeSeconds,
+                agentVersion,
+                policyVersion
+              },
+              meta: { tenantId: ctx.enrollment.tenantId, deviceId }
+            });
+
+            if (!resp?.ok) {
+              const errorCode = String(resp?.error?.code || "");
+              const errorMessage = String(resp?.error?.message || resp?.error || "heartbeat failed");
+              ctx.logger?.warn("[grpc-client] heartbeat IPC rejected — marking connection broken", {
+                errorCode,
+                errorMessage
+              });
+              connected = false;
+              connectPromise = null;
+              // Surface to stream.on('error') so scheduleReconnect() runs.
+              stream.emit("error", new Error(`heartbeat_failed:${errorCode || errorMessage}`));
+            }
+            try {
+              ctx.trayStatus.markHeartbeat();
+            } catch {}
+          } catch (err: any) {
+            ctx.logger?.warn("[grpc-client] heartbeat IPC threw — marking connection broken", {
+              error: err?.message || String(err)
+            });
+            connected = false;
+            connectPromise = null;
+            try {
+              ctx.trayStatus.markGrpcDisconnected();
+            } catch {}
+            stream.emit("error", err instanceof Error ? err : new Error(String(err)));
+          }
+
+          return;
+        }
+
+        ctx.logger?.warn("[grpc-client] stream.write ignored unknown message type", {
+          keys: Object.keys(msg || {})
+        });
+      })
+      .catch((err) => {
+        const errCode = String(err?.code || "");
+        const errMessage = String(err?.message || err || "");
+        if (errCode === "EPIPE" || /EPIPE/i.test(errMessage)) {
+          ctx.logger?.warn("[grpc-client] EPIPE detected, marking connection as broken", {
+            errCode,
+            errMessage
+          });
+          connected = false;
+          connectPromise = null;
+          try {
+            ctx.trayStatus.markGrpcDisconnected();
+          } catch {}
+        }
+        // release in-flight on failure
+        if (msg?.facts?.eventId) {
+          inFlightEvents.delete(String(msg.facts.eventId));
+        }
+        stream.emit("error", err);
+      });
+  };
+
+  stream.end = () => {
+    if (ended) return;
+
+    ended = true;
+    localClose = true;
+    connected = false;
+    connectPromise = null;
+    try {
+      ctx.trayStatus.markGrpcDisconnected();
+    } catch {}
+
+    (ctx.priv as any)
+      .call({
+        v: 1,
+        id: "grpc-close",
+        method: "grpc.close",
+        params: {},
+        meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+      })
+      .catch(() => {});
+
+    stream.emit("end");
+  };
+
+  const client = {
+    Connect: () => {
+      ended = false;
+      localClose = false;
+      ensureConnected().catch(() => {});
+      return stream;
+    },
+    // Reports "live" only if (a) the local connect handshake
+    // completed AND (b) we've heard from the server within the
+    // silence threshold. The local `connected` flag alone is
+    // insufficient: when the PrivSvc bridge goes zombie (post
+    // sleep/wake half-open TCP) it stops emitting `grpc.disconnected`
+    // at all, so `connected` stays `true` until something else
+    // resets it — meanwhile heartbeats `stream.write(...)` succeed
+    // into kernel buffer that never reaches the server, the dashboard
+    // shows the device offline, but the tray icon stays green and
+    // any caller that gates on `isConnected()` keeps trying. This
+    // staleness gate makes `isConnected()` track REAL liveness, not
+    // wishful thinking.
+    isConnected: () => {
+      if (!connected) return false;
+      return Date.now() - lastServerActivityMs <= SILENCE_THRESHOLD_MS;
+    }
+  };
+
+  (ctx as any).__grpcClientInstance = client;
+
+  return client;
+} 

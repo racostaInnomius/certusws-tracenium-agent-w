@@ -1,0 +1,86 @@
+// src/plugins/scp/providers/macos.ts
+//
+// Schema 2.0 macOS SCP collector. Same contract as the Windows provider:
+// pass the raw posture from PrivSvc through as evidence. The server-side
+// catalog evaluator decides pass/fail against its own rule set.
+
+import type { AgentContext } from "../../../core/agent-context";
+import type { ScpNamespace, ScpPatchesEvidence } from "../../../domain/scp-types";
+
+function asArray<T = any>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+async function readSecurityCompliance(ctx: AgentContext): Promise<any> {
+  const resp = await ctx.priv.call({
+    v: 1,
+    id: `scp_${Date.now()}`,
+    method: "security.compliance",
+    params: {},
+    meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+  });
+
+  if (!resp?.ok) {
+    throw new Error(resp?.error?.message || "security.compliance failed");
+  }
+
+  return resp.result || {};
+}
+
+function buildPatchesEvidence(posture: any): ScpPatchesEvidence {
+  const items = asArray(posture?.patches?.items);
+
+  return {
+    items,
+    count: Number(posture?.patches?.securityCount ?? items.length) || items.length,
+    lastScanUtc: posture?.patches?.lastScanUtc ?? posture?.collectedAtUtc ?? undefined
+  };
+}
+
+export async function collectMacosScp(ctx: AgentContext): Promise<ScpNamespace> {
+  let posture: any = {};
+  let collectorError: ScpNamespace["collectorError"] | undefined;
+
+  try {
+    posture = await readSecurityCompliance(ctx);
+  } catch (err: any) {
+    collectorError = {
+      message: err?.message || String(err),
+      phase: "security.compliance"
+    };
+  }
+
+  return {
+    schemaVersion: "2.0",
+    collector: {
+      plugin: "scp",
+      version: ctx.config.agentVersion
+    },
+    hasChanges: true,
+
+    // Raw evidence blocks — paths chosen to match the macOS catalog
+    // entries in certusws-tracenium/db/migrations/20260422_compliance_catalog_seed.sql
+    // (filevault.status, gatekeeper.status, sip.status, screenLock.*,
+    //  services.remoteLogin, smb.smb1.enabled, softwareUpdate.autoCheck,
+    //  accounts.guestEnabled). Those catalog rows are gated by
+    //  collector_version_min so they stay not_applicable until PrivSvc
+    //  actually ships the evidence — the type signature is forward-
+    //  compatible for that rollout.
+    firewall: posture?.firewall,
+    filevault: posture?.filevault,
+    gatekeeper: posture?.gatekeeper,
+    sip: posture?.sip,
+    screenLock: posture?.screenLock,
+    services: posture?.services,
+    smb: posture?.smb,
+    shares: posture?.shares,
+    antivirus: posture?.antivirus,
+    softwareUpdate: posture?.softwareUpdate,
+    accounts: posture?.accounts,
+    domain: posture?.domain,
+
+    patches: buildPatchesEvidence(posture),
+
+    ...(collectorError ? { collectorError } : {})
+  };
+}

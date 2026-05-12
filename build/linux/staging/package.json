@@ -1,0 +1,41 @@
+{
+  "name": "certusws-tracenium-agent",
+  "version": "1.1.14",
+  "description": "Tracenium Agent - Hardware & Software inventory collector",
+  "license": "MIT",
+  "author": {
+    "name": "Certus",
+    "email": "support@certusitm.com"
+  },
+  "type": "commonjs",
+  "main": "main.js",
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.8.0",
+    "better-sqlite3": "^12.6.2",
+    "child_process": "^1.0.2",
+    "crypto": "^1.0.1",
+    "dotenv": "^16.4.5",
+    "node-wmi": "^0.0.5",
+    "os": "^0.1.2",
+    "path": "^0.12.7",
+    "postject": "^1.0.0-alpha.6",
+    "systeminformation": "^5.27.11",
+    "util": "^0.12.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.3.0",
+    "copyfiles": "^2.4.1",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:privsvc:linux": "tsc -p privsvc/linux/tsconfig.json",
+    "build:privsvc:macos": "tsc -p privsvc/macos/tsconfig.json",
+    "pkg:linux": "../scripts/build-linux-binaries.sh",
+    "pkg:linux:arm64": "TRACENIUM_AGENT_ARCH=arm64 ../scripts/build-linux-binaries.sh",
+    "pkg:macos": "../scripts/build-macos-pkg.sh"
+  }
+}

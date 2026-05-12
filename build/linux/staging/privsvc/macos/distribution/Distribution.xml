@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+  <title>Tracenium Agent</title>
+
+  <welcome file="welcome.html" />
+  <readme file="readme.html" />
+  <license file="license.html" />
+  <conclusion file="conclusion.html" />
+
+  <background file="tracenium_pgk.png" alignment="center" scaling="proportional" />
+
+  <!--
+    hostArchitectures: declarando arm64+x86_64 explícitamente, macOS
+    Installer corre los scripts (preinstall/postinstall) NATIVAMENTE
+    en cada arch. Sin esto, en Apple Silicon el postinstall se invoca
+    vía Rosetta Intel Translation — funciona pero más lento y agrega
+    ruido al log (`Preparing to execute with Rosetta Intel
+    Translation`).
+  -->
+  <options customize="never" require-scripts="true" hostArchitectures="arm64,x86_64" />
+  <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true" />
+
+  <pkg-ref id="@TRACENIUM_PKG_IDENTIFIER@" version="@TRACENIUM_AGENT_VERSION@" auth="Root">TraceniumAgentComponent.pkg</pkg-ref>
+
+  <choices-outline>
+    <line choice="tracenium-agent" />
+  </choices-outline>
+
+  <choice id="tracenium-agent" title="Tracenium Agent" visible="false" selected="true" enabled="false">
+    <pkg-ref id="@TRACENIUM_PKG_IDENTIFIER@" />
+  </choice>
+</installer-gui-script>
