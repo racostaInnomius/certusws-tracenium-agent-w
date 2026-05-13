@@ -11,7 +11,42 @@ let shuttingDown = false;
 let currentCtx: AgentContext | null = null;
 let cleanupTimer: NodeJS.Timeout | undefined;
 let certRenewalTimer: NodeJS.Timeout | undefined;
+let livenessWatchdogTimer: NodeJS.Timeout | undefined;
 let stopGrpcStream: (() => void) | null = null;
+
+// ── Liveness watchdog ───────────────────────────────────────────────
+//
+// Polls the trayStatus store every minute. If its last successful save
+// happened more than MAX_STATUS_STALE_MS ago, the event loop is wedged
+// somewhere (a worker promise that never settles, a privsvc socket
+// half-open with no error event, etc.) and we exit so launchd recycles
+// us with clean state.
+//
+// Why this exists: every other layer of self-healing — worker
+// stuck-flags, cached-client invalidation, scheduleReconnect — depends
+// on the event loop being able to run callbacks. When the loop is
+// fully stuck on an unresolved await, all those mechanisms become
+// dead code. Status file writes are the canary because almost every
+// real activity in the agent writes the status (heartbeats every 60s,
+// reconnects, jobs, policy changes); a 5-minute silence means
+// everything is stuck.
+//
+// 5 minutes vs 60 seconds for STALE: heartbeats fire every 60s, so 5
+// min is 5 consecutive missed heartbeat-writes. Generous enough that
+// a one-shot slow disk or transient privsvc hiccup doesn't kill us;
+// strict enough that we recover in single-digit minutes instead of
+// the 36 hours of zombie we observed in prod.
+const LIVENESS_CHECK_INTERVAL_MS = 60_000;
+const MAX_STATUS_STALE_MS = 5 * 60 * 1000;
+// Grace period after startup before the watchdog can fire. Cold
+// bootstrap (enrollment fetch, policy hydrate, outbox recovery) can
+// legitimately take 30–90s on first boot, and we don't write the
+// status file until trayStatus.writeStartupSnapshot runs. The
+// constructor's `lastWriteAtMs = Date.now()` covers that, but the
+// grace adds a safety margin so the watchdog never trips on the
+// startup race itself.
+const LIVENESS_STARTUP_GRACE_MS = 5 * 60 * 1000;
+const livenessStartedAtMs = Date.now();
 
 export async function startService() {
   try {
@@ -197,6 +232,47 @@ export async function startService() {
     };
     armCertRenewal();
 
+    // Arm the process-level liveness watchdog. This is the last-resort
+    // defense: if every other recovery mechanism fails because the
+    // event loop itself is wedged, this exits the process so launchd
+    // restarts us. See the constants above for rationale.
+    livenessWatchdogTimer = setInterval(() => {
+      if (shuttingDown) return;
+      const sinceStartupMs = Date.now() - livenessStartedAtMs;
+      if (sinceStartupMs < LIVENESS_STARTUP_GRACE_MS) return;
+
+      try {
+        const lastWriteMs = currentCtx?.trayStatus?.getLastWriteMs?.();
+        if (typeof lastWriteMs !== "number") return; // store not ready yet
+        const staleMs = Date.now() - lastWriteMs;
+        if (staleMs > MAX_STATUS_STALE_MS) {
+          // Use the global `logger`, not `log` (= ctx.logger). The ctx
+          // logger may share state with whatever component is wedged;
+          // the global one writes to stdout/stderr directly. We want
+          // the breadcrumb to land regardless of which subsystem is on
+          // fire.
+          logger.error(
+            "Liveness watchdog: tray status not updated in " +
+              `${Math.round(staleMs / 1000)}s (> ${MAX_STATUS_STALE_MS / 1000}s threshold). ` +
+              "Event loop is wedged. Exiting so launchd can recycle the process."
+          );
+          // Same 250ms flush window as the crash handlers in
+          // service.ts. unref so the timer can't keep the loop alive
+          // beyond what's already in there.
+          setTimeout(() => process.exit(1), 250).unref();
+        }
+      } catch (e: any) {
+        // The watchdog itself must never throw — otherwise it'd become
+        // the source of the very crash it's trying to prevent. Log
+        // and continue.
+        logger.warn(
+          "Liveness watchdog: check threw",
+          e?.message || String(e)
+        );
+      }
+    }, LIVENESS_CHECK_INTERVAL_MS);
+    (livenessWatchdogTimer as any)?.unref?.();
+
     log.info("Agent Core started.");
   } catch (err: any) {
     logger.error("Fatal startup error:", err?.message || err);
@@ -217,6 +293,11 @@ process.on("SIGTERM", async () => {
     if (cleanupTimer) {
       clearInterval(cleanupTimer);
       cleanupTimer = undefined;
+    }
+
+    if (livenessWatchdogTimer) {
+      clearInterval(livenessWatchdogTimer);
+      livenessWatchdogTimer = undefined;
     }
 
     if (certRenewalTimer) {
@@ -246,10 +327,59 @@ process.on("SIGTERM", async () => {
   process.exit(0);
 });
 
+// Crash handlers — log and EXIT.
+//
+// History: the previous implementation logged the error and let the
+// process continue running. That seemed safe (one failed promise
+// shouldn't take the agent down) but in practice it created a much
+// worse failure mode: a single uncaught error from the privsvc
+// socket reconnect path (ECONNREFUSED after privsvc was restarted by
+// launchd) would silently land here, the event loop would continue
+// with corrupted state (cached gRPC client pointing at a dead socket,
+// running-job flags stuck true, status file frozen), and the agent
+// would appear "alive" to launchd for days while doing zero useful
+// work. The tray icon kept showing the last persisted state
+// ("offline, http 504 stream timeout") because the writer that
+// updates it was wedged in the same event loop.
+//
+// The correct behavior for a launchd-managed daemon is the opposite:
+// surface every unrecoverable error as a process exit so launchd can
+// recycle us. KeepAlive in the .plist means we come back within
+// seconds, with a clean event loop and a fresh socket connection.
+// A few minutes of "process restarted" beats days of zombie.
+//
+// We exit(1) — not (0) — so launchd treats this as an abnormal exit
+// and ThrottleInterval governs restart cadence, preventing a tight
+// crash loop from frying the box. Also: a non-zero code shows up in
+// `launchctl print` and `log show` so the failure stays visible
+// rather than being mistaken for a clean shutdown.
+//
+// The 250ms delay gives the logger transport a chance to flush its
+// buffer (Node's stdout/stderr to a pipe is non-blocking, so an
+// immediate exit can truncate the last few lines we care about most).
+function crashAndExit(label: string, err: unknown): void {
+  try {
+    logger.error(`${label}:`, err);
+  } catch {
+    // Logger itself may be broken — last-resort stderr write so we
+    // at least leave a forensic breadcrumb before the process dies.
+    try {
+      process.stderr.write(`${label}: ${String(err)}\n`);
+    } catch {
+      // Nothing left to do.
+    }
+  }
+  // Detach event loop influence from any pending operations before
+  // exit. unref'd timer fires only if event loop is otherwise empty;
+  // if something is still queued it'll keep the loop alive, but the
+  // setTimeout itself can't extend that window.
+  setTimeout(() => process.exit(1), 250).unref();
+}
+
 process.on("uncaughtException", (err) => {
-  logger.error("Uncaught exception:", err);
+  crashAndExit("Uncaught exception", err);
 });
 
 process.on("unhandledRejection", (reason) => {
-  logger.error("Unhandled rejection:", reason);
+  crashAndExit("Unhandled rejection", reason);
 });

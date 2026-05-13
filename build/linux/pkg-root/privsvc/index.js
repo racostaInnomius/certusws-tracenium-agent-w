@@ -675,14 +675,14 @@ var require_tls_helpers = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CIPHER_SUITES = void 0;
     exports2.getDefaultRootsData = getDefaultRootsData;
-    var fs11 = require("fs");
+    var fs12 = require("fs");
     exports2.CIPHER_SUITES = process.env.GRPC_SSL_CIPHER_SUITES;
     var DEFAULT_ROOTS_FILE_PATH = process.env.GRPC_DEFAULT_SSL_ROOTS_FILE_PATH;
     var defaultRootsData = null;
     function getDefaultRootsData() {
       if (DEFAULT_ROOTS_FILE_PATH) {
         if (defaultRootsData === null) {
-          defaultRootsData = fs11.readFileSync(DEFAULT_ROOTS_FILE_PATH);
+          defaultRootsData = fs12.readFileSync(DEFAULT_ROOTS_FILE_PATH);
         }
         return defaultRootsData;
       }
@@ -713,19 +713,19 @@ var require_uri_parser = __commonJS({
       };
     }
     var NUMBER_REGEX = /^\d+$/;
-    function splitHostPort(path6) {
-      if (path6.startsWith("[")) {
-        const hostEnd = path6.indexOf("]");
+    function splitHostPort(path7) {
+      if (path7.startsWith("[")) {
+        const hostEnd = path7.indexOf("]");
         if (hostEnd === -1) {
           return null;
         }
-        const host = path6.substring(1, hostEnd);
+        const host = path7.substring(1, hostEnd);
         if (host.indexOf(":") === -1) {
           return null;
         }
-        if (path6.length > hostEnd + 1) {
-          if (path6[hostEnd + 1] === ":") {
-            const portString = path6.substring(hostEnd + 2);
+        if (path7.length > hostEnd + 1) {
+          if (path7[hostEnd + 1] === ":") {
+            const portString = path7.substring(hostEnd + 2);
             if (NUMBER_REGEX.test(portString)) {
               return {
                 host,
@@ -743,7 +743,7 @@ var require_uri_parser = __commonJS({
           };
         }
       } else {
-        const splitPath = path6.split(":");
+        const splitPath = path7.split(":");
         if (splitPath.length === 2) {
           if (NUMBER_REGEX.test(splitPath[1])) {
             return {
@@ -755,7 +755,7 @@ var require_uri_parser = __commonJS({
           }
         } else {
           return {
-            host: path6
+            host: path7
           };
         }
       }
@@ -3755,14 +3755,14 @@ var require_client_interceptors = __commonJS({
       }
     };
     exports2.InterceptingCall = InterceptingCall;
-    function getCall(channel, path6, options) {
+    function getCall(channel, path7, options) {
       var _a, _b;
       const deadline = (_a = options.deadline) !== null && _a !== void 0 ? _a : Infinity;
       const host = options.host;
       const parent = (_b = options.parent) !== null && _b !== void 0 ? _b : null;
       const propagateFlags = options.propagate_flags;
       const credentials2 = options.credentials;
-      const call = channel.createCall(path6, deadline, host, parent, propagateFlags);
+      const call = channel.createCall(path7, deadline, host, parent, propagateFlags);
       if (credentials2) {
         call.setCredentials(credentials2);
       }
@@ -4332,9 +4332,9 @@ var require_make_client = __commonJS({
       ServiceClientImpl.serviceName = serviceName;
       return ServiceClientImpl;
     }
-    function partial(fn, path6, serialize, deserialize) {
+    function partial(fn, path7, serialize, deserialize) {
       return function(...args) {
-        return fn.call(this, path6, serialize, deserialize, ...args);
+        return fn.call(this, path7, serialize, deserialize, ...args);
       };
     }
     function isProtobufTypeDefinition(obj) {
@@ -6217,7 +6217,7 @@ var require_fetch = __commonJS({
     module2.exports = fetch;
     var asPromise = require_aspromise();
     var inquire = require_inquire();
-    var fs11 = inquire("fs");
+    var fs12 = inquire("fs");
     function fetch(filename, options, callback) {
       if (typeof options === "function") {
         callback = options;
@@ -6226,8 +6226,8 @@ var require_fetch = __commonJS({
         options = {};
       if (!callback)
         return asPromise(fetch, this, filename, options);
-      if (!options.xhr && fs11 && fs11.readFile)
-        return fs11.readFile(filename, function fetchReadFileCallback(err, contents) {
+      if (!options.xhr && fs12 && fs12.readFile)
+        return fs12.readFile(filename, function fetchReadFileCallback(err, contents) {
           return err && typeof XMLHttpRequest !== "undefined" ? fetch.xhr(filename, options, callback) : err ? callback(err) : callback(null, options.binary ? contents : contents.toString("utf8"));
         });
       return fetch.xhr(filename, options, callback);
@@ -6265,15 +6265,15 @@ var require_fetch = __commonJS({
 var require_path = __commonJS({
   "certusws-tracenium-agent-w/build/linux/staging/node_modules/@protobufjs/path/index.js"(exports2) {
     "use strict";
-    var path6 = exports2;
+    var path7 = exports2;
     var isAbsolute = (
       /**
        * Tests if the specified path is absolute.
        * @param {string} path Path to test
        * @returns {boolean} `true` if path is absolute
        */
-      path6.isAbsolute = function isAbsolute2(path7) {
-        return /^(?:\/|\w+:)/.test(path7);
+      path7.isAbsolute = function isAbsolute2(path8) {
+        return /^(?:\/|\w+:)/.test(path8);
       }
     );
     var normalize = (
@@ -6282,9 +6282,9 @@ var require_path = __commonJS({
        * @param {string} path Path to normalize
        * @returns {string} Normalized path
        */
-      path6.normalize = function normalize2(path7) {
-        path7 = path7.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
-        var parts = path7.split("/"), absolute = isAbsolute(path7), prefix = "";
+      path7.normalize = function normalize2(path8) {
+        path8 = path8.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+        var parts = path8.split("/"), absolute = isAbsolute(path8), prefix = "";
         if (absolute)
           prefix = parts.shift() + "/";
         for (var i = 0; i < parts.length; ) {
@@ -6303,7 +6303,7 @@ var require_path = __commonJS({
         return prefix + parts.join("/");
       }
     );
-    path6.resolve = function resolve(originPath, includePath, alreadyNormalized) {
+    path7.resolve = function resolve(originPath, includePath, alreadyNormalized) {
       if (!alreadyNormalized)
         includePath = normalize(includePath);
       if (isAbsolute(includePath))
@@ -6340,8 +6340,9 @@ var require_namespace = __commonJS({
     var Type;
     var Service;
     var Enum;
-    Namespace.fromJSON = function fromJSON(name, json) {
-      return new Namespace(name, json.options).addJSON(json.nested);
+    Namespace.fromJSON = function fromJSON(name, json, depth) {
+      depth = util.checkDepth(depth);
+      return new Namespace(name, json.options).addJSON(json.nested, depth);
     };
     function arrayToJSON(array, toJSONOptions) {
       if (!(array && array.length))
@@ -6398,14 +6399,15 @@ var require_namespace = __commonJS({
         arrayToJSON(this.nestedArray, toJSONOptions)
       ]);
     };
-    Namespace.prototype.addJSON = function addJSON(nestedJson) {
+    Namespace.prototype.addJSON = function addJSON(nestedJson, depth) {
+      depth = util.checkDepth(depth);
       var ns = this;
       if (nestedJson) {
         for (var names = Object.keys(nestedJson), i = 0, nested; i < names.length; ++i) {
           nested = nestedJson[names[i]];
           ns.add(
             // most to least likely
-            (nested.fields !== void 0 ? Type.fromJSON : nested.values !== void 0 ? Enum.fromJSON : nested.methods !== void 0 ? Service.fromJSON : nested.id !== void 0 ? Field.fromJSON : Namespace.fromJSON)(names[i], nested)
+            (nested.fields !== void 0 ? Type.fromJSON : nested.values !== void 0 ? Enum.fromJSON : nested.methods !== void 0 ? Service.fromJSON : nested.id !== void 0 ? Field.fromJSON : Namespace.fromJSON)(names[i], nested, depth + 1)
           );
         }
       }
@@ -6468,16 +6470,16 @@ var require_namespace = __commonJS({
       object.onRemove(this);
       return clearCache(this);
     };
-    Namespace.prototype.define = function define2(path6, json) {
-      if (util.isString(path6))
-        path6 = path6.split(".");
-      else if (!Array.isArray(path6))
+    Namespace.prototype.define = function define2(path7, json) {
+      if (util.isString(path7))
+        path7 = path7.split(".");
+      else if (!Array.isArray(path7))
         throw TypeError("illegal path");
-      if (path6 && path6.length && path6[0] === "")
+      if (path7 && path7.length && path7[0] === "")
         throw Error("path must be relative");
       var ptr = this;
-      while (path6.length > 0) {
-        var part = path6.shift();
+      while (path7.length > 0) {
+        var part = path7.shift();
         if (ptr.nested && ptr.nested[part]) {
           ptr = ptr.nested[part];
           if (!(ptr instanceof Namespace))
@@ -6512,26 +6514,26 @@ var require_namespace = __commonJS({
       });
       return this;
     };
-    Namespace.prototype.lookup = function lookup(path6, filterTypes, parentAlreadyChecked) {
+    Namespace.prototype.lookup = function lookup(path7, filterTypes, parentAlreadyChecked) {
       if (typeof filterTypes === "boolean") {
         parentAlreadyChecked = filterTypes;
         filterTypes = void 0;
       } else if (filterTypes && !Array.isArray(filterTypes))
         filterTypes = [filterTypes];
-      if (util.isString(path6) && path6.length) {
-        if (path6 === ".")
+      if (util.isString(path7) && path7.length) {
+        if (path7 === ".")
           return this.root;
-        path6 = path6.split(".");
-      } else if (!path6.length)
+        path7 = path7.split(".");
+      } else if (!path7.length)
         return this;
-      var flatPath = path6.join(".");
-      if (path6[0] === "")
-        return this.root.lookup(path6.slice(1), filterTypes);
+      var flatPath = path7.join(".");
+      if (path7[0] === "")
+        return this.root.lookup(path7.slice(1), filterTypes);
       var found = this.root._fullyQualifiedObjects && this.root._fullyQualifiedObjects["." + flatPath];
       if (found && (!filterTypes || filterTypes.indexOf(found.constructor) > -1)) {
         return found;
       }
-      found = this._lookupImpl(path6, flatPath);
+      found = this._lookupImpl(path7, flatPath);
       if (found && (!filterTypes || filterTypes.indexOf(found.constructor) > -1)) {
         return found;
       }
@@ -6539,7 +6541,7 @@ var require_namespace = __commonJS({
         return null;
       var current = this;
       while (current.parent) {
-        found = current.parent._lookupImpl(path6, flatPath);
+        found = current.parent._lookupImpl(path7, flatPath);
         if (found && (!filterTypes || filterTypes.indexOf(found.constructor) > -1)) {
           return found;
         }
@@ -6547,22 +6549,22 @@ var require_namespace = __commonJS({
       }
       return null;
     };
-    Namespace.prototype._lookupImpl = function lookup(path6, flatPath) {
+    Namespace.prototype._lookupImpl = function lookup(path7, flatPath) {
       if (Object.prototype.hasOwnProperty.call(this._lookupCache, flatPath)) {
         return this._lookupCache[flatPath];
       }
-      var found = this.get(path6[0]);
+      var found = this.get(path7[0]);
       var exact = null;
       if (found) {
-        if (path6.length === 1) {
+        if (path7.length === 1) {
           exact = found;
         } else if (found instanceof Namespace) {
-          path6 = path6.slice(1);
-          exact = found._lookupImpl(path6, path6.join("."));
+          path7 = path7.slice(1);
+          exact = found._lookupImpl(path7, path7.join("."));
         }
       } else {
         for (var i = 0; i < this.nestedArray.length; ++i)
-          if (this._nestedArray[i] instanceof Namespace && (found = this._nestedArray[i]._lookupImpl(path6, flatPath))) {
+          if (this._nestedArray[i] instanceof Namespace && (found = this._nestedArray[i]._lookupImpl(path7, flatPath))) {
             exact = found;
             break;
           }
@@ -6570,28 +6572,28 @@ var require_namespace = __commonJS({
       this._lookupCache[flatPath] = exact;
       return exact;
     };
-    Namespace.prototype.lookupType = function lookupType(path6) {
-      var found = this.lookup(path6, [Type]);
+    Namespace.prototype.lookupType = function lookupType(path7) {
+      var found = this.lookup(path7, [Type]);
       if (!found)
-        throw Error("no such type: " + path6);
+        throw Error("no such type: " + path7);
       return found;
     };
-    Namespace.prototype.lookupEnum = function lookupEnum(path6) {
-      var found = this.lookup(path6, [Enum]);
+    Namespace.prototype.lookupEnum = function lookupEnum(path7) {
+      var found = this.lookup(path7, [Enum]);
       if (!found)
-        throw Error("no such Enum '" + path6 + "' in " + this);
+        throw Error("no such Enum '" + path7 + "' in " + this);
       return found;
     };
-    Namespace.prototype.lookupTypeOrEnum = function lookupTypeOrEnum(path6) {
-      var found = this.lookup(path6, [Type, Enum]);
+    Namespace.prototype.lookupTypeOrEnum = function lookupTypeOrEnum(path7) {
+      var found = this.lookup(path7, [Type, Enum]);
       if (!found)
-        throw Error("no such Type or Enum '" + path6 + "' in " + this);
+        throw Error("no such Type or Enum '" + path7 + "' in " + this);
       return found;
     };
-    Namespace.prototype.lookupService = function lookupService(path6) {
-      var found = this.lookup(path6, [Service]);
+    Namespace.prototype.lookupService = function lookupService(path7) {
+      var found = this.lookup(path7, [Service]);
       if (!found)
-        throw Error("no such Service '" + path6 + "' in " + this);
+        throw Error("no such Service '" + path7 + "' in " + this);
       return found;
     };
     Namespace._configure = function(Type_, Service_, Enum_) {
@@ -6742,13 +6744,14 @@ var require_service2 = __commonJS({
       this.methods = {};
       this._methodsArray = null;
     }
-    Service.fromJSON = function fromJSON(name, json) {
+    Service.fromJSON = function fromJSON(name, json, depth) {
+      depth = util.checkDepth(depth);
       var service = new Service(name, json.options);
       if (json.methods)
         for (var names = Object.keys(json.methods), i = 0; i < names.length; ++i)
           service.add(Method.fromJSON(names[i], json.methods[names[i]]));
       if (json.nested)
-        service.addJSON(json.nested);
+        service.addJSON(json.nested, depth);
       if (json.edition)
         service._edition = json.edition;
       service.comment = json.comment;
@@ -7427,7 +7430,8 @@ var require_type = __commonJS({
       delete type.verify;
       return type;
     }
-    Type.fromJSON = function fromJSON(name, json) {
+    Type.fromJSON = function fromJSON(name, json, depth) {
+      depth = util.checkDepth(depth);
       var type = new Type(name, json.options);
       type.extensions = json.extensions;
       type.reserved = json.reserved;
@@ -7444,7 +7448,7 @@ var require_type = __commonJS({
           var nested = json.nested[names[i]];
           type.add(
             // most to least likely
-            (nested.id !== void 0 ? Field.fromJSON : nested.fields !== void 0 ? Type.fromJSON : nested.values !== void 0 ? Enum.fromJSON : nested.methods !== void 0 ? Service.fromJSON : Namespace.fromJSON)(names[i], nested)
+            (nested.id !== void 0 ? Field.fromJSON : nested.fields !== void 0 ? Type.fromJSON : nested.values !== void 0 ? Enum.fromJSON : nested.methods !== void 0 ? Service.fromJSON : Namespace.fromJSON)(names[i], nested, depth + 1)
           );
         }
       if (json.extensions && json.extensions.length)
@@ -7669,12 +7673,13 @@ var require_root = __commonJS({
       this._edition = "proto2";
       this._fullyQualifiedObjects = {};
     }
-    Root.fromJSON = function fromJSON(json, root) {
+    Root.fromJSON = function fromJSON(json, root, depth) {
+      depth = util.checkDepth(depth);
       if (!root)
         root = new Root();
       if (json.options)
         root.setOptions(json.options);
-      return root.addJSON(json.nested).resolveAll();
+      return root.addJSON(json.nested, depth).resolveAll();
     };
     Root.prototype.resolvePath = util.path.resolve;
     Root.prototype.fetch = util.fetch;
@@ -7912,6 +7917,13 @@ var require_util = __commonJS({
     var reservedRe = util.patterns.reservedRe;
     var unsafePropertyRe = util.patterns.unsafePropertyRe;
     util.fs = util.inquire("fs");
+    util.checkDepth = function checkDepth(depth) {
+      if (depth === void 0)
+        depth = 0;
+      if (depth > util.recursionLimit)
+        throw Error("max depth exceeded");
+      return depth;
+    };
     util.toArray = function toArray(object) {
       if (object) {
         var keys = Object.keys(object), array = new Array(keys.length), index = 0;
@@ -7979,13 +7991,13 @@ var require_util = __commonJS({
       Object.defineProperty(object, "$type", { value: enm, enumerable: false });
       return enm;
     };
-    util.setProperty = function setProperty(dst, path6, value, ifNotSet) {
-      function setProp(dst2, path7, value2) {
-        var part = path7.shift();
+    util.setProperty = function setProperty(dst, path7, value, ifNotSet) {
+      function setProp(dst2, path8, value2) {
+        var part = path8.shift();
         if (unsafePropertyRe.test(part))
           return dst2;
-        if (path7.length > 0) {
-          dst2[part] = setProp(dst2[part] || {}, path7, value2);
+        if (path8.length > 0) {
+          dst2[part] = setProp(dst2[part] || {}, path8, value2);
         } else {
           var prevValue = dst2[part];
           if (prevValue && ifNotSet)
@@ -7998,10 +8010,10 @@ var require_util = __commonJS({
       }
       if (typeof dst !== "object")
         throw TypeError("dst must be an object");
-      if (!path6)
+      if (!path7)
         throw TypeError("path must be specified");
-      path6 = path6.split(".");
-      return setProp(dst, path6, value);
+      path7 = path7.split(".");
+      return setProp(dst, path7, value);
     };
     Object.defineProperty(util, "decorateRoot", {
       get: function() {
@@ -8547,12 +8559,12 @@ var require_object = __commonJS({
        */
       fullName: {
         get: function() {
-          var path6 = [this.name], ptr = this.parent;
+          var path7 = [this.name], ptr = this.parent;
           while (ptr) {
-            path6.unshift(ptr.name);
+            path7.unshift(ptr.name);
             ptr = ptr.parent;
           }
-          return path6.join(".");
+          return path7.join(".");
         }
       }
     });
@@ -9378,23 +9390,24 @@ var require_parse = __commonJS({
           throw illegal(edition, "edition");
         skip(";");
       }
-      function parseCommon(parent, token2) {
+      function parseCommon(parent, token2, depth) {
+        depth = util.checkDepth(depth);
         switch (token2) {
           case "option":
             parseOption(parent, token2);
             skip(";");
             return true;
           case "message":
-            parseType(parent, token2);
+            parseType(parent, token2, depth + 1);
             return true;
           case "enum":
             parseEnum(parent, token2);
             return true;
           case "service":
-            parseService(parent, token2);
+            parseService(parent, token2, depth + 1);
             return true;
           case "extend":
-            parseExtension(parent, token2);
+            parseExtension(parent, token2, depth);
             return true;
         }
         return false;
@@ -9420,12 +9433,13 @@ var require_parse = __commonJS({
             obj.comment = cmnt(trailingLine) || obj.comment;
         }
       }
-      function parseType(parent, token2) {
+      function parseType(parent, token2, depth) {
+        depth = util.checkDepth(depth);
         if (!nameRe.test(token2 = next()))
           throw illegal(token2, "type name");
         var type = new Type(token2);
         ifBlock(type, function parseType_block(token3) {
-          if (parseCommon(type, token3))
+          if (parseCommon(type, token3, depth))
             return;
           switch (token3) {
             case "map":
@@ -9436,19 +9450,19 @@ var require_parse = __commonJS({
                 throw illegal(token3);
             /* eslint-disable no-fallthrough */
             case "repeated":
-              parseField(type, token3);
+              parseField(type, token3, void 0, depth + 1);
               break;
             case "optional":
               if (edition === "proto3") {
-                parseField(type, "proto3_optional");
+                parseField(type, "proto3_optional", void 0, depth + 1);
               } else if (edition !== "proto2") {
                 throw illegal(token3);
               } else {
-                parseField(type, "optional");
+                parseField(type, "optional", void 0, depth + 1);
               }
               break;
             case "oneof":
-              parseOneOf(type, token3);
+              parseOneOf(type, token3, depth + 1);
               break;
             case "extensions":
               readRanges(type.extensions || (type.extensions = []));
@@ -9461,7 +9475,7 @@ var require_parse = __commonJS({
                 throw illegal(token3);
               }
               push2(token3);
-              parseField(type, "optional");
+              parseField(type, "optional", void 0, depth + 1);
               break;
           }
         });
@@ -9470,10 +9484,10 @@ var require_parse = __commonJS({
           topLevelObjects.push(type);
         }
       }
-      function parseField(parent, rule, extend) {
+      function parseField(parent, rule, extend, depth) {
         var type = next();
         if (type === "group") {
-          parseGroup(parent, rule);
+          parseGroup(parent, rule, depth);
           return;
         }
         while (type.endsWith(".") || peek().startsWith(".")) {
@@ -9508,7 +9522,8 @@ var require_parse = __commonJS({
           topLevelObjects.push(field);
         }
       }
-      function parseGroup(parent, rule) {
+      function parseGroup(parent, rule, depth) {
+        depth = util.checkDepth(depth);
         if (edition >= 2023) {
           throw illegal("group");
         }
@@ -9532,17 +9547,17 @@ var require_parse = __commonJS({
               break;
             case "required":
             case "repeated":
-              parseField(type, token2);
+              parseField(type, token2, void 0, depth + 1);
               break;
             case "optional":
               if (edition === "proto3") {
-                parseField(type, "proto3_optional");
+                parseField(type, "proto3_optional", void 0, depth + 1);
               } else {
-                parseField(type, "optional");
+                parseField(type, "optional", void 0, depth + 1);
               }
               break;
             case "message":
-              parseType(type, token2);
+              parseType(type, token2, depth + 1);
               break;
             case "enum":
               parseEnum(type, token2);
@@ -9583,7 +9598,7 @@ var require_parse = __commonJS({
         });
         parent.add(field);
       }
-      function parseOneOf(parent, token2) {
+      function parseOneOf(parent, token2, depth) {
         if (!nameRe.test(token2 = next()))
           throw illegal(token2, "name");
         var oneof = new OneOf(applyCase(token2));
@@ -9593,7 +9608,7 @@ var require_parse = __commonJS({
             skip(";");
           } else {
             push2(token3);
-            parseField(oneof, "optional");
+            parseField(oneof, "optional", void 0, depth);
           }
         });
         parent.add(oneof);
@@ -9681,7 +9696,8 @@ var require_parse = __commonJS({
         option = option && option[option.length - 1] === "." ? option.slice(0, -1) : option;
         setParsedOption(parent, option, optionValue, propName);
       }
-      function parseOptionValue(parent, name) {
+      function parseOptionValue(parent, name, depth) {
+        depth = util.checkDepth(depth);
         if (skip("{", true)) {
           var objectResult = {};
           while (!skip("}", true)) {
@@ -9695,7 +9711,7 @@ var require_parse = __commonJS({
             var propName = token;
             skip(":", true);
             if (peek() === "{") {
-              value = parseOptionValue(parent, name + "." + token);
+              value = parseOptionValue(parent, name + "." + token, depth + 1);
             } else if (peek() === "[") {
               value = [];
               var lastValue;
@@ -9748,12 +9764,13 @@ var require_parse = __commonJS({
         }
         return parent;
       }
-      function parseService(parent, token2) {
+      function parseService(parent, token2, depth) {
+        depth = util.checkDepth(depth);
         if (!nameRe.test(token2 = next()))
           throw illegal(token2, "service name");
         var service = new Service(token2);
         ifBlock(service, function parseService_block(token3) {
-          if (parseCommon(service, token3)) {
+          if (parseCommon(service, token3, depth)) {
             return;
           }
           if (token3 === "rpc")
@@ -9798,7 +9815,7 @@ var require_parse = __commonJS({
         });
         parent.add(method);
       }
-      function parseExtension(parent, token2) {
+      function parseExtension(parent, token2, depth) {
         if (!typeRefRe.test(token2 = next()))
           throw illegal(token2, "reference");
         var reference = token2;
@@ -9806,20 +9823,20 @@ var require_parse = __commonJS({
           switch (token3) {
             case "required":
             case "repeated":
-              parseField(parent, token3, reference);
+              parseField(parent, token3, reference, depth + 1);
               break;
             case "optional":
               if (edition === "proto3") {
-                parseField(parent, "proto3_optional", reference);
+                parseField(parent, "proto3_optional", reference, depth + 1);
               } else {
-                parseField(parent, "optional", reference);
+                parseField(parent, "optional", reference, depth + 1);
               }
               break;
             default:
               if (edition === "proto2" || !typeRefRe.test(token3))
                 throw illegal(token3);
               push2(token3);
-              parseField(parent, "optional", reference);
+              parseField(parent, "optional", reference, depth + 1);
               break;
           }
         });
@@ -9852,7 +9869,7 @@ var require_parse = __commonJS({
             skip(";", true);
             break;
           default:
-            if (parseCommon(ptr, token)) {
+            if (parseCommon(ptr, token, 0)) {
               head = false;
               continue;
             }
@@ -12563,19 +12580,19 @@ var require_util2 = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.addCommonProtos = exports2.loadProtosWithOptionsSync = exports2.loadProtosWithOptions = void 0;
-    var fs11 = require("fs");
-    var path6 = require("path");
+    var fs12 = require("fs");
+    var path7 = require("path");
     var Protobuf = require_protobufjs();
     function addIncludePathResolver(root, includePaths) {
       const originalResolvePath = root.resolvePath;
       root.resolvePath = (origin, target) => {
-        if (path6.isAbsolute(target)) {
+        if (path7.isAbsolute(target)) {
           return target;
         }
         for (const directory of includePaths) {
-          const fullPath = path6.join(directory, target);
+          const fullPath = path7.join(directory, target);
           try {
-            fs11.accessSync(fullPath, fs11.constants.R_OK);
+            fs12.accessSync(fullPath, fs12.constants.R_OK);
             return fullPath;
           } catch (err) {
             continue;
@@ -18896,9 +18913,9 @@ var require_server_call = __commonJS({
       return status;
     }
     var ServerUnaryCallImpl = class extends events_1.EventEmitter {
-      constructor(path6, call, metadata, request) {
+      constructor(path7, call, metadata, request) {
         super();
-        this.path = path6;
+        this.path = path7;
         this.call = call;
         this.metadata = metadata;
         this.request = request;
@@ -18928,9 +18945,9 @@ var require_server_call = __commonJS({
     };
     exports2.ServerUnaryCallImpl = ServerUnaryCallImpl;
     var ServerReadableStreamImpl = class extends stream_1.Readable {
-      constructor(path6, call, metadata) {
+      constructor(path7, call, metadata) {
         super({ objectMode: true });
-        this.path = path6;
+        this.path = path7;
         this.call = call;
         this.metadata = metadata;
         this.cancelled = false;
@@ -18962,9 +18979,9 @@ var require_server_call = __commonJS({
     };
     exports2.ServerReadableStreamImpl = ServerReadableStreamImpl;
     var ServerWritableStreamImpl = class extends stream_1.Writable {
-      constructor(path6, call, metadata, request) {
+      constructor(path7, call, metadata, request) {
         super({ objectMode: true });
-        this.path = path6;
+        this.path = path7;
         this.call = call;
         this.metadata = metadata;
         this.request = request;
@@ -19018,9 +19035,9 @@ var require_server_call = __commonJS({
     };
     exports2.ServerWritableStreamImpl = ServerWritableStreamImpl;
     var ServerDuplexStreamImpl = class extends stream_1.Duplex {
-      constructor(path6, call, metadata) {
+      constructor(path7, call, metadata) {
         super({ objectMode: true });
-        this.path = path6;
+        this.path = path7;
         this.call = call;
         this.metadata = metadata;
         this.pendingStatus = {
@@ -21296,11 +21313,11 @@ var require_server = __commonJS({
           }
           return true;
         }
-        _retrieveHandler(path6) {
-          serverCallTrace("Received call to method " + path6 + " at address " + this.serverAddressString);
-          const handler = this.handlers.get(path6);
+        _retrieveHandler(path7) {
+          serverCallTrace("Received call to method " + path7 + " at address " + this.serverAddressString);
+          const handler = this.handlers.get(path7);
           if (handler === void 0) {
-            serverCallTrace("No handler registered for method " + path6 + ". Sending UNIMPLEMENTED status.");
+            serverCallTrace("No handler registered for method " + path7 + ". Sending UNIMPLEMENTED status.");
             return null;
           }
           return handler;
@@ -21322,10 +21339,10 @@ var require_server = __commonJS({
             channelzSessionInfo === null || channelzSessionInfo === void 0 ? void 0 : channelzSessionInfo.streamTracker.addCallFailed();
             return;
           }
-          const path6 = headers[HTTP2_HEADER_PATH];
-          const handler = this._retrieveHandler(path6);
+          const path7 = headers[HTTP2_HEADER_PATH];
+          const handler = this._retrieveHandler(path7);
           if (!handler) {
-            this._respondWithError(getUnimplementedStatusResponse(path6), stream, channelzSessionInfo);
+            this._respondWithError(getUnimplementedStatusResponse(path7), stream, channelzSessionInfo);
             return;
           }
           const callEventTracker = {
@@ -21373,10 +21390,10 @@ var require_server = __commonJS({
           if (this._verifyContentType(stream, headers) !== true) {
             return;
           }
-          const path6 = headers[HTTP2_HEADER_PATH];
-          const handler = this._retrieveHandler(path6);
+          const path7 = headers[HTTP2_HEADER_PATH];
+          const handler = this._retrieveHandler(path7);
           if (!handler) {
-            this._respondWithError(getUnimplementedStatusResponse(path6), stream, null);
+            this._respondWithError(getUnimplementedStatusResponse(path7), stream, null);
             return;
           }
           const call = (0, server_interceptors_1.getServerInterceptingCall)([...extraInterceptors, ...this.interceptors], stream, headers, null, handler, this.options);
@@ -22397,7 +22414,7 @@ var require_certificate_provider = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileWatcherCertificateProvider = void 0;
-    var fs11 = require("fs");
+    var fs12 = require("fs");
     var logging = require_logging();
     var constants_1 = require_constants();
     var util_1 = require("util");
@@ -22405,7 +22422,7 @@ var require_certificate_provider = __commonJS({
     function trace(text) {
       logging.trace(constants_1.LogVerbosity.DEBUG, TRACER_NAME, text);
     }
-    var readFilePromise = (0, util_1.promisify)(fs11.readFile);
+    var readFilePromise = (0, util_1.promisify)(fs12.readFile);
     var FileWatcherCertificateProvider = class {
       constructor(config) {
         this.config = config;
@@ -22660,13 +22677,13 @@ var require_resolver_uds = __commonJS({
         this.listener = listener;
         this.hasReturnedResult = false;
         this.endpoints = [];
-        let path6;
+        let path7;
         if (target.authority === "") {
-          path6 = "/" + target.path;
+          path7 = "/" + target.path;
         } else {
-          path6 = target.path;
+          path7 = target.path;
         }
-        this.endpoints = [{ addresses: [{ path: path6 }] }];
+        this.endpoints = [{ addresses: [{ path: path7 }] }];
       }
       updateResolution() {
         if (!this.hasReturnedResult) {
@@ -22726,12 +22743,12 @@ var require_resolver_ip = __commonJS({
           return;
         }
         const pathList = target.path.split(",");
-        for (const path6 of pathList) {
-          const hostPort = (0, uri_parser_1.splitHostPort)(path6);
+        for (const path7 of pathList) {
+          const hostPort = (0, uri_parser_1.splitHostPort)(path7);
           if (hostPort === null) {
             this.error = {
               code: constants_1.Status.UNAVAILABLE,
-              details: `Failed to parse ${target.scheme} address ${path6}`,
+              details: `Failed to parse ${target.scheme} address ${path7}`,
               metadata: new metadata_1.Metadata()
             };
             return;
@@ -22739,7 +22756,7 @@ var require_resolver_ip = __commonJS({
           if (target.scheme === IPV4_SCHEME && !(0, net_1.isIPv4)(hostPort.host) || target.scheme === IPV6_SCHEME && !(0, net_1.isIPv6)(hostPort.host)) {
             this.error = {
               code: constants_1.Status.UNAVAILABLE,
-              details: `Failed to parse ${target.scheme} address ${path6}`,
+              details: `Failed to parse ${target.scheme} address ${path7}`,
               metadata: new metadata_1.Metadata()
             };
             return;
@@ -24089,7 +24106,7 @@ var require_src3 = __commonJS({
 });
 
 // certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/server.ts
-var import_fs10 = __toESM(require("fs"));
+var import_fs11 = __toESM(require("fs"));
 var import_net = __toESM(require("net"));
 
 // certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/paths.ts
@@ -26830,12 +26847,99 @@ async function handleSdpInstall(req) {
   });
 }
 
+// certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/agent-install.ts
+var import_child_process6 = require("child_process");
+var import_fs10 = __toESM(require("fs"));
+var import_path6 = __toESM(require("path"));
+var UPDATES_DIR = import_path6.default.join(DATA_DIR, "updates");
+async function handleAgentInstall(req) {
+  const params = req.params || {};
+  const packagePath = String(params.path || "");
+  const format = String(params.format || "");
+  const targetVersion = String(params.version || "");
+  const absPath = import_path6.default.resolve(packagePath);
+  const absUpdatesDir = import_path6.default.resolve(UPDATES_DIR);
+  if (!absPath.startsWith(absUpdatesDir + import_path6.default.sep)) {
+    return fail(req.id, "bad_request", `path outside updates dir: ${absPath}`);
+  }
+  if (!import_fs10.default.existsSync(absPath)) {
+    return fail(req.id, "bad_request", `package not found: ${absPath}`);
+  }
+  const distro = detectFamily();
+  if (format === "deb" && distro.family !== "debian") {
+    return fail(req.id, "format_unsupported", `deb on non-debian (${distro.family})`);
+  }
+  if (format === "rpm" && distro.family !== "rhel" && distro.family !== "suse") {
+    return fail(req.id, "format_unsupported", `rpm on non-rpm family (${distro.family})`);
+  }
+  if (format !== "deb" && format !== "rpm") {
+    return fail(req.id, "format_unsupported", `unknown format: ${format}`);
+  }
+  let installCmd;
+  let installArgs;
+  if (format === "deb") {
+    installCmd = "/usr/bin/dpkg";
+    installArgs = ["-E", "--force-confold", "--force-confdef", "-i", absPath];
+  } else {
+    installCmd = "/usr/bin/rpm";
+    installArgs = ["-U", "--force", "--nodeps", absPath];
+  }
+  const scopeUnit = `tracenium-agent-update-${process.pid}-${Date.now()}.scope`;
+  const systemdRunArgs = [
+    "--scope",
+    "--collect",
+    "--quiet",
+    "--slice=system.slice",
+    `--unit=${scopeUnit}`,
+    "--",
+    installCmd,
+    ...installArgs
+  ];
+  logger.info("agent_install_start", {
+    targetVersion,
+    format,
+    family: distro.family,
+    path: absPath,
+    scopeUnit
+  });
+  try {
+    const child = (0, import_child_process6.spawn)("/usr/bin/systemd-run", systemdRunArgs, {
+      detached: true,
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        DEBIAN_FRONTEND: "noninteractive",
+        LANG: "C",
+        LC_ALL: "C"
+      }
+    });
+    child.unref();
+    logger.info("agent_install_dispatched", {
+      targetVersion,
+      pid: child.pid,
+      scopeUnit
+    });
+    return success(req.id, {
+      started: true,
+      command: installCmd,
+      args: installArgs,
+      scopeUnit
+    });
+  } catch (err) {
+    logger.error("agent_install_spawn_failed", {
+      error: err?.message || String(err),
+      targetVersion
+    });
+    return fail(req.id, "install_failed", err?.message || String(err));
+  }
+}
+
 // certusws-tracenium-agent-w/build/linux/staging/privsvc/linux/src/router.ts
 function isRoot() {
   return typeof process.getuid === "function" ? process.getuid() === 0 : false;
 }
 function requiresRoot(method) {
-  return method.startsWith("crypto.") || method.startsWith("grpc.") || method.startsWith("sdp.") || method.startsWith("pmp.") || method === "patch.install";
+  return method.startsWith("crypto.") || method.startsWith("grpc.") || method.startsWith("sdp.") || method.startsWith("pmp.") || method === "patch.install" || method === "agent.install";
 }
 async function routeRequest(req, push2) {
   if (req.v !== 1) return fail(req.id, "bad_version", "Unsupported protocol version");
@@ -26926,6 +27030,16 @@ async function routeRequest(req, push2) {
       return handleSdpDownload(req);
     case "sdp.install":
       return handleSdpInstall(req);
+    // ── Agent self-upgrade ────────────────────────────────────────
+    // Installs the .deb/.rpm the agent has downloaded into
+    // /var/lib/tracenium/updates/. Must go through privsvc (root)
+    // because dpkg/rpm need root — the agent itself runs as the
+    // unprivileged `tracenium` user. Dispatched as a detached
+    // systemd-run --scope so the install survives our own restart
+    // when the upgrade's postinstall does `systemctl try-restart
+    // tracenium-privsvc tracenium-agent`.
+    case "agent.install":
+      return handleAgentInstall(req);
     // ── AMP — software inventory ──────────────────────────────────
     // On macOS this method bounces with `not_supported` because amp
     // is collected by the agent core (running as root via launchd).
@@ -26995,7 +27109,7 @@ function handleClient(socket) {
 function startServer() {
   ensurePrivSvcDirs();
   try {
-    if (import_fs10.default.existsSync(SOCKET_PATH)) import_fs10.default.unlinkSync(SOCKET_PATH);
+    if (import_fs11.default.existsSync(SOCKET_PATH)) import_fs11.default.unlinkSync(SOCKET_PATH);
   } catch {
   }
   const server = import_net.default.createServer(handleClient);
@@ -27004,8 +27118,8 @@ function startServer() {
     let groupOk = false;
     const gid = lookupSocketGid();
     try {
-      if (typeof import_fs10.default.chownSync === "function") {
-        import_fs10.default.chownSync(SOCKET_PATH, 0, gid ?? 0);
+      if (typeof import_fs11.default.chownSync === "function") {
+        import_fs11.default.chownSync(SOCKET_PATH, 0, gid ?? 0);
         ownerOk = true;
         groupOk = gid !== null;
       }
@@ -27014,7 +27128,7 @@ function startServer() {
     }
     const targetMode = groupOk ? 432 : 384;
     try {
-      import_fs10.default.chmodSync(SOCKET_PATH, targetMode);
+      import_fs11.default.chmodSync(SOCKET_PATH, targetMode);
     } catch (err) {
       logger.warn("socket_chmod_failed", { error: err?.message || String(err) });
     }
@@ -27026,7 +27140,7 @@ function startServer() {
     }
     let stat = null;
     try {
-      stat = import_fs10.default.statSync(SOCKET_PATH);
+      stat = import_fs11.default.statSync(SOCKET_PATH);
     } catch {
     }
     logger.info("privsvc_linux_listening", {
@@ -27049,7 +27163,7 @@ function startServer() {
     } catch {
     }
     try {
-      if (import_fs10.default.existsSync(SOCKET_PATH)) import_fs10.default.unlinkSync(SOCKET_PATH);
+      if (import_fs11.default.existsSync(SOCKET_PATH)) import_fs11.default.unlinkSync(SOCKET_PATH);
     } catch {
     }
     process.exit(0);

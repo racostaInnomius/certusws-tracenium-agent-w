@@ -31,6 +31,7 @@ import { handleSecurityPosture } from "./security-posture";
 import { handlePatchScan, handlePatchInstall } from "./patch-management";
 import { handlePmpReadCheckState, handlePmpRemediate } from "./pmp-remediation";
 import { handleSdpDetect, handleSdpDownload, handleSdpInstall } from "./sdp";
+import { handleAgentInstall } from "./agent-install";
 
 function isRoot() {
   return typeof process.getuid === "function" ? process.getuid() === 0 : false;
@@ -45,7 +46,8 @@ function requiresRoot(method: string) {
     method.startsWith("grpc.") ||
     method.startsWith("sdp.") ||
     method.startsWith("pmp.") ||
-    method === "patch.install"
+    method === "patch.install" ||
+    method === "agent.install"
   );
 }
 
@@ -156,6 +158,17 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
       return handleSdpDownload(req);
     case "sdp.install":
       return handleSdpInstall(req);
+
+    // ── Agent self-upgrade ────────────────────────────────────────
+    // Installs the .deb/.rpm the agent has downloaded into
+    // /var/lib/tracenium/updates/. Must go through privsvc (root)
+    // because dpkg/rpm need root — the agent itself runs as the
+    // unprivileged `tracenium` user. Dispatched as a detached
+    // systemd-run --scope so the install survives our own restart
+    // when the upgrade's postinstall does `systemctl try-restart
+    // tracenium-privsvc tracenium-agent`.
+    case "agent.install":
+      return handleAgentInstall(req);
 
     // ── AMP — software inventory ──────────────────────────────────
     // On macOS this method bounces with `not_supported` because amp

@@ -59,6 +59,31 @@ function buildPmpStateForHash(namespace: PmpNamespace) {
   return rest;
 }
 
+// Force-clear threshold for the *Running guard flags. If a worker has
+// been "running" for longer than this, we assume it's hung on some
+// upstream IO that will never return (privsvc socket gone half-open
+// post sleep/wake, or HTTP fetch to api.tracenium.com stuck because
+// the resolver cached an unreachable answer) and force the flag down
+// so the NEXT tick can start a clean run.
+//
+// Why we don't try to abort the original run: it's awaited deep inside
+// awaits that we don't own (plugin code, network libs, dpkg/winwmi
+// calls). The hung promise will eventually settle when the OS gives up
+// on the underlying syscall — and when it does, the finally-block sets
+// the flag to false again, which is idempotent. The new tick we
+// started in parallel may overlap briefly, but that's strictly better
+// than "no inventory for 36 hours" which is what we observed in prod.
+//
+// 30 minutes is generous on purpose. Real legitimate worker durations:
+//   inventory  : ~5–60 s (longer on big AMP catalogs)
+//   compliance : ~5–30 s
+//   patch      : 1–10 min (PMP scan), apply phase is bounded separately
+//   update     : 30 s – 5 min (download + verify; install path forks
+//                an installer subprocess and returns immediately)
+//
+// Hitting 30 min on any of these means something is unrecoverable.
+const WORKER_STUCK_TIMEOUT_MS = 30 * 60 * 1000;
+
 class Scheduler {
 
   private timers: Map<string, NodeJS.Timeout> = new Map();
@@ -73,6 +98,51 @@ class Scheduler {
   private complianceRunning: boolean = false;
   private updateRunning: boolean = false;
   private patchRunning: boolean = false;
+
+  // Wall-clock start timestamps for the *Running guards above. 0 when
+  // not running. Used by `checkStuckWorker()` so the overlap-detection
+  // path can distinguish "started 10s ago and still working" (normal)
+  // from "started 2 hours ago and never finished" (zombie, force-clear).
+  // Without these the guards became permanent shutoffs once the first
+  // tick wedged — the precise production failure mode we're patching.
+  private inventoryStartedAt: number = 0;
+  private complianceStartedAt: number = 0;
+  private updateStartedAt: number = 0;
+  private patchStartedAt: number = 0;
+
+  /**
+   * Returns true if the caller should proceed with a fresh run.
+   * Returns false if the previous run is still legitimately in flight
+   * and the caller should skip this tick.
+   *
+   * Side effect on stuck detection: logs an error and force-clears the
+   * provided startedAtRef + the running flag (via the caller assigning
+   * the result back). Callers must mutate their *Running and *StartedAt
+   * fields based on the return; we can't do that from here without
+   * generics / reflection that just clutters the call sites.
+   */
+  private checkStuckWorker(
+    label: string,
+    isRunning: boolean,
+    startedAt: number
+  ): { proceed: boolean; clearStuck: boolean } {
+    if (!isRunning) {
+      return { proceed: true, clearStuck: false };
+    }
+    const elapsed = Date.now() - startedAt;
+    if (elapsed > WORKER_STUCK_TIMEOUT_MS) {
+      logger.error(
+        `${label} has been running for ${Math.round(elapsed / 1000)}s ` +
+          `(> ${WORKER_STUCK_TIMEOUT_MS / 1000}s threshold). ` +
+          `Force-clearing stuck flag and starting a new run.`
+      );
+      return { proceed: true, clearStuck: true };
+    }
+    logger.warn(`${label} already running, skipping overlapping execution`, {
+      elapsedMs: elapsed
+    });
+    return { proceed: false, clearStuck: false };
+  }
   // Forces one full AMP snapshot on the first inventory tick after the
   // daemon starts — ensures the server receives current posture after
   // an upgrade / reinstall / reboot, even if the AMP delta baseline on
@@ -363,12 +433,25 @@ class Scheduler {
       return;
     }
 
-    if (this.inventoryRunning) {
-      logger.warn("Inventory already running, skipping overlapping execution");
-      return;
+    {
+      const { proceed, clearStuck } = this.checkStuckWorker(
+        "Inventory",
+        this.inventoryRunning,
+        this.inventoryStartedAt
+      );
+      if (!proceed) return;
+      if (clearStuck) {
+        // Previous run is zombie. Drop the guard so the new run below
+        // can proceed; the zombie's finally-block will set it to false
+        // again whenever it eventually unblocks (no-op vs our new run
+        // which has its own setter at the bottom of this block).
+        this.inventoryRunning = false;
+        this.inventoryStartedAt = 0;
+      }
     }
 
     this.inventoryRunning = true;
+    this.inventoryStartedAt = Date.now();
 
     try {
 
@@ -511,6 +594,7 @@ class Scheduler {
     } finally {
 
       this.inventoryRunning = false;
+      this.inventoryStartedAt = 0;
 
     }
   }
@@ -527,12 +611,21 @@ class Scheduler {
       return;
     }
 
-    if (this.complianceRunning) {
-      logger.warn("Compliance already running, skipping overlapping execution");
-      return;
+    {
+      const { proceed, clearStuck } = this.checkStuckWorker(
+        "Compliance",
+        this.complianceRunning,
+        this.complianceStartedAt
+      );
+      if (!proceed) return;
+      if (clearStuck) {
+        this.complianceRunning = false;
+        this.complianceStartedAt = 0;
+      }
     }
 
     this.complianceRunning = true;
+    this.complianceStartedAt = Date.now();
 
     try {
       logger.info("Collecting SCP facts...");
@@ -601,6 +694,7 @@ class Scheduler {
     } finally {
 
       this.complianceRunning = false;
+      this.complianceStartedAt = 0;
 
     }
   }
@@ -612,12 +706,21 @@ class Scheduler {
       return;
     }
 
-    if (this.updateRunning) {
-      logger.warn("Update already running, skipping overlapping execution");
-      return;
+    {
+      const { proceed, clearStuck } = this.checkStuckWorker(
+        "Update",
+        this.updateRunning,
+        this.updateStartedAt
+      );
+      if (!proceed) return;
+      if (clearStuck) {
+        this.updateRunning = false;
+        this.updateStartedAt = 0;
+      }
     }
 
     this.updateRunning = true;
+    this.updateStartedAt = Date.now();
 
     try {
 
@@ -637,6 +740,7 @@ class Scheduler {
     } finally {
 
       this.updateRunning = false;
+      this.updateStartedAt = 0;
 
     }
   }
@@ -659,12 +763,21 @@ class Scheduler {
     // pipeline hides future bugs from the compiler (e.g. a typo in the
     // property name would silently create a second unused property
     // rather than failing typecheck).
-    if (this.patchRunning) {
-      logger.warn("Patch scan already running, skipping overlapping execution");
-      return;
+    {
+      const { proceed, clearStuck } = this.checkStuckWorker(
+        "Patch scan",
+        this.patchRunning,
+        this.patchStartedAt
+      );
+      if (!proceed) return;
+      if (clearStuck) {
+        this.patchRunning = false;
+        this.patchStartedAt = 0;
+      }
     }
 
     this.patchRunning = true;
+    this.patchStartedAt = Date.now();
 
     try {
       logger.info("Collecting PMP facts...");
@@ -723,6 +836,7 @@ class Scheduler {
     } finally {
 
       this.patchRunning = false;
+      this.patchStartedAt = 0;
 
     }
   }

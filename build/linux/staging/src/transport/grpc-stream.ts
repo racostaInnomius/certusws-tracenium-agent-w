@@ -879,6 +879,32 @@ stream = client.Connect();
     }
     reconnecting = true;
 
+    // Reset the "currently connected since" timestamp — disconnect just
+    // happened, we are NOT connected, and the next metrics flush should
+    // reflect that. The frozen production zombie kept dumping
+    // `connectedSinceUtc: '2026-05-11T03:43:31.467Z'` in every 5-minute
+    // metrics line for ~36 hours because this field was only ever set
+    // (on READY), never cleared. That timestamp lied about agent
+    // liveness to anyone scanning logs.
+    grpcMetrics.connectedSinceUtc = null;
+
+    // Force-close the current client even if the disconnect path
+    // (push handler / stream.end) already nullified the singleton.
+    // Idempotent; cost is one no-op IPC call. Without this, an error
+    // path that emits stream.emit("error", …) WITHOUT calling end()
+    // or sending a `grpc.disconnected` push (see grpc-client.ts:511,
+    // 524, 547, 557) leaves the per-ctx cached instance in place,
+    // and the next startGrpcStream → createGrpcClient cycle resurrects
+    // the same corpse. Closing here guarantees the next attempt builds
+    // a clean instance.
+    try {
+      client.close?.();
+    } catch (e: any) {
+      ctx.logger?.warn?.("gRPC stream: client.close() during reconnect threw", {
+        error: e?.message || String(e)
+      });
+    }
+
     reconnectAttempts += 1;
     grpcMetrics.reconnectCount += 1;
     const delayMs = nextReconnectDelayMs();

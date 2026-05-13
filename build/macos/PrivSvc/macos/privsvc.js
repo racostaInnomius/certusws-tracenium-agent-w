@@ -6340,8 +6340,9 @@ var require_namespace = __commonJS({
     var Type;
     var Service;
     var Enum;
-    Namespace.fromJSON = function fromJSON(name, json) {
-      return new Namespace(name, json.options).addJSON(json.nested);
+    Namespace.fromJSON = function fromJSON(name, json, depth) {
+      depth = util.checkDepth(depth);
+      return new Namespace(name, json.options).addJSON(json.nested, depth);
     };
     function arrayToJSON(array, toJSONOptions) {
       if (!(array && array.length))
@@ -6398,14 +6399,15 @@ var require_namespace = __commonJS({
         arrayToJSON(this.nestedArray, toJSONOptions)
       ]);
     };
-    Namespace.prototype.addJSON = function addJSON(nestedJson) {
+    Namespace.prototype.addJSON = function addJSON(nestedJson, depth) {
+      depth = util.checkDepth(depth);
       var ns = this;
       if (nestedJson) {
         for (var names = Object.keys(nestedJson), i = 0, nested; i < names.length; ++i) {
           nested = nestedJson[names[i]];
           ns.add(
             // most to least likely
-            (nested.fields !== void 0 ? Type.fromJSON : nested.values !== void 0 ? Enum.fromJSON : nested.methods !== void 0 ? Service.fromJSON : nested.id !== void 0 ? Field.fromJSON : Namespace.fromJSON)(names[i], nested)
+            (nested.fields !== void 0 ? Type.fromJSON : nested.values !== void 0 ? Enum.fromJSON : nested.methods !== void 0 ? Service.fromJSON : nested.id !== void 0 ? Field.fromJSON : Namespace.fromJSON)(names[i], nested, depth + 1)
           );
         }
       }
@@ -6742,13 +6744,14 @@ var require_service2 = __commonJS({
       this.methods = {};
       this._methodsArray = null;
     }
-    Service.fromJSON = function fromJSON(name, json) {
+    Service.fromJSON = function fromJSON(name, json, depth) {
+      depth = util.checkDepth(depth);
       var service = new Service(name, json.options);
       if (json.methods)
         for (var names = Object.keys(json.methods), i = 0; i < names.length; ++i)
           service.add(Method.fromJSON(names[i], json.methods[names[i]]));
       if (json.nested)
-        service.addJSON(json.nested);
+        service.addJSON(json.nested, depth);
       if (json.edition)
         service._edition = json.edition;
       service.comment = json.comment;
@@ -7427,7 +7430,8 @@ var require_type = __commonJS({
       delete type.verify;
       return type;
     }
-    Type.fromJSON = function fromJSON(name, json) {
+    Type.fromJSON = function fromJSON(name, json, depth) {
+      depth = util.checkDepth(depth);
       var type = new Type(name, json.options);
       type.extensions = json.extensions;
       type.reserved = json.reserved;
@@ -7444,7 +7448,7 @@ var require_type = __commonJS({
           var nested = json.nested[names[i]];
           type.add(
             // most to least likely
-            (nested.id !== void 0 ? Field.fromJSON : nested.fields !== void 0 ? Type.fromJSON : nested.values !== void 0 ? Enum.fromJSON : nested.methods !== void 0 ? Service.fromJSON : Namespace.fromJSON)(names[i], nested)
+            (nested.id !== void 0 ? Field.fromJSON : nested.fields !== void 0 ? Type.fromJSON : nested.values !== void 0 ? Enum.fromJSON : nested.methods !== void 0 ? Service.fromJSON : Namespace.fromJSON)(names[i], nested, depth + 1)
           );
         }
       if (json.extensions && json.extensions.length)
@@ -7669,12 +7673,13 @@ var require_root = __commonJS({
       this._edition = "proto2";
       this._fullyQualifiedObjects = {};
     }
-    Root.fromJSON = function fromJSON(json, root) {
+    Root.fromJSON = function fromJSON(json, root, depth) {
+      depth = util.checkDepth(depth);
       if (!root)
         root = new Root();
       if (json.options)
         root.setOptions(json.options);
-      return root.addJSON(json.nested).resolveAll();
+      return root.addJSON(json.nested, depth).resolveAll();
     };
     Root.prototype.resolvePath = util.path.resolve;
     Root.prototype.fetch = util.fetch;
@@ -7912,6 +7917,13 @@ var require_util = __commonJS({
     var reservedRe = util.patterns.reservedRe;
     var unsafePropertyRe = util.patterns.unsafePropertyRe;
     util.fs = util.inquire("fs");
+    util.checkDepth = function checkDepth(depth) {
+      if (depth === void 0)
+        depth = 0;
+      if (depth > util.recursionLimit)
+        throw Error("max depth exceeded");
+      return depth;
+    };
     util.toArray = function toArray(object) {
       if (object) {
         var keys = Object.keys(object), array = new Array(keys.length), index = 0;
@@ -9378,23 +9390,24 @@ var require_parse = __commonJS({
           throw illegal(edition, "edition");
         skip(";");
       }
-      function parseCommon(parent, token2) {
+      function parseCommon(parent, token2, depth) {
+        depth = util.checkDepth(depth);
         switch (token2) {
           case "option":
             parseOption(parent, token2);
             skip(";");
             return true;
           case "message":
-            parseType(parent, token2);
+            parseType(parent, token2, depth + 1);
             return true;
           case "enum":
             parseEnum(parent, token2);
             return true;
           case "service":
-            parseService(parent, token2);
+            parseService(parent, token2, depth + 1);
             return true;
           case "extend":
-            parseExtension(parent, token2);
+            parseExtension(parent, token2, depth);
             return true;
         }
         return false;
@@ -9420,12 +9433,13 @@ var require_parse = __commonJS({
             obj.comment = cmnt(trailingLine) || obj.comment;
         }
       }
-      function parseType(parent, token2) {
+      function parseType(parent, token2, depth) {
+        depth = util.checkDepth(depth);
         if (!nameRe.test(token2 = next()))
           throw illegal(token2, "type name");
         var type = new Type(token2);
         ifBlock(type, function parseType_block(token3) {
-          if (parseCommon(type, token3))
+          if (parseCommon(type, token3, depth))
             return;
           switch (token3) {
             case "map":
@@ -9436,19 +9450,19 @@ var require_parse = __commonJS({
                 throw illegal(token3);
             /* eslint-disable no-fallthrough */
             case "repeated":
-              parseField(type, token3);
+              parseField(type, token3, void 0, depth + 1);
               break;
             case "optional":
               if (edition === "proto3") {
-                parseField(type, "proto3_optional");
+                parseField(type, "proto3_optional", void 0, depth + 1);
               } else if (edition !== "proto2") {
                 throw illegal(token3);
               } else {
-                parseField(type, "optional");
+                parseField(type, "optional", void 0, depth + 1);
               }
               break;
             case "oneof":
-              parseOneOf(type, token3);
+              parseOneOf(type, token3, depth + 1);
               break;
             case "extensions":
               readRanges(type.extensions || (type.extensions = []));
@@ -9461,7 +9475,7 @@ var require_parse = __commonJS({
                 throw illegal(token3);
               }
               push2(token3);
-              parseField(type, "optional");
+              parseField(type, "optional", void 0, depth + 1);
               break;
           }
         });
@@ -9470,10 +9484,10 @@ var require_parse = __commonJS({
           topLevelObjects.push(type);
         }
       }
-      function parseField(parent, rule, extend) {
+      function parseField(parent, rule, extend, depth) {
         var type = next();
         if (type === "group") {
-          parseGroup(parent, rule);
+          parseGroup(parent, rule, depth);
           return;
         }
         while (type.endsWith(".") || peek().startsWith(".")) {
@@ -9508,7 +9522,8 @@ var require_parse = __commonJS({
           topLevelObjects.push(field);
         }
       }
-      function parseGroup(parent, rule) {
+      function parseGroup(parent, rule, depth) {
+        depth = util.checkDepth(depth);
         if (edition >= 2023) {
           throw illegal("group");
         }
@@ -9532,17 +9547,17 @@ var require_parse = __commonJS({
               break;
             case "required":
             case "repeated":
-              parseField(type, token2);
+              parseField(type, token2, void 0, depth + 1);
               break;
             case "optional":
               if (edition === "proto3") {
-                parseField(type, "proto3_optional");
+                parseField(type, "proto3_optional", void 0, depth + 1);
               } else {
-                parseField(type, "optional");
+                parseField(type, "optional", void 0, depth + 1);
               }
               break;
             case "message":
-              parseType(type, token2);
+              parseType(type, token2, depth + 1);
               break;
             case "enum":
               parseEnum(type, token2);
@@ -9583,7 +9598,7 @@ var require_parse = __commonJS({
         });
         parent.add(field);
       }
-      function parseOneOf(parent, token2) {
+      function parseOneOf(parent, token2, depth) {
         if (!nameRe.test(token2 = next()))
           throw illegal(token2, "name");
         var oneof = new OneOf(applyCase(token2));
@@ -9593,7 +9608,7 @@ var require_parse = __commonJS({
             skip(";");
           } else {
             push2(token3);
-            parseField(oneof, "optional");
+            parseField(oneof, "optional", void 0, depth);
           }
         });
         parent.add(oneof);
@@ -9681,7 +9696,8 @@ var require_parse = __commonJS({
         option = option && option[option.length - 1] === "." ? option.slice(0, -1) : option;
         setParsedOption(parent, option, optionValue, propName);
       }
-      function parseOptionValue(parent, name) {
+      function parseOptionValue(parent, name, depth) {
+        depth = util.checkDepth(depth);
         if (skip("{", true)) {
           var objectResult = {};
           while (!skip("}", true)) {
@@ -9695,7 +9711,7 @@ var require_parse = __commonJS({
             var propName = token;
             skip(":", true);
             if (peek() === "{") {
-              value = parseOptionValue(parent, name + "." + token);
+              value = parseOptionValue(parent, name + "." + token, depth + 1);
             } else if (peek() === "[") {
               value = [];
               var lastValue;
@@ -9748,12 +9764,13 @@ var require_parse = __commonJS({
         }
         return parent;
       }
-      function parseService(parent, token2) {
+      function parseService(parent, token2, depth) {
+        depth = util.checkDepth(depth);
         if (!nameRe.test(token2 = next()))
           throw illegal(token2, "service name");
         var service = new Service(token2);
         ifBlock(service, function parseService_block(token3) {
-          if (parseCommon(service, token3)) {
+          if (parseCommon(service, token3, depth)) {
             return;
           }
           if (token3 === "rpc")
@@ -9798,7 +9815,7 @@ var require_parse = __commonJS({
         });
         parent.add(method);
       }
-      function parseExtension(parent, token2) {
+      function parseExtension(parent, token2, depth) {
         if (!typeRefRe.test(token2 = next()))
           throw illegal(token2, "reference");
         var reference = token2;
@@ -9806,20 +9823,20 @@ var require_parse = __commonJS({
           switch (token3) {
             case "required":
             case "repeated":
-              parseField(parent, token3, reference);
+              parseField(parent, token3, reference, depth + 1);
               break;
             case "optional":
               if (edition === "proto3") {
-                parseField(parent, "proto3_optional", reference);
+                parseField(parent, "proto3_optional", reference, depth + 1);
               } else {
-                parseField(parent, "optional", reference);
+                parseField(parent, "optional", reference, depth + 1);
               }
               break;
             default:
               if (edition === "proto2" || !typeRefRe.test(token3))
                 throw illegal(token3);
               push2(token3);
-              parseField(parent, "optional", reference);
+              parseField(parent, "optional", reference, depth + 1);
               break;
           }
         });
@@ -9852,7 +9869,7 @@ var require_parse = __commonJS({
             skip(";", true);
             break;
           default:
-            if (parseCommon(ptr, token)) {
+            if (parseCommon(ptr, token, 0)) {
               head = false;
               continue;
             }

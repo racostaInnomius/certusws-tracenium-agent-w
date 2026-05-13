@@ -179,12 +179,42 @@ if command -v systemctl >/dev/null 2>&1; then
 
     systemctl enable tracenium-privsvc.service tracenium-agent.service || true
 
-    # Start privsvc first; agent has Requires= so it'll wait, but
-    # being explicit makes the boot ordering visible in journald.
+    # ── Restart running services to pick up the new binaries ─────
+    # `try-restart` is the load-bearing call for the UPGRADE case:
+    #   * If the unit is running → systemd stops + starts it, so the
+    #     daemon loads the new agent-core.js / privsvc.js we just
+    #     unpacked. Without this, the previous (old-version) daemon
+    #     keeps running in memory and the agent reports the OLD
+    #     `agentVersion` indefinitely. We observed exactly that
+    #     against the Ubuntu host: package upgraded on disk, agent
+    #     stayed on 1.1.13 because nothing was restarted.
+    #   * If the unit is NOT running (fresh install) → no-op. The
+    #     `start` below brings them up for the first time.
+    #
+    # Order matters: privsvc first (agent has Requires= privsvc,
+    # so systemd would restart the agent anyway when privsvc
+    # restarts, but doing privsvc explicitly first keeps the boot
+    # ordering visible in journald and avoids a brief window where
+    # the agent's IPC client retries against a missing socket).
+    #
+    # This runs from inside an agent-upgrade dpkg postinstall, but
+    # dpkg itself was launched by `systemd-run --scope` (see
+    # privsvc/linux/src/agent-install.ts) so it lives in a transient
+    # scope OUTSIDE both unit cgroups. systemd killing privsvc /
+    # agent doesn't reach us — try-restart is safe even though
+    # we're restarting the very service whose IPC initiated the
+    # install.
+    systemctl try-restart tracenium-privsvc.service 2>/dev/null || true
+    systemctl try-restart tracenium-agent.service   2>/dev/null || true
+
+    # Fresh install path: `start` is no-op if the unit is already
+    # active after try-restart. `--no-block` so the package
+    # transaction doesn't hold open waiting for DNS / TLS /
+    # enrollment REST during the agent's first connect attempt.
     systemctl start --no-block tracenium-privsvc.service || true
     systemctl start --no-block tracenium-agent.service || true
 
-    echo "  systemd units enabled + started"
+    echo "  systemd units enabled + (re)started"
 else
     echo "  WARNING: systemctl not found — services will not auto-start. This system uses a non-systemd init."
 fi

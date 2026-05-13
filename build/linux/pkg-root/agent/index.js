@@ -964,7 +964,11 @@ var init_privsvc_client_macos = __esm({
           sock?.destroy();
         } catch {
         }
-        this.emit("error", err);
+        if (this.listenerCount("error") > 0) {
+          this.emit("error", err);
+        } else {
+          this.emit("disconnect", { err, code: errCode, message: errMessage });
+        }
       }
       onSocketClose() {
         const wasManual = this.closedByClient;
@@ -1247,7 +1251,11 @@ var init_privsvc_client_linux = __esm({
           sock?.destroy();
         } catch {
         }
-        this.emit("error", err);
+        if (this.listenerCount("error") > 0) {
+          this.emit("error", err);
+        } else {
+          this.emit("disconnect", { err, code: errCode, message: errMessage });
+        }
       }
       onSocketClose() {
         const wasManual = this.closedByClient;
@@ -22291,101 +22299,9 @@ var init_update_state = __esm({
   }
 });
 
-// certusws-tracenium-agent-w/build/linux/staging/src/platform/linux/distro.ts
-var distro_exports = {};
-__export(distro_exports, {
-  _resetForTests: () => _resetForTests,
-  detectFamily: () => detectFamily
-});
-function parseOsRelease(text) {
-  const out = {};
-  for (const rawLine of text.split("\n")) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq <= 0) continue;
-    const key = line.slice(0, eq).trim();
-    let value = line.slice(eq + 1).trim();
-    if (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) {
-      value = value.slice(1, -1);
-    }
-    out[key] = value;
-  }
-  return out;
-}
-function familyFromIdLike(idLike) {
-  if (!idLike) return "unknown";
-  for (const token of idLike.toLowerCase().split(/\s+/)) {
-    const fam = FAMILY_BY_ID[token];
-    if (fam) return fam;
-  }
-  return "unknown";
-}
-function detectFamily() {
-  if (cached) return cached;
-  let kv = {};
-  try {
-    const text = import_fs15.default.readFileSync("/etc/os-release", "utf8");
-    kv = parseOsRelease(text);
-  } catch {
-  }
-  const id = (kv.ID || "unknown").toLowerCase();
-  const family = FAMILY_BY_ID[id] ?? familyFromIdLike(kv.ID_LIKE);
-  cached = {
-    id,
-    family,
-    versionId: kv.VERSION_ID || "",
-    prettyName: kv.PRETTY_NAME || (id !== "unknown" ? id : "unknown linux")
-  };
-  return cached;
-}
-function _resetForTests() {
-  cached = null;
-}
-var import_fs15, FAMILY_BY_ID, cached;
-var init_distro = __esm({
-  "certusws-tracenium-agent-w/build/linux/staging/src/platform/linux/distro.ts"() {
-    "use strict";
-    import_fs15 = __toESM(require("fs"));
-    FAMILY_BY_ID = {
-      // debian-family
-      debian: "debian",
-      ubuntu: "debian",
-      raspbian: "debian",
-      linuxmint: "debian",
-      pop: "debian",
-      neon: "debian",
-      elementary: "debian",
-      zorin: "debian",
-      kali: "debian",
-      parrot: "debian",
-      // rhel-family
-      rhel: "rhel",
-      centos: "rhel",
-      rocky: "rhel",
-      almalinux: "rhel",
-      fedora: "rhel",
-      amzn: "rhel",
-      ol: "rhel",
-      // Oracle Linux
-      scientific: "rhel",
-      // suse-family — shipped as supported in Phase 10. Listed here so
-      // detection is correct even before we add SUSE-specific plugin
-      // branches; the plugins themselves return `unsupported_distro`
-      // until then.
-      opensuse: "suse",
-      "opensuse-leap": "suse",
-      "opensuse-tumbleweed": "suse",
-      sles: "suse",
-      sled: "suse"
-    };
-    cached = null;
-  }
-});
-
 // certusws-tracenium-agent-w/build/linux/staging/src/update/updater-runner.ts
 function runWindowsMsiUpdate(msiPath) {
-  if (!import_fs16.default.existsSync(msiPath)) {
+  if (!import_fs15.default.existsSync(msiPath)) {
     throw new Error(`msi_not_found: ${msiPath}`);
   }
   const args = ["/i", msiPath, "/qn", "/norestart"];
@@ -22420,7 +22336,7 @@ function runWindowsMsiUpdate(msiPath) {
   }
 }
 function runMacosPkgUpdate(pkgPath) {
-  if (!import_fs16.default.existsSync(pkgPath)) {
+  if (!import_fs15.default.existsSync(pkgPath)) {
     throw new Error(`pkg_not_found: ${pkgPath}`);
   }
   const args = ["-pkg", pkgPath, "-target", "/"];
@@ -22497,147 +22413,105 @@ function runMacosPkgUpdate(pkgPath) {
     throw err;
   }
 }
-function runLinuxDebUpdate(debPath) {
-  if (!import_fs16.default.existsSync(debPath)) {
-    throw new Error(`deb_not_found: ${debPath}`);
-  }
-  const args = [
-    "-E",
-    "--force-confold",
-    "--force-confdef",
-    "-i",
-    debPath
-  ];
-  try {
-    const child = (0, import_child_process7.spawn)("/usr/bin/dpkg", args, {
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, DEBIAN_FRONTEND: "noninteractive", LANG: "C", LC_ALL: "C" }
-    });
-    captureChildExit(child, debPath, "dpkg");
-    child.unref();
-    console.log("[update] linux dpkg launched", {
-      path: debPath,
-      pid: child.pid
-    });
-    return {
-      started: true,
-      command: "/usr/bin/dpkg",
-      args
-    };
-  } catch (err) {
-    console.error("[update] failed to start dpkg", {
-      error: err?.message || err,
-      path: debPath
-    });
-    throw err;
-  }
-}
-function runLinuxRpmUpdate(rpmPath) {
-  if (!import_fs16.default.existsSync(rpmPath)) {
-    throw new Error(`rpm_not_found: ${rpmPath}`);
-  }
-  const args = [
-    "-U",
-    "--force",
-    "--nodeps",
-    rpmPath
-  ];
-  try {
-    const child = (0, import_child_process7.spawn)("/usr/bin/rpm", args, {
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, LANG: "C", LC_ALL: "C" }
-    });
-    captureChildExit(child, rpmPath, "rpm");
-    child.unref();
-    console.log("[update] linux rpm launched", {
-      path: rpmPath,
-      pid: child.pid
-    });
-    return {
-      started: true,
-      command: "/usr/bin/rpm",
-      args
-    };
-  } catch (err) {
-    console.error("[update] failed to start rpm", {
-      error: err?.message || err,
-      path: rpmPath
-    });
-    throw err;
-  }
-}
-function captureChildExit(child, packagePath, tool) {
-  const stdoutChunks = [];
-  const stderrChunks = [];
-  const MAX_CAPTURE_BYTES = 16 * 1024;
-  let capturedBytes = 0;
-  const capture = (store) => (chunk) => {
-    if (capturedBytes >= MAX_CAPTURE_BYTES) return;
-    const remaining = MAX_CAPTURE_BYTES - capturedBytes;
-    const slice = chunk.length > remaining ? chunk.slice(0, remaining) : chunk;
-    store.push(slice);
-    capturedBytes += slice.length;
-  };
-  child.stdout?.on("data", capture(stdoutChunks));
-  child.stderr?.on("data", capture(stderrChunks));
-  child.on("error", (err) => {
-    console.error(`[update] ${tool} spawn error`, {
-      error: err?.message || err,
-      path: packagePath
-    });
-    try {
-      updateUpdateState({
-        updateInProgress: false,
-        status: "failed",
-        lastError: `${tool}_spawn_error: ${err?.message || err}`
-      });
-    } catch {
-    }
-  });
-  child.on("exit", (code, signal) => {
-    const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
-    const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim();
-    if (code === 0) {
-      console.log(`[update] ${tool} exited cleanly`, { code, pid: child.pid });
-    } else {
-      console.error(`[update] ${tool} FAILED`, {
-        code,
-        signal,
-        pid: child.pid,
-        stdoutTail: stdout.slice(-500),
-        stderrTail: stderr.slice(-500)
-      });
-      try {
-        updateUpdateState({
-          updateInProgress: false,
-          status: "failed",
-          lastError: `${tool}_exit_${code ?? signal ?? "unknown"}: ${(stderr || stdout).slice(0, 300)}`
-        });
-      } catch {
-      }
-    }
-  });
-}
-function runLinuxUpdate(packagePath) {
-  const distro = detectFamily();
-  if (distro.family === "debian") {
-    return runLinuxDebUpdate(packagePath);
-  }
-  if (distro.family === "rhel" || distro.family === "suse") {
-    return runLinuxRpmUpdate(packagePath);
-  }
-  throw new Error(`linux_update_unsupported_family: ${distro.family}`);
-}
-var import_child_process7, import_fs16;
+var import_child_process7, import_fs15;
 var init_updater_runner = __esm({
   "certusws-tracenium-agent-w/build/linux/staging/src/update/updater-runner.ts"() {
     "use strict";
     import_child_process7 = require("child_process");
-    import_fs16 = __toESM(require("fs"));
+    import_fs15 = __toESM(require("fs"));
     init_update_state();
-    init_distro();
+  }
+});
+
+// certusws-tracenium-agent-w/build/linux/staging/src/platform/linux/distro.ts
+var distro_exports = {};
+__export(distro_exports, {
+  _resetForTests: () => _resetForTests,
+  detectFamily: () => detectFamily
+});
+function parseOsRelease(text) {
+  const out = {};
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) {
+      value = value.slice(1, -1);
+    }
+    out[key] = value;
+  }
+  return out;
+}
+function familyFromIdLike(idLike) {
+  if (!idLike) return "unknown";
+  for (const token of idLike.toLowerCase().split(/\s+/)) {
+    const fam = FAMILY_BY_ID[token];
+    if (fam) return fam;
+  }
+  return "unknown";
+}
+function detectFamily() {
+  if (cached) return cached;
+  let kv = {};
+  try {
+    const text = import_fs16.default.readFileSync("/etc/os-release", "utf8");
+    kv = parseOsRelease(text);
+  } catch {
+  }
+  const id = (kv.ID || "unknown").toLowerCase();
+  const family = FAMILY_BY_ID[id] ?? familyFromIdLike(kv.ID_LIKE);
+  cached = {
+    id,
+    family,
+    versionId: kv.VERSION_ID || "",
+    prettyName: kv.PRETTY_NAME || (id !== "unknown" ? id : "unknown linux")
+  };
+  return cached;
+}
+function _resetForTests() {
+  cached = null;
+}
+var import_fs16, FAMILY_BY_ID, cached;
+var init_distro = __esm({
+  "certusws-tracenium-agent-w/build/linux/staging/src/platform/linux/distro.ts"() {
+    "use strict";
+    import_fs16 = __toESM(require("fs"));
+    FAMILY_BY_ID = {
+      // debian-family
+      debian: "debian",
+      ubuntu: "debian",
+      raspbian: "debian",
+      linuxmint: "debian",
+      pop: "debian",
+      neon: "debian",
+      elementary: "debian",
+      zorin: "debian",
+      kali: "debian",
+      parrot: "debian",
+      // rhel-family
+      rhel: "rhel",
+      centos: "rhel",
+      rocky: "rhel",
+      almalinux: "rhel",
+      fedora: "rhel",
+      amzn: "rhel",
+      ol: "rhel",
+      // Oracle Linux
+      scientific: "rhel",
+      // suse-family — shipped as supported in Phase 10. Listed here so
+      // detection is correct even before we add SUSE-specific plugin
+      // branches; the plugins themselves return `unsupported_distro`
+      // until then.
+      opensuse: "suse",
+      "opensuse-leap": "suse",
+      "opensuse-tumbleweed": "suse",
+      sles: "suse",
+      sled: "suse"
+    };
+    cached = null;
   }
 });
 
@@ -23271,14 +23145,14 @@ async function performLinuxUpdate(ctx, latestVersion, expectedHash, downloadUrlO
     const dir = import_path12.default.join(resolveBaseDir3(), "updates");
     ensureDir4(dir);
     const arch = getArch();
-    const family = detectFamily().family;
-    const ext = family === "debian" ? "deb" : "rpm";
+    const family2 = detectFamily().family;
+    const ext = family2 === "debian" ? "deb" : "rpm";
     const fileName = `tracenium-agent-${latestVersion}-${arch}.${ext}`;
     const filePath = import_path12.default.join(dir, fileName);
     console.log("[update] downloading linux pkg from override url", {
       url: downloadUrlOverride,
       version: latestVersion,
-      family,
+      family: family2,
       ext
     });
     const { size } = await downloadToFile(downloadUrlOverride, filePath);
@@ -23317,8 +23191,32 @@ async function performLinuxUpdate(ctx, latestVersion, expectedHash, downloadUrlO
     arch: getArch(),
     family: detectFamily().family
   });
-  const result2 = runLinuxUpdate(downloaded.filePath);
-  return result2;
+  const family = detectFamily().family;
+  const format = family === "debian" ? "deb" : "rpm";
+  const installResp = await ctx.priv.call({
+    v: 1,
+    id: `agent-install-${Date.now()}`,
+    method: "agent.install",
+    params: {
+      path: downloaded.filePath,
+      format,
+      version: latestVersion
+    },
+    meta: {
+      tenantId: ctx.enrollment.tenantId,
+      deviceId: ctx.enrollment.deviceId
+    }
+  });
+  if (installResp.error) {
+    throw new Error(
+      `agent.install failed: ${installResp.error.code}: ${installResp.error.message}`
+    );
+  }
+  return {
+    started: true,
+    command: installResp.ok?.command || "privsvc:agent.install",
+    args: installResp.ok?.args || []
+  };
 }
 var import_fs17, import_path12, import_crypto11, import_http, import_https;
 var init_update_service = __esm({
@@ -24948,12 +24846,33 @@ function purgeLegacyStatusFile() {
 var TrayStatusStore = class {
   dir = ensureAgentStatusDir();
   filePath = getTrayStatusFilePath();
+  // Wall-clock of the most recent successful save(). Read by the
+  // process-level liveness watchdog (see service.ts) which exits the
+  // process if no writes have happened in N minutes — the canonical
+  // signal that the event loop is wedged. Normal operation writes
+  // this on every heartbeat (~60s), every reconnect attempt, every
+  // job event, and every policy change, so going > 5 min without an
+  // update means SOMETHING is stuck in an unrecoverable await.
+  //
+  // We initialize to now() so the watchdog has a finite starting
+  // reference even before the first write — otherwise a slow startup
+  // could fire it spuriously.
+  lastWriteAtMs = Date.now();
   constructor() {
     ensureDir3(this.dir);
     purgeLegacyStatusFile();
   }
   getPath() {
     return this.filePath;
+  }
+  /**
+   * Returns the wall-clock ms of the most recent successful save().
+   * Watchdog reads this; do not use for anything else (e.g. don't
+   * make user-visible decisions on it — it doesn't represent any
+   * semantic state, just I/O liveness).
+   */
+  getLastWriteMs() {
+    return this.lastWriteAtMs;
   }
   load() {
     if (!import_fs13.default.existsSync(this.filePath)) {
@@ -24970,6 +24889,7 @@ var TrayStatusStore = class {
     const tmp = `${this.filePath}.tmp`;
     import_fs13.default.writeFileSync(tmp, JSON.stringify(snapshot, null, 2), { encoding: "utf8", mode: 420 });
     import_fs13.default.renameSync(tmp, this.filePath);
+    this.lastWriteAtMs = Date.now();
   }
   update(updater) {
     const current = this.load();
@@ -26019,6 +25939,7 @@ function buildPmpStateForHash(namespace) {
   const { hasChanges: _ignored, ...rest } = namespace;
   return rest;
 }
+var WORKER_STUCK_TIMEOUT_MS = 30 * 60 * 1e3;
 var Scheduler = class {
   timers = /* @__PURE__ */ new Map();
   // Which pipelines are currently "armed". We track this separately from
@@ -26032,6 +25953,43 @@ var Scheduler = class {
   complianceRunning = false;
   updateRunning = false;
   patchRunning = false;
+  // Wall-clock start timestamps for the *Running guards above. 0 when
+  // not running. Used by `checkStuckWorker()` so the overlap-detection
+  // path can distinguish "started 10s ago and still working" (normal)
+  // from "started 2 hours ago and never finished" (zombie, force-clear).
+  // Without these the guards became permanent shutoffs once the first
+  // tick wedged — the precise production failure mode we're patching.
+  inventoryStartedAt = 0;
+  complianceStartedAt = 0;
+  updateStartedAt = 0;
+  patchStartedAt = 0;
+  /**
+   * Returns true if the caller should proceed with a fresh run.
+   * Returns false if the previous run is still legitimately in flight
+   * and the caller should skip this tick.
+   *
+   * Side effect on stuck detection: logs an error and force-clears the
+   * provided startedAtRef + the running flag (via the caller assigning
+   * the result back). Callers must mutate their *Running and *StartedAt
+   * fields based on the return; we can't do that from here without
+   * generics / reflection that just clutters the call sites.
+   */
+  checkStuckWorker(label, isRunning, startedAt) {
+    if (!isRunning) {
+      return { proceed: true, clearStuck: false };
+    }
+    const elapsed = Date.now() - startedAt;
+    if (elapsed > WORKER_STUCK_TIMEOUT_MS) {
+      logger.error(
+        `${label} has been running for ${Math.round(elapsed / 1e3)}s (> ${WORKER_STUCK_TIMEOUT_MS / 1e3}s threshold). Force-clearing stuck flag and starting a new run.`
+      );
+      return { proceed: true, clearStuck: true };
+    }
+    logger.warn(`${label} already running, skipping overlapping execution`, {
+      elapsedMs: elapsed
+    });
+    return { proceed: false, clearStuck: false };
+  }
   // Forces one full AMP snapshot on the first inventory tick after the
   // daemon starts — ensures the server receives current posture after
   // an upgrade / reinstall / reboot, even if the AMP delta baseline on
@@ -26227,11 +26185,20 @@ var Scheduler = class {
       logger.info("AMP plugin disabled by policy, skipping inventory");
       return;
     }
-    if (this.inventoryRunning) {
-      logger.warn("Inventory already running, skipping overlapping execution");
-      return;
+    {
+      const { proceed, clearStuck } = this.checkStuckWorker(
+        "Inventory",
+        this.inventoryRunning,
+        this.inventoryStartedAt
+      );
+      if (!proceed) return;
+      if (clearStuck) {
+        this.inventoryRunning = false;
+        this.inventoryStartedAt = 0;
+      }
     }
     this.inventoryRunning = true;
+    this.inventoryStartedAt = Date.now();
     try {
       logger.info("Collecting AMP facts...");
       const namespaces = {};
@@ -26310,6 +26277,7 @@ var Scheduler = class {
       logger.error("Inventory pipeline failed", { err });
     } finally {
       this.inventoryRunning = false;
+      this.inventoryStartedAt = 0;
     }
   }
   async runCompliance(ctx) {
@@ -26321,11 +26289,20 @@ var Scheduler = class {
       logger.info("SCP plugin disabled by policy, skipping compliance");
       return;
     }
-    if (this.complianceRunning) {
-      logger.warn("Compliance already running, skipping overlapping execution");
-      return;
+    {
+      const { proceed, clearStuck } = this.checkStuckWorker(
+        "Compliance",
+        this.complianceRunning,
+        this.complianceStartedAt
+      );
+      if (!proceed) return;
+      if (clearStuck) {
+        this.complianceRunning = false;
+        this.complianceStartedAt = 0;
+      }
     }
     this.complianceRunning = true;
+    this.complianceStartedAt = Date.now();
     try {
       logger.info("Collecting SCP facts...");
       const namespaces = {};
@@ -26375,6 +26352,7 @@ var Scheduler = class {
       logger.error("Compliance pipeline failed", { err });
     } finally {
       this.complianceRunning = false;
+      this.complianceStartedAt = 0;
     }
   }
   async runUpdate(ctx) {
@@ -26382,11 +26360,20 @@ var Scheduler = class {
       logger.info("Update disabled by policy, skipping update check");
       return;
     }
-    if (this.updateRunning) {
-      logger.warn("Update already running, skipping overlapping execution");
-      return;
+    {
+      const { proceed, clearStuck } = this.checkStuckWorker(
+        "Update",
+        this.updateRunning,
+        this.updateStartedAt
+      );
+      if (!proceed) return;
+      if (clearStuck) {
+        this.updateRunning = false;
+        this.updateStartedAt = 0;
+      }
     }
     this.updateRunning = true;
+    this.updateStartedAt = Date.now();
     try {
       logger.info("Running update check...", {
         deviceId: ctx.enrollment.deviceId
@@ -26399,6 +26386,7 @@ var Scheduler = class {
       logger.error("Update task failed", { err });
     } finally {
       this.updateRunning = false;
+      this.updateStartedAt = 0;
     }
   }
   async runPatch(ctx) {
@@ -26410,11 +26398,20 @@ var Scheduler = class {
       logger.info("PMP plugin disabled by policy, skipping patch scan");
       return;
     }
-    if (this.patchRunning) {
-      logger.warn("Patch scan already running, skipping overlapping execution");
-      return;
+    {
+      const { proceed, clearStuck } = this.checkStuckWorker(
+        "Patch scan",
+        this.patchRunning,
+        this.patchStartedAt
+      );
+      if (!proceed) return;
+      if (clearStuck) {
+        this.patchRunning = false;
+        this.patchStartedAt = 0;
+      }
     }
     this.patchRunning = true;
+    this.patchStartedAt = Date.now();
     try {
       logger.info("Collecting PMP facts...");
       const namespaces = {};
@@ -26459,6 +26456,7 @@ var Scheduler = class {
       logger.error("Patch pipeline failed", { err });
     } finally {
       this.patchRunning = false;
+      this.patchStartedAt = 0;
     }
   }
 };
@@ -26507,7 +26505,7 @@ function attachPrivPushHandler(ctx, onPush) {
 }
 function createGrpcClient(ctx) {
   if (ctx.__grpcClientInstance) {
-    ctx.logger?.warn?.("[grpc-client] reusing existing grpc client instance");
+    ctx.logger?.debug?.("[grpc-client] reusing existing grpc client instance");
     return ctx.__grpcClientInstance;
   }
   const target = normalizeTarget(ctx.config.grpcEndpoint);
@@ -26523,6 +26521,12 @@ function createGrpcClient(ctx) {
   let lastServerActivityMs = Date.now();
   stream.getLastServerActivityMs = () => lastServerActivityMs;
   const SILENCE_THRESHOLD_MS2 = 27e4;
+  const invalidateCachedClient = (reason) => {
+    if (ctx.__grpcClientInstance === client) {
+      delete ctx.__grpcClientInstance;
+      ctx.logger?.info?.("[grpc-client] cached instance invalidated", { reason });
+    }
+  };
   attachPrivPushHandler(ctx, (pushMsg) => {
     try {
       const method = pushMsg?.method;
@@ -26617,6 +26621,7 @@ function createGrpcClient(ctx) {
           ctx.trayStatus.markGrpcDisconnected();
         } catch {
         }
+        invalidateCachedClient("remote_disconnect");
         stream.emit("end");
         return;
       }
@@ -26884,6 +26889,7 @@ function createGrpcClient(ctx) {
       meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
     }).catch(() => {
     });
+    invalidateCachedClient("local_end");
     stream.emit("end");
   };
   const client = {
@@ -26909,6 +26915,21 @@ function createGrpcClient(ctx) {
     isConnected: () => {
       if (!connected) return false;
       return Date.now() - lastServerActivityMs <= SILENCE_THRESHOLD_MS2;
+    },
+    // Explicit teardown. Callers (grpc-stream's reconnect loop) use
+    // this when they've decided the current client is unrecoverable
+    // — e.g. silence-watchdog tripped, isConnected() returned false,
+    // or an error event was emitted. Without it, the only way to
+    // invalidate the singleton was from inside grpc-client itself
+    // (push handler / stream.end), which left the reconnect loop
+    // unable to force a clean slate when those signals didn't fire.
+    close: () => {
+      try {
+        stream.end?.();
+      } catch (e) {
+        ctx.logger?.warn?.("[grpc-client] close: stream.end threw", e?.message || e);
+        invalidateCachedClient("close_fallback");
+      }
     }
   };
   ctx.__grpcClientInstance = client;
@@ -28185,6 +28206,14 @@ function startGrpcStream(ctx) {
       return;
     }
     reconnecting = true;
+    grpcMetrics.connectedSinceUtc = null;
+    try {
+      client.close?.();
+    } catch (e) {
+      ctx.logger?.warn?.("gRPC stream: client.close() during reconnect threw", {
+        error: e?.message || String(e)
+      });
+    }
     reconnectAttempts += 1;
     grpcMetrics.reconnectCount += 1;
     const delayMs = nextReconnectDelayMs();
@@ -28592,7 +28621,12 @@ var shuttingDown = false;
 var currentCtx = null;
 var cleanupTimer;
 var certRenewalTimer;
+var livenessWatchdogTimer;
 var stopGrpcStream = null;
+var LIVENESS_CHECK_INTERVAL_MS = 6e4;
+var MAX_STATUS_STALE_MS = 5 * 60 * 1e3;
+var LIVENESS_STARTUP_GRACE_MS = 5 * 60 * 1e3;
+var livenessStartedAtMs = Date.now();
 async function startService() {
   try {
     logger.info("Starting Tracenium Agent Core...");
@@ -28718,6 +28752,28 @@ async function startService() {
       }, delayMs);
     };
     armCertRenewal();
+    livenessWatchdogTimer = setInterval(() => {
+      if (shuttingDown) return;
+      const sinceStartupMs = Date.now() - livenessStartedAtMs;
+      if (sinceStartupMs < LIVENESS_STARTUP_GRACE_MS) return;
+      try {
+        const lastWriteMs = currentCtx?.trayStatus?.getLastWriteMs?.();
+        if (typeof lastWriteMs !== "number") return;
+        const staleMs = Date.now() - lastWriteMs;
+        if (staleMs > MAX_STATUS_STALE_MS) {
+          logger.error(
+            `Liveness watchdog: tray status not updated in ${Math.round(staleMs / 1e3)}s (> ${MAX_STATUS_STALE_MS / 1e3}s threshold). Event loop is wedged. Exiting so launchd can recycle the process.`
+          );
+          setTimeout(() => process.exit(1), 250).unref();
+        }
+      } catch (e) {
+        logger.warn(
+          "Liveness watchdog: check threw",
+          e?.message || String(e)
+        );
+      }
+    }, LIVENESS_CHECK_INTERVAL_MS);
+    livenessWatchdogTimer?.unref?.();
     log.info("Agent Core started.");
   } catch (err) {
     logger.error("Fatal startup error:", err?.message || err);
@@ -28733,6 +28789,10 @@ process.on("SIGTERM", async () => {
     if (cleanupTimer) {
       clearInterval(cleanupTimer);
       cleanupTimer = void 0;
+    }
+    if (livenessWatchdogTimer) {
+      clearInterval(livenessWatchdogTimer);
+      livenessWatchdogTimer = void 0;
     }
     if (certRenewalTimer) {
       clearTimeout(certRenewalTimer);
@@ -28753,11 +28813,23 @@ process.on("SIGTERM", async () => {
   }
   process.exit(0);
 });
+function crashAndExit(label, err) {
+  try {
+    logger.error(`${label}:`, err);
+  } catch {
+    try {
+      process.stderr.write(`${label}: ${String(err)}
+`);
+    } catch {
+    }
+  }
+  setTimeout(() => process.exit(1), 250).unref();
+}
 process.on("uncaughtException", (err) => {
-  logger.error("Uncaught exception:", err);
+  crashAndExit("Uncaught exception", err);
 });
 process.on("unhandledRejection", (reason) => {
-  logger.error("Unhandled rejection:", reason);
+  crashAndExit("Unhandled rejection", reason);
 });
 
 // certusws-tracenium-agent-w/build/linux/staging/src/index.ts

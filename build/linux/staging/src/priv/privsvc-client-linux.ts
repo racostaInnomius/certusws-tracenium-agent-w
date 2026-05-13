@@ -218,7 +218,22 @@ export class PrivSvcClient extends EventEmitter {
       sock?.destroy();
     } catch {}
 
-    this.emit("error", err);
+    // EventEmitter contract: emitting "error" without a listener throws
+    // synchronously. See the macOS sibling (privsvc-client-macos.ts) for
+    // the full rationale. Short version: no caller in src/ subscribes
+    // to our "error" event, so an unguarded emit ended up as an
+    // uncaughtException — and after we hardened the service-level
+    // handler to exit on uncaught, every transient privsvc restart
+    // would unnecessarily recycle the whole agent. The downstream
+    // grpc-client already drives recovery off of the `grpc.disconnected`
+    // push that onSocketClose generates, so a non-error "disconnect"
+    // event is the right contract here. Listener-guard preserves
+    // future opt-in if a consumer ever wants the strong error signal.
+    if (this.listenerCount("error") > 0) {
+      this.emit("error", err);
+    } else {
+      this.emit("disconnect", { err, code: errCode, message: errMessage });
+    }
   }
 
   private onSocketClose() {

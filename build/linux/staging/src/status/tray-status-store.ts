@@ -45,6 +45,19 @@ export class TrayStatusStore {
   private dir = ensureAgentStatusDir();
   private filePath = getTrayStatusFilePath();
 
+  // Wall-clock of the most recent successful save(). Read by the
+  // process-level liveness watchdog (see service.ts) which exits the
+  // process if no writes have happened in N minutes — the canonical
+  // signal that the event loop is wedged. Normal operation writes
+  // this on every heartbeat (~60s), every reconnect attempt, every
+  // job event, and every policy change, so going > 5 min without an
+  // update means SOMETHING is stuck in an unrecoverable await.
+  //
+  // We initialize to now() so the watchdog has a finite starting
+  // reference even before the first write — otherwise a slow startup
+  // could fire it spuriously.
+  private lastWriteAtMs: number = Date.now();
+
   constructor() {
     ensureDir(this.dir);
     purgeLegacyStatusFile();
@@ -52,6 +65,16 @@ export class TrayStatusStore {
 
   getPath() {
     return this.filePath;
+  }
+
+  /**
+   * Returns the wall-clock ms of the most recent successful save().
+   * Watchdog reads this; do not use for anything else (e.g. don't
+   * make user-visible decisions on it — it doesn't represent any
+   * semantic state, just I/O liveness).
+   */
+  getLastWriteMs() {
+    return this.lastWriteAtMs;
   }
 
   load(): TrayStatusSnapshot | null {
@@ -77,6 +100,12 @@ export class TrayStatusStore {
     // también es 0o644 en /Library/Application Support/Tracenium/Logs/.
     fs.writeFileSync(tmp, JSON.stringify(snapshot, null, 2), { encoding: "utf8", mode: 0o644 });
     fs.renameSync(tmp, this.filePath);
+    // Stamp AFTER the rename succeeds — a failed write should not
+    // refresh the liveness clock, or the watchdog could be fooled by a
+    // disk-full / perms / EBUSY loop that keeps throwing in the same
+    // place every tick. We want the watchdog to actually exit in that
+    // case so launchd restarts us with fresh fd state.
+    this.lastWriteAtMs = Date.now();
   }
 
   update(

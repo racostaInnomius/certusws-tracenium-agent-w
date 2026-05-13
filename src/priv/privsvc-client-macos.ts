@@ -221,7 +221,33 @@ export class PrivSvcClient extends EventEmitter {
       sock?.destroy();
     } catch {}
 
-    this.emit("error", err);
+    // EventEmitter contract: emitting "error" without a listener throws
+    // synchronously. No consumer in the codebase subscribes to our
+    // "error" event (checked at grep-time), so this throw used to land
+    // in service.ts's uncaughtException handler. Before the fix to that
+    // handler, the process kept running with the socket gone and every
+    // subsequent .call() would queue against a null socket. After the
+    // handler fix, this throw IS the trigger for a process exit + clean
+    // restart — but exiting on transient privsvc-restart events is
+    // overkill, and there's a more useful signal we can emit instead.
+    //
+    // The right model: privsvc restarting is a recoverable event for
+    // grpc-client (it pushes `grpc.disconnected` which triggers a
+    // reconnect). The socket error is just the local manifestation of
+    // the same underlying state — so emit "disconnect" (a non-error
+    // event name that EventEmitter doesn't auto-throw), include the
+    // error payload for diagnostics, and let onSocketClose drive the
+    // recovery as it already does.
+    //
+    // We still emit "error" IF a listener is attached — preserving the
+    // public contract for any future consumer that wants the strong
+    // signal. Listener-guard is the canonical Node pattern for opt-in
+    // error broadcasting on EventEmitters.
+    if (this.listenerCount("error") > 0) {
+      this.emit("error", err);
+    } else {
+      this.emit("disconnect", { err, code: errCode, message: errMessage });
+    }
   }
 
   private onSocketClose() {

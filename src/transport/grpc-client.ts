@@ -28,6 +28,16 @@ type StreamLike = EventEmitter & {
 type GrpcBridgeClient = {
   Connect: () => StreamLike;
   isConnected: () => boolean;
+  // Explicit teardown. Idempotent. Tears down the local stream,
+  // notifies privsvc to close its side, and drops the per-AgentContext
+  // singleton so the next createGrpcClient() builds fresh state.
+  // Callers (notably grpc-stream's reconnect supervisor) use this when
+  // they've decided the client is unrecoverable — without it, the only
+  // way to invalidate the cached instance was from inside grpc-client
+  // itself, which meant a "stuck reconnect" loop could keep getting
+  // back the same dead client (337 attempts deep, in the observed
+  // production zombie).
+  close: () => void;
 };
 
 function attachPrivPushHandler(ctx: AgentContext, onPush: (msg: any) => void) {
@@ -64,9 +74,18 @@ function attachPrivPushHandler(ctx: AgentContext, onPush: (msg: any) => void) {
 }
 
 export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
-  // Ensure singleton instance per AgentContext
+  // Singleton per AgentContext. The cache is invalidated whenever the
+  // stream is torn down (stream.end / grpc.disconnected push / client.close)
+  // so a reconnect after a half-open TCP / privsvc-restart / sleep-wake
+  // event gets a fresh client with clean state instead of resurrecting a
+  // corpse whose `connected` flag and `lastServerActivityMs` lie about
+  // liveness. The "reusing existing grpc client instance" warning used
+  // to print on EVERY caller after the first connect, including healthy
+  // ones — masking the actual leak (calls that returned a dead client
+  // after a stream death). Now it only prints inside the same generation
+  // of a healthy stream, which is the only legitimate reuse case.
   if ((ctx as any).__grpcClientInstance) {
-    ctx.logger?.warn?.("[grpc-client] reusing existing grpc client instance");
+    ctx.logger?.debug?.("[grpc-client] reusing existing grpc client instance");
     return (ctx as any).__grpcClientInstance;
   }
 
@@ -115,6 +134,19 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
   // "false" before the watchdog fires its reconnect, which would make
   // heartbeats stop short of triggering any recovery.
   const SILENCE_THRESHOLD_MS = 270_000;
+
+  // Wipe the per-ctx singleton so the next createGrpcClient() builds a
+  // fresh instance instead of returning this dead one. We guard with an
+  // identity check (=== client) because in theory a faster reconnect on
+  // another code path could have already swapped in a newer instance,
+  // and we don't want to clobber that. Idempotent — safe to call from
+  // multiple disconnect paths.
+  const invalidateCachedClient = (reason: string) => {
+    if ((ctx as any).__grpcClientInstance === client) {
+      delete (ctx as any).__grpcClientInstance;
+      ctx.logger?.info?.("[grpc-client] cached instance invalidated", { reason });
+    }
+  };
 
   // Push from PrivSvc → re-emit as "data"
   attachPrivPushHandler(ctx, (pushMsg: any) => {
@@ -236,6 +268,14 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         try {
           ctx.trayStatus.markGrpcDisconnected();
         } catch {}
+
+        // Invalidate the singleton so the next createGrpcClient() in
+        // the reconnect path builds a fresh instance. Without this,
+        // grpc-stream's reconnect loop kept getting back the same
+        // dead client (with stale `connected`/`lastServerActivityMs`
+        // state) and the reconnect attempts piled up to 337 in the
+        // wild before the operator manually restarted the agent.
+        invalidateCachedClient("remote_disconnect");
 
         // Remote disconnect: notify listeners, but do NOT mark this stream as locally ended
         // and do NOT send grpc.close back to PrivSvc.
@@ -579,10 +619,13 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       })
       .catch(() => {});
 
+    // Wipe the singleton — see invalidateCachedClient docstring.
+    invalidateCachedClient("local_end");
+
     stream.emit("end");
   };
 
-  const client = {
+  const client: GrpcBridgeClient & { close: () => void } = {
     Connect: () => {
       ended = false;
       localClose = false;
@@ -604,6 +647,26 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
     isConnected: () => {
       if (!connected) return false;
       return Date.now() - lastServerActivityMs <= SILENCE_THRESHOLD_MS;
+    },
+    // Explicit teardown. Callers (grpc-stream's reconnect loop) use
+    // this when they've decided the current client is unrecoverable
+    // — e.g. silence-watchdog tripped, isConnected() returned false,
+    // or an error event was emitted. Without it, the only way to
+    // invalidate the singleton was from inside grpc-client itself
+    // (push handler / stream.end), which left the reconnect loop
+    // unable to force a clean slate when those signals didn't fire.
+    close: () => {
+      // End the local stream (which already invalidates the cache and
+      // notifies privsvc) — gated on `ended` so a no-op double-close
+      // is safe.
+      try {
+        stream.end?.();
+      } catch (e: any) {
+        ctx.logger?.warn?.("[grpc-client] close: stream.end threw", e?.message || e);
+        // Belt-and-braces: if stream.end didn't run cleanly, still
+        // drop the cached instance ourselves.
+        invalidateCachedClient("close_fallback");
+      }
     }
   };
 

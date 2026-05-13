@@ -15,7 +15,7 @@ import type {
   DownloadedUpdateInfo
 } from "./update-types";
 import { updateUpdateState } from "./update-state";
-import { runMacosPkgUpdate, runWindowsMsiUpdate, runLinuxUpdate } from "./updater-runner";
+import { runMacosPkgUpdate, runWindowsMsiUpdate } from "./updater-runner";
 import { detectFamily } from "../platform/linux/distro";
 import { compareSemver, looksLikeSemver } from "./semver";
 
@@ -929,8 +929,47 @@ export async function performLinuxUpdate(
     family: detectFamily().family,
   });
 
-  // runLinuxUpdate dispatches to dpkg or rpm by family.
-  const result = runLinuxUpdate(downloaded.filePath);
+  // ── Linux: route the install through privsvc ────────────────────
+  //
+  // On Linux the agent daemon runs as the unprivileged `tracenium`
+  // user. dpkg / rpm need root — calling them from here would fail
+  // with EPERM (and silently, because the previous code spawned
+  // detached and returned `{ started: true }` before the child died).
+  // The privsvc daemon runs as root and exposes `agent.install` for
+  // this exact purpose; see privsvc/linux/src/agent-install.ts for
+  // the rationale around systemd-run --scope dispatching.
+  //
+  // privsvc handles format selection internally (deb vs rpm by
+  // distro family). We pass the format the agent already computed so
+  // privsvc can reject early on a family mismatch rather than
+  // letting dpkg/rpm fail with an obscure error.
+  const family = detectFamily().family;
+  const format = family === "debian" ? "deb" : "rpm";
 
-  return result;
+  const installResp = await ctx.priv.call({
+    v: 1,
+    id: `agent-install-${Date.now()}`,
+    method: "agent.install",
+    params: {
+      path: downloaded.filePath,
+      format,
+      version: latestVersion,
+    },
+    meta: {
+      tenantId: ctx.enrollment.tenantId,
+      deviceId: ctx.enrollment.deviceId,
+    },
+  });
+
+  if (installResp.error) {
+    throw new Error(
+      `agent.install failed: ${installResp.error.code}: ${installResp.error.message}`
+    );
+  }
+
+  return {
+    started: true,
+    command: installResp.ok?.command || "privsvc:agent.install",
+    args: installResp.ok?.args || [],
+  };
 }
