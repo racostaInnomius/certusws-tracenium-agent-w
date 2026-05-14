@@ -120,6 +120,25 @@ export async function collectWindowsScp(ctx: AgentContext): Promise<ScpNamespace
     };
   }
 
+  // Promote a per-section failure surfaced INSIDE the privsvc response
+  // (e.g. `posture.collectorError = { phase: "patches", reason:
+  // "powershell_timeout", message: "..." }`) to the top-level
+  // collectorError field IF we don't already have an outright IPC
+  // failure. Without this, a privsvc that took 50s on the patches
+  // PowerShell script and gave up — but still returned every other
+  // section successfully — would deliver evidence where `patches` is
+  // an empty shell (`{count: 0, items: []}`) AND no error signal at
+  // the top level. The backend's stale-preservation gate keys on the
+  // top-level collectorError, so without surfacing it here the
+  // dashboard would still regress to "Last patch = unknown".
+  if (!collectorError && posture?.collectorError) {
+    const inner = posture.collectorError;
+    collectorError = {
+      message: String(inner?.message ?? "privsvc reported a section failure"),
+      phase: String(inner?.phase ?? "security.compliance")
+    };
+  }
+
   return {
     schemaVersion: "2.0",
     collector: {

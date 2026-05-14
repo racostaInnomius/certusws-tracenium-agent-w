@@ -21,6 +21,22 @@ function getTimeoutForMethod(method: string): number {
     case "software.inventory":
       return 60000; // inventory can be heavy (WMI/registry)
     case "security.compliance":
+      // 90s. Bumped from 30s because the Windows privsvc handler runs
+      // ~10 PowerShell scripts in series (bitlocker, defender, firewall,
+      // smb, shares, antivirus, domain/gpo, ciphers, protocols, patches),
+      // and the patches call alone — `Microsoft.Update.Session.
+      // QueryHistory()` — is notoriously slow on hosts with hundreds of
+      // historical updates AND/OR a WSUS policy pointing at a remote
+      // server. We observed DESKTOP-9G467VM intermittently exceeding the
+      // 30s budget (~30% of scans) and the agent giving up while
+      // privsvc was still processing — the response landed seconds
+      // later but was already dropped, so `patches.count` went to 0
+      // and the dashboard regressed to "Last patch = unknown".
+      //
+      // 90s is generous enough that even a heavily-patched WSUS host
+      // completes, while still bounded so a genuinely-broken privsvc
+      // doesn't wedge the agent's compliance pipeline indefinitely.
+      return 90000;
     case "patch.scan":
       return 30000;
     case "patch.install":
