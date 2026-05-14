@@ -676,9 +676,11 @@ export const linuxProvider = {
             deleteSoftwareByIds(deletes);
           }
 
+          // Phase B: drop items[] on delta sends. See windows.ts
+          // for the full rationale.
           software = {
             count: deltaResult.currentCount,
-            items: apps,
+            items: undefined,
             delta: deltaResult.delta,
             hasChanges: true
           };

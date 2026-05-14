@@ -257,9 +257,37 @@ export const windowsProvider = {
             deleteSoftwareByIds(deletes);
           }
 
+          // ── Phase B: drop items[] when sending a delta ─────────
+          //
+          // The backend's `software_current_app` projection
+          // (modules/db/migrations/20260514_software_current_app.sql)
+          // is maintained incrementally from delta.added / removed /
+          // updated. With that path live, re-sending the full apps[]
+          // on every change wastes bandwidth: a typical Windows host
+          // with 40 apps reships ~5 KB of identical metadata for a
+          // single 1-app delta. The audit said 99% of software_
+          // inventory rows pre-Phase-B were full snapshots, 76% of
+          // which were duplicates of the prior row.
+          //
+          // DEPLOY ORDER REQUIREMENT: the matching backend (which
+          // ALSO landed in this release) must be deployed BEFORE
+          // agents running this code start phoning home. An older
+          // backend that doesn't know about software_current_app
+          // and only reads software_payload->'items' would render
+          // empty inventory for these devices. The backend ships
+          // first in the rollout sequence; this code only takes
+          // effect when the bundled-agent version updates.
+          //
+          // Note (Aug 2025 / pre-Phase-B comment): the previous code
+          // had a "CRITICAL: NEVER drop items" comment here, which
+          // documented the OLD invariant (server reconstructed
+          // current state from the latest snapshot's items[]). That
+          // invariant no longer holds — current state lives in
+          // software_current_app, server-side, maintained
+          // incrementally.
           software = {
             count: deltaResult.currentCount,
-            items: apps, // CRITICAL: NEVER drop items
+            items: undefined,
             delta: deltaResult.delta,
             hasChanges: true
           };

@@ -23637,7 +23637,7 @@ var import_dotenv = __toESM(require_main());
 // package.json
 var package_default = {
   name: "certusws-tracenium-agent",
-  version: "1.1.14",
+  version: "1.1.15",
   description: "Tracenium Agent - Hardware & Software inventory collector",
   license: "MIT",
   author: {
