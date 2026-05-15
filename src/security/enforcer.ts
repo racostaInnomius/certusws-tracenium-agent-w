@@ -21,7 +21,8 @@
 //     pass. No state-changing call is ever made without the lock.
 //
 //   * Per-checkId cooldown: once we successfully run a remediation
-//     for a checkId, we don't retry for COOLDOWN_MS even if the
+//     for a checkId, we don't retry for cooldownMs (derived from
+//     policy.cooldownMinutes, default 60min) even if the
 //     post-state read still shows drift (could be a host that
 //     genuinely needs a reboot — see e.g. Windows TLS legacy
 //     disable, which writes registry but takes effect only after
@@ -63,7 +64,13 @@ import { buildDeviceFacts } from "../domain/device-facts-builder";
 // long enough that a real reboot-pending state isn't hammered,
 // short enough that operator action (e.g. flipping a setting back
 // via GPO) gets caught.
-const COOLDOWN_MS = 60 * 60 * 1000;
+//
+// Operators can override per-tenant via `security.cooldownMinutes`
+// in the policy. policy-runtime.sanitizeSecurityPolicy clamps that
+// to [1, 1440] minutes (matching the backend validator). When the
+// policy doesn't carry the field — older agents that pre-date B7,
+// or operators who never set it — we fall back to this default.
+const COOLDOWN_DEFAULT_MS = 60 * 60 * 1000;
 
 // Maximum wall-clock time we let the entire enforce pass take. Beyond
 // this we bail — usually means a privsvc handler is hung. Defense in
@@ -308,6 +315,16 @@ export async function runSecurityEnforce(
   const platform = os.platform() as Platform;
   const results: EnforceResult[] = [];
 
+  // Per-pass cooldown derived from the policy. Sanitized by
+  // sanitizeSecurityPolicy → guaranteed to be an integer in
+  // [1, 1440] when present. We resolve once at pass-start so a
+  // mid-pass policy reload doesn't make the throttle window
+  // change between checks within the same pass.
+  const cooldownMs =
+    typeof policy.cooldownMinutes === "number" && policy.cooldownMinutes > 0
+      ? policy.cooldownMinutes * 60 * 1000
+      : COOLDOWN_DEFAULT_MS;
+
   // Iterate every potential remediator. We do this serially because
   // (a) the privsvc lock makes parallelism a no-op anyway, and
   // (b) the per-pass deadline lets us cut a long pass short
@@ -393,7 +410,7 @@ export async function runSecurityEnforce(
     // for an up-to-date drift signal in the dashboard).
     if (mode === "auto") {
       const last = lastAppliedAt.get(entry.checkId) ?? 0;
-      if (Date.now() - last < COOLDOWN_MS) {
+      if (Date.now() - last < cooldownMs) {
         results.push({
           checkId: entry.checkId,
           capability: entry.capability,

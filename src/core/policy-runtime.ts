@@ -125,6 +125,18 @@ export type SecurityPolicy = {
   // even if individual capabilities are configured.
   defaultMode?: SecurityMode;
 
+  // Minimum interval between successive AUTO remediation attempts
+  // for the SAME checkId, in minutes. Defaults to 60. Operators in
+  // change-tightened environments may want longer (e.g. 720 = 12h)
+  // to ensure each remediation gets a full business-hours review
+  // window before the agent retries. Short cooldowns are useful in
+  // CI / lab fleets where rapid iteration matters more than churn.
+  //
+  // Bounds enforced by the backend validator: [1, 1440] minutes
+  // (1 minute to 24 hours). Agent-side validator clamps the same
+  // range — values outside are silently replaced with the default.
+  cooldownMinutes?: number;
+
   // ── Functional (have an existing pmp.remediate handler) ─────────
 
   firewall?: {
@@ -202,6 +214,15 @@ function stripDroppedFeatures(input: Record<string, unknown>): Record<string, un
 // enforcer and the validator agree on what's recognized.
 const SECURITY_VALID_MODES = new Set<string>(["auto", "report-only", "off"]);
 
+// Cooldown bounds (in minutes) for the per-checkId AUTO remediation
+// throttle. Backend validator enforces the same range — anything
+// outside is silently replaced with SECURITY_COOLDOWN_DEFAULT_MIN here
+// so a buggy operator-supplied value can't break the enforcer's
+// schedule arithmetic.
+const SECURITY_COOLDOWN_MIN_MINUTES = 1;
+const SECURITY_COOLDOWN_MAX_MINUTES = 1440; // 24h
+const SECURITY_COOLDOWN_DEFAULT_MIN = 60;   // 1h — matches pre-B7 hardcoded value
+
 // Capability keys we recognize on the wire. Unknown keys (typo,
 // forward-compat from a newer backend) are silently dropped at parse
 // time so the enforcer never iterates garbage.
@@ -223,20 +244,43 @@ function coerceMode(raw: unknown): SecurityMode {
   return "report-only";
 }
 
+// Clamp the operator-supplied cooldown to the documented bounds.
+// Returns the default if the value is missing, non-numeric, or
+// outside [1, 1440]. Logged at debug-level so an out-of-range value
+// is recoverable from an agent log without breaking enforcement.
+function clampCooldownMinutes(raw: unknown, logger: any): number {
+  if (raw === undefined || raw === null) return SECURITY_COOLDOWN_DEFAULT_MIN;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) {
+    logger?.debug?.("security policy: cooldownMinutes not an integer, using default", { raw });
+    return SECURITY_COOLDOWN_DEFAULT_MIN;
+  }
+  if (n < SECURITY_COOLDOWN_MIN_MINUTES || n > SECURITY_COOLDOWN_MAX_MINUTES) {
+    logger?.debug?.("security policy: cooldownMinutes out of range, using default", {
+      raw: n,
+      min: SECURITY_COOLDOWN_MIN_MINUTES,
+      max: SECURITY_COOLDOWN_MAX_MINUTES
+    });
+    return SECURITY_COOLDOWN_DEFAULT_MIN;
+  }
+  return n;
+}
+
 // Validate + normalize the security block. Always returns a NEW
 // object even if input was already clean — keeps the caller's
 // reference-equality semantics predictable when policyChanged fires.
 function sanitizeSecurityPolicy(input: any, logger: any): SecurityPolicy {
   if (!input || typeof input !== "object") {
-    return { defaultMode: "report-only" };
+    return { defaultMode: "report-only", cooldownMinutes: SECURITY_COOLDOWN_DEFAULT_MIN };
   }
   const out: SecurityPolicy = {
     version: typeof input.version === "string" ? input.version : undefined,
     defaultMode: coerceMode(input.defaultMode),
+    cooldownMinutes: clampCooldownMinutes(input.cooldownMinutes, logger),
   };
 
   for (const [k, v] of Object.entries(input)) {
-    if (k === "version" || k === "defaultMode") continue;
+    if (k === "version" || k === "defaultMode" || k === "cooldownMinutes") continue;
     if (!SECURITY_KNOWN_CAPABILITIES.has(k)) {
       logger?.debug?.("security policy: dropping unknown capability", { capability: k });
       continue;
