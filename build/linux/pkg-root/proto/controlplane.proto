@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package tracenium.control;
+
+service ControlPlane {
+  rpc Connect(stream ControlMessage) returns (stream ControlMessage);
+}
+
+// ---------------- ACK ----------------
+
+enum AckStatus {
+  ACK_OK = 0;
+  ACK_RETRY = 1;
+  ACK_REJECTED = 2;
+}
+
+message Ack {
+  string eventId = 1;
+  AckStatus status = 2;
+  string message = 3;
+  string receivedAtUtc = 4;
+  string serverTimeUtc = 5;
+}
+
+message Error {
+  string code = 1;
+  string message = 2;
+}
+
+// ---------------- AGENT -> SERVER ----------------
+
+message Hello {
+  string eventId = 1;
+
+  string deviceId = 2;
+  string tenantId = 3;
+  string agentVersion = 4;
+  string protocolVersion = 5;
+  string policyVersion = 6;
+
+  repeated string capabilities = 7;
+}
+
+
+message Facts {
+  string eventId = 1;
+  bytes payloadJson = 2;
+  string deviceId = 3;
+  string namespace = 4;
+  repeated string namespaces = 5;
+}
+
+message Heartbeat {
+  string eventId = 1;
+  string deviceId = 2;
+  int64 uptimeSeconds = 3;
+
+  // useful for detecting version/policy drift
+  string agentVersion = 4;
+  string policyVersion = 5;
+}
+
+// ---------------- SERVER -> AGENT ----------------
+
+message RunJob {
+  string jobId = 1;
+  string jobType = 2;
+  bytes payloadJson = 3;
+}
+
+message RotateCert {
+  string reason = 1;
+}
+
+message PolicyUpdate {
+  string eventId = 1;
+  string policyVersion = 2;
+  bytes policyJson = 3;
+}
+
+message Disconnect {
+  string reason = 1;
+}
+
+message AgentUpdate {
+  string jobId = 1;
+  string version = 2;
+}
+
+// ---------------- CONTROL PLANE MESSAGE ----------------
+
+message ControlMessage {
+  string traceId = 10;
+
+  oneof msg {
+
+    // agent -> server
+    Hello hello = 1;
+    Facts facts = 2;
+    Heartbeat heartbeat = 3;
+
+    // server -> agent
+    RunJob runJob = 4;
+    RotateCert rotateCert = 5;
+    PolicyUpdate policyUpdate = 6;
+    Disconnect disconnect = 7;
+    AgentUpdate agentUpdate = 8;
+
+    // bidirectional
+    Ack ack = 11;
+    Error error = 12;
+  }
+}
