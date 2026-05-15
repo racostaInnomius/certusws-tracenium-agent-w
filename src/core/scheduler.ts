@@ -340,7 +340,12 @@ class Scheduler {
 
     // update pipeline
     if (ctx.policyRuntime.isUpdateEnabled()) {
-      const intervalSeconds = 6 * 60 * 60; // 6h default
+      // Sprint 1 of Policy v2 moved this from hardcoded `6 * 60 * 60`
+      // to a policy-driven value. Default stays 21600s (6h) for
+      // backward compat — operators see no behavior change unless
+      // they explicitly tune `update.intervalSeconds` (or its v2
+      // equivalent `agent.schedules.update.intervalSeconds`).
+      const intervalSeconds = ctx.policyRuntime.getUpdateInterval();
 
       logger.info("Update pipeline enabled", { intervalSeconds });
 
