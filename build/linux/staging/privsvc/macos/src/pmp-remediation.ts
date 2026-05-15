@@ -1,48 +1,269 @@
 // privsvc/macos/src/pmp-remediation.ts
 //
-// Patch Management v2 — privsvc handlers for non-patch remediation
-// on macOS. Phase 1 ships ZERO Windows-checkIds-applicable handlers
-// (the 4 P1 checkIds — TLS, ciphers, SMBv1, firewall profiles —
-// are all `windows.*`); this file is the macOS counterpart that
-// returns `unsupported_check` for everything until Phase 2 lights
-// up the macOS coverage (FileVault, gatekeeper, screen lock, SIP).
+// Patch Management v2 — privsvc handlers for non-patch posture
+// remediation on macOS.
 //
-// We DO ship the file + router cases now so:
-//   1. The IPC contract works on macOS hosts (no `not_supported`
-//      router miss that the agent's privsvc-IPC client would treat
-//      as a privsvc bug rather than a Phase 1 limitation).
-//   2. Phase 2 has a clear seam to land per-checkId handlers
-//      without touching the agent or backend.
+// Sprint 3 (A1) ships 5 checkIds, mirroring the four-checkId catalog
+// that Linux and Windows already implement. Same return shape, same
+// failure semantics, same router contract — the agent's PMP plugin
+// (src/plugins/pmp/) doesn't need ANY macOS-specific code; the
+// checkId list lives entirely server-side in
+// compliance_check_catalog and is whitelisted on the agent via
+// remediation-checks.ts.
 //
-// HANDLERS map keyed on checkId — same shape as the Windows-side
-// dict — empty in Phase 1. Adding a Phase 2 handler is one entry +
-// one function below.
+// Catalog (Sprint 3):
+//
+//   macos.firewall.enabled            — READ + REMEDIATE
+//     ALF (Application Layer Firewall). Single binary, no reboot.
+//     Maps to security policy field `firewall.required`.
+//
+//   macos.gatekeeper.enabled          — READ + REMEDIATE
+//     Code-signing assessment. Single `spctl` call, no reboot.
+//
+//   macos.remote_login.disabled       — READ + REMEDIATE
+//     SSH server (sshd) enabled via System Settings → General → Sharing.
+//     `systemsetup -setremotelogin off` with -f to skip the
+//     interactive confirmation. No reboot.
+//
+//   macos.sip.enabled                 — READ ONLY
+//     System Integrity Protection. Toggling SIP requires booting to
+//     Recovery and running `csrutil enable` there — there is no
+//     userland API. We READ via `csrutil status` so the dashboard
+//     surfaces the state, but REMEDIATE returns unsupported_check.
+//
+//   macos.filevault.enabled           — READ ONLY
+//     Disk encryption. `fdesetup enable` requires interactive user
+//     auth (password) AND a Recovery Key prompt; can't be safely
+//     scripted from a daemon without leaking the user's password.
+//     READ only.
+//
+// Why these five (and not more):
+//   * They map 1-1 to the existing macOS SCP collector evidence
+//     blocks (firewall, gatekeeper, sip, filevault, services).
+//   * Three of them are AUTO-remediable from a daemon (firewall,
+//     gatekeeper, remote_login). The other two (sip, filevault)
+//     have hard runtime limits.
+//   * SCP `screenLock` and `smb.smb1` could be added but ship as
+//     follow-ups: screen lock policy is a defaults-write that
+//     touches user-domain prefs (need per-user iteration), and
+//     macOS's SMB stack already disables SMBv1 by default since
+//     macOS 12.
 
+import { execFile } from "child_process";
+import { promisify } from "util";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
 
-// Phase 1 — empty. Each Phase 2 entry will follow the
-// shape: `(params) => Promise<RemediateResult>`.
-type ReadCheckHandler = (params: any) => Promise<{
-  state: any;
-  isCompliant: boolean;
-}>;
+const execFileAsync = promisify(execFile);
 
-type RemediateHandler = (params: any) => Promise<{
-  exitCode: number;
-  stderrExcerpt?: string;
-  durationMs: number;
-  requiresReboot?: boolean;
-  changesApplied?: string[];
-}>;
+// Per-handler exec timeout. macOS tools are predictable — `spctl`,
+// `csrutil`, `socketfilterfw` return in ms; `systemsetup` is the
+// outlier and can take a few seconds because it serialises through
+// the System Events helper. 10s covers everything with margin.
+const HANDLER_TIMEOUT_MS = 10_000;
 
-const READ_HANDLERS: Record<string, ReadCheckHandler> = {
-  // Phase 2 entries land here.
+type CmdResult = { stdout: string; stderr: string; code: number };
+
+async function runCmd(bin: string, args: string[], timeoutMs = HANDLER_TIMEOUT_MS): Promise<CmdResult> {
+  try {
+    const { stdout, stderr } = await execFileAsync(bin, args, { timeout: timeoutMs });
+    return { stdout: stdout || "", stderr: stderr || "", code: 0 };
+  } catch (err: any) {
+    // execFile rejects on non-zero exit AND on timeout. Both cases
+    // carry stdout/stderr; the caller decides how to interpret.
+    // Timeout-killed children have err.killed === true + err.signal
+    // === "SIGTERM"; we surface that via a synthetic exit code 124
+    // (the GNU `timeout(1)` convention) so handlers don't need a
+    // separate timeout-handling branch.
+    const isTimeout = err?.killed === true && err?.signal === "SIGTERM";
+    return {
+      stdout: err?.stdout || "",
+      stderr: err?.stderr || "",
+      code: isTimeout ? 124 : (typeof err?.code === "number" ? err.code : 1),
+    };
+  }
+}
+
+function excerpt(s: string, max = 1024): string {
+  if (!s) return "";
+  const trimmed = s.trim();
+  return trimmed.length > max ? trimmed.slice(0, max) + "...[truncated]" : trimmed;
+}
+
+// ── Firewall (ALF) ───────────────────────────────────────────────
+//
+// `socketfilterfw --getglobalstate` outputs one of:
+//   "Firewall is disabled. (State = 0)"
+//   "Firewall is enabled.  (State = 1)"
+//   "Firewall is enabled and blocking all incoming. (State = 2)"
+//
+// State >= 1 means firewall is on (we treat both 1 and 2 as enabled
+// because either fulfils the `firewall.required` policy).
+
+const ALF_PATH = "/usr/libexec/ApplicationFirewall/socketfilterfw";
+
+async function readMacFirewall(): Promise<{ state: any; isCompliant: boolean }> {
+  const r = await runCmd(ALF_PATH, ["--getglobalstate"]);
+  const match = r.stdout.match(/State\s*=\s*(\d+)/i);
+  const stateNum = match ? Number(match[1]) : null;
+  const enabled = stateNum !== null && stateNum >= 1;
+  return {
+    state: {
+      enabled,
+      stateValue: stateNum,
+      raw: excerpt(r.stdout, 256),
+    },
+    isCompliant: enabled,
+  };
+}
+
+async function remediateMacFirewall(): Promise<any> {
+  const start = Date.now();
+  const r = await runCmd(ALF_PATH, ["--setglobalstate", "on"]);
+  return {
+    exitCode: r.code,
+    stderrExcerpt: r.code === 0 ? undefined : excerpt(r.stderr),
+    durationMs: Date.now() - start,
+    requiresReboot: false,
+    changesApplied: r.code === 0 ? ["alf:globalstate=on"] : [],
+  };
+}
+
+// ── Gatekeeper ───────────────────────────────────────────────────
+//
+// `spctl --status` outputs:
+//   "assessments enabled"   → gatekeeper on
+//   "assessments disabled"  → gatekeeper off
+//
+// `spctl --master-enable` re-enables. `--master-disable` is the
+// inverse; we don't expose that direction (CIS / NIST want gatekeeper
+// ON, and an admin who explicitly needs it off can run it manually).
+
+async function readMacGatekeeper(): Promise<{ state: any; isCompliant: boolean }> {
+  const r = await runCmd("/usr/sbin/spctl", ["--status"]);
+  const enabled = /assessments\s+enabled/i.test(r.stdout);
+  return {
+    state: {
+      enabled,
+      raw: excerpt(r.stdout, 256),
+    },
+    isCompliant: enabled,
+  };
+}
+
+async function remediateMacGatekeeper(): Promise<any> {
+  const start = Date.now();
+  const r = await runCmd("/usr/sbin/spctl", ["--master-enable"]);
+  return {
+    exitCode: r.code,
+    stderrExcerpt: r.code === 0 ? undefined : excerpt(r.stderr),
+    durationMs: Date.now() - start,
+    requiresReboot: false,
+    changesApplied: r.code === 0 ? ["spctl:--master-enable"] : [],
+  };
+}
+
+// ── Remote Login (sshd) ──────────────────────────────────────────
+//
+// `systemsetup -getremotelogin` outputs:
+//   "Remote Login: On"
+//   "Remote Login: Off"
+//
+// To remediate (turn OFF), use:
+//   systemsetup -f -setremotelogin off
+//
+// The `-f` skips the interactive confirmation prompt ("You are
+// about to disable Remote Login. Confirm? [y/N]"). Without -f a
+// daemon-spawned systemsetup would hang waiting on stdin.
+
+async function readMacRemoteLogin(): Promise<{ state: any; isCompliant: boolean }> {
+  const r = await runCmd("/usr/sbin/systemsetup", ["-getremotelogin"]);
+  // "Remote Login: On" / "Remote Login: Off"
+  const onMatch = /Remote\s+Login:\s*On\b/i.test(r.stdout);
+  const offMatch = /Remote\s+Login:\s*Off\b/i.test(r.stdout);
+  return {
+    state: {
+      enabled: onMatch ? true : offMatch ? false : null,
+      raw: excerpt(r.stdout, 256),
+    },
+    isCompliant: offMatch, // policy is "remote login DISABLED"
+  };
+}
+
+async function remediateMacRemoteLogin(): Promise<any> {
+  const start = Date.now();
+  const r = await runCmd("/usr/sbin/systemsetup", ["-f", "-setremotelogin", "off"]);
+  return {
+    exitCode: r.code,
+    stderrExcerpt: r.code === 0 ? undefined : excerpt(r.stderr),
+    durationMs: Date.now() - start,
+    requiresReboot: false,
+    changesApplied: r.code === 0 ? ["systemsetup:remotelogin=off"] : [],
+  };
+}
+
+// ── SIP (read-only) ──────────────────────────────────────────────
+//
+// `csrutil status` outputs (varies slightly by macOS major):
+//   "System Integrity Protection status: enabled."
+//   "System Integrity Protection status: disabled."
+//
+// CANNOT be remediated from a running system — SIP is set in NVRAM
+// by `csrutil enable` while booted to Recovery (`Cmd-R` at boot).
+// We return unsupported_check from the remediate path.
+
+async function readMacSip(): Promise<{ state: any; isCompliant: boolean }> {
+  const r = await runCmd("/usr/bin/csrutil", ["status"]);
+  const enabled = /enabled\.?/i.test(r.stdout) && !/disabled/i.test(r.stdout);
+  return {
+    state: {
+      enabled,
+      raw: excerpt(r.stdout, 256),
+    },
+    isCompliant: enabled,
+  };
+}
+
+// ── FileVault (read-only) ────────────────────────────────────────
+//
+// `fdesetup status` outputs:
+//   "FileVault is On."
+//   "FileVault is Off."
+//   "FileVault is Off, but will be enabled after the next restart..."
+//
+// Enabling FileVault from a daemon would require capturing the
+// user's login password AND handling the recovery-key prompt — both
+// outside what privsvc can safely do. Read-only.
+
+async function readMacFileVault(): Promise<{ state: any; isCompliant: boolean }> {
+  const r = await runCmd("/usr/bin/fdesetup", ["status"]);
+  const on = /FileVault\s+is\s+On\b/i.test(r.stdout);
+  const off = /FileVault\s+is\s+Off\b/i.test(r.stdout);
+  return {
+    state: {
+      enabled: on ? true : off ? false : null,
+      raw: excerpt(r.stdout, 256),
+    },
+    isCompliant: on,
+  };
+}
+
+// ── Dispatch tables ──────────────────────────────────────────────
+
+const READ_HANDLERS: Record<string, () => Promise<{ state: any; isCompliant: boolean }>> = {
+  "macos.firewall.enabled":      readMacFirewall,
+  "macos.gatekeeper.enabled":    readMacGatekeeper,
+  "macos.remote_login.disabled": readMacRemoteLogin,
+  "macos.sip.enabled":           readMacSip,
+  "macos.filevault.enabled":     readMacFileVault,
 };
 
-const REMEDIATE_HANDLERS: Record<string, RemediateHandler> = {
-  // Phase 2 entries land here.
+const REMEDIATE_HANDLERS: Record<string, () => Promise<any>> = {
+  "macos.firewall.enabled":      remediateMacFirewall,
+  "macos.gatekeeper.enabled":    remediateMacGatekeeper,
+  "macos.remote_login.disabled": remediateMacRemoteLogin,
+  // sip / filevault intentionally omitted — see file header.
 };
 
 // ── pmp.read_check_state ─────────────────────────────────────────
@@ -55,17 +276,12 @@ export async function handlePmpReadCheckState(req: PrivSvcRequest): Promise<Priv
 
   const handler = READ_HANDLERS[checkId];
   if (!handler) {
-    // The agent layer also whitelists per-OS via remediation-checks.ts
-    // — this path only executes when something slipped past it
-    // (e.g. backend dispatched a Windows checkId to a Mac due to
-    // bad targeting). Surface the precise reason so the agent can
-    // ack `outcome=rejected` with `reason=unsupported_check`.
     logger.info("pmp_read_check_state_unsupported", { checkId });
     return fail(req.id, "unsupported_check", `no read handler for checkId ${checkId} on macOS`);
   }
 
   try {
-    const result = await handler(req.params || {});
+    const result = await handler();
     return success(req.id, {
       state: result.state,
       isCompliant: result.isCompliant === true,
@@ -95,7 +311,7 @@ export async function handlePmpRemediate(req: PrivSvcRequest): Promise<PrivSvcRe
   }
 
   try {
-    const result = await handler(req.params || {});
+    const result = await handler();
     return success(req.id, {
       exitCode: result.exitCode,
       stderrExcerpt: result.stderrExcerpt ?? null,

@@ -173,7 +173,7 @@ var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
     var fs18 = require("fs");
     var path13 = require("path");
-    var os21 = require("os");
+    var os22 = require("os");
     var crypto10 = require("crypto");
     var packageJson = require_package();
     var version = packageJson.version;
@@ -296,7 +296,7 @@ var require_main = __commonJS({
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path13.join(os21.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path13.join(os22.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = Boolean(options && options.debug);
@@ -478,6 +478,7 @@ function getTimeoutForMethod(method) {
       return 6e4;
     // inventory can be heavy (WMI/registry)
     case "security.compliance":
+      return 9e4;
     case "patch.scan":
       return 3e4;
     case "patch.install":
@@ -1461,7 +1462,7 @@ var require_package2 = __commonJS({
 var require_util = __commonJS({
   "node_modules/systeminformation/lib/util.js"(exports2) {
     "use strict";
-    var os21 = require("os");
+    var os22 = require("os");
     var fs18 = require("fs");
     var path13 = require("path");
     var spawn2 = require("child_process").spawn;
@@ -1568,7 +1569,7 @@ var require_util = __commonJS({
     }
     function cores() {
       if (_cores === 0) {
-        _cores = os21.cpus().length;
+        _cores = os22.cpus().length;
       }
       return _cores;
     }
@@ -1829,7 +1830,7 @@ var require_util = __commonJS({
     function powerShellRelease() {
       try {
         if (_psChild) {
-          _psChild.stdin.write("exit" + os21.EOL);
+          _psChild.stdin.write("exit" + os22.EOL);
           _psChild.stdin.end();
         }
       } catch {
@@ -1856,7 +1857,7 @@ var require_util = __commonJS({
             });
             try {
               if (_psChild && _psChild.pid) {
-                _psChild.stdin.write(_psToUTF8 + "echo " + _psCmdStart + id + _psIdSeperator + "; " + os21.EOL + cmd + os21.EOL + "echo " + _psCmdSeperator + os21.EOL);
+                _psChild.stdin.write(_psToUTF8 + "echo " + _psCmdStart + id + _psIdSeperator + "; " + os22.EOL + cmd + os22.EOL + "echo " + _psCmdSeperator + os22.EOL);
               }
             } catch {
               resolve("");
@@ -1868,7 +1869,7 @@ var require_util = __commonJS({
         return new Promise((resolve) => {
           process.nextTick(() => {
             try {
-              const osVersion = os21.release().split(".").map(Number);
+              const osVersion = os22.release().split(".").map(Number);
               const spanOptions = osVersion[0] < 10 ? ["-NoProfile", "-NoLogo", "-InputFormat", "Text", "-NoExit", "-ExecutionPolicy", "Unrestricted", "-Command", "-"] : ["-NoProfile", "-NoLogo", "-InputFormat", "Text", "-ExecutionPolicy", "Unrestricted", "-Command", _psToUTF8 + cmd];
               const child = spawn2(_powerShell, spanOptions, {
                 stdio: "pipe",
@@ -1900,8 +1901,8 @@ var require_util = __commonJS({
                 });
                 if (osVersion[0] < 10) {
                   try {
-                    child.stdin.write(_psToUTF8 + cmd + os21.EOL);
-                    child.stdin.write("exit" + os21.EOL);
+                    child.stdin.write(_psToUTF8 + cmd + os22.EOL);
+                    child.stdin.write("exit" + os22.EOL);
                     child.stdin.end();
                   } catch {
                     child.kill();
@@ -4069,7 +4070,7 @@ var require_util = __commonJS({
 var require_osinfo = __commonJS({
   "node_modules/systeminformation/lib/osinfo.js"(exports2) {
     "use strict";
-    var os21 = require("os");
+    var os22 = require("os");
     var fs18 = require("fs");
     var util = require_util();
     var exec = require("child_process").exec;
@@ -4093,14 +4094,14 @@ var require_osinfo = __commonJS({
       }
       const result2 = {
         current: Date.now(),
-        uptime: os21.uptime(),
+        uptime: os22.uptime(),
         timezone: t.length >= 7 ? t[5] : "",
         timezoneName
       };
       if (_darwin || _linux) {
         try {
           const stdout = execSync3("date +%Z && date +%z && ls -l /etc/localtime 2>/dev/null", util.execOptsLinux);
-          const lines = stdout.toString().split(os21.EOL);
+          const lines = stdout.toString().split(os22.EOL);
           if (lines.length > 3 && !lines[0]) {
             lines.shift();
           }
@@ -4110,7 +4111,7 @@ var require_osinfo = __commonJS({
           }
           return {
             current: Date.now(),
-            uptime: os21.uptime(),
+            uptime: os22.uptime(),
             timezone: lines[1] ? timezone + lines[1] : timezone,
             timezoneName: lines[2] && lines[2].indexOf("/zoneinfo/") > 0 ? lines[2].split("/zoneinfo/")[1] || "" : ""
           };
@@ -4229,11 +4230,11 @@ var require_osinfo = __commonJS({
       return "";
     }
     function getFQDN() {
-      let fqdn = os21.hostname;
+      let fqdn = os22.hostname;
       if (_linux || _darwin) {
         try {
           const stdout = execSync3("hostname -f 2>/dev/null", util.execOptsLinux);
-          fqdn = stdout.toString().split(os21.EOL)[0];
+          fqdn = stdout.toString().split(os22.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4241,7 +4242,7 @@ var require_osinfo = __commonJS({
       if (_freebsd || _openbsd || _netbsd) {
         try {
           const stdout = execSync3("hostname 2>/dev/null");
-          fqdn = stdout.toString().split(os21.EOL)[0];
+          fqdn = stdout.toString().split(os22.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4249,7 +4250,7 @@ var require_osinfo = __commonJS({
       if (_windows) {
         try {
           const stdout = execSync3("echo %COMPUTERNAME%.%USERDNSDOMAIN%", util.execOptsWin);
-          fqdn = stdout.toString().replace(".%USERDNSDOMAIN%", "").split(os21.EOL)[0];
+          fqdn = stdout.toString().replace(".%USERDNSDOMAIN%", "").split(os22.EOL)[0];
         } catch {
           util.noop();
         }
@@ -4264,9 +4265,9 @@ var require_osinfo = __commonJS({
             distro: "unknown",
             release: "unknown",
             codename: "",
-            kernel: os21.release(),
-            arch: os21.arch(),
-            hostname: os21.hostname(),
+            kernel: os22.release(),
+            arch: os22.arch(),
+            hostname: os22.hostname(),
             fqdn: getFQDN(),
             codepage: "",
             logofile: "",
@@ -4475,7 +4476,7 @@ var require_osinfo = __commonJS({
     }
     function versions(apps, callback) {
       let versionObject = {
-        kernel: os21.release(),
+        kernel: os22.release(),
         apache: "",
         bash: "",
         bun: "",
@@ -5191,7 +5192,7 @@ var require_osinfo = __commonJS({
     function getUniqueMacAdresses() {
       let macs = [];
       try {
-        const ifaces = os21.networkInterfaces();
+        const ifaces = os22.networkInterfaces();
         for (let dev in ifaces) {
           if ({}.hasOwnProperty.call(ifaces, dev)) {
             ifaces[dev].forEach((details) => {
@@ -5313,7 +5314,7 @@ var require_system = __commonJS({
   "node_modules/systeminformation/lib/system.js"(exports2) {
     "use strict";
     var fs18 = require("fs");
-    var os21 = require("os");
+    var os22 = require("os");
     var util = require_util();
     var { uuid } = require_osinfo();
     var exec = require("child_process").exec;
@@ -5437,8 +5438,8 @@ var require_system = __commonJS({
                   util.noop();
                 }
               }
-              if (!result2.virtual && (os21.release().toLowerCase().indexOf("microsoft") >= 0 || os21.release().toLowerCase().endsWith("wsl2"))) {
-                const kernelVersion = parseFloat(os21.release().toLowerCase());
+              if (!result2.virtual && (os22.release().toLowerCase().indexOf("microsoft") >= 0 || os22.release().toLowerCase().endsWith("wsl2"))) {
+                const kernelVersion = parseFloat(os22.release().toLowerCase());
                 result2.virtual = true;
                 result2.manufacturer = "Microsoft";
                 result2.model = "WSL";
@@ -5848,7 +5849,7 @@ var require_system = __commonJS({
                 result2.model = "Raspberry Pi";
                 result2.serial = rpi.serial;
                 result2.version = rpi.type + " - " + rpi.revision;
-                result2.memMax = os21.totalmem();
+                result2.memMax = os22.totalmem();
                 result2.memSlots = 0;
               }
               if (callback) {
@@ -5874,9 +5875,9 @@ var require_system = __commonJS({
               }
               devices.shift();
               result2.memSlots = devices.length;
-              if (os21.arch() === "arm64") {
+              if (os22.arch() === "arm64") {
                 result2.memSlots = 0;
-                result2.memMax = os21.totalmem();
+                result2.memMax = os22.totalmem();
               }
               if (callback) {
                 callback(result2);
@@ -5893,7 +5894,7 @@ var require_system = __commonJS({
           if (_windows) {
             try {
               const workload = [];
-              const win10plus = parseInt(os21.release()) >= 10;
+              const win10plus = parseInt(os22.release()) >= 10;
               const maxCapacityAttribute = win10plus ? "MaxCapacityEx" : "MaxCapacity";
               workload.push(util.powerShell("Get-CimInstance Win32_baseboard | select Model,Manufacturer,Product,Version,SerialNumber,PartNumber,SKU | fl"));
               workload.push(util.powerShell(`Get-CimInstance Win32_physicalmemoryarray | select ${maxCapacityAttribute}, MemoryDevices | fl`));
@@ -6089,7 +6090,7 @@ var require_system = __commonJS({
 var require_cpu = __commonJS({
   "node_modules/systeminformation/lib/cpu.js"(exports2) {
     "use strict";
-    var os21 = require("os");
+    var os22 = require("os");
     var exec = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var fs18 = require("fs");
@@ -6952,7 +6953,7 @@ var require_cpu = __commonJS({
                 const countProcessors = util.getValue(lines, "hw.packages");
                 const countCores = util.getValue(lines, "hw.physicalcpu_max");
                 const countThreads = util.getValue(lines, "hw.ncpu");
-                if (os21.arch() === "arm64") {
+                if (os22.arch() === "arm64") {
                   result2.socket = "SOC";
                   try {
                     const clusters = execSync3("ioreg -c IOPlatformDevice -d 3 -r | grep cluster-type").toString().split("\n");
@@ -6980,8 +6981,8 @@ var require_cpu = __commonJS({
             if (_linux) {
               let modelline = "";
               let lines = [];
-              if (os21.cpus()[0] && os21.cpus()[0].model) {
-                modelline = os21.cpus()[0].model;
+              if (os22.cpus()[0] && os22.cpus()[0].model) {
+                modelline = os22.cpus()[0].model;
               }
               exec('export LC_ALL=C; lscpu; echo -n "Governor: "; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null; echo; unset LC_ALL', (error, stdout) => {
                 if (!error) {
@@ -7070,8 +7071,8 @@ var require_cpu = __commonJS({
             if (_freebsd || _openbsd || _netbsd) {
               let modelline = "";
               let lines = [];
-              if (os21.cpus()[0] && os21.cpus()[0].model) {
-                modelline = os21.cpus()[0].model;
+              if (os22.cpus()[0] && os22.cpus()[0].model) {
+                modelline = os22.cpus()[0].model;
               }
               exec("export LC_ALL=C; dmidecode -t 4; dmidecode -t 7 unset LC_ALL", (error, stdout) => {
                 let cache = [];
@@ -7231,7 +7232,7 @@ var require_cpu = __commonJS({
     }
     exports2.cpu = cpu;
     function getCpuCurrentSpeedSync() {
-      const cpus = os21.cpus();
+      const cpus = os22.cpus();
       let minFreq = 999999999;
       let maxFreq = 0;
       let avgFreq = 0;
@@ -7926,7 +7927,7 @@ var require_cpu = __commonJS({
     function getLoad() {
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const loads = os21.loadavg().map((x) => {
+          const loads = os22.loadavg().map((x) => {
             return x / util.cores();
           });
           const avgLoad = parseFloat(Math.max.apply(Math, loads).toFixed(2));
@@ -7934,7 +7935,7 @@ var require_cpu = __commonJS({
           const now = Date.now() - _current_cpu.ms;
           if (now >= 200) {
             _current_cpu.ms = Date.now();
-            const cpus = os21.cpus().map((cpu2) => {
+            const cpus = os22.cpus().map((cpu2) => {
               cpu2.times.steal = 0;
               cpu2.times.guest = 0;
               return cpu2;
@@ -8128,7 +8129,7 @@ var require_cpu = __commonJS({
     function getFullLoad() {
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const cpus = os21.cpus();
+          const cpus = os22.cpus();
           let totalUser = 0;
           let totalSystem = 0;
           let totalNice = 0;
@@ -8171,7 +8172,7 @@ var require_cpu = __commonJS({
 var require_memory = __commonJS({
   "node_modules/systeminformation/lib/memory.js"(exports2) {
     "use strict";
-    var os21 = require("os");
+    var os22 = require("os");
     var exec = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
@@ -8217,12 +8218,12 @@ var require_memory = __commonJS({
       return new Promise((resolve) => {
         process.nextTick(() => {
           let result2 = {
-            total: os21.totalmem(),
-            free: os21.freemem(),
-            used: os21.totalmem() - os21.freemem(),
-            active: os21.totalmem() - os21.freemem(),
+            total: os22.totalmem(),
+            free: os22.freemem(),
+            used: os22.totalmem() - os22.freemem(),
+            active: os22.totalmem() - os22.freemem(),
             // temporarily (fallback)
-            available: os21.freemem(),
+            available: os22.freemem(),
             // temporarily (fallback)
             buffers: 0,
             cached: 0,
@@ -8241,9 +8242,9 @@ var require_memory = __commonJS({
                 if (!error) {
                   const lines = stdout.toString().split("\n");
                   result2.total = parseInt(util.getValue(lines, "memtotal"), 10);
-                  result2.total = result2.total ? result2.total * 1024 : os21.totalmem();
+                  result2.total = result2.total ? result2.total * 1024 : os22.totalmem();
                   result2.free = parseInt(util.getValue(lines, "memfree"), 10);
-                  result2.free = result2.free ? result2.free * 1024 : os21.freemem();
+                  result2.free = result2.free ? result2.free * 1024 : os22.freemem();
                   result2.used = result2.total - result2.free;
                   result2.buffers = parseInt(util.getValue(lines, "buffers"), 10);
                   result2.buffers = result2.buffers ? result2.buffers * 1024 : 0;
@@ -8465,7 +8466,7 @@ var require_memory = __commonJS({
                 }
                 if (!result2.length) {
                   result2.push({
-                    size: os21.totalmem(),
+                    size: os22.totalmem(),
                     bank: "",
                     type: "",
                     ecc: null,
@@ -10040,7 +10041,7 @@ var require_filesystem = __commonJS({
     "use strict";
     var util = require_util();
     var fs18 = require("fs");
-    var os21 = require("os");
+    var os22 = require("os");
     var exec = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var execPromiseSave = util.promisifySave(require("child_process").exec);
@@ -11234,7 +11235,7 @@ ${BSDName}|"; smartctl -H ${BSDName} | grep overall;`;
           }
           if (_darwin) {
             let cmdFullSmart = "";
-            exec(`system_profiler SPSerialATADataType SPNVMeDataType ${parseInt(os21.release(), 10) > 24 ? "SPUSBHostDataType" : "SPUSBDataType"} `, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
+            exec(`system_profiler SPSerialATADataType SPNVMeDataType ${parseInt(os22.release(), 10) > 24 ? "SPUSBHostDataType" : "SPUSBDataType"} `, { maxBuffer: 1024 * 1024 }, (error, stdout) => {
               if (!error) {
                 const lines = stdout.toString().split("\n");
                 const linesSATA = [];
@@ -11614,7 +11615,7 @@ ${BSDName}|"; diskutil info /dev/${BSDName} | grep SMART;`;
 var require_network = __commonJS({
   "node_modules/systeminformation/lib/network.js"(exports2) {
     "use strict";
-    var os21 = require("os");
+    var os22 = require("os");
     var exec = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var execFileSync = require("child_process").execFileSync;
@@ -11639,7 +11640,7 @@ var require_network = __commonJS({
       let ifacename = "";
       let ifacenameFirst = "";
       try {
-        const ifaces = os21.networkInterfaces();
+        const ifaces = os22.networkInterfaces();
         let scopeid = 9999;
         for (let dev in ifaces) {
           if ({}.hasOwnProperty.call(ifaces, dev)) {
@@ -11659,7 +11660,7 @@ var require_network = __commonJS({
           let defaultIp = "";
           const cmd = "netstat -r";
           const result2 = execSync3(cmd, util.execOptsWin);
-          const lines = result2.toString().split(os21.EOL);
+          const lines = result2.toString().split(os22.EOL);
           lines.forEach((line) => {
             line = line.replace(/\s+/g, " ").trim();
             if (line.indexOf("0.0.0.0 0.0.0.0") > -1 && !/[a-zA-Z]/.test(line)) {
@@ -12286,7 +12287,7 @@ var require_network = __commonJS({
       defaultString = "" + defaultString;
       return new Promise((resolve) => {
         process.nextTick(() => {
-          const ifaces = os21.networkInterfaces();
+          const ifaces = os22.networkInterfaces();
           let result2 = [];
           let nics = [];
           let dnsSuffixes = [];
@@ -13328,7 +13329,7 @@ var require_network = __commonJS({
           if (_windows) {
             try {
               exec("netstat -r", util.execOptsWin, (error, stdout) => {
-                const lines = stdout.toString().split(os21.EOL);
+                const lines = stdout.toString().split(os22.EOL);
                 lines.forEach((line) => {
                   line = line.replace(/\s+/g, " ").trim();
                   if (line.indexOf("0.0.0.0 0.0.0.0") > -1 && !/[a-zA-Z]/.test(line)) {
@@ -13374,7 +13375,7 @@ var require_network = __commonJS({
 var require_wifi = __commonJS({
   "node_modules/systeminformation/lib/wifi.js"(exports2) {
     "use strict";
-    var os21 = require("os");
+    var os22 = require("os");
     var exec = require("child_process").exec;
     var execSync3 = require("child_process").execSync;
     var util = require_util();
@@ -13596,7 +13597,7 @@ var require_wifi = __commonJS({
         parts.shift();
         parts.forEach((part) => {
           part = "ACTIVE:" + part;
-          const lines = part.split(os21.EOL);
+          const lines = part.split(os22.EOL);
           const channel = util.getValue(lines, "CHAN");
           const frequency = util.getValue(lines, "FREQ").toLowerCase().replace("mhz", "").trim();
           const security = util.getValue(lines, "SECURITY").replace("(", "").replace(")", "");
@@ -13813,15 +13814,15 @@ var require_wifi = __commonJS({
           } else if (_windows) {
             const cmd = "netsh wlan show networks mode=Bssid";
             util.powerShell(cmd).then((stdout) => {
-              const ssidParts = stdout.toString("utf8").split(os21.EOL + os21.EOL + "SSID ");
+              const ssidParts = stdout.toString("utf8").split(os22.EOL + os22.EOL + "SSID ");
               ssidParts.shift();
               ssidParts.forEach((ssidPart) => {
-                const ssidLines = ssidPart.split(os21.EOL);
+                const ssidLines = ssidPart.split(os22.EOL);
                 if (ssidLines && ssidLines.length >= 8 && ssidLines[0].indexOf(":") >= 0) {
                   const bssidsParts = ssidPart.split(" BSSID");
                   bssidsParts.shift();
                   bssidsParts.forEach((bssidPart) => {
-                    const bssidLines = bssidPart.split(os21.EOL);
+                    const bssidLines = bssidPart.split(os22.EOL);
                     const bssidLine = bssidLines[0].split(":");
                     bssidLine.shift();
                     const bssid = bssidLine.join(":").trim().toLowerCase();
@@ -14132,7 +14133,7 @@ var require_wifi = __commonJS({
 var require_processes = __commonJS({
   "node_modules/systeminformation/lib/processes.js"(exports2) {
     "use strict";
-    var os21 = require("os");
+    var os22 = require("os");
     var fs18 = require("fs");
     var path13 = require("path");
     var exec = require("child_process").exec;
@@ -14783,7 +14784,7 @@ var require_processes = __commonJS({
             line = line.trim().replace(/ +/g, " ").replace(/,+/g, ".");
             const parts = line.split(" ");
             const command = parts.slice(9).join(" ");
-            const pmem = parseFloat((1 * parseInt(parts[3]) * 1024 / os21.totalmem()).toFixed(1));
+            const pmem = parseFloat((1 * parseInt(parts[3]) * 1024 / os22.totalmem()).toFixed(1));
             const started = parseElapsed(parts[5]);
             result2.push({
               pid: parseInt(parts[0]),
@@ -14986,7 +14987,7 @@ var require_processes = __commonJS({
                         cpu: 0,
                         cpuu: 0,
                         cpus: 0,
-                        mem: memw / os21.totalmem() * 100,
+                        mem: memw / os22.totalmem() * 100,
                         priority: element.Priority | null,
                         memVsz: element.PageFileUsage || null,
                         memRss: Math.floor((element.WorkingSetSize || 0) / 1024),
@@ -15140,7 +15141,7 @@ var require_processes = __commonJS({
                         result2.forEach((item) => {
                           if (item.proc.toLowerCase() === pname.toLowerCase()) {
                             item.pids.push(pid);
-                            item.mem += mem / os21.totalmem() * 100;
+                            item.mem += mem / os22.totalmem() * 100;
                             processFound = true;
                           }
                         });
@@ -15150,7 +15151,7 @@ var require_processes = __commonJS({
                             pid,
                             pids: [pid],
                             cpu: 0,
-                            mem: mem / os21.totalmem() * 100
+                            mem: mem / os22.totalmem() * 100
                           });
                         }
                       }
@@ -16891,7 +16892,7 @@ var require_docker = __commonJS({
 var require_virtualbox = __commonJS({
   "node_modules/systeminformation/lib/virtualbox.js"(exports2) {
     "use strict";
-    var os21 = require("os");
+    var os22 = require("os");
     var exec = require("child_process").exec;
     var util = require_util();
     function vboxInfo(callback) {
@@ -16900,10 +16901,10 @@ var require_virtualbox = __commonJS({
         process.nextTick(() => {
           try {
             exec(util.getVboxmanage() + " list vms --long", (error, stdout) => {
-              let parts = (os21.EOL + stdout.toString()).split(os21.EOL + "Name:");
+              let parts = (os22.EOL + stdout.toString()).split(os22.EOL + "Name:");
               parts.shift();
               parts.forEach((part) => {
-                const lines = ("Name:" + part).split(os21.EOL);
+                const lines = ("Name:" + part).split(os22.EOL);
                 const state = util.getValue(lines, "State");
                 const running = state.startsWith("running");
                 const runningSinceString = running ? state.replace("running (since ", "").replace(")", "").trim() : "";
@@ -20392,8 +20393,7 @@ var init_windows = __esm({
               }
               software = {
                 count: deltaResult.currentCount,
-                items: apps,
-                // CRITICAL: NEVER drop items
+                items: void 0,
                 delta: deltaResult.delta,
                 hasChanges: true
               };
@@ -20833,7 +20833,7 @@ var init_macos = __esm({
               }
               software = {
                 count: deltaResult.currentCount,
-                items: apps,
+                items: void 0,
                 delta: deltaResult.delta,
                 hasChanges: true
               };
@@ -21268,7 +21268,7 @@ var init_linux = __esm({
               }
               software = {
                 count: deltaResult.currentCount,
-                items: apps,
+                items: void 0,
                 delta: deltaResult.delta,
                 hasChanges: true
               };
@@ -21475,6 +21475,13 @@ async function collectWindowsScp(ctx) {
     collectorError = {
       message: err?.message || String(err),
       phase: "security.compliance"
+    };
+  }
+  if (!collectorError && posture?.collectorError) {
+    const inner = posture.collectorError;
+    collectorError = {
+      message: String(inner?.message ?? "privsvc reported a section failure"),
+      phase: String(inner?.phase ?? "security.compliance")
     };
   }
   return {
@@ -22211,6 +22218,19 @@ var init_pmp = __esm({
   }
 });
 
+// src/bootstrap/logger.ts
+var logger;
+var init_logger = __esm({
+  "src/bootstrap/logger.ts"() {
+    "use strict";
+    logger = {
+      info: (...args) => console.log("[INFO]", ...args),
+      error: (...args) => console.error("[ERROR]", ...args),
+      warn: (...args) => console.warn("[WARN]", ...args)
+    };
+  }
+});
+
 // src/update/update-state.ts
 function ensureDir2(dir) {
   import_fs12.default.mkdirSync(dir, { recursive: true });
@@ -22299,101 +22319,857 @@ var init_update_state = __esm({
   }
 });
 
-// src/platform/linux/distro.ts
-var distro_exports = {};
-__export(distro_exports, {
-  _resetForTests: () => _resetForTests,
-  detectFamily: () => detectFamily
+// src/queue/sqlite-outbox.ts
+function utcNow() {
+  return (/* @__PURE__ */ new Date()).toISOString();
+}
+function computeBackoffSeconds(attempt) {
+  const base = 30;
+  const max = 3600;
+  const secs = Math.min(max, base * Math.pow(2, attempt - 1));
+  const jitter = Math.floor(Math.random() * 10);
+  return secs + jitter;
+}
+function addSecondsIso(iso, secs) {
+  const d = new Date(iso);
+  d.setSeconds(d.getSeconds() + secs);
+  return d.toISOString();
+}
+function maybeCompressPayload(json) {
+  const size = Buffer.byteLength(json, "utf8");
+  if (size < COMPRESS_THRESHOLD_BYTES) return json;
+  try {
+    const gz = import_zlib.default.gzipSync(Buffer.from(json, "utf8"));
+    return "gz:" + gz.toString("base64");
+  } catch {
+    return json;
+  }
+}
+function maybeDecompressPayload(value) {
+  if (!value.startsWith("gz:")) return value;
+  try {
+    const b64 = value.slice(3);
+    const buf = Buffer.from(b64, "base64");
+    return import_zlib.default.gunzipSync(buf).toString("utf8");
+  } catch {
+    return value;
+  }
+}
+function defaultDbPath() {
+  if (import_os15.default.platform() === "win32") {
+    const programData = process.env.PROGRAMDATA || process.env.ProgramData || "C:\\ProgramData";
+    return import_path11.default.join(programData, "Tracenium", "Agent", "outbox.db");
+  }
+  return import_path11.default.join(import_os15.default.homedir(), ".tracenium", "agent", "outbox.db");
+}
+var import_os15, import_path11, import_fs14, import_better_sqlite32, import_zlib, MAX_ATTEMPTS, COMPRESS_THRESHOLD_BYTES, SqliteOutbox, outbox;
+var init_sqlite_outbox = __esm({
+  "src/queue/sqlite-outbox.ts"() {
+    "use strict";
+    import_os15 = __toESM(require("os"));
+    import_path11 = __toESM(require("path"));
+    import_fs14 = __toESM(require("fs"));
+    import_better_sqlite32 = __toESM(require("better-sqlite3"));
+    import_zlib = __toESM(require("zlib"));
+    init_logger();
+    MAX_ATTEMPTS = 20;
+    COMPRESS_THRESHOLD_BYTES = 50 * 1024;
+    SqliteOutbox = class {
+      constructor(dbPath = defaultDbPath()) {
+        this.dbPath = dbPath;
+        this.lockOwner = `agentcore:${import_os15.default.hostname()}:${process.pid}`;
+        const dir = import_path11.default.dirname(dbPath);
+        import_fs14.default.mkdirSync(dir, { recursive: true });
+        this.db = new import_better_sqlite32.default(dbPath);
+        logger.info("[outbox] initialized", { dbPath: this.dbPath });
+        this.initialize();
+      }
+      dbPath;
+      db;
+      lockOwner;
+      listeners = /* @__PURE__ */ new Set();
+      initialize() {
+        this.db.pragma("journal_mode = WAL");
+        this.db.pragma("synchronous = NORMAL");
+        this.db.exec(`
+      CREATE TABLE IF NOT EXISTS outbox_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+        type TEXT NOT NULL,
+        created_at_utc TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+
+        status TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at_utc TEXT NOT NULL,
+
+        locked_at_utc TEXT NULL,
+        lock_owner TEXT NULL,
+
+        last_error TEXT NULL,
+        sent_at_utc TEXT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_outbox_status_next
+        ON outbox_events(status, next_attempt_at_utc);
+
+      CREATE INDEX IF NOT EXISTS idx_outbox_inflight
+        ON outbox_events(status, locked_at_utc);
+
+      CREATE INDEX IF NOT EXISTS idx_outbox_payload_hash
+        ON outbox_events(payload_hash);
+
+      CREATE TABLE IF NOT EXISTS agent_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at_utc TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_outbox_lock_owner
+        ON outbox_events(lock_owner);
+    `);
+        const cols = this.db.prepare(`PRAGMA table_info(outbox_events)`).all();
+        const hasPayloadHash = cols.some((c) => c.name === "payload_hash");
+        if (!hasPayloadHash) {
+          this.db.exec(`ALTER TABLE outbox_events ADD COLUMN payload_hash TEXT`);
+          const rows = this.db.prepare(`SELECT id, payload_json FROM outbox_events`).all();
+          const upd = this.db.prepare(`UPDATE outbox_events SET payload_hash=? WHERE id=?`);
+          for (const r of rows) {
+            try {
+              const decompressed = typeof r.payload_json === "string" ? maybeDecompressPayload(r.payload_json) : String(r.payload_json);
+              const raw = typeof decompressed === "string" ? decompressed : JSON.stringify(decompressed);
+              const h = require("crypto").createHash("sha256").update(raw).digest("hex");
+              upd.run(h, r.id);
+            } catch {
+              const h = require("crypto").createHash("sha256").update(String(r.payload_json)).digest("hex");
+              upd.run(h, r.id);
+            }
+          }
+        }
+        this.recoverStaleInflight(600);
+      }
+      enqueue(input) {
+        const rawJson = JSON.stringify(input.payload);
+        const hash = require("crypto").createHash("sha256").update(rawJson).digest("hex");
+        const payloadJson = maybeCompressPayload(rawJson);
+        const maxBytes = 2 * 1024 * 1024;
+        if (Buffer.byteLength(payloadJson, "utf8") > maxBytes) {
+          throw new Error("Outbox payload too large (>2MB)");
+        }
+        const existing = this.db.prepare(`
+        SELECT id FROM outbox_events
+        WHERE payload_hash = ?
+          AND type = ?
+          AND status IN ('PENDING','IN_FLIGHT')
+        LIMIT 1
+      `).get(hash, input.type);
+        if (existing && typeof existing.id === "number") {
+          return existing.id;
+        }
+        const stmt = this.db.prepare(`
+      INSERT INTO outbox_events
+      (type, created_at_utc, payload_json, payload_hash, status, attempts, next_attempt_at_utc)
+      VALUES (?, ?, ?, ?, 'PENDING', 0, ?)
+    `);
+        const now = utcNow();
+        const result2 = stmt.run(
+          input.type,
+          now,
+          payloadJson,
+          hash,
+          now
+        );
+        logger.info("[outbox] enqueue inserted", {
+          id: Number(result2.lastInsertRowid),
+          type: input.type,
+          hash
+        });
+        this.notifyChanged();
+        return Number(result2.lastInsertRowid);
+      }
+      leaseReady(limit = 25) {
+        const now = utcNow();
+        const hasPending = this.db.prepare(`
+        SELECT 1
+        FROM outbox_events
+        WHERE status='PENDING'
+          AND attempts < ?
+          AND next_attempt_at_utc <= ?
+        LIMIT 1
+      `).get(MAX_ATTEMPTS, now);
+        if (!hasPending) {
+          return [];
+        }
+        const tx = this.db.transaction(() => {
+          const candidates = this.db.prepare(`
+          SELECT id
+          FROM outbox_events
+          WHERE status='PENDING'
+            AND attempts < ?
+            AND next_attempt_at_utc <= ?
+          ORDER BY id ASC
+          LIMIT ?
+        `).all(MAX_ATTEMPTS, now, limit);
+          if (candidates.length === 0) return [];
+          const ids = candidates.map((r) => Number(r.id));
+          const placeholders = ids.map(() => "?").join(",");
+          const updRes = this.db.prepare(`
+        UPDATE outbox_events
+        SET status='IN_FLIGHT',
+            locked_at_utc=?,
+            lock_owner=?
+        WHERE id IN (${placeholders})
+          AND status='PENDING'
+          AND lock_owner IS NULL
+      `).run(now, this.lockOwner, ...ids);
+          if (updRes?.changes === 0) {
+            return [];
+          }
+          const rows = this.db.prepare(`
+        SELECT *
+        FROM outbox_events
+        WHERE id IN (${placeholders})
+          AND status='IN_FLIGHT'
+          AND lock_owner=?
+        ORDER BY id ASC
+      `).all(...ids, this.lockOwner);
+          return rows.map((r) => {
+            let payload = r.payload_json;
+            if (typeof payload === "string") {
+              const decompressed = maybeDecompressPayload(payload);
+              try {
+                payload = JSON.parse(decompressed);
+              } catch {
+                payload = decompressed;
+              }
+            }
+            return {
+              ...r,
+              payload_json: payload
+            };
+          });
+        });
+        return tx();
+      }
+      markSent(id) {
+        const now = utcNow();
+        const res = this.db.prepare(`
+      UPDATE outbox_events
+      SET status='SENT',
+          sent_at_utc=?,
+          locked_at_utc=NULL,
+          lock_owner=NULL,
+          last_error=NULL
+      WHERE id=? AND status IN ('PENDING','IN_FLIGHT')
+    `).run(now, id);
+        const row = this.db.prepare(`SELECT id, status, lock_owner, sent_at_utc FROM outbox_events WHERE id=?`).get(id);
+        if (res?.changes === 0) {
+          logger.warn("[outbox] markSent: no rows updated (unexpected state)", { id });
+          return;
+        }
+        this.notifyChanged();
+      }
+      markFailed(id, error) {
+        const row = this.db.prepare("SELECT attempts FROM outbox_events WHERE id=? AND status IN ('PENDING','IN_FLIGHT')").get(id);
+        if (!row) {
+          return;
+        }
+        const attempts = (row?.attempts ?? 0) + 1;
+        if (attempts >= MAX_ATTEMPTS) {
+          this.db.prepare(`
+        UPDATE outbox_events
+        SET status='FAILED',
+            attempts=?,
+            locked_at_utc=NULL,
+            lock_owner=NULL,
+            last_error=?
+        WHERE id=?
+      `).run(attempts, error.slice(0, 2e3), id);
+          this.notifyChanged();
+          return;
+        }
+        const next = addSecondsIso(utcNow(), computeBackoffSeconds(attempts));
+        this.db.prepare(`
+      UPDATE outbox_events
+      SET status='PENDING',
+          attempts=?,
+          next_attempt_at_utc=?,
+          locked_at_utc=NULL,
+          lock_owner=NULL,
+          last_error=?
+      WHERE id=?
+    `).run(attempts, next, error.slice(0, 2e3), id);
+        this.notifyChanged();
+      }
+      markRejected(id, error) {
+        const res = this.db.prepare(`
+      UPDATE outbox_events
+      SET status='FAILED',
+          locked_at_utc=NULL,
+          lock_owner=NULL,
+          last_error=?
+      WHERE id=? AND status IN ('PENDING','IN_FLIGHT')
+    `).run(error.slice(0, 2e3), id);
+        if (res?.changes === 0) {
+          logger.warn("[outbox] markRejected: no rows updated (unexpected state)", { id });
+          return;
+        }
+        this.notifyChanged();
+      }
+      recoverStaleInflight(ttlSeconds) {
+        const cutoff = addSecondsIso(utcNow(), -ttlSeconds);
+        const rows = this.db.prepare(`
+      SELECT id, attempts
+      FROM outbox_events
+      WHERE status='IN_FLIGHT'
+        AND locked_at_utc < ?
+        AND lock_owner IS NOT NULL
+    `).all(cutoff);
+        const upd = this.db.prepare(`
+      UPDATE outbox_events
+      SET status='PENDING',
+          attempts=?,
+          next_attempt_at_utc=?,
+          locked_at_utc=NULL,
+          lock_owner=NULL
+      WHERE id=?
+    `);
+        const fail = this.db.prepare(`
+      UPDATE outbox_events
+      SET status='FAILED',
+          attempts=?,
+          locked_at_utc=NULL,
+          lock_owner=NULL,
+          last_error=?
+      WHERE id=?
+    `);
+        let changed = false;
+        for (const r of rows) {
+          const nextAttempts = (r.attempts ?? 0) + 1;
+          if (nextAttempts >= MAX_ATTEMPTS) {
+            fail.run(nextAttempts, "stale inflight exceeded max attempts", r.id);
+            changed = true;
+            continue;
+          }
+          const next = addSecondsIso(utcNow(), computeBackoffSeconds(nextAttempts));
+          upd.run(nextAttempts, next, r.id);
+          changed = true;
+        }
+        if (changed) {
+          this.notifyChanged();
+        }
+      }
+      hasPendingOfType(type) {
+        const row = this.db.prepare(`
+        SELECT id
+        FROM outbox_events
+        WHERE type = ?
+          AND status IN ('PENDING', 'IN_FLIGHT')
+        ORDER BY id ASC
+        LIMIT 1
+      `).get(type);
+        return !!row;
+      }
+      cleanup(retentionDays = 14) {
+        const cutoff = addSecondsIso(
+          utcNow(),
+          -(retentionDays * 86400)
+        );
+        this.db.prepare(`
+      DELETE FROM outbox_events
+      WHERE (status='SENT' AND sent_at_utc < ?)
+         OR (status='FAILED' AND created_at_utc < ?)
+    `).run(cutoff, cutoff);
+      }
+      getState(key) {
+        const row = this.db.prepare(`SELECT value FROM agent_state WHERE key=?`).get(key);
+        return row?.value ?? null;
+      }
+      setState(key, value) {
+        const now = utcNow();
+        this.db.prepare(`
+      INSERT INTO agent_state (key, value, updated_at_utc)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value=excluded.value,
+        updated_at_utc=excluded.updated_at_utc
+    `).run(key, value, now);
+      }
+      onChanged(cb) {
+        this.listeners.add(cb);
+        return () => {
+          this.listeners.delete(cb);
+        };
+      }
+      notifyChanged() {
+        for (const cb of Array.from(this.listeners)) {
+          try {
+            cb();
+          } catch {
+          }
+        }
+      }
+      getNextReadyDelayMs() {
+        const row = this.db.prepare(`
+        SELECT next_attempt_at_utc
+        FROM outbox_events
+        WHERE status='PENDING'
+          AND attempts < ?
+        ORDER BY next_attempt_at_utc ASC
+        LIMIT 1
+      `).get(MAX_ATTEMPTS);
+        if (!row?.next_attempt_at_utc) {
+          return null;
+        }
+        const delay = new Date(row.next_attempt_at_utc).getTime() - Date.now();
+        return Math.max(0, delay);
+      }
+    };
+    outbox = new SqliteOutbox();
+  }
 });
-function parseOsRelease(text) {
-  const out = {};
-  for (const rawLine of text.split("\n")) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq <= 0) continue;
-    const key = line.slice(0, eq).trim();
-    let value = line.slice(eq + 1).trim();
-    if (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) {
-      value = value.slice(1, -1);
-    }
-    out[key] = value;
+
+// src/domain/device-facts-builder.ts
+function isIgnorableUser(value) {
+  const v = String(value || "").trim().toLowerCase();
+  return !v || v === "root" || v === "system" || v === "localservice" || v === "networkservice" || v === "_mbsetupuser" || v === "loginwindow";
+}
+function parseUserIdentity(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  const slashMatch = value.match(/^([^\\]+)\\(.+)$/);
+  if (slashMatch) {
+    const domain = slashMatch[1]?.trim() || null;
+    const user = slashMatch[2]?.trim() || "";
+    if (isIgnorableUser(user)) return null;
+    return {
+      user,
+      domain,
+      raw: value,
+      isLoggedIn: true,
+      lastLogon: null
+    };
+  }
+  const atMatch = value.match(/^([^@\s]+)@([^@\s]+)$/);
+  if (atMatch) {
+    const user = atMatch[1]?.trim() || "";
+    const domain = atMatch[2]?.trim() || null;
+    if (isIgnorableUser(user)) return null;
+    return {
+      user,
+      domain,
+      raw: value,
+      isLoggedIn: true,
+      lastLogon: null
+    };
+  }
+  if (isIgnorableUser(value)) return null;
+  return {
+    user: value,
+    domain: null,
+    raw: value,
+    isLoggedIn: true,
+    lastLogon: null
+  };
+}
+async function runCommand(command, args, timeout = 2500) {
+  try {
+    const { stdout } = await execFileAsync3(command, args, {
+      timeout,
+      windowsHide: true,
+      maxBuffer: 1024 * 128
+    });
+    const value = String(stdout || "").trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+async function getInteractiveUserFromOs() {
+  const platform = import_os16.default.platform();
+  if (platform === "win32") {
+    const ps = await runCommand("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      "try { (Get-CimInstance Win32_ComputerSystem).UserName } catch { $null }"
+    ], 3500);
+    const fromPs = parseUserIdentity(ps);
+    if (fromPs) return fromPs;
+    const whoami2 = await runCommand("whoami.exe", [], 2500);
+    return parseUserIdentity(whoami2);
+  }
+  if (platform === "darwin") {
+    const consoleUser = await runCommand("/usr/bin/stat", ["-f", "%Su", "/dev/console"], 2500);
+    const fromConsole = parseUserIdentity(consoleUser);
+    if (fromConsole) return fromConsole;
+    const whoami2 = await runCommand("/usr/bin/whoami", [], 2500);
+    return parseUserIdentity(whoami2);
+  }
+  const who = await runCommand("who", [], 2500);
+  if (who) {
+    const firstLine = who.split("\n").map((x) => x.trim()).filter(Boolean)[0];
+    const firstUser = firstLine?.split(/\s+/)[0];
+    const fromWho = parseUserIdentity(firstUser);
+    if (fromWho) return fromWho;
+  }
+  const logname = await runCommand("logname", [], 2500);
+  const fromLogname = parseUserIdentity(logname);
+  if (fromLogname) return fromLogname;
+  const whoami = await runCommand("whoami", [], 2500);
+  return parseUserIdentity(whoami);
+}
+function normalizeSiUsers(siUsers) {
+  if (!Array.isArray(siUsers)) return [];
+  const users = [];
+  for (const entry of siUsers) {
+    const raw = entry?.user || entry?.name || entry?.username;
+    const normalized = parseUserIdentity(raw);
+    if (!normalized) continue;
+    const date = entry?.date ? String(entry.date) : null;
+    const time = entry?.time ? String(entry.time) : null;
+    users.push({
+      ...normalized,
+      raw: normalized.raw || String(raw),
+      isLoggedIn: true,
+      lastLogon: date && time ? `${date} ${time}` : null
+    });
+  }
+  return users;
+}
+function dedupeUsers(users) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const user of users) {
+    const key = `${user.domain || ""}\\${user.user}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(user);
   }
   return out;
 }
-function familyFromIdLike(idLike) {
-  if (!idLike) return "unknown";
-  for (const token of idLike.toLowerCase().split(/\s+/)) {
-    const fam = FAMILY_BY_ID[token];
-    if (fam) return fam;
+async function buildLoggedInUsers(siUsers) {
+  const preferred = await getInteractiveUserFromOs();
+  const fromSi = normalizeSiUsers(siUsers);
+  return dedupeUsers([
+    ...preferred ? [preferred] : [],
+    ...fromSi
+  ]);
+}
+function isPrivateIpv4(ip) {
+  if (!ip) return false;
+  if (/^10\./.test(ip)) return true;
+  if (/^192\.168\./.test(ip)) return true;
+  const m = ip.match(/^172\.(\d{1,2})\./);
+  if (m) {
+    const second = Number(m[1]);
+    return second >= 16 && second <= 31;
   }
-  return "unknown";
+  return false;
 }
-function detectFamily() {
-  if (cached) return cached;
-  let kv = {};
-  try {
-    const text = import_fs15.default.readFileSync("/etc/os-release", "utf8");
-    kv = parseOsRelease(text);
-  } catch {
+function isUsableIpv4(ip) {
+  if (!ip) return false;
+  if (ip === "127.0.0.1") return false;
+  if (ip.startsWith("169.254.")) return false;
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip);
+}
+function inferInterfaceType(iface) {
+  const text = `${iface?.iface || ""} ${iface?.ifaceName || ""} ${iface?.name || ""} ${iface?.type || ""}`.toLowerCase();
+  if (text.includes("wi-fi") || text.includes("wifi") || text.includes("wireless") || /^en0\b/.test(text) || /^wlan/.test(text)) {
+    return "wifi";
   }
-  const id = (kv.ID || "unknown").toLowerCase();
-  const family = FAMILY_BY_ID[id] ?? familyFromIdLike(kv.ID_LIKE);
-  cached = {
-    id,
-    family,
-    versionId: kv.VERSION_ID || "",
-    prettyName: kv.PRETTY_NAME || (id !== "unknown" ? id : "unknown linux")
-  };
-  return cached;
+  if (text.includes("ethernet") || /^eth/.test(text) || /^en\d+\b/.test(text)) {
+    return "ethernet";
+  }
+  if (text.includes("vpn") || text.includes("utun") || text.includes("tun") || text.includes("tap")) {
+    return "vpn";
+  }
+  if (text.includes("loopback") || text.includes("lo0") || text === "lo") {
+    return "loopback";
+  }
+  return iface?.type ? String(iface.type) : void 0;
 }
-function _resetForTests() {
-  cached = null;
-}
-var import_fs15, FAMILY_BY_ID, cached;
-var init_distro = __esm({
-  "src/platform/linux/distro.ts"() {
-    "use strict";
-    import_fs15 = __toESM(require("fs"));
-    FAMILY_BY_ID = {
-      // debian-family
-      debian: "debian",
-      ubuntu: "debian",
-      raspbian: "debian",
-      linuxmint: "debian",
-      pop: "debian",
-      neon: "debian",
-      elementary: "debian",
-      zorin: "debian",
-      kali: "debian",
-      parrot: "debian",
-      // rhel-family
-      rhel: "rhel",
-      centos: "rhel",
-      rocky: "rhel",
-      almalinux: "rhel",
-      fedora: "rhel",
-      amzn: "rhel",
-      ol: "rhel",
-      // Oracle Linux
-      scientific: "rhel",
-      // suse-family — shipped as supported in Phase 10. Listed here so
-      // detection is correct even before we add SUSE-specific plugin
-      // branches; the plugins themselves return `unsupported_distro`
-      // until then.
-      opensuse: "suse",
-      "opensuse-leap": "suse",
-      "opensuse-tumbleweed": "suse",
-      sles: "suse",
-      sled: "suse"
+function normalizeNetworkInterfaces(net4, defaultInterface) {
+  if (!Array.isArray(net4)) return [];
+  const defaultName = String(defaultInterface || "").trim().toLowerCase();
+  const normalized = net4.map((iface) => {
+    const name = String(iface?.iface || iface?.name || iface?.ifaceName || "").trim() || void 0;
+    const displayName = String(iface?.ifaceName || iface?.name || iface?.iface || "").trim() || name;
+    const ip4 = String(iface?.ip4 || iface?.ipv4 || "").trim() || null;
+    const ip6 = String(iface?.ip6 || iface?.ipv6 || "").trim() || null;
+    const mac = String(iface?.mac || "").trim() || void 0;
+    const internal = Boolean(iface?.internal);
+    const isDefault = Boolean(defaultName && name && name.toLowerCase() === defaultName);
+    return {
+      name,
+      displayName,
+      mac,
+      ip4,
+      ip6,
+      internal,
+      default: isDefault,
+      type: inferInterfaceType(iface)
     };
-    cached = null;
+  }).filter((iface) => iface.name || iface.ip4 || iface.ip6 || iface.mac);
+  const preferredIndex = normalized.findIndex(
+    (iface) => !iface.internal && Boolean(iface.default) && isUsableIpv4(iface.ip4)
+  );
+  const privateIndex = normalized.findIndex(
+    (iface) => !iface.internal && isUsableIpv4(iface.ip4) && isPrivateIpv4(iface.ip4)
+  );
+  const usableIndex = normalized.findIndex(
+    (iface) => !iface.internal && isUsableIpv4(iface.ip4)
+  );
+  const selectedIndex = preferredIndex >= 0 ? preferredIndex : privateIndex >= 0 ? privateIndex : usableIndex;
+  if (selectedIndex >= 0) {
+    normalized.forEach((iface, index) => {
+      iface.default = index === selectedIndex;
+    });
+    const selected = normalized.splice(selectedIndex, 1)[0];
+    normalized.unshift(selected);
+  }
+  return normalized;
+}
+function buildDeviceIdentity(ctx) {
+  const nodePlatform = import_os16.default.platform();
+  const platform = nodePlatform === "win32" ? "windows" : nodePlatform === "darwin" ? "macos" : "linux";
+  return {
+    deviceId: ctx.enrollment.deviceId,
+    tenantId: ctx.enrollment.tenantId,
+    hostname: import_os16.default.hostname(),
+    fqdn: import_os16.default.hostname(),
+    domain: platform === "windows" ? process.env.USERDOMAIN || void 0 : void 0,
+    platform
+  };
+}
+async function buildHardwareNamespace() {
+  const [
+    osInfo,
+    system,
+    baseboard,
+    chassis,
+    bios,
+    cpu,
+    mem,
+    memLayout,
+    diskLayout,
+    graphics,
+    net4,
+    defaultNetworkInterface,
+    time,
+    cpuCurrentSpeed,
+    audio,
+    bluetooth,
+    usb,
+    printer,
+    users,
+    battery,
+    fsSize,
+    wifiNetworks,
+    networkStats,
+    inetLatency
+  ] = await Promise.all([
+    import_systeminformation4.default.osInfo(),
+    import_systeminformation4.default.system(),
+    import_systeminformation4.default.baseboard(),
+    import_systeminformation4.default.chassis(),
+    import_systeminformation4.default.bios(),
+    import_systeminformation4.default.cpu(),
+    import_systeminformation4.default.mem(),
+    import_systeminformation4.default.memLayout(),
+    import_systeminformation4.default.diskLayout(),
+    import_systeminformation4.default.graphics(),
+    import_systeminformation4.default.networkInterfaces().catch(() => []),
+    import_systeminformation4.default.networkInterfaceDefault().catch(() => null),
+    import_systeminformation4.default.time(),
+    import_systeminformation4.default.cpuCurrentSpeed(),
+    import_systeminformation4.default.audio(),
+    import_systeminformation4.default.bluetoothDevices(),
+    import_systeminformation4.default.usb(),
+    import_systeminformation4.default.printer(),
+    import_systeminformation4.default.users().catch(() => []),
+    import_systeminformation4.default.battery(),
+    import_systeminformation4.default.fsSize(),
+    import_systeminformation4.default.wifiNetworks(),
+    import_systeminformation4.default.networkStats(),
+    import_systeminformation4.default.inetLatency("8.8.8.8")
+  ]);
+  const isVirtual = system.virtual === true || typeof system.virtual === "string" && String(system.virtual).toLowerCase().includes("virtual");
+  const normalizedUsers = await buildLoggedInUsers(users);
+  const networkInterfaces = normalizeNetworkInterfaces(net4, defaultNetworkInterface);
+  const staticPart = {
+    system: {
+      manufacturer: system.manufacturer,
+      model: system.model,
+      version: system.version,
+      serial: system.serial,
+      uuid: system.uuid,
+      sku: system.sku,
+      virtual: isVirtual
+    },
+    baseboard,
+    chassis,
+    bios: [bios],
+    os: {
+      platform: (() => {
+        const p = import_os16.default.platform();
+        return p === "win32" ? "windows" : p === "darwin" ? "macos" : "linux";
+      })(),
+      distro: osInfo.distro,
+      release: osInfo.release,
+      kernel: osInfo.kernel
+    },
+    uuid: system.uuid,
+    versions: {
+      kernel: osInfo.kernel,
+      node: process.version,
+      v8: process.versions.v8
+    },
+    cpu,
+    graphics,
+    memLayout,
+    diskLayout,
+    users: normalizedUsers,
+    networkInterfaces
+  };
+  const runtimePart = {
+    memoryBytes: mem?.total,
+    disks: Array.isArray(diskLayout) ? diskLayout.map((d) => ({
+      name: d.name,
+      type: d.type,
+      sizeBytes: d.size
+    })) : void 0,
+    filesystems: Array.isArray(fsSize) ? fsSize.map((f) => ({
+      fs: f.fs,
+      type: f.type,
+      sizeBytes: f.size,
+      usedBytes: f.used,
+      mount: f.mount
+    })) : void 0,
+    isVirtualMachine: isVirtual
+  };
+  return {
+    static: staticPart,
+    runtime: runtimePart
+  };
+}
+function canonicalArch() {
+  const raw = import_os16.default.arch();
+  if (raw === "x64") return "x64";
+  if (raw === "arm64") return "arm64";
+  if (raw === "ia32") return "x64";
+  return raw;
+}
+function buildAgentInfo(ctx) {
+  const nodePlatform = import_os16.default.platform();
+  const platform = nodePlatform === "win32" ? "windows" : nodePlatform === "darwin" ? "macos" : "linux";
+  const capabilities = Array.from(/* @__PURE__ */ new Set([
+    ...ctx.enrollment.bootstrap.capabilities || [],
+    ...ctx.policyRuntime.getEnabledPlugins()
+  ]));
+  return {
+    agentVersion: ctx.config.agentVersion,
+    coreVersion: ctx.config.coreVersion,
+    osProvider: platform,
+    arch: canonicalArch(),
+    capabilities,
+    install: {
+      // Nota v1: installId podría ser distinto a deviceId; lo dejamos así por ahora.
+      installId: ctx.enrollment.deviceId,
+      channel: ctx.enrollment.bootstrap.channel,
+      firstSeenAtUtc: ctx.enrollment.enrolledAtUtc
+    }
+  };
+}
+function stableStringify2(obj) {
+  if (obj === null || typeof obj !== "object") return JSON.stringify(obj);
+  if (Array.isArray(obj)) return `[${obj.map(stableStringify2).join(",")}]`;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `"${k}":${stableStringify2(obj[k])}`).join(",")}}`;
+}
+function hashObject(obj) {
+  const json = stableStringify2(obj);
+  return "sha256:" + import_crypto10.default.createHash("sha256").update(json).digest("hex");
+}
+function buildDeviceBaseline(ctx, hardware) {
+  const device = buildDeviceIdentity(ctx);
+  const agent = buildAgentInfo(ctx);
+  const baseline = {
+    device,
+    agent,
+    hardware: hardware.static
+    // ONLY static part participates in baseline
+  };
+  return {
+    baseline,
+    baselineHash: hashObject(baseline)
+  };
+}
+async function buildDeviceFacts(ctx, namespaces) {
+  const hardware = await buildHardwareNamespace();
+  const { baseline, baselineHash } = buildDeviceBaseline(ctx, hardware);
+  const outNamespaces = { ...namespaces };
+  if (namespaces.amp) {
+    const ampIn = namespaces.amp;
+    const swIn = ampIn.software;
+    const software = swIn ? {
+      count: swIn.count ?? 0,
+      delta: swIn.delta ?? null,
+      items: Array.isArray(swIn.items) ? [...swIn.items] : void 0,
+      hasChanges: swIn.hasChanges ?? false
+    } : {
+      count: 0,
+      delta: null,
+      items: void 0,
+      hasChanges: false
+    };
+    const security = ampIn.security ?? {};
+    outNamespaces.amp = {
+      hardware: {
+        static: hardware.static,
+        runtime: hardware.runtime
+      },
+      security,
+      software
+    };
+  }
+  return {
+    schemaVersion: "1.0",
+    collectedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
+    agent: baseline.agent,
+    device: {
+      deviceId: baseline.device.deviceId,
+      tenantId: baseline.device.tenantId,
+      hostname: baseline.device.hostname,
+      fqdn: baseline.device.fqdn,
+      domain: baseline.device.domain,
+      platform: baseline.device.platform
+    },
+    namespaces: outNamespaces,
+    _meta: {
+      baselineHash
+    }
+  };
+}
+var import_os16, import_systeminformation4, import_child_process6, import_util3, import_crypto10, execFileAsync3;
+var init_device_facts_builder = __esm({
+  "src/domain/device-facts-builder.ts"() {
+    "use strict";
+    import_os16 = __toESM(require("os"));
+    import_systeminformation4 = __toESM(require_lib());
+    import_child_process6 = require("child_process");
+    import_util3 = require("util");
+    import_crypto10 = __toESM(require("crypto"));
+    execFileAsync3 = (0, import_util3.promisify)(import_child_process6.execFile);
   }
 });
 
 // src/update/updater-runner.ts
 function runWindowsMsiUpdate(msiPath) {
-  if (!import_fs16.default.existsSync(msiPath)) {
+  if (!import_fs15.default.existsSync(msiPath)) {
     throw new Error(`msi_not_found: ${msiPath}`);
   }
   const args = ["/i", msiPath, "/qn", "/norestart"];
@@ -22428,7 +23204,7 @@ function runWindowsMsiUpdate(msiPath) {
   }
 }
 function runMacosPkgUpdate(pkgPath) {
-  if (!import_fs16.default.existsSync(pkgPath)) {
+  if (!import_fs15.default.existsSync(pkgPath)) {
     throw new Error(`pkg_not_found: ${pkgPath}`);
   }
   const args = ["-pkg", pkgPath, "-target", "/"];
@@ -22505,147 +23281,105 @@ function runMacosPkgUpdate(pkgPath) {
     throw err;
   }
 }
-function runLinuxDebUpdate(debPath) {
-  if (!import_fs16.default.existsSync(debPath)) {
-    throw new Error(`deb_not_found: ${debPath}`);
-  }
-  const args = [
-    "-E",
-    "--force-confold",
-    "--force-confdef",
-    "-i",
-    debPath
-  ];
-  try {
-    const child = (0, import_child_process7.spawn)("/usr/bin/dpkg", args, {
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, DEBIAN_FRONTEND: "noninteractive", LANG: "C", LC_ALL: "C" }
-    });
-    captureChildExit(child, debPath, "dpkg");
-    child.unref();
-    console.log("[update] linux dpkg launched", {
-      path: debPath,
-      pid: child.pid
-    });
-    return {
-      started: true,
-      command: "/usr/bin/dpkg",
-      args
-    };
-  } catch (err) {
-    console.error("[update] failed to start dpkg", {
-      error: err?.message || err,
-      path: debPath
-    });
-    throw err;
-  }
-}
-function runLinuxRpmUpdate(rpmPath) {
-  if (!import_fs16.default.existsSync(rpmPath)) {
-    throw new Error(`rpm_not_found: ${rpmPath}`);
-  }
-  const args = [
-    "-U",
-    "--force",
-    "--nodeps",
-    rpmPath
-  ];
-  try {
-    const child = (0, import_child_process7.spawn)("/usr/bin/rpm", args, {
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, LANG: "C", LC_ALL: "C" }
-    });
-    captureChildExit(child, rpmPath, "rpm");
-    child.unref();
-    console.log("[update] linux rpm launched", {
-      path: rpmPath,
-      pid: child.pid
-    });
-    return {
-      started: true,
-      command: "/usr/bin/rpm",
-      args
-    };
-  } catch (err) {
-    console.error("[update] failed to start rpm", {
-      error: err?.message || err,
-      path: rpmPath
-    });
-    throw err;
-  }
-}
-function captureChildExit(child, packagePath, tool) {
-  const stdoutChunks = [];
-  const stderrChunks = [];
-  const MAX_CAPTURE_BYTES = 16 * 1024;
-  let capturedBytes = 0;
-  const capture = (store) => (chunk) => {
-    if (capturedBytes >= MAX_CAPTURE_BYTES) return;
-    const remaining = MAX_CAPTURE_BYTES - capturedBytes;
-    const slice = chunk.length > remaining ? chunk.slice(0, remaining) : chunk;
-    store.push(slice);
-    capturedBytes += slice.length;
-  };
-  child.stdout?.on("data", capture(stdoutChunks));
-  child.stderr?.on("data", capture(stderrChunks));
-  child.on("error", (err) => {
-    console.error(`[update] ${tool} spawn error`, {
-      error: err?.message || err,
-      path: packagePath
-    });
-    try {
-      updateUpdateState({
-        updateInProgress: false,
-        status: "failed",
-        lastError: `${tool}_spawn_error: ${err?.message || err}`
-      });
-    } catch {
-    }
-  });
-  child.on("exit", (code, signal) => {
-    const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
-    const stdout = Buffer.concat(stdoutChunks).toString("utf8").trim();
-    if (code === 0) {
-      console.log(`[update] ${tool} exited cleanly`, { code, pid: child.pid });
-    } else {
-      console.error(`[update] ${tool} FAILED`, {
-        code,
-        signal,
-        pid: child.pid,
-        stdoutTail: stdout.slice(-500),
-        stderrTail: stderr.slice(-500)
-      });
-      try {
-        updateUpdateState({
-          updateInProgress: false,
-          status: "failed",
-          lastError: `${tool}_exit_${code ?? signal ?? "unknown"}: ${(stderr || stdout).slice(0, 300)}`
-        });
-      } catch {
-      }
-    }
-  });
-}
-function runLinuxUpdate(packagePath) {
-  const distro = detectFamily();
-  if (distro.family === "debian") {
-    return runLinuxDebUpdate(packagePath);
-  }
-  if (distro.family === "rhel" || distro.family === "suse") {
-    return runLinuxRpmUpdate(packagePath);
-  }
-  throw new Error(`linux_update_unsupported_family: ${distro.family}`);
-}
-var import_child_process7, import_fs16;
+var import_child_process7, import_fs15;
 var init_updater_runner = __esm({
   "src/update/updater-runner.ts"() {
     "use strict";
     import_child_process7 = require("child_process");
-    import_fs16 = __toESM(require("fs"));
+    import_fs15 = __toESM(require("fs"));
     init_update_state();
-    init_distro();
+  }
+});
+
+// src/platform/linux/distro.ts
+var distro_exports = {};
+__export(distro_exports, {
+  _resetForTests: () => _resetForTests,
+  detectFamily: () => detectFamily
+});
+function parseOsRelease(text) {
+  const out = {};
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) {
+      value = value.slice(1, -1);
+    }
+    out[key] = value;
+  }
+  return out;
+}
+function familyFromIdLike(idLike) {
+  if (!idLike) return "unknown";
+  for (const token of idLike.toLowerCase().split(/\s+/)) {
+    const fam = FAMILY_BY_ID[token];
+    if (fam) return fam;
+  }
+  return "unknown";
+}
+function detectFamily() {
+  if (cached) return cached;
+  let kv = {};
+  try {
+    const text = import_fs16.default.readFileSync("/etc/os-release", "utf8");
+    kv = parseOsRelease(text);
+  } catch {
+  }
+  const id = (kv.ID || "unknown").toLowerCase();
+  const family = FAMILY_BY_ID[id] ?? familyFromIdLike(kv.ID_LIKE);
+  cached = {
+    id,
+    family,
+    versionId: kv.VERSION_ID || "",
+    prettyName: kv.PRETTY_NAME || (id !== "unknown" ? id : "unknown linux")
+  };
+  return cached;
+}
+function _resetForTests() {
+  cached = null;
+}
+var import_fs16, FAMILY_BY_ID, cached;
+var init_distro = __esm({
+  "src/platform/linux/distro.ts"() {
+    "use strict";
+    import_fs16 = __toESM(require("fs"));
+    FAMILY_BY_ID = {
+      // debian-family
+      debian: "debian",
+      ubuntu: "debian",
+      raspbian: "debian",
+      linuxmint: "debian",
+      pop: "debian",
+      neon: "debian",
+      elementary: "debian",
+      zorin: "debian",
+      kali: "debian",
+      parrot: "debian",
+      // rhel-family
+      rhel: "rhel",
+      centos: "rhel",
+      rocky: "rhel",
+      almalinux: "rhel",
+      fedora: "rhel",
+      amzn: "rhel",
+      ol: "rhel",
+      // Oracle Linux
+      scientific: "rhel",
+      // suse-family — shipped as supported in Phase 10. Listed here so
+      // detection is correct even before we add SUSE-specific plugin
+      // branches; the plugins themselves return `unsupported_distro`
+      // until then.
+      opensuse: "suse",
+      "opensuse-leap": "suse",
+      "opensuse-tumbleweed": "suse",
+      sles: "suse",
+      sled: "suse"
+    };
+    cached = null;
   }
 });
 
@@ -23279,14 +24013,14 @@ async function performLinuxUpdate(ctx, latestVersion, expectedHash, downloadUrlO
     const dir = import_path12.default.join(resolveBaseDir3(), "updates");
     ensureDir4(dir);
     const arch = getArch();
-    const family = detectFamily().family;
-    const ext = family === "debian" ? "deb" : "rpm";
+    const family2 = detectFamily().family;
+    const ext = family2 === "debian" ? "deb" : "rpm";
     const fileName = `tracenium-agent-${latestVersion}-${arch}.${ext}`;
     const filePath = import_path12.default.join(dir, fileName);
     console.log("[update] downloading linux pkg from override url", {
       url: downloadUrlOverride,
       version: latestVersion,
-      family,
+      family: family2,
       ext
     });
     const { size } = await downloadToFile(downloadUrlOverride, filePath);
@@ -23325,8 +24059,32 @@ async function performLinuxUpdate(ctx, latestVersion, expectedHash, downloadUrlO
     arch: getArch(),
     family: detectFamily().family
   });
-  const result2 = runLinuxUpdate(downloaded.filePath);
-  return result2;
+  const family = detectFamily().family;
+  const format = family === "debian" ? "deb" : "rpm";
+  const installResp = await ctx.priv.call({
+    v: 1,
+    id: `agent-install-${Date.now()}`,
+    method: "agent.install",
+    params: {
+      path: downloaded.filePath,
+      format,
+      version: latestVersion
+    },
+    meta: {
+      tenantId: ctx.enrollment.tenantId,
+      deviceId: ctx.enrollment.deviceId
+    }
+  });
+  if (installResp.error) {
+    throw new Error(
+      `agent.install failed: ${installResp.error.code}: ${installResp.error.message}`
+    );
+  }
+  return {
+    started: true,
+    command: installResp.ok?.command || "privsvc:agent.install",
+    args: installResp.ok?.args || []
+  };
 }
 var import_fs17, import_path12, import_crypto11, import_http, import_https;
 var init_update_service = __esm({
@@ -23503,6 +24261,407 @@ var init_update_task = __esm({
     init_update_state();
     init_update_service();
     init_semver();
+  }
+});
+
+// src/security/enforcer.ts
+var enforcer_exports = {};
+__export(enforcer_exports, {
+  runSecurityEnforce: () => runSecurityEnforce
+});
+function effectiveMode(cap, policy) {
+  if (cap?.mode === "auto" || cap?.mode === "report-only" || cap?.mode === "off") {
+    return cap.mode;
+  }
+  if (policy.defaultMode) return policy.defaultMode;
+  return "report-only";
+}
+async function runSecurityEnforce(ctx) {
+  const policy = ctx.policyRuntime.getSecurityPolicy?.();
+  if (!policy) {
+    ctx.logger?.debug?.("[security] no policy configured, skipping enforcer");
+    return [];
+  }
+  const passStart = Date.now();
+  const passDeadline = passStart + ENFORCE_PASS_TIMEOUT_MS;
+  const platform = import_os17.default.platform();
+  const results = [];
+  const cooldownMs = typeof policy.cooldownMinutes === "number" && policy.cooldownMinutes > 0 ? policy.cooldownMinutes * 60 * 1e3 : COOLDOWN_DEFAULT_MS;
+  for (const entry of SECURITY_CAPABILITY_REMEDIATORS) {
+    if (Date.now() > passDeadline) {
+      ctx.logger?.warn?.("[security] enforce pass exceeded deadline, bailing", {
+        completed: results.length,
+        remaining: SECURITY_CAPABILITY_REMEDIATORS.length - results.length
+      });
+      break;
+    }
+    const cap = policy[entry.capability];
+    if (!cap) {
+      continue;
+    }
+    const mode = effectiveMode(cap, policy);
+    if (mode === "off") {
+      results.push({
+        checkId: entry.checkId,
+        capability: entry.capability,
+        subfield: entry.subfield,
+        mode,
+        outcome: "skipped_off",
+        durationMs: 0
+      });
+      continue;
+    }
+    if (!entry.policyHasValue(cap)) {
+      results.push({
+        checkId: entry.checkId,
+        capability: entry.capability,
+        subfield: entry.subfield,
+        mode,
+        outcome: "skipped_no_value",
+        durationMs: 0
+      });
+      continue;
+    }
+    if (!entry.oses.includes(platform)) {
+      results.push({
+        checkId: entry.checkId,
+        capability: entry.capability,
+        subfield: entry.subfield,
+        mode,
+        outcome: "skipped_wrong_os",
+        durationMs: 0
+      });
+      continue;
+    }
+    if (!entry.desiredEqual(cap)) {
+      ctx.logger?.warn?.("[security] policy unenforceable by current remediator", {
+        capability: entry.capability,
+        subfield: entry.subfield,
+        checkId: entry.checkId
+      });
+      results.push({
+        checkId: entry.checkId,
+        capability: entry.capability,
+        subfield: entry.subfield,
+        mode,
+        outcome: "skipped_unenforceable_desired",
+        durationMs: 0,
+        detail: `Remediator ${entry.checkId} cannot reach the requested state.`
+      });
+      continue;
+    }
+    if (mode === "auto") {
+      const last = lastAppliedAt.get(entry.checkId) ?? 0;
+      if (Date.now() - last < cooldownMs) {
+        results.push({
+          checkId: entry.checkId,
+          capability: entry.capability,
+          subfield: entry.subfield,
+          mode,
+          outcome: "skipped_cooldown",
+          durationMs: 0,
+          detail: `Cooldown active (last applied ${Math.round(
+            (Date.now() - last) / 1e3
+          )}s ago).`
+        });
+        continue;
+      }
+    }
+    const itemStart = Date.now();
+    const readResp = await ctx.priv.call({
+      v: 1,
+      id: `security-enforce-read-${entry.checkId}-${Date.now()}`,
+      method: "pmp.read_check_state",
+      params: { checkId: entry.checkId },
+      meta: {
+        tenantId: ctx.enrollment.tenantId,
+        deviceId: ctx.enrollment.deviceId
+      }
+    });
+    if (!readResp?.ok) {
+      const code = readResp?.error?.code || "read_state_failed";
+      results.push({
+        checkId: entry.checkId,
+        capability: entry.capability,
+        subfield: entry.subfield,
+        mode,
+        outcome: "error",
+        durationMs: Date.now() - itemStart,
+        detail: `read_check_state failed: ${code}`
+      });
+      continue;
+    }
+    const compliant = readResp.result?.isCompliant === true;
+    if (compliant) {
+      results.push({
+        checkId: entry.checkId,
+        capability: entry.capability,
+        subfield: entry.subfield,
+        mode,
+        outcome: "compliant",
+        durationMs: Date.now() - itemStart
+      });
+      continue;
+    }
+    if (mode === "report-only") {
+      ctx.logger?.warn?.("[security] drift detected (report-only)", {
+        capability: entry.capability,
+        subfield: entry.subfield,
+        checkId: entry.checkId,
+        state: readResp.result?.state
+      });
+      results.push({
+        checkId: entry.checkId,
+        capability: entry.capability,
+        subfield: entry.subfield,
+        mode,
+        outcome: "drift_report_only",
+        durationMs: Date.now() - itemStart
+      });
+      continue;
+    }
+    const acquired = tryStartRemediate(ctx);
+    if (!acquired) {
+      results.push({
+        checkId: entry.checkId,
+        capability: entry.capability,
+        subfield: entry.subfield,
+        mode,
+        outcome: "skipped_locked",
+        durationMs: Date.now() - itemStart,
+        detail: "another remediation in progress"
+      });
+      continue;
+    }
+    try {
+      const applyResp = await ctx.priv.call({
+        v: 1,
+        id: `security-enforce-apply-${entry.checkId}-${Date.now()}`,
+        method: "pmp.remediate",
+        params: {
+          checkId: entry.checkId,
+          params: {},
+          timeoutSeconds: 540
+        },
+        meta: {
+          tenantId: ctx.enrollment.tenantId,
+          deviceId: ctx.enrollment.deviceId
+        }
+      });
+      if (!applyResp?.ok) {
+        const code = applyResp?.error?.code || "remediate_failed";
+        results.push({
+          checkId: entry.checkId,
+          capability: entry.capability,
+          subfield: entry.subfield,
+          mode,
+          outcome: "drift_remediation_failed",
+          durationMs: Date.now() - itemStart,
+          detail: code
+        });
+        continue;
+      }
+      const requiresReboot = applyResp.result?.requiresReboot === true;
+      lastAppliedAt.set(entry.checkId, Date.now());
+      results.push({
+        checkId: entry.checkId,
+        capability: entry.capability,
+        subfield: entry.subfield,
+        mode,
+        outcome: requiresReboot ? "drift_remediation_rebooting" : "drift_remediated",
+        durationMs: Date.now() - itemStart,
+        detail: requiresReboot ? "reboot required to fully apply" : void 0
+      });
+    } finally {
+      finishRemediate();
+    }
+  }
+  ctx.logger?.info?.("[security] enforce pass complete", {
+    durationMs: Date.now() - passStart,
+    items: results.length,
+    summary: summarize(results)
+  });
+  try {
+    await emitSecurityEnforceEvents(ctx, results);
+  } catch (err) {
+    ctx.logger?.warn?.("[security] audit emit failed (non-fatal)", {
+      error: err?.message || String(err)
+    });
+  }
+  return results;
+}
+function summarize(results) {
+  const counts = {};
+  for (const r of results) {
+    counts[r.outcome] = (counts[r.outcome] ?? 0) + 1;
+  }
+  return counts;
+}
+async function emitSecurityEnforceEvents(ctx, results) {
+  const events = [];
+  const occurredAtUtc = (/* @__PURE__ */ new Date()).toISOString();
+  for (const r of results) {
+    if (!AUDITABLE_OUTCOMES.has(r.outcome)) continue;
+    if (!r.checkId) continue;
+    const lastOutcome = lastEmittedOutcome.get(r.checkId);
+    if (lastOutcome === r.outcome) continue;
+    const eventType = AUDIT_EVENT_TYPES[r.outcome];
+    if (!eventType) continue;
+    events.push({
+      occurredAtUtc,
+      capability: r.capability,
+      subfield: r.subfield,
+      checkId: r.checkId,
+      mode: r.mode,
+      outcome: r.outcome,
+      eventType,
+      durationMs: r.durationMs,
+      detail: r.detail
+    });
+  }
+  for (const r of results) {
+    if (r.checkId) lastEmittedOutcome.set(r.checkId, r.outcome);
+  }
+  if (events.length === 0) {
+    ctx.logger?.debug?.("[security] no auditable outcome changes; nothing to emit");
+    return;
+  }
+  ctx.logger?.info?.("[security] emitting audit events", {
+    count: events.length,
+    types: events.map((e) => e.eventType)
+  });
+  const namespaces = {
+    security_enforce: {
+      events
+    }
+  };
+  const facts = await buildDeviceFacts(ctx, namespaces);
+  outbox.enqueue({
+    type: "FACTS_SNAPSHOT",
+    payload: facts
+  });
+}
+var import_os17, COOLDOWN_DEFAULT_MS, ENFORCE_PASS_TIMEOUT_MS, lastAppliedAt, lastEmittedOutcome, AUDITABLE_OUTCOMES, AUDIT_EVENT_TYPES, SECURITY_CAPABILITY_REMEDIATORS;
+var init_enforcer = __esm({
+  "src/security/enforcer.ts"() {
+    "use strict";
+    import_os17 = __toESM(require("os"));
+    init_state();
+    init_sqlite_outbox();
+    init_device_facts_builder();
+    COOLDOWN_DEFAULT_MS = 60 * 60 * 1e3;
+    ENFORCE_PASS_TIMEOUT_MS = 5 * 60 * 1e3;
+    lastAppliedAt = /* @__PURE__ */ new Map();
+    lastEmittedOutcome = /* @__PURE__ */ new Map();
+    AUDITABLE_OUTCOMES = /* @__PURE__ */ new Set([
+      "drift_report_only",
+      "drift_remediated",
+      "drift_remediation_rebooting",
+      "drift_remediation_failed",
+      "skipped_unenforceable_desired",
+      "error"
+    ]);
+    AUDIT_EVENT_TYPES = {
+      // Auditable
+      drift_report_only: "SECURITY_DRIFT_DETECTED",
+      drift_remediated: "SECURITY_DRIFT_REMEDIATED",
+      drift_remediation_rebooting: "SECURITY_DRIFT_REMEDIATION_REBOOTING",
+      drift_remediation_failed: "SECURITY_DRIFT_REMEDIATION_FAILED",
+      skipped_unenforceable_desired: "SECURITY_POLICY_UNENFORCEABLE",
+      error: "SECURITY_ENFORCE_ERROR",
+      // Non-auditable
+      compliant: null,
+      skipped_off: null,
+      skipped_no_value: null,
+      skipped_wrong_os: null,
+      skipped_cooldown: null,
+      skipped_locked: null,
+      skipped_no_remediator: null
+    };
+    SECURITY_CAPABILITY_REMEDIATORS = [
+      // ── Firewall ──────────────────────────────────────────────────
+      {
+        capability: "firewall",
+        subfield: "required",
+        checkId: "linux.firewall.enabled",
+        oses: ["linux"],
+        policyHasValue: (cap) => typeof cap?.required === "boolean",
+        desiredEqual: (cap) => cap?.required === true
+      },
+      {
+        capability: "firewall",
+        subfield: "required",
+        checkId: "windows.firewall.profiles_enabled",
+        oses: ["win32"],
+        policyHasValue: (cap) => typeof cap?.required === "boolean",
+        desiredEqual: (cap) => cap?.required === true
+      },
+      {
+        // macOS handler lives in privsvc/macos/src/pmp-remediation.ts
+        // (`macos.firewall.enabled`) — read state via socketfilterfw,
+        // remediate via `socketfilterfw --setglobalstate on`. No reboot.
+        capability: "firewall",
+        subfield: "required",
+        checkId: "macos.firewall.enabled",
+        oses: ["darwin"],
+        policyHasValue: (cap) => typeof cap?.required === "boolean",
+        desiredEqual: (cap) => cap?.required === true
+      },
+      // ── SSH (Linux only — Win/Mac don't have an SSH daemon in our
+      //    target server posture; even when Windows runs OpenSSH Server,
+      //    the SCP collector doesn't extract its config the way the
+      //    Linux one does) ────────────────────────────────────────────
+      {
+        capability: "ssh",
+        subfield: "permitRootLogin",
+        checkId: "linux.ssh.root_login_disabled",
+        oses: ["linux"],
+        policyHasValue: (cap) => cap?.permitRootLogin !== void 0,
+        desiredEqual: (cap) => cap?.permitRootLogin === "no"
+      },
+      {
+        capability: "ssh",
+        subfield: "passwordAuthentication",
+        checkId: "linux.ssh.password_auth_disabled",
+        oses: ["linux"],
+        policyHasValue: (cap) => typeof cap?.passwordAuthentication === "boolean",
+        desiredEqual: (cap) => cap?.passwordAuthentication === false
+      },
+      {
+        capability: "ssh",
+        subfield: "weakKexDisabled",
+        checkId: "linux.cryptography.weak_ssh_kex_disabled",
+        oses: ["linux"],
+        policyHasValue: (cap) => typeof cap?.weakKexDisabled === "boolean",
+        desiredEqual: (cap) => cap?.weakKexDisabled === true
+      },
+      // ── TLS (Windows only — SCHANNEL is Windows-specific) ──────────
+      {
+        capability: "tls",
+        subfield: "legacyDisabled",
+        checkId: "windows.cryptography.legacy_tls_disabled",
+        oses: ["win32"],
+        policyHasValue: (cap) => typeof cap?.legacyDisabled === "boolean",
+        desiredEqual: (cap) => cap?.legacyDisabled === true
+      },
+      {
+        capability: "tls",
+        subfield: "weakCiphersDisabled",
+        checkId: "windows.cryptography.weak_ciphers_disabled",
+        oses: ["win32"],
+        policyHasValue: (cap) => typeof cap?.weakCiphersDisabled === "boolean",
+        desiredEqual: (cap) => cap?.weakCiphersDisabled === true
+      },
+      // ── SMB (Windows) ──────────────────────────────────────────────
+      {
+        capability: "smb",
+        subfield: "smbv1Disabled",
+        checkId: "windows.network_sharing.smbv1_disabled",
+        oses: ["win32"],
+        policyHasValue: (cap) => typeof cap?.smbv1Disabled === "boolean",
+        desiredEqual: (cap) => cap?.smbv1Disabled === true
+      }
+    ];
   }
 });
 
@@ -24630,6 +25789,75 @@ function stableStringify(value) {
 
 // src/core/policy-runtime.ts
 var import_events4 = require("events");
+var DROPPED_FEATURE_NAMES = /* @__PURE__ */ new Set(["realtimeInventory"]);
+function stripDroppedFeatures(input) {
+  const out = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (!DROPPED_FEATURE_NAMES.has(k)) out[k] = v;
+  }
+  return out;
+}
+var SECURITY_VALID_MODES = /* @__PURE__ */ new Set(["auto", "report-only", "off"]);
+var SECURITY_COOLDOWN_MIN_MINUTES = 1;
+var SECURITY_COOLDOWN_MAX_MINUTES = 1440;
+var SECURITY_COOLDOWN_DEFAULT_MIN = 60;
+var SECURITY_KNOWN_CAPABILITIES = /* @__PURE__ */ new Set([
+  "firewall",
+  "ssh",
+  "tls",
+  "smb",
+  "passwordPolicy",
+  "bitlocker",
+  "usb",
+  "shares"
+]);
+function coerceMode(raw) {
+  if (typeof raw === "string" && SECURITY_VALID_MODES.has(raw)) {
+    return raw;
+  }
+  return "report-only";
+}
+function clampCooldownMinutes(raw, logger2) {
+  if (raw === void 0 || raw === null) return SECURITY_COOLDOWN_DEFAULT_MIN;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) {
+    logger2?.debug?.("security policy: cooldownMinutes not an integer, using default", { raw });
+    return SECURITY_COOLDOWN_DEFAULT_MIN;
+  }
+  if (n < SECURITY_COOLDOWN_MIN_MINUTES || n > SECURITY_COOLDOWN_MAX_MINUTES) {
+    logger2?.debug?.("security policy: cooldownMinutes out of range, using default", {
+      raw: n,
+      min: SECURITY_COOLDOWN_MIN_MINUTES,
+      max: SECURITY_COOLDOWN_MAX_MINUTES
+    });
+    return SECURITY_COOLDOWN_DEFAULT_MIN;
+  }
+  return n;
+}
+function sanitizeSecurityPolicy(input, logger2) {
+  if (!input || typeof input !== "object") {
+    return { defaultMode: "report-only", cooldownMinutes: SECURITY_COOLDOWN_DEFAULT_MIN };
+  }
+  const out = {
+    version: typeof input.version === "string" ? input.version : void 0,
+    defaultMode: coerceMode(input.defaultMode),
+    cooldownMinutes: clampCooldownMinutes(input.cooldownMinutes, logger2)
+  };
+  for (const [k, v] of Object.entries(input)) {
+    if (k === "version" || k === "defaultMode" || k === "cooldownMinutes") continue;
+    if (!SECURITY_KNOWN_CAPABILITIES.has(k)) {
+      logger2?.debug?.("security policy: dropping unknown capability", { capability: k });
+      continue;
+    }
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+    const sanitized = { ...v };
+    if ("mode" in sanitized) {
+      sanitized.mode = coerceMode(sanitized.mode);
+    }
+    out[k] = sanitized;
+  }
+  return out;
+}
 var DEFAULT_POLICY = {
   inventory: {
     intervalSeconds: 21600
@@ -24643,6 +25871,14 @@ var DEFAULT_POLICY = {
     intervalSeconds: 86400
     // 24h
   },
+  update: {
+    // Was hardcoded to 6h (21600s) in scheduler.ts:343 before Sprint 1
+    // of Policy v2. Pulled into policy so operators can tune how often
+    // the agent's self-update probe runs (the actual install is still
+    // gated by `modules.update` / `features.selfUpdate`).
+    intervalSeconds: 21600
+    // 6h
+  },
   plugins: {
     enabled: ["amp"]
   },
@@ -24653,7 +25889,6 @@ var DEFAULT_POLICY = {
     compliance: false
   },
   features: {
-    realtimeInventory: false,
     remoteShell: false,
     selfUpdate: true
   }
@@ -24695,6 +25930,23 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
   getPatchInterval() {
     return this.policy.patch?.intervalSeconds || DEFAULT_POLICY.patch.intervalSeconds;
   }
+  getUpdateInterval() {
+    return this.policy.update?.intervalSeconds || DEFAULT_POLICY.update.intervalSeconds;
+  }
+  // Returns the security policy block, or null if the operator hasn't
+  // authored one. Callers (the security enforcer in src/security/
+  // enforcer.ts) treat null as "no security policy active — skip the
+  // entire enforcement pipeline".
+  //
+  // We don't merge in defaults here because security capabilities are
+  // OPT-IN: an unset capability means "no opinion", which is
+  // semantically different from "default value applied". The
+  // enforcer handles the per-capability default-mode resolution
+  // (combining `security.defaultMode` with each capability's own
+  // `mode`).
+  getSecurityPolicy() {
+    return this.policy.security ?? null;
+  }
   getEnabledPlugins() {
     return this.policy.plugins?.enabled || DEFAULT_POLICY.plugins.enabled;
   }
@@ -24734,42 +25986,58 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
     this.emit("policyChanged", this.policy);
     this.emit("inventoryIntervalChanged", this.getInventoryInterval());
     this.emit("patchIntervalChanged", this.getPatchInterval());
+    this.emit("complianceIntervalChanged", this.getComplianceInterval());
+    this.emit("updateIntervalChanged", this.getUpdateInterval());
     this.emit("pluginsChanged", this.getEnabledPlugins());
     this.emit("modulesChanged", this.listEnabledModules());
     this.emit("featuresChanged", this.policy.features);
+    this.emit("securityPolicyChanged", this.getSecurityPolicy());
   }
   // ---------- validation ----------
   validatePolicy(policy) {
     if (typeof policy !== "object" || policy === null) {
       return JSON.parse(JSON.stringify(DEFAULT_POLICY));
     }
+    const fromAgent = policy.agent ?? {};
+    const fromSchedules = fromAgent.schedules ?? {};
+    const mergedInventory = {
+      intervalSeconds: fromSchedules.inventory?.intervalSeconds ?? policy.inventory?.intervalSeconds ?? DEFAULT_POLICY.inventory.intervalSeconds
+    };
+    const mergedCompliance = {
+      intervalSeconds: fromSchedules.compliance?.intervalSeconds ?? policy.compliance?.intervalSeconds ?? DEFAULT_POLICY.compliance.intervalSeconds
+    };
+    const mergedPatch = {
+      intervalSeconds: fromSchedules.patch?.intervalSeconds ?? policy.patch?.intervalSeconds ?? DEFAULT_POLICY.patch.intervalSeconds
+    };
+    const mergedUpdate = {
+      intervalSeconds: fromSchedules.update?.intervalSeconds ?? policy.update?.intervalSeconds ?? DEFAULT_POLICY.update.intervalSeconds
+    };
+    const mergedPlugins = {
+      enabled: fromAgent.plugins?.enabled ?? policy.plugins?.enabled ?? DEFAULT_POLICY.plugins.enabled
+    };
+    const mergedModules = {
+      ...DEFAULT_POLICY.modules,
+      ...policy.modules,
+      ...fromAgent.modules
+    };
+    const mergedFeatures = {
+      ...DEFAULT_POLICY.features,
+      // Drop the deprecated realtimeInventory at parse time. We
+      // accept it on the wire but never read it after this point.
+      ...policy.features ? stripDroppedFeatures(policy.features) : {},
+      ...fromAgent.features ? stripDroppedFeatures(fromAgent.features) : {}
+    };
+    const mergedSecurity = policy.security !== void 0 ? sanitizeSecurityPolicy(policy.security, this.logger) : void 0;
     const validated = {
-      ...DEFAULT_POLICY,
-      ...policy,
-      inventory: {
-        ...DEFAULT_POLICY.inventory,
-        ...policy.inventory
-      },
-      compliance: {
-        ...DEFAULT_POLICY.compliance,
-        ...policy.compliance
-      },
-      patch: {
-        ...DEFAULT_POLICY.patch,
-        ...policy.patch
-      },
-      plugins: {
-        ...DEFAULT_POLICY.plugins,
-        ...policy.plugins
-      },
-      modules: {
-        ...DEFAULT_POLICY.modules,
-        ...policy.modules
-      },
-      features: {
-        ...DEFAULT_POLICY.features,
-        ...policy.features
-      }
+      version: policy.version,
+      inventory: mergedInventory,
+      compliance: mergedCompliance,
+      patch: mergedPatch,
+      update: mergedUpdate,
+      plugins: mergedPlugins,
+      modules: mergedModules,
+      features: mergedFeatures,
+      security: mergedSecurity
     };
     if (validated.inventory?.intervalSeconds && (validated.inventory.intervalSeconds < 60 || validated.inventory.intervalSeconds > 86400)) {
       this.logger?.warn?.("Invalid inventory interval in policy, reverting to default");
@@ -24782,6 +26050,10 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
     if (validated.patch?.intervalSeconds && (validated.patch.intervalSeconds < 300 || validated.patch.intervalSeconds > 604800)) {
       this.logger?.warn?.("Invalid patch interval in policy, reverting to default");
       validated.patch.intervalSeconds = DEFAULT_POLICY.patch.intervalSeconds;
+    }
+    if (validated.update?.intervalSeconds && (validated.update.intervalSeconds < 60 || validated.update.intervalSeconds > 86400)) {
+      this.logger?.warn?.("Invalid update interval in policy, reverting to default");
+      validated.update.intervalSeconds = DEFAULT_POLICY.update.intervalSeconds;
     }
     if (!Array.isArray(validated.plugins?.enabled)) {
       validated.plugins = { enabled: DEFAULT_POLICY.plugins.enabled };
@@ -24806,6 +26078,7 @@ var PolicyRuntime = class extends import_events4.EventEmitter {
       inventoryInterval: this.getInventoryInterval(),
       complianceInterval: this.getComplianceInterval(),
       patchInterval: this.getPatchInterval(),
+      updateInterval: this.getUpdateInterval(),
       plugins: this.getEnabledPlugins(),
       modules: this.listEnabledModules(),
       features: this.policy.features
@@ -24924,12 +26197,8 @@ var PluginManager = class {
   }
 };
 
-// src/bootstrap/logger.ts
-var logger = {
-  info: (...args) => console.log("[INFO]", ...args),
-  error: (...args) => console.error("[ERROR]", ...args),
-  warn: (...args) => console.warn("[WARN]", ...args)
-};
+// src/core/bootstrap.ts
+init_logger();
 
 // src/status/tray-status-store.ts
 var import_fs13 = __toESM(require("fs"));
@@ -25177,842 +26446,10 @@ async function bootstrapContext() {
   return ctx;
 }
 
-// src/queue/sqlite-outbox.ts
-var import_os15 = __toESM(require("os"));
-var import_path11 = __toESM(require("path"));
-var import_fs14 = __toESM(require("fs"));
-var import_better_sqlite32 = __toESM(require("better-sqlite3"));
-var import_zlib = __toESM(require("zlib"));
-var MAX_ATTEMPTS = 20;
-var COMPRESS_THRESHOLD_BYTES = 50 * 1024;
-function utcNow() {
-  return (/* @__PURE__ */ new Date()).toISOString();
-}
-function computeBackoffSeconds(attempt) {
-  const base = 30;
-  const max = 3600;
-  const secs = Math.min(max, base * Math.pow(2, attempt - 1));
-  const jitter = Math.floor(Math.random() * 10);
-  return secs + jitter;
-}
-function addSecondsIso(iso, secs) {
-  const d = new Date(iso);
-  d.setSeconds(d.getSeconds() + secs);
-  return d.toISOString();
-}
-function maybeCompressPayload(json) {
-  const size = Buffer.byteLength(json, "utf8");
-  if (size < COMPRESS_THRESHOLD_BYTES) return json;
-  try {
-    const gz = import_zlib.default.gzipSync(Buffer.from(json, "utf8"));
-    return "gz:" + gz.toString("base64");
-  } catch {
-    return json;
-  }
-}
-function maybeDecompressPayload(value) {
-  if (!value.startsWith("gz:")) return value;
-  try {
-    const b64 = value.slice(3);
-    const buf = Buffer.from(b64, "base64");
-    return import_zlib.default.gunzipSync(buf).toString("utf8");
-  } catch {
-    return value;
-  }
-}
-function defaultDbPath() {
-  if (import_os15.default.platform() === "win32") {
-    const programData = process.env.PROGRAMDATA || process.env.ProgramData || "C:\\ProgramData";
-    return import_path11.default.join(programData, "Tracenium", "Agent", "outbox.db");
-  }
-  return import_path11.default.join(import_os15.default.homedir(), ".tracenium", "agent", "outbox.db");
-}
-var SqliteOutbox = class {
-  constructor(dbPath = defaultDbPath()) {
-    this.dbPath = dbPath;
-    this.lockOwner = `agentcore:${import_os15.default.hostname()}:${process.pid}`;
-    const dir = import_path11.default.dirname(dbPath);
-    import_fs14.default.mkdirSync(dir, { recursive: true });
-    this.db = new import_better_sqlite32.default(dbPath);
-    logger.info("[outbox] initialized", { dbPath: this.dbPath });
-    this.initialize();
-  }
-  dbPath;
-  db;
-  lockOwner;
-  listeners = /* @__PURE__ */ new Set();
-  initialize() {
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("synchronous = NORMAL");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS outbox_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-        type TEXT NOT NULL,
-        created_at_utc TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        payload_hash TEXT NOT NULL,
-
-        status TEXT NOT NULL,
-        attempts INTEGER NOT NULL DEFAULT 0,
-        next_attempt_at_utc TEXT NOT NULL,
-
-        locked_at_utc TEXT NULL,
-        lock_owner TEXT NULL,
-
-        last_error TEXT NULL,
-        sent_at_utc TEXT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_outbox_status_next
-        ON outbox_events(status, next_attempt_at_utc);
-
-      CREATE INDEX IF NOT EXISTS idx_outbox_inflight
-        ON outbox_events(status, locked_at_utc);
-
-      CREATE INDEX IF NOT EXISTS idx_outbox_payload_hash
-        ON outbox_events(payload_hash);
-
-      CREATE TABLE IF NOT EXISTS agent_state (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        updated_at_utc TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_outbox_lock_owner
-        ON outbox_events(lock_owner);
-    `);
-    const cols = this.db.prepare(`PRAGMA table_info(outbox_events)`).all();
-    const hasPayloadHash = cols.some((c) => c.name === "payload_hash");
-    if (!hasPayloadHash) {
-      this.db.exec(`ALTER TABLE outbox_events ADD COLUMN payload_hash TEXT`);
-      const rows = this.db.prepare(`SELECT id, payload_json FROM outbox_events`).all();
-      const upd = this.db.prepare(`UPDATE outbox_events SET payload_hash=? WHERE id=?`);
-      for (const r of rows) {
-        try {
-          const decompressed = typeof r.payload_json === "string" ? maybeDecompressPayload(r.payload_json) : String(r.payload_json);
-          const raw = typeof decompressed === "string" ? decompressed : JSON.stringify(decompressed);
-          const h = require("crypto").createHash("sha256").update(raw).digest("hex");
-          upd.run(h, r.id);
-        } catch {
-          const h = require("crypto").createHash("sha256").update(String(r.payload_json)).digest("hex");
-          upd.run(h, r.id);
-        }
-      }
-    }
-    this.recoverStaleInflight(600);
-  }
-  enqueue(input) {
-    const rawJson = JSON.stringify(input.payload);
-    const hash = require("crypto").createHash("sha256").update(rawJson).digest("hex");
-    const payloadJson = maybeCompressPayload(rawJson);
-    const maxBytes = 2 * 1024 * 1024;
-    if (Buffer.byteLength(payloadJson, "utf8") > maxBytes) {
-      throw new Error("Outbox payload too large (>2MB)");
-    }
-    const existing = this.db.prepare(`
-        SELECT id FROM outbox_events
-        WHERE payload_hash = ?
-          AND type = ?
-          AND status IN ('PENDING','IN_FLIGHT')
-        LIMIT 1
-      `).get(hash, input.type);
-    if (existing && typeof existing.id === "number") {
-      return existing.id;
-    }
-    const stmt = this.db.prepare(`
-      INSERT INTO outbox_events
-      (type, created_at_utc, payload_json, payload_hash, status, attempts, next_attempt_at_utc)
-      VALUES (?, ?, ?, ?, 'PENDING', 0, ?)
-    `);
-    const now = utcNow();
-    const result2 = stmt.run(
-      input.type,
-      now,
-      payloadJson,
-      hash,
-      now
-    );
-    logger.info("[outbox] enqueue inserted", {
-      id: Number(result2.lastInsertRowid),
-      type: input.type,
-      hash
-    });
-    this.notifyChanged();
-    return Number(result2.lastInsertRowid);
-  }
-  leaseReady(limit = 25) {
-    const now = utcNow();
-    const hasPending = this.db.prepare(`
-        SELECT 1
-        FROM outbox_events
-        WHERE status='PENDING'
-          AND attempts < ?
-          AND next_attempt_at_utc <= ?
-        LIMIT 1
-      `).get(MAX_ATTEMPTS, now);
-    if (!hasPending) {
-      return [];
-    }
-    const tx = this.db.transaction(() => {
-      const candidates = this.db.prepare(`
-          SELECT id
-          FROM outbox_events
-          WHERE status='PENDING'
-            AND attempts < ?
-            AND next_attempt_at_utc <= ?
-          ORDER BY id ASC
-          LIMIT ?
-        `).all(MAX_ATTEMPTS, now, limit);
-      if (candidates.length === 0) return [];
-      const ids = candidates.map((r) => Number(r.id));
-      const placeholders = ids.map(() => "?").join(",");
-      const updRes = this.db.prepare(`
-        UPDATE outbox_events
-        SET status='IN_FLIGHT',
-            locked_at_utc=?,
-            lock_owner=?
-        WHERE id IN (${placeholders})
-          AND status='PENDING'
-          AND lock_owner IS NULL
-      `).run(now, this.lockOwner, ...ids);
-      if (updRes?.changes === 0) {
-        return [];
-      }
-      const rows = this.db.prepare(`
-        SELECT *
-        FROM outbox_events
-        WHERE id IN (${placeholders})
-          AND status='IN_FLIGHT'
-          AND lock_owner=?
-        ORDER BY id ASC
-      `).all(...ids, this.lockOwner);
-      return rows.map((r) => {
-        let payload = r.payload_json;
-        if (typeof payload === "string") {
-          const decompressed = maybeDecompressPayload(payload);
-          try {
-            payload = JSON.parse(decompressed);
-          } catch {
-            payload = decompressed;
-          }
-        }
-        return {
-          ...r,
-          payload_json: payload
-        };
-      });
-    });
-    return tx();
-  }
-  markSent(id) {
-    const now = utcNow();
-    const res = this.db.prepare(`
-      UPDATE outbox_events
-      SET status='SENT',
-          sent_at_utc=?,
-          locked_at_utc=NULL,
-          lock_owner=NULL,
-          last_error=NULL
-      WHERE id=? AND status IN ('PENDING','IN_FLIGHT')
-    `).run(now, id);
-    const row = this.db.prepare(`SELECT id, status, lock_owner, sent_at_utc FROM outbox_events WHERE id=?`).get(id);
-    if (res?.changes === 0) {
-      logger.warn("[outbox] markSent: no rows updated (unexpected state)", { id });
-      return;
-    }
-    this.notifyChanged();
-  }
-  markFailed(id, error) {
-    const row = this.db.prepare("SELECT attempts FROM outbox_events WHERE id=? AND status IN ('PENDING','IN_FLIGHT')").get(id);
-    if (!row) {
-      return;
-    }
-    const attempts = (row?.attempts ?? 0) + 1;
-    if (attempts >= MAX_ATTEMPTS) {
-      this.db.prepare(`
-        UPDATE outbox_events
-        SET status='FAILED',
-            attempts=?,
-            locked_at_utc=NULL,
-            lock_owner=NULL,
-            last_error=?
-        WHERE id=?
-      `).run(attempts, error.slice(0, 2e3), id);
-      this.notifyChanged();
-      return;
-    }
-    const next = addSecondsIso(utcNow(), computeBackoffSeconds(attempts));
-    this.db.prepare(`
-      UPDATE outbox_events
-      SET status='PENDING',
-          attempts=?,
-          next_attempt_at_utc=?,
-          locked_at_utc=NULL,
-          lock_owner=NULL,
-          last_error=?
-      WHERE id=?
-    `).run(attempts, next, error.slice(0, 2e3), id);
-    this.notifyChanged();
-  }
-  markRejected(id, error) {
-    const res = this.db.prepare(`
-      UPDATE outbox_events
-      SET status='FAILED',
-          locked_at_utc=NULL,
-          lock_owner=NULL,
-          last_error=?
-      WHERE id=? AND status IN ('PENDING','IN_FLIGHT')
-    `).run(error.slice(0, 2e3), id);
-    if (res?.changes === 0) {
-      logger.warn("[outbox] markRejected: no rows updated (unexpected state)", { id });
-      return;
-    }
-    this.notifyChanged();
-  }
-  recoverStaleInflight(ttlSeconds) {
-    const cutoff = addSecondsIso(utcNow(), -ttlSeconds);
-    const rows = this.db.prepare(`
-      SELECT id, attempts
-      FROM outbox_events
-      WHERE status='IN_FLIGHT'
-        AND locked_at_utc < ?
-        AND lock_owner IS NOT NULL
-    `).all(cutoff);
-    const upd = this.db.prepare(`
-      UPDATE outbox_events
-      SET status='PENDING',
-          attempts=?,
-          next_attempt_at_utc=?,
-          locked_at_utc=NULL,
-          lock_owner=NULL
-      WHERE id=?
-    `);
-    const fail = this.db.prepare(`
-      UPDATE outbox_events
-      SET status='FAILED',
-          attempts=?,
-          locked_at_utc=NULL,
-          lock_owner=NULL,
-          last_error=?
-      WHERE id=?
-    `);
-    let changed = false;
-    for (const r of rows) {
-      const nextAttempts = (r.attempts ?? 0) + 1;
-      if (nextAttempts >= MAX_ATTEMPTS) {
-        fail.run(nextAttempts, "stale inflight exceeded max attempts", r.id);
-        changed = true;
-        continue;
-      }
-      const next = addSecondsIso(utcNow(), computeBackoffSeconds(nextAttempts));
-      upd.run(nextAttempts, next, r.id);
-      changed = true;
-    }
-    if (changed) {
-      this.notifyChanged();
-    }
-  }
-  hasPendingOfType(type) {
-    const row = this.db.prepare(`
-        SELECT id
-        FROM outbox_events
-        WHERE type = ?
-          AND status IN ('PENDING', 'IN_FLIGHT')
-        ORDER BY id ASC
-        LIMIT 1
-      `).get(type);
-    return !!row;
-  }
-  cleanup(retentionDays = 14) {
-    const cutoff = addSecondsIso(
-      utcNow(),
-      -(retentionDays * 86400)
-    );
-    this.db.prepare(`
-      DELETE FROM outbox_events
-      WHERE (status='SENT' AND sent_at_utc < ?)
-         OR (status='FAILED' AND created_at_utc < ?)
-    `).run(cutoff, cutoff);
-  }
-  getState(key) {
-    const row = this.db.prepare(`SELECT value FROM agent_state WHERE key=?`).get(key);
-    return row?.value ?? null;
-  }
-  setState(key, value) {
-    const now = utcNow();
-    this.db.prepare(`
-      INSERT INTO agent_state (key, value, updated_at_utc)
-      VALUES (?, ?, ?)
-      ON CONFLICT(key) DO UPDATE SET
-        value=excluded.value,
-        updated_at_utc=excluded.updated_at_utc
-    `).run(key, value, now);
-  }
-  onChanged(cb) {
-    this.listeners.add(cb);
-    return () => {
-      this.listeners.delete(cb);
-    };
-  }
-  notifyChanged() {
-    for (const cb of Array.from(this.listeners)) {
-      try {
-        cb();
-      } catch {
-      }
-    }
-  }
-  getNextReadyDelayMs() {
-    const row = this.db.prepare(`
-        SELECT next_attempt_at_utc
-        FROM outbox_events
-        WHERE status='PENDING'
-          AND attempts < ?
-        ORDER BY next_attempt_at_utc ASC
-        LIMIT 1
-      `).get(MAX_ATTEMPTS);
-    if (!row?.next_attempt_at_utc) {
-      return null;
-    }
-    const delay = new Date(row.next_attempt_at_utc).getTime() - Date.now();
-    return Math.max(0, delay);
-  }
-};
-var outbox = new SqliteOutbox();
-
-// src/domain/device-facts-builder.ts
-var import_os16 = __toESM(require("os"));
-var import_systeminformation4 = __toESM(require_lib());
-var import_child_process6 = require("child_process");
-var import_util3 = require("util");
-var import_crypto10 = __toESM(require("crypto"));
-var execFileAsync3 = (0, import_util3.promisify)(import_child_process6.execFile);
-function isIgnorableUser(value) {
-  const v = String(value || "").trim().toLowerCase();
-  return !v || v === "root" || v === "system" || v === "localservice" || v === "networkservice" || v === "_mbsetupuser" || v === "loginwindow";
-}
-function parseUserIdentity(raw) {
-  const value = String(raw || "").trim();
-  if (!value) return null;
-  const slashMatch = value.match(/^([^\\]+)\\(.+)$/);
-  if (slashMatch) {
-    const domain = slashMatch[1]?.trim() || null;
-    const user = slashMatch[2]?.trim() || "";
-    if (isIgnorableUser(user)) return null;
-    return {
-      user,
-      domain,
-      raw: value,
-      isLoggedIn: true,
-      lastLogon: null
-    };
-  }
-  const atMatch = value.match(/^([^@\s]+)@([^@\s]+)$/);
-  if (atMatch) {
-    const user = atMatch[1]?.trim() || "";
-    const domain = atMatch[2]?.trim() || null;
-    if (isIgnorableUser(user)) return null;
-    return {
-      user,
-      domain,
-      raw: value,
-      isLoggedIn: true,
-      lastLogon: null
-    };
-  }
-  if (isIgnorableUser(value)) return null;
-  return {
-    user: value,
-    domain: null,
-    raw: value,
-    isLoggedIn: true,
-    lastLogon: null
-  };
-}
-async function runCommand(command, args, timeout = 2500) {
-  try {
-    const { stdout } = await execFileAsync3(command, args, {
-      timeout,
-      windowsHide: true,
-      maxBuffer: 1024 * 128
-    });
-    const value = String(stdout || "").trim();
-    return value.length > 0 ? value : null;
-  } catch {
-    return null;
-  }
-}
-async function getInteractiveUserFromOs() {
-  const platform = import_os16.default.platform();
-  if (platform === "win32") {
-    const ps = await runCommand("powershell.exe", [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      "try { (Get-CimInstance Win32_ComputerSystem).UserName } catch { $null }"
-    ], 3500);
-    const fromPs = parseUserIdentity(ps);
-    if (fromPs) return fromPs;
-    const whoami2 = await runCommand("whoami.exe", [], 2500);
-    return parseUserIdentity(whoami2);
-  }
-  if (platform === "darwin") {
-    const consoleUser = await runCommand("/usr/bin/stat", ["-f", "%Su", "/dev/console"], 2500);
-    const fromConsole = parseUserIdentity(consoleUser);
-    if (fromConsole) return fromConsole;
-    const whoami2 = await runCommand("/usr/bin/whoami", [], 2500);
-    return parseUserIdentity(whoami2);
-  }
-  const who = await runCommand("who", [], 2500);
-  if (who) {
-    const firstLine = who.split("\n").map((x) => x.trim()).filter(Boolean)[0];
-    const firstUser = firstLine?.split(/\s+/)[0];
-    const fromWho = parseUserIdentity(firstUser);
-    if (fromWho) return fromWho;
-  }
-  const logname = await runCommand("logname", [], 2500);
-  const fromLogname = parseUserIdentity(logname);
-  if (fromLogname) return fromLogname;
-  const whoami = await runCommand("whoami", [], 2500);
-  return parseUserIdentity(whoami);
-}
-function normalizeSiUsers(siUsers) {
-  if (!Array.isArray(siUsers)) return [];
-  const users = [];
-  for (const entry of siUsers) {
-    const raw = entry?.user || entry?.name || entry?.username;
-    const normalized = parseUserIdentity(raw);
-    if (!normalized) continue;
-    const date = entry?.date ? String(entry.date) : null;
-    const time = entry?.time ? String(entry.time) : null;
-    users.push({
-      ...normalized,
-      raw: normalized.raw || String(raw),
-      isLoggedIn: true,
-      lastLogon: date && time ? `${date} ${time}` : null
-    });
-  }
-  return users;
-}
-function dedupeUsers(users) {
-  const seen = /* @__PURE__ */ new Set();
-  const out = [];
-  for (const user of users) {
-    const key = `${user.domain || ""}\\${user.user}`.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(user);
-  }
-  return out;
-}
-async function buildLoggedInUsers(siUsers) {
-  const preferred = await getInteractiveUserFromOs();
-  const fromSi = normalizeSiUsers(siUsers);
-  return dedupeUsers([
-    ...preferred ? [preferred] : [],
-    ...fromSi
-  ]);
-}
-function isPrivateIpv4(ip) {
-  if (!ip) return false;
-  if (/^10\./.test(ip)) return true;
-  if (/^192\.168\./.test(ip)) return true;
-  const m = ip.match(/^172\.(\d{1,2})\./);
-  if (m) {
-    const second = Number(m[1]);
-    return second >= 16 && second <= 31;
-  }
-  return false;
-}
-function isUsableIpv4(ip) {
-  if (!ip) return false;
-  if (ip === "127.0.0.1") return false;
-  if (ip.startsWith("169.254.")) return false;
-  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip);
-}
-function inferInterfaceType(iface) {
-  const text = `${iface?.iface || ""} ${iface?.ifaceName || ""} ${iface?.name || ""} ${iface?.type || ""}`.toLowerCase();
-  if (text.includes("wi-fi") || text.includes("wifi") || text.includes("wireless") || /^en0\b/.test(text) || /^wlan/.test(text)) {
-    return "wifi";
-  }
-  if (text.includes("ethernet") || /^eth/.test(text) || /^en\d+\b/.test(text)) {
-    return "ethernet";
-  }
-  if (text.includes("vpn") || text.includes("utun") || text.includes("tun") || text.includes("tap")) {
-    return "vpn";
-  }
-  if (text.includes("loopback") || text.includes("lo0") || text === "lo") {
-    return "loopback";
-  }
-  return iface?.type ? String(iface.type) : void 0;
-}
-function normalizeNetworkInterfaces(net4, defaultInterface) {
-  if (!Array.isArray(net4)) return [];
-  const defaultName = String(defaultInterface || "").trim().toLowerCase();
-  const normalized = net4.map((iface) => {
-    const name = String(iface?.iface || iface?.name || iface?.ifaceName || "").trim() || void 0;
-    const displayName = String(iface?.ifaceName || iface?.name || iface?.iface || "").trim() || name;
-    const ip4 = String(iface?.ip4 || iface?.ipv4 || "").trim() || null;
-    const ip6 = String(iface?.ip6 || iface?.ipv6 || "").trim() || null;
-    const mac = String(iface?.mac || "").trim() || void 0;
-    const internal = Boolean(iface?.internal);
-    const isDefault = Boolean(defaultName && name && name.toLowerCase() === defaultName);
-    return {
-      name,
-      displayName,
-      mac,
-      ip4,
-      ip6,
-      internal,
-      default: isDefault,
-      type: inferInterfaceType(iface)
-    };
-  }).filter((iface) => iface.name || iface.ip4 || iface.ip6 || iface.mac);
-  const preferredIndex = normalized.findIndex(
-    (iface) => !iface.internal && Boolean(iface.default) && isUsableIpv4(iface.ip4)
-  );
-  const privateIndex = normalized.findIndex(
-    (iface) => !iface.internal && isUsableIpv4(iface.ip4) && isPrivateIpv4(iface.ip4)
-  );
-  const usableIndex = normalized.findIndex(
-    (iface) => !iface.internal && isUsableIpv4(iface.ip4)
-  );
-  const selectedIndex = preferredIndex >= 0 ? preferredIndex : privateIndex >= 0 ? privateIndex : usableIndex;
-  if (selectedIndex >= 0) {
-    normalized.forEach((iface, index) => {
-      iface.default = index === selectedIndex;
-    });
-    const selected = normalized.splice(selectedIndex, 1)[0];
-    normalized.unshift(selected);
-  }
-  return normalized;
-}
-function buildDeviceIdentity(ctx) {
-  const nodePlatform = import_os16.default.platform();
-  const platform = nodePlatform === "win32" ? "windows" : nodePlatform === "darwin" ? "macos" : "linux";
-  return {
-    deviceId: ctx.enrollment.deviceId,
-    tenantId: ctx.enrollment.tenantId,
-    hostname: import_os16.default.hostname(),
-    fqdn: import_os16.default.hostname(),
-    domain: platform === "windows" ? process.env.USERDOMAIN || void 0 : void 0,
-    platform
-  };
-}
-async function buildHardwareNamespace() {
-  const [
-    osInfo,
-    system,
-    baseboard,
-    chassis,
-    bios,
-    cpu,
-    mem,
-    memLayout,
-    diskLayout,
-    graphics,
-    net4,
-    defaultNetworkInterface,
-    time,
-    cpuCurrentSpeed,
-    audio,
-    bluetooth,
-    usb,
-    printer,
-    users,
-    battery,
-    fsSize,
-    wifiNetworks,
-    networkStats,
-    inetLatency
-  ] = await Promise.all([
-    import_systeminformation4.default.osInfo(),
-    import_systeminformation4.default.system(),
-    import_systeminformation4.default.baseboard(),
-    import_systeminformation4.default.chassis(),
-    import_systeminformation4.default.bios(),
-    import_systeminformation4.default.cpu(),
-    import_systeminformation4.default.mem(),
-    import_systeminformation4.default.memLayout(),
-    import_systeminformation4.default.diskLayout(),
-    import_systeminformation4.default.graphics(),
-    import_systeminformation4.default.networkInterfaces().catch(() => []),
-    import_systeminformation4.default.networkInterfaceDefault().catch(() => null),
-    import_systeminformation4.default.time(),
-    import_systeminformation4.default.cpuCurrentSpeed(),
-    import_systeminformation4.default.audio(),
-    import_systeminformation4.default.bluetoothDevices(),
-    import_systeminformation4.default.usb(),
-    import_systeminformation4.default.printer(),
-    import_systeminformation4.default.users().catch(() => []),
-    import_systeminformation4.default.battery(),
-    import_systeminformation4.default.fsSize(),
-    import_systeminformation4.default.wifiNetworks(),
-    import_systeminformation4.default.networkStats(),
-    import_systeminformation4.default.inetLatency("8.8.8.8")
-  ]);
-  const isVirtual = system.virtual === true || typeof system.virtual === "string" && String(system.virtual).toLowerCase().includes("virtual");
-  const normalizedUsers = await buildLoggedInUsers(users);
-  const networkInterfaces = normalizeNetworkInterfaces(net4, defaultNetworkInterface);
-  const staticPart = {
-    system: {
-      manufacturer: system.manufacturer,
-      model: system.model,
-      version: system.version,
-      serial: system.serial,
-      uuid: system.uuid,
-      sku: system.sku,
-      virtual: isVirtual
-    },
-    baseboard,
-    chassis,
-    bios: [bios],
-    os: {
-      platform: (() => {
-        const p = import_os16.default.platform();
-        return p === "win32" ? "windows" : p === "darwin" ? "macos" : "linux";
-      })(),
-      distro: osInfo.distro,
-      release: osInfo.release,
-      kernel: osInfo.kernel
-    },
-    uuid: system.uuid,
-    versions: {
-      kernel: osInfo.kernel,
-      node: process.version,
-      v8: process.versions.v8
-    },
-    cpu,
-    graphics,
-    memLayout,
-    diskLayout,
-    users: normalizedUsers,
-    networkInterfaces
-  };
-  const runtimePart = {
-    memoryBytes: mem?.total,
-    disks: Array.isArray(diskLayout) ? diskLayout.map((d) => ({
-      name: d.name,
-      type: d.type,
-      sizeBytes: d.size
-    })) : void 0,
-    filesystems: Array.isArray(fsSize) ? fsSize.map((f) => ({
-      fs: f.fs,
-      type: f.type,
-      sizeBytes: f.size,
-      usedBytes: f.used,
-      mount: f.mount
-    })) : void 0,
-    isVirtualMachine: isVirtual
-  };
-  return {
-    static: staticPart,
-    runtime: runtimePart
-  };
-}
-function canonicalArch() {
-  const raw = import_os16.default.arch();
-  if (raw === "x64") return "x64";
-  if (raw === "arm64") return "arm64";
-  if (raw === "ia32") return "x64";
-  return raw;
-}
-function buildAgentInfo(ctx) {
-  const nodePlatform = import_os16.default.platform();
-  const platform = nodePlatform === "win32" ? "windows" : nodePlatform === "darwin" ? "macos" : "linux";
-  const capabilities = Array.from(/* @__PURE__ */ new Set([
-    ...ctx.enrollment.bootstrap.capabilities || [],
-    ...ctx.policyRuntime.getEnabledPlugins()
-  ]));
-  return {
-    agentVersion: ctx.config.agentVersion,
-    coreVersion: ctx.config.coreVersion,
-    osProvider: platform,
-    arch: canonicalArch(),
-    capabilities,
-    install: {
-      // Nota v1: installId podría ser distinto a deviceId; lo dejamos así por ahora.
-      installId: ctx.enrollment.deviceId,
-      channel: ctx.enrollment.bootstrap.channel,
-      firstSeenAtUtc: ctx.enrollment.enrolledAtUtc
-    }
-  };
-}
-function stableStringify2(obj) {
-  if (obj === null || typeof obj !== "object") return JSON.stringify(obj);
-  if (Array.isArray(obj)) return `[${obj.map(stableStringify2).join(",")}]`;
-  const keys = Object.keys(obj).sort();
-  return `{${keys.map((k) => `"${k}":${stableStringify2(obj[k])}`).join(",")}}`;
-}
-function hashObject(obj) {
-  const json = stableStringify2(obj);
-  return "sha256:" + import_crypto10.default.createHash("sha256").update(json).digest("hex");
-}
-function buildDeviceBaseline(ctx, hardware) {
-  const device = buildDeviceIdentity(ctx);
-  const agent = buildAgentInfo(ctx);
-  const baseline = {
-    device,
-    agent,
-    hardware: hardware.static
-    // ONLY static part participates in baseline
-  };
-  return {
-    baseline,
-    baselineHash: hashObject(baseline)
-  };
-}
-async function buildDeviceFacts(ctx, namespaces) {
-  const hardware = await buildHardwareNamespace();
-  const { baseline, baselineHash } = buildDeviceBaseline(ctx, hardware);
-  const outNamespaces = { ...namespaces };
-  if (namespaces.amp) {
-    const ampIn = namespaces.amp;
-    const swIn = ampIn.software;
-    const software = swIn ? {
-      count: swIn.count ?? 0,
-      delta: swIn.delta ?? null,
-      items: Array.isArray(swIn.items) ? [...swIn.items] : void 0,
-      hasChanges: swIn.hasChanges ?? false
-    } : {
-      count: 0,
-      delta: null,
-      items: void 0,
-      hasChanges: false
-    };
-    const security = ampIn.security ?? {};
-    outNamespaces.amp = {
-      hardware: {
-        static: hardware.static,
-        runtime: hardware.runtime
-      },
-      security,
-      software
-    };
-  }
-  return {
-    schemaVersion: "1.0",
-    collectedAtUtc: (/* @__PURE__ */ new Date()).toISOString(),
-    agent: baseline.agent,
-    device: {
-      deviceId: baseline.device.deviceId,
-      tenantId: baseline.device.tenantId,
-      hostname: baseline.device.hostname,
-      fqdn: baseline.device.fqdn,
-      domain: baseline.device.domain,
-      platform: baseline.device.platform
-    },
-    namespaces: outNamespaces,
-    _meta: {
-      baselineHash
-    }
-  };
-}
-
 // src/core/scheduler.ts
+init_sqlite_outbox();
+init_logger();
+init_device_facts_builder();
 init_update_task();
 var import_crypto12 = __toESM(require("crypto"));
 function normalizeForHash(value) {
@@ -26232,7 +26669,7 @@ var Scheduler = class {
       });
     }
     if (ctx.policyRuntime.isUpdateEnabled()) {
-      const intervalSeconds = 6 * 60 * 60;
+      const intervalSeconds = ctx.policyRuntime.getUpdateInterval();
       logger.info("Update pipeline enabled", { intervalSeconds });
       this.runUpdate(ctx).catch(
         (err) => logger.error("Update pipeline initial run error", { err })
@@ -26458,6 +26895,14 @@ var Scheduler = class {
         scpCollectorVersion: namespaces.scp.collector?.version ?? null,
         scpEvidenceKeys
       });
+      try {
+        const { runSecurityEnforce: runSecurityEnforce2 } = await Promise.resolve().then(() => (init_enforcer(), enforcer_exports));
+        await runSecurityEnforce2(ctx);
+      } catch (secErr) {
+        logger.warn("Security enforce pass failed (non-fatal)", {
+          error: secErr?.message || String(secErr)
+        });
+      }
     } catch (err) {
       logger.error("Compliance pipeline failed", { err });
     } finally {
@@ -26572,8 +27017,12 @@ var Scheduler = class {
 };
 var scheduler = new Scheduler();
 
+// src/core/service.ts
+init_logger();
+
 // src/transport/grpc-client.ts
 var import_events5 = require("events");
+init_sqlite_outbox();
 function normalizeTarget(url) {
   return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 }
@@ -27047,14 +27496,16 @@ function createGrpcClient(ctx) {
 }
 
 // src/transport/grpc-stream.ts
+init_sqlite_outbox();
+init_device_facts_builder();
 init_state();
 
 // src/plugins/pmp/remediation.ts
-var import_os18 = __toESM(require("os"));
+var import_os19 = __toESM(require("os"));
 init_state();
 
 // src/plugins/pmp/remediation-checks.ts
-var import_os17 = __toESM(require("os"));
+var import_os18 = __toESM(require("os"));
 var ENTRIES = [
   {
     checkId: "windows.cryptography.legacy_tls_disabled",
@@ -27100,13 +27551,42 @@ var ENTRIES = [
   {
     checkId: "linux.firewall.enabled",
     applicableTo: /* @__PURE__ */ new Set(["linux"])
+  },
+  // ── macOS (Sprint 3 — A1) ───────────────────────────────────────
+  // Five checkIds implemented in privsvc/macos/src/pmp-remediation.ts.
+  // Three are read+remediate (firewall, gatekeeper, remote_login);
+  // two are read-only (sip, filevault) — sip can only be toggled
+  // from Recovery, and filevault enabling requires interactive user
+  // auth which a daemon can't safely provide. The agent still
+  // whitelists all five here so the read-state path is reachable
+  // (the dashboard's posture timeline calls it to show "sip
+  // enabled / disabled" without invoking remediation).
+  {
+    checkId: "macos.firewall.enabled",
+    applicableTo: /* @__PURE__ */ new Set(["macos"])
+  },
+  {
+    checkId: "macos.gatekeeper.enabled",
+    applicableTo: /* @__PURE__ */ new Set(["macos"])
+  },
+  {
+    checkId: "macos.remote_login.disabled",
+    applicableTo: /* @__PURE__ */ new Set(["macos"])
+  },
+  {
+    checkId: "macos.sip.enabled",
+    applicableTo: /* @__PURE__ */ new Set(["macos"])
+  },
+  {
+    checkId: "macos.filevault.enabled",
+    applicableTo: /* @__PURE__ */ new Set(["macos"])
   }
 ];
 var BY_CHECK_ID = new Map(
   ENTRIES.map((e) => [e.checkId, e])
 );
 function localOs() {
-  const p = import_os17.default.platform();
+  const p = import_os18.default.platform();
   if (p === "win32") return "windows";
   if (p === "darwin") return "macos";
   if (p === "linux") return "linux";
@@ -27298,7 +27778,7 @@ async function runRemediation(ctx, jobId, payload) {
   }
 }
 function snapshotMatchesLocal(snapshotPlatform) {
-  const p = import_os18.default.platform();
+  const p = import_os19.default.platform();
   if (snapshotPlatform === "cross") return true;
   if (snapshotPlatform === "windows") return p === "win32";
   if (snapshotPlatform === "macos") return p === "darwin";
@@ -27332,7 +27812,7 @@ function ackFor(outcome, remediationId, extras) {
 }
 
 // src/plugins/sdp/index.ts
-var import_os20 = __toESM(require("os"));
+var import_os21 = __toESM(require("os"));
 
 // src/plugins/sdp/state.ts
 var installInProgress = false;
@@ -27353,7 +27833,7 @@ function finishInstall(outcome, exitCode) {
 }
 
 // src/plugins/sdp/detection.ts
-var import_os19 = __toESM(require("os"));
+var import_os20 = __toESM(require("os"));
 var PLATFORM_APPLICABILITY = {
   registry_uninstall: /* @__PURE__ */ new Set(["win32"]),
   bundle_version: /* @__PURE__ */ new Set(["darwin"]),
@@ -27420,7 +27900,7 @@ async function evaluate(ctx, rule, jobId) {
       skipReason: "no_rule"
     };
   }
-  const platform = import_os19.default.platform();
+  const platform = import_os20.default.platform();
   const applicable = PLATFORM_APPLICABILITY[rule.type]?.has(platform) ?? false;
   if (!applicable) {
     return {
@@ -27471,7 +27951,7 @@ async function evaluate(ctx, rule, jobId) {
 
 // src/plugins/sdp/index.ts
 function normalizePlatform() {
-  const p = import_os20.default.platform();
+  const p = import_os21.default.platform();
   if (p === "win32") return "windows";
   if (p === "darwin") return "macos";
   if (p === "linux") return "linux";
@@ -28127,6 +28607,36 @@ async function executeRunJob(ctx, runJob) {
         };
       }
     }
+    case "reset_baseline": {
+      const namespace = String(payload?.namespace || "").trim().toLowerCase();
+      if (namespace !== "amp") {
+        return {
+          status: 2,
+          message: `reset_baseline rejected: unsupported namespace "${namespace}"`
+        };
+      }
+      const stateKey = `namespaceHash:${namespace}`;
+      try {
+        outbox.setState(stateKey, "");
+        ctx.logger?.warn?.("[reset_baseline] cleared namespace hash, next compliance tick will re-send baseline", {
+          namespace,
+          stateKey
+        });
+        return {
+          status: 0,
+          message: `reset_baseline:cleared:${namespace}`
+        };
+      } catch (err) {
+        ctx.logger?.error?.("[reset_baseline] failed to clear state", {
+          namespace,
+          error: err?.message || String(err)
+        });
+        return {
+          status: 1,
+          message: `reset_baseline:state_write_failed:${err?.message || "unknown"}`
+        };
+      }
+    }
     case "agent_update": {
       const version = String(payload?.version || runJob?.version || "").trim();
       if (!version) {
@@ -28727,6 +29237,7 @@ function startGrpcStream(ctx) {
 }
 
 // src/core/service.ts
+init_sqlite_outbox();
 var shuttingDown = false;
 var currentCtx = null;
 var cleanupTimer;

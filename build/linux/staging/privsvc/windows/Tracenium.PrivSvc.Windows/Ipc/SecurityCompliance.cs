@@ -8,8 +8,33 @@ namespace Tracenium.PrivSvc.Windows.Ipc;
 
 public static class SecurityCompliance
 {
+    // Tracks the first section that failed (timeout or exception) during
+    // a Handle() invocation so we can return a structured collectorError
+    // alongside whatever partial evidence we did manage to collect.
+    // Thread-local because Handle can in principle run concurrently for
+    // independent IPC calls — keeping the field instance-free avoids
+    // contention without forcing every helper signature to thread an
+    // error sink through.
+    private static readonly System.Threading.ThreadLocal<CollectorError?> _firstError =
+        new(() => null);
+
+    private sealed record CollectorError(string Phase, string Reason, string Message);
+
+    private static void RecordSectionError(string phase, string reason, string message)
+    {
+        // Only record the FIRST error — subsequent failures stay in the
+        // section status fields. The top-level signal is the one the
+        // backend's stale-preservation gate consumes; multiple errors
+        // would just clutter it.
+        if (_firstError.Value is null)
+        {
+            _firstError.Value = new CollectorError(phase, reason, message);
+        }
+    }
+
     public static Task<PrivSvcResponse> Handle(PrivSvcRequest req)
     {
+        _firstError.Value = null;
         try
         {
             var result = new
@@ -23,7 +48,32 @@ public static class SecurityCompliance
                 domain = GetDomainAndGpoStatus(),
                 ciphers = GetEnabledCiphers(),
                 protocols = GetTlsProtocols(),
-                patches = GetInstalledSecurityPatches()
+                patches = GetInstalledSecurityPatches(),
+                // Top-level signal: if ANY section bailed out
+                // (PowerShell timeout, COM exception, etc.), this is
+                // non-null. The agent-side SCP collector propagates it
+                // to `scp.collectorError`, which the backend's
+                // upsertSecurityComplianceCurrent CASE uses to KEEP the
+                // device's last good snapshot rather than overwriting
+                // with the partial/empty payload we're returning here.
+                //
+                // Why include partial evidence at all (vs failing the
+                // whole call): some sections may have succeeded — e.g.
+                // bitlocker is fast, patches is slow. Without this
+                // top-level error marker, a slow-patches host that
+                // succeeded on every other check would have its OTHER
+                // evidence overwritten by the backend with a snapshot
+                // that included `patches.count = 0`, regressing the
+                // dashboard. With this marker, the backend short-
+                // circuits the overwrite entirely.
+                collectorError = _firstError.Value is null
+                    ? null
+                    : new
+                    {
+                        phase = _firstError.Value.Phase,
+                        reason = _firstError.Value.Reason,
+                        message = _firstError.Value.Message
+                    }
             };
 
             return Task.FromResult(PrivSvcResponse.Success(req.Id, result));
@@ -33,6 +83,10 @@ public static class SecurityCompliance
             return Task.FromResult(
                 PrivSvcResponse.Fail(req.Id, "security_compliance_error", ex.Message)
             );
+        }
+        finally
+        {
+            _firstError.Value = null;
         }
     }
 
@@ -467,9 +521,18 @@ foreach ($p in $protocols) {
         //   `lastScanUtc` records when WE ran THIS query — gives the UI a
         //   "data freshness" signal even when the device hasn't installed
         //   anything new in months. Was missing entirely before this fix.
+        // 45s budget for the WU history query. On heavily-patched WSUS-
+        // bound hosts `GetTotalHistoryCount` + a full `QueryHistory(0,N)`
+        // can legitimately take 30-40s; we want to allow that and fail
+        // hard past it, not crash mid-call and pretend the device has
+        // zero patches. The agent-side IPC timeout (90s in
+        // privsvc-client-windows.ts) is sized to accommodate this 45s
+        // plus the ~15s the other 9 sections take.
+        const int PATCHES_TIMEOUT_MS = 45_000;
+
         try
         {
-            var output = RunPs(@"
+            var ps = RunPsWithTimeout(@"
 $session = New-Object -ComObject Microsoft.Update.Session
 $searcher = $session.CreateUpdateSearcher()
 $total = $searcher.GetTotalHistoryCount()
@@ -513,53 +576,157 @@ foreach ($entry in $history) {
 # ISO-8601 UTC.
 $items = $items | Sort-Object -Property installedOn -Descending
 $items | ConvertTo-Json -Depth 4
-");
+", PATCHES_TIMEOUT_MS);
 
-            var items = ParseJsonArray(output);
+            if (ps.TimedOut)
+            {
+                // 45 seconds wasn't enough — wuauserv is degraded, WSUS
+                // pointer is unreachable, or the host has truly massive
+                // history. Record the failure for the top-level
+                // collectorError and try the fast fallback so we at
+                // least ship SOMETHING. The fallback (Get-HotFix)
+                // returns a subset of installed updates (no cumulative
+                // rollups) but enough for the UI to render a non-empty
+                // "Last patch" date — far better than a 0/unknown
+                // regression.
+                RecordSectionError(
+                    "patches",
+                    "powershell_timeout",
+                    $"Microsoft.Update.Session.QueryHistory exceeded {PATCHES_TIMEOUT_MS / 1000}s"
+                );
+                return TryPatchesFallback();
+            }
+
+            var items = ParseJsonArray(ps.Stdout);
             var nowUtc = DateTime.UtcNow.ToString("O");
 
             return new
             {
-                status = items.Count > 0 ? "present" : "unknown",
+                status = items.Count > 0 ? "present" : "empty",
                 count = items.Count,
                 lastScanUtc = nowUtc,
                 items
             };
         }
-        catch
+        catch (Exception ex)
         {
-            // Fall back to Get-HotFix on COM failures (e.g. WUA service
-            // disabled / COM objects unavailable). Better to show a partial
-            // list than nothing at all.
-            try
+            RecordSectionError(
+                "patches",
+                "wua_com_exception",
+                ex.Message ?? "Microsoft.Update.Session COM call threw"
+            );
+            return TryPatchesFallback();
+        }
+    }
+
+    private static object TryPatchesFallback()
+    {
+        // Fall back to Get-HotFix on COM failures (e.g. WUA service
+        // disabled, COM objects unavailable, Microsoft.Update.Session
+        // timed out). It's a strict subset of the WU history (Get-HotFix
+        // misses cumulative updates installed via CBS — which is most of
+        // modern Patch Tuesday) but better than reporting nothing.
+        try
+        {
+            var fb = RunPsWithTimeout(
+                "Get-HotFix | Where-Object { $_.HotFixID -match '^KB' -and ($_.Description -match 'Security|Update|Hotfix') } | Sort-Object InstalledOn -Descending | Select-Object HotFixID, Description, InstalledBy, InstalledOn | ConvertTo-Json -Depth 4",
+                DEFAULT_PS_TIMEOUT_MS
+            );
+
+            if (fb.TimedOut)
             {
-                var fallback = RunPs(
-                    "Get-HotFix | Where-Object { $_.HotFixID -match '^KB' -and ($_.Description -match 'Security|Update|Hotfix') } | Sort-Object InstalledOn -Descending | Select-Object HotFixID, Description, InstalledBy, InstalledOn | ConvertTo-Json -Depth 4"
+                RecordSectionError(
+                    "patches",
+                    "fallback_timeout",
+                    $"Get-HotFix fallback exceeded {DEFAULT_PS_TIMEOUT_MS / 1000}s"
                 );
-                var fbItems = ParseJsonArray(fallback);
-                return new
-                {
-                    status = fbItems.Count > 0 ? "present" : "unknown",
-                    count = fbItems.Count,
-                    lastScanUtc = DateTime.UtcNow.ToString("O"),
-                    source = "get_hotfix_fallback",
-                    items = fbItems
-                };
-            }
-            catch
-            {
                 return new
                 {
                     status = "unknown",
                     count = 0,
                     lastScanUtc = DateTime.UtcNow.ToString("O"),
+                    source = "fallback_timeout",
                     items = Array.Empty<object>()
                 };
             }
+
+            var fbItems = ParseJsonArray(fb.Stdout);
+            return new
+            {
+                status = fbItems.Count > 0 ? "present" : "unknown",
+                count = fbItems.Count,
+                lastScanUtc = DateTime.UtcNow.ToString("O"),
+                source = "get_hotfix_fallback",
+                items = fbItems
+            };
+        }
+        catch (Exception ex)
+        {
+            RecordSectionError(
+                "patches",
+                "fallback_exception",
+                ex.Message ?? "Get-HotFix fallback threw"
+            );
+            return new
+            {
+                status = "unknown",
+                count = 0,
+                lastScanUtc = DateTime.UtcNow.ToString("O"),
+                items = Array.Empty<object>()
+            };
         }
     }
 
+    private sealed class PsResult
+    {
+        public string Stdout { get; init; } = "";
+        public string Stderr { get; init; } = "";
+        public bool TimedOut { get; init; }
+        public int? ExitCode { get; init; }
+    }
+
+    // Default per-PowerShell timeout. Most of our compliance scripts
+    // return in well under 5 seconds; 15s covers the slow outliers like
+    // `Get-NetFirewallProfile` on a fresh boot or `Get-BitLockerVolume`
+    // on a host with several encrypted volumes. The patches collector
+    // overrides this — see `RunPsWithTimeout` callers below.
+    private const int DEFAULT_PS_TIMEOUT_MS = 15_000;
+
+    // ── PowerShell launcher with a hard timeout ────────────────────
+    //
+    // The legacy `RunPs(cmd)` API returned `stdout` and silently
+    // dropped any indication that the script had timed out. Worse,
+    // it called `ReadToEnd()` BEFORE `WaitForExit(15000)` — which
+    // means the read blocks until stdout closes (i.e. the PS process
+    // exits naturally). The 15s WaitForExit was effectively dead code:
+    // by the time we reached it, ReadToEnd had already waited as long
+    // as PowerShell wanted to take. A single slow
+    // `Microsoft.Update.Session.QueryHistory()` call would freeze the
+    // whole SecurityCompliance.Handle() pipeline for 40-60s, which is
+    // exactly what we observed against DESKTOP-9G467VM (intermittent
+    // 30s+ scans, agent-side IPC timeout, dashboard regressing to
+    // "Last patch = unknown").
+    //
+    // The new shape:
+    //   * BeginOutputReadLine / BeginErrorReadLine drains stdout +
+    //     stderr asynchronously into buffers so we can't deadlock
+    //     when the child fills its output pipe.
+    //   * WaitForExit(timeoutMs) is the actual bound. On timeout we
+    //     Kill the entire process tree (Kill(entireProcessTree:true)
+    //     covers any nested processes the script spawned —
+    //     `wmic`, `Get-HotFix`, etc).
+    //   * Returns a structured result so callers can distinguish
+    //     timeout from "ran clean but produced no output".
+    //
+    // RunPs (singular) is preserved as a thin shim over
+    // RunPsWithTimeout so existing call sites that don't care about
+    // timeouts keep their pre-fix behavior.
     private static string RunPs(string command)
+    {
+        return RunPsWithTimeout(command, DEFAULT_PS_TIMEOUT_MS).Stdout;
+    }
+
+    private static PsResult RunPsWithTimeout(string command, int timeoutMs)
     {
         var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
         var psi = new ProcessStartInfo("powershell",
@@ -572,19 +739,75 @@ $items | ConvertTo-Json -Depth 4
         };
 
         using var proc = Process.Start(psi);
-        if (proc == null) return "";
-
-        var stdout = proc.StandardOutput.ReadToEnd();
-        var stderr = proc.StandardError.ReadToEnd();
-
-        proc.WaitForExit(15000);
-
-        if (!string.IsNullOrWhiteSpace(stderr))
+        if (proc == null)
         {
-            Console.WriteLine($"[PrivSvc][SecurityCompliance] PowerShell stderr: {stderr}");
+            return new PsResult { TimedOut = false, ExitCode = null };
         }
 
-        return stdout;
+        var stdoutBuf = new StringBuilder();
+        var stderrBuf = new StringBuilder();
+
+        proc.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data is not null) stdoutBuf.AppendLine(e.Data);
+        };
+        proc.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data is not null) stderrBuf.AppendLine(e.Data);
+        };
+
+        proc.BeginOutputReadLine();
+        proc.BeginErrorReadLine();
+
+        var exited = proc.WaitForExit(timeoutMs);
+
+        if (!exited)
+        {
+            // Hard kill. entireProcessTree=true reaches any nested
+            // helpers the script spawned (Get-HotFix → wmic, etc).
+            try
+            {
+                proc.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // Best effort; if the kill itself fails the child will
+                // be reaped when its handles drop.
+            }
+
+            // Give async readers a brief grace window to drain
+            // whatever made it onto stdout/stderr before the kill —
+            // useful for forensics ("did the script even start?").
+            proc.WaitForExit(500);
+
+            var stderrText = stderrBuf.ToString();
+            if (!string.IsNullOrWhiteSpace(stderrText))
+            {
+                Console.WriteLine($"[PrivSvc][SecurityCompliance] PowerShell stderr (timed out): {stderrText}");
+            }
+
+            return new PsResult
+            {
+                Stdout = stdoutBuf.ToString(),
+                Stderr = stderrText,
+                TimedOut = true,
+                ExitCode = null
+            };
+        }
+
+        var stderrFinal = stderrBuf.ToString();
+        if (!string.IsNullOrWhiteSpace(stderrFinal))
+        {
+            Console.WriteLine($"[PrivSvc][SecurityCompliance] PowerShell stderr: {stderrFinal}");
+        }
+
+        return new PsResult
+        {
+            Stdout = stdoutBuf.ToString(),
+            Stderr = stderrFinal,
+            TimedOut = false,
+            ExitCode = proc.ExitCode
+        };
     }
 
     private static Dictionary<string, object> ParseJsonObject(string output)

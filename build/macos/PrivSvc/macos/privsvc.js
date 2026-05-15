@@ -25616,11 +25616,135 @@ async function handlePatchInstall(req) {
 }
 
 // privsvc/macos/src/pmp-remediation.ts
+var import_child_process3 = require("child_process");
+var import_util3 = require("util");
+var execFileAsync3 = (0, import_util3.promisify)(import_child_process3.execFile);
+var HANDLER_TIMEOUT_MS = 1e4;
+async function runCmd(bin, args, timeoutMs = HANDLER_TIMEOUT_MS) {
+  try {
+    const { stdout, stderr } = await execFileAsync3(bin, args, { timeout: timeoutMs });
+    return { stdout: stdout || "", stderr: stderr || "", code: 0 };
+  } catch (err) {
+    const isTimeout = err?.killed === true && err?.signal === "SIGTERM";
+    return {
+      stdout: err?.stdout || "",
+      stderr: err?.stderr || "",
+      code: isTimeout ? 124 : typeof err?.code === "number" ? err.code : 1
+    };
+  }
+}
+function excerpt(s, max = 1024) {
+  if (!s) return "";
+  const trimmed = s.trim();
+  return trimmed.length > max ? trimmed.slice(0, max) + "...[truncated]" : trimmed;
+}
+var ALF_PATH = "/usr/libexec/ApplicationFirewall/socketfilterfw";
+async function readMacFirewall() {
+  const r = await runCmd(ALF_PATH, ["--getglobalstate"]);
+  const match = r.stdout.match(/State\s*=\s*(\d+)/i);
+  const stateNum = match ? Number(match[1]) : null;
+  const enabled = stateNum !== null && stateNum >= 1;
+  return {
+    state: {
+      enabled,
+      stateValue: stateNum,
+      raw: excerpt(r.stdout, 256)
+    },
+    isCompliant: enabled
+  };
+}
+async function remediateMacFirewall() {
+  const start = Date.now();
+  const r = await runCmd(ALF_PATH, ["--setglobalstate", "on"]);
+  return {
+    exitCode: r.code,
+    stderrExcerpt: r.code === 0 ? void 0 : excerpt(r.stderr),
+    durationMs: Date.now() - start,
+    requiresReboot: false,
+    changesApplied: r.code === 0 ? ["alf:globalstate=on"] : []
+  };
+}
+async function readMacGatekeeper() {
+  const r = await runCmd("/usr/sbin/spctl", ["--status"]);
+  const enabled = /assessments\s+enabled/i.test(r.stdout);
+  return {
+    state: {
+      enabled,
+      raw: excerpt(r.stdout, 256)
+    },
+    isCompliant: enabled
+  };
+}
+async function remediateMacGatekeeper() {
+  const start = Date.now();
+  const r = await runCmd("/usr/sbin/spctl", ["--master-enable"]);
+  return {
+    exitCode: r.code,
+    stderrExcerpt: r.code === 0 ? void 0 : excerpt(r.stderr),
+    durationMs: Date.now() - start,
+    requiresReboot: false,
+    changesApplied: r.code === 0 ? ["spctl:--master-enable"] : []
+  };
+}
+async function readMacRemoteLogin() {
+  const r = await runCmd("/usr/sbin/systemsetup", ["-getremotelogin"]);
+  const onMatch = /Remote\s+Login:\s*On\b/i.test(r.stdout);
+  const offMatch = /Remote\s+Login:\s*Off\b/i.test(r.stdout);
+  return {
+    state: {
+      enabled: onMatch ? true : offMatch ? false : null,
+      raw: excerpt(r.stdout, 256)
+    },
+    isCompliant: offMatch
+    // policy is "remote login DISABLED"
+  };
+}
+async function remediateMacRemoteLogin() {
+  const start = Date.now();
+  const r = await runCmd("/usr/sbin/systemsetup", ["-f", "-setremotelogin", "off"]);
+  return {
+    exitCode: r.code,
+    stderrExcerpt: r.code === 0 ? void 0 : excerpt(r.stderr),
+    durationMs: Date.now() - start,
+    requiresReboot: false,
+    changesApplied: r.code === 0 ? ["systemsetup:remotelogin=off"] : []
+  };
+}
+async function readMacSip() {
+  const r = await runCmd("/usr/bin/csrutil", ["status"]);
+  const enabled = /enabled\.?/i.test(r.stdout) && !/disabled/i.test(r.stdout);
+  return {
+    state: {
+      enabled,
+      raw: excerpt(r.stdout, 256)
+    },
+    isCompliant: enabled
+  };
+}
+async function readMacFileVault() {
+  const r = await runCmd("/usr/bin/fdesetup", ["status"]);
+  const on = /FileVault\s+is\s+On\b/i.test(r.stdout);
+  const off = /FileVault\s+is\s+Off\b/i.test(r.stdout);
+  return {
+    state: {
+      enabled: on ? true : off ? false : null,
+      raw: excerpt(r.stdout, 256)
+    },
+    isCompliant: on
+  };
+}
 var READ_HANDLERS = {
-  // Phase 2 entries land here.
+  "macos.firewall.enabled": readMacFirewall,
+  "macos.gatekeeper.enabled": readMacGatekeeper,
+  "macos.remote_login.disabled": readMacRemoteLogin,
+  "macos.sip.enabled": readMacSip,
+  "macos.filevault.enabled": readMacFileVault
 };
 var REMEDIATE_HANDLERS = {
-  // Phase 2 entries land here.
+  "macos.firewall.enabled": remediateMacFirewall,
+  "macos.gatekeeper.enabled": remediateMacGatekeeper,
+  "macos.remote_login.disabled": remediateMacRemoteLogin
+  // sip / filevault intentionally omitted — see file header.
 };
 async function handlePmpReadCheckState(req) {
   const checkId = String(req.params?.checkId || "").trim();
@@ -25633,7 +25757,7 @@ async function handlePmpReadCheckState(req) {
     return fail(req.id, "unsupported_check", `no read handler for checkId ${checkId} on macOS`);
   }
   try {
-    const result = await handler(req.params || {});
+    const result = await handler();
     return success(req.id, {
       state: result.state,
       isCompliant: result.isCompliant === true,
@@ -25658,7 +25782,7 @@ async function handlePmpRemediate(req) {
     return fail(req.id, "unsupported_check", `no remediation handler for checkId ${checkId} on macOS`);
   }
   try {
-    const result = await handler(req.params || {});
+    const result = await handler();
     return success(req.id, {
       exitCode: result.exitCode,
       stderrExcerpt: result.stderrExcerpt ?? null,
@@ -25679,12 +25803,12 @@ async function handlePmpRemediate(req) {
 }
 
 // privsvc/macos/src/security-posture.ts
-var import_child_process3 = require("child_process");
-var import_util3 = require("util");
-var execFileAsync3 = (0, import_util3.promisify)(import_child_process3.execFile);
+var import_child_process4 = require("child_process");
+var import_util4 = require("util");
+var execFileAsync4 = (0, import_util4.promisify)(import_child_process4.execFile);
 async function run2(command, args, timeout = 5e3) {
   try {
-    const { stdout, stderr } = await execFileAsync3(command, args, { timeout, maxBuffer: 8 * 1024 * 1024 });
+    const { stdout, stderr } = await execFileAsync4(command, args, { timeout, maxBuffer: 8 * 1024 * 1024 });
     return {
       output: `${stdout || ""}${stderr || ""}`.trim(),
       ok: true
@@ -26139,12 +26263,12 @@ async function handleSecurityPosture(req) {
 }
 
 // privsvc/macos/src/sdp.ts
-var import_child_process4 = require("child_process");
-var import_util4 = require("util");
+var import_child_process5 = require("child_process");
+var import_util5 = require("util");
 var import_crypto3 = __toESM(require("crypto"));
 var import_fs4 = __toESM(require("fs"));
 var import_path4 = __toESM(require("path"));
-var execFileAsync4 = (0, import_util4.promisify)(import_child_process4.execFile);
+var execFileAsync5 = (0, import_util5.promisify)(import_child_process5.execFile);
 var STAGING_DIR = import_path4.default.join(DATA_DIR, "sdp-staging");
 var STAGING_TTL_MS = 24 * 60 * 60 * 1e3;
 var MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024;
@@ -26208,7 +26332,7 @@ function meetsMinVersion(installed, minVersion) {
 async function detectBundleVersion(rule) {
   let paths = [];
   try {
-    const { stdout } = await execFileAsync4(
+    const { stdout } = await execFileAsync5(
       "/usr/bin/mdfind",
       [`kMDItemCFBundleIdentifier == '${rule.bundleId.replace(/'/g, "")}'`],
       { timeout: 15e3, maxBuffer: 1024 * 1024 }
@@ -26223,7 +26347,7 @@ async function detectBundleVersion(rule) {
       for (const app of apps) {
         const plistPath2 = `/Applications/${app}/Contents/Info.plist`;
         try {
-          const { stdout } = await execFileAsync4(
+          const { stdout } = await execFileAsync5(
             "/usr/bin/defaults",
             ["read", plistPath2, "CFBundleIdentifier"],
             { timeout: 5e3 }
@@ -26248,7 +26372,7 @@ async function detectBundleVersion(rule) {
   let installed = "";
   for (const key of ["CFBundleShortVersionString", "CFBundleVersion"]) {
     try {
-      const { stdout } = await execFileAsync4(
+      const { stdout } = await execFileAsync5(
         "/usr/bin/defaults",
         ["read", plistPath, key],
         { timeout: 5e3 }
@@ -26275,7 +26399,7 @@ async function detectBundleVersion(rule) {
 }
 async function detectPkgReceipt(rule) {
   try {
-    const { stdout } = await execFileAsync4(
+    const { stdout } = await execFileAsync5(
       "/usr/sbin/pkgutil",
       ["--pkg-info", rule.pkgId],
       { timeout: 1e4, maxBuffer: 1024 * 1024 }
@@ -26322,7 +26446,7 @@ async function detectCommandExit(rule) {
   let stdout = "";
   let stderr = "";
   try {
-    const result = await execFileAsync4(rule.cmd, rule.args ?? [], {
+    const result = await execFileAsync5(rule.cmd, rule.args ?? [], {
       timeout: 15e3,
       maxBuffer: 256 * 1024
     });
@@ -26460,7 +26584,7 @@ async function handleSdpDownload(req) {
   ];
   const downloadStart = Date.now();
   try {
-    await execFileAsync4("/usr/bin/curl", curlArgs, {
+    await execFileAsync5("/usr/bin/curl", curlArgs, {
       timeout: (timeoutSeconds + 30) * 1e3,
       // curl is silent on success, so its stdout/stderr buffer is small.
       maxBuffer: 1024 * 1024
@@ -26522,7 +26646,7 @@ async function handleSdpDownload(req) {
 async function runPkgInstaller(stagingPath, timeoutSeconds) {
   const start = Date.now();
   try {
-    const { stdout, stderr } = await execFileAsync4(
+    const { stdout, stderr } = await execFileAsync5(
       "/usr/sbin/installer",
       ["-pkg", stagingPath, "-target", "/"],
       { timeout: timeoutSeconds * 1e3, maxBuffer: 8 * 1024 * 1024 }
@@ -26548,7 +26672,7 @@ async function runDmgInstaller(stagingPath, timeoutSeconds) {
   let mountPoint = null;
   try {
     const attachStart = Date.now();
-    const { stdout: attachOut } = await execFileAsync4(
+    const { stdout: attachOut } = await execFileAsync5(
       "/usr/bin/hdiutil",
       [
         "attach",
@@ -26582,7 +26706,7 @@ async function runDmgInstaller(stagingPath, timeoutSeconds) {
     try {
       const st = import_fs4.default.statSync(targetApp);
       if (st.isDirectory()) {
-        await execFileAsync4("/bin/rm", ["-rf", targetApp], {
+        await execFileAsync5("/bin/rm", ["-rf", targetApp], {
           timeout: 6e4,
           maxBuffer: 1024 * 1024
         });
@@ -26590,7 +26714,7 @@ async function runDmgInstaller(stagingPath, timeoutSeconds) {
     } catch {
     }
     const remainingMs = Math.max(6e4, timeoutSeconds * 1e3 - (Date.now() - start));
-    const { stdout, stderr } = await execFileAsync4(
+    const { stdout, stderr } = await execFileAsync5(
       "/usr/bin/ditto",
       [sourceApp, targetApp],
       { timeout: remainingMs, maxBuffer: 8 * 1024 * 1024 }
@@ -26612,7 +26736,7 @@ async function runDmgInstaller(stagingPath, timeoutSeconds) {
   } finally {
     if (mountPoint) {
       try {
-        await execFileAsync4(
+        await execFileAsync5(
           "/usr/bin/hdiutil",
           ["detach", "-force", mountPoint],
           { timeout: 3e4, maxBuffer: 256 * 1024 }

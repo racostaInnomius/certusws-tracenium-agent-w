@@ -88,6 +88,36 @@ const ENTRIES: AgentCheckEntry[] = [
     checkId: "linux.firewall.enabled",
     applicableTo: new Set<CheckOsApplicability>(["linux"]),
   },
+
+  // ── macOS (Sprint 3 — A1) ───────────────────────────────────────
+  // Five checkIds implemented in privsvc/macos/src/pmp-remediation.ts.
+  // Three are read+remediate (firewall, gatekeeper, remote_login);
+  // two are read-only (sip, filevault) — sip can only be toggled
+  // from Recovery, and filevault enabling requires interactive user
+  // auth which a daemon can't safely provide. The agent still
+  // whitelists all five here so the read-state path is reachable
+  // (the dashboard's posture timeline calls it to show "sip
+  // enabled / disabled" without invoking remediation).
+  {
+    checkId: "macos.firewall.enabled",
+    applicableTo: new Set<CheckOsApplicability>(["macos"]),
+  },
+  {
+    checkId: "macos.gatekeeper.enabled",
+    applicableTo: new Set<CheckOsApplicability>(["macos"]),
+  },
+  {
+    checkId: "macos.remote_login.disabled",
+    applicableTo: new Set<CheckOsApplicability>(["macos"]),
+  },
+  {
+    checkId: "macos.sip.enabled",
+    applicableTo: new Set<CheckOsApplicability>(["macos"]),
+  },
+  {
+    checkId: "macos.filevault.enabled",
+    applicableTo: new Set<CheckOsApplicability>(["macos"]),
+  },
 ];
 
 const BY_CHECK_ID: ReadonlyMap<string, AgentCheckEntry> = new Map(

@@ -634,9 +634,12 @@ export const macProvider = {
             deleteSoftwareByIds(deletes);
           }
 
+          // Phase B: drop items[] on delta sends. See windows.ts
+          // for the full rationale (~50 lines of context kept there
+          // to avoid triplicating it here).
           software = {
             count: deltaResult.currentCount,
-            items: apps,
+            items: undefined,
             delta: deltaResult.delta,
             hasChanges: true
           };
