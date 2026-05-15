@@ -637,6 +637,54 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       }
     }
 
+    case "reset_baseline": {
+      // M1 (cold-projection recovery): the backend asks us to drop
+      // the local namespace-hash cache so the next compliance tick
+      // re-sends a full baseline snapshot instead of another delta.
+      // The backend dispatches this when its projection table
+      // (software_current_app today; pmp/scp tables could follow
+      // the same pattern) is empty for this device but the agent is
+      // sending deltas — a divergence we want to self-heal rather
+      // than wait for manual operator intervention.
+      const namespace = String(payload?.namespace || "").trim().toLowerCase();
+      if (namespace !== "amp") {
+        // Only "amp" is wired today (it's the only namespace with a
+        // delta protocol). Others reject cleanly so a future
+        // backend that dispatches a different namespace gets a
+        // recognizable error in audit instead of silent acceptance.
+        return {
+          status: 2,
+          message: `reset_baseline rejected: unsupported namespace "${namespace}"`,
+        };
+      }
+      const stateKey = `namespaceHash:${namespace}`;
+      try {
+        // outbox.deleteState() with a falsy default. The actual
+        // behavior of "clear" we want is: forget the prior hash so
+        // the next collect pass sees `previousHash !== currentHash`
+        // and enqueues. setState("") is equivalent — empty string
+        // can't match any sha256 output.
+        outbox.setState(stateKey, "");
+        ctx.logger?.warn?.("[reset_baseline] cleared namespace hash, next compliance tick will re-send baseline", {
+          namespace,
+          stateKey,
+        });
+        return {
+          status: 0,
+          message: `reset_baseline:cleared:${namespace}`,
+        };
+      } catch (err: any) {
+        ctx.logger?.error?.("[reset_baseline] failed to clear state", {
+          namespace,
+          error: err?.message || String(err),
+        });
+        return {
+          status: 1,
+          message: `reset_baseline:state_write_failed:${err?.message || "unknown"}`,
+        };
+      }
+    }
+
     case "agent_update": {
       const version = String(payload?.version || runJob?.version || "").trim();
       if (!version) {

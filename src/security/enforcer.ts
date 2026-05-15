@@ -183,6 +183,17 @@ const SECURITY_CAPABILITY_REMEDIATORS: RemediatorEntry[] = [
     policyHasValue: (cap) => typeof cap?.required === "boolean",
     desiredEqual: (cap) => cap?.required === true,
   },
+  {
+    // macOS handler lives in privsvc/macos/src/pmp-remediation.ts
+    // (`macos.firewall.enabled`) — read state via socketfilterfw,
+    // remediate via `socketfilterfw --setglobalstate on`. No reboot.
+    capability: "firewall",
+    subfield: "required",
+    checkId: "macos.firewall.enabled",
+    oses: ["darwin"],
+    policyHasValue: (cap) => typeof cap?.required === "boolean",
+    desiredEqual: (cap) => cap?.required === true,
+  },
 
   // ── SSH (Linux only — Win/Mac don't have an SSH daemon in our
   //    target server posture; even when Windows runs OpenSSH Server,
