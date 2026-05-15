@@ -692,6 +692,33 @@ class Scheduler {
         scpEvidenceKeys
       });
 
+      // ── Sprint 2 of Policy v2: security enforcer pass ───────────
+      //
+      // Piggybacks on the compliance pipeline because:
+      //   1. We've just collected fresh SCP evidence; the enforcer's
+      //      read-state probes effectively re-confirm what the
+      //      collector saw, but on a per-checkId basis.
+      //   2. The compliance cadence (default 8h) matches the
+      //      right "how often should we re-check posture drift"
+      //      cadence too — every 30 min would hammer hosts, every
+      //      24h would be too lax to catch drift before audit.
+      //   3. The compliance gate (isComplianceEnabled +
+      //      pluginEnabled("scp")) is the same conceptual gate the
+      //      enforcer needs — there's no value enforcing posture
+      //      on a tenant that hasn't opted into compliance.
+      //
+      // The enforcer is fail-soft: any error inside swallows here
+      // so a busted privsvc call doesn't take down the compliance
+      // pipeline that just succeeded.
+      try {
+        const { runSecurityEnforce } = await import("../security/enforcer");
+        await runSecurityEnforce(ctx);
+      } catch (secErr: any) {
+        logger.warn("Security enforce pass failed (non-fatal)", {
+          error: secErr?.message || String(secErr),
+        });
+      }
+
     } catch (err) {
 
       logger.error("Compliance pipeline failed", { err });

@@ -84,6 +84,95 @@ export type RuntimePolicy = {
       selfUpdate?: boolean;
     };
   };
+
+  // Policy v2 — Security Policy block (Sprint 2). Declares desired
+  // posture for capabilities the agent can already CHECK (SCP
+  // collectors) and OPTIONALLY enforce (pmp.remediate handlers).
+  //
+  // Per-capability `mode`:
+  //   "auto"        : enforcer remediates on drift (only valid for
+  //                   capabilities backed by a working pmp.remediate
+  //                   handler — see SECURITY_CAPABILITY_REMEDIATORS
+  //                   in src/security/enforcer.ts).
+  //   "report-only" : enforcer reads state, logs drift, never
+  //                   modifies the system. Default for every
+  //                   capability — operators must explicitly flip
+  //                   to "auto" per-item.
+  //   "off"         : enforcer skips the capability entirely. The
+  //                   SCP collector still reports raw evidence, but
+  //                   the policy field is treated as "no opinion".
+  //
+  // Capabilities without an existing remediator (passwordPolicy,
+  // bitlocker, usb, shares, localAccounts) are accepted in the
+  // schema as placeholders. Setting mode="auto" on those is a no-op
+  // until a future sprint ships the corresponding handlers — the
+  // enforcer logs a debug line and moves on.
+  security?: SecurityPolicy;
+};
+
+export type SecurityMode = "auto" | "report-only" | "off";
+
+export type SecurityPolicy = {
+  // Version of the security policy CATALOG the operator authored
+  // against. Independent from the top-level policy `version` —
+  // lets us bump the security schema (add fields, change defaults)
+  // without invalidating every existing policy document.
+  version?: string;
+
+  // Default mode applied to capabilities that have a desired value
+  // set but no explicit `mode`. Useful for a "fail-safe" override:
+  // setting defaultMode="off" disables ALL security enforcement
+  // even if individual capabilities are configured.
+  defaultMode?: SecurityMode;
+
+  // ── Functional (have an existing pmp.remediate handler) ─────────
+
+  firewall?: {
+    mode?: SecurityMode;
+    required?: boolean;
+  };
+
+  ssh?: {
+    mode?: SecurityMode;
+    permitRootLogin?: "yes" | "no";       // → linux.ssh.root_login_disabled
+    passwordAuthentication?: boolean;     // → linux.ssh.password_auth_disabled
+    weakKexDisabled?: boolean;            // → linux.cryptography.weak_ssh_kex_disabled
+  };
+
+  tls?: {
+    mode?: SecurityMode;
+    legacyDisabled?: boolean;             // → windows.cryptography.legacy_tls_disabled
+    weakCiphersDisabled?: boolean;        // → windows.cryptography.weak_ciphers_disabled
+  };
+
+  smb?: {
+    mode?: SecurityMode;
+    smbv1Disabled?: boolean;              // → windows.network_sharing.smbv1_disabled
+  };
+
+  // ── Placeholders (SCP collector exists, no remediator yet) ──────
+
+  passwordPolicy?: {
+    mode?: SecurityMode;
+    passMaxDaysMax?: number;       // CIS recommends ≤ 365
+    encryptMethod?: string;        // e.g. "SHA512" / "YESCRYPT"
+  };
+
+  bitlocker?: {
+    mode?: SecurityMode;
+    required?: boolean;
+  };
+
+  usb?: {
+    mode?: SecurityMode;
+    blocklist?: string[];          // VID:PID entries
+    allowlist?: string[];
+  };
+
+  shares?: {
+    mode?: SecurityMode;
+    denyEveryoneFullControl?: boolean;
+  };
 };
 
 type RuntimeModuleName = keyof NonNullable<RuntimePolicy["modules"]>;
@@ -104,6 +193,71 @@ function stripDroppedFeatures(input: Record<string, unknown>): Record<string, un
   for (const [k, v] of Object.entries(input)) {
     if (!DROPPED_FEATURE_NAMES.has(k)) out[k] = v;
   }
+  return out;
+}
+
+// Allowed values for SecurityPolicy.*.mode and .defaultMode. Anything
+// outside this set is clamped to "report-only" — the safe choice
+// (read state, never modify the system). Centralized constant so the
+// enforcer and the validator agree on what's recognized.
+const SECURITY_VALID_MODES = new Set<string>(["auto", "report-only", "off"]);
+
+// Capability keys we recognize on the wire. Unknown keys (typo,
+// forward-compat from a newer backend) are silently dropped at parse
+// time so the enforcer never iterates garbage.
+const SECURITY_KNOWN_CAPABILITIES = new Set<string>([
+  "firewall",
+  "ssh",
+  "tls",
+  "smb",
+  "passwordPolicy",
+  "bitlocker",
+  "usb",
+  "shares"
+]);
+
+function coerceMode(raw: unknown): SecurityMode {
+  if (typeof raw === "string" && SECURITY_VALID_MODES.has(raw)) {
+    return raw as SecurityMode;
+  }
+  return "report-only";
+}
+
+// Validate + normalize the security block. Always returns a NEW
+// object even if input was already clean — keeps the caller's
+// reference-equality semantics predictable when policyChanged fires.
+function sanitizeSecurityPolicy(input: any, logger: any): SecurityPolicy {
+  if (!input || typeof input !== "object") {
+    return { defaultMode: "report-only" };
+  }
+  const out: SecurityPolicy = {
+    version: typeof input.version === "string" ? input.version : undefined,
+    defaultMode: coerceMode(input.defaultMode),
+  };
+
+  for (const [k, v] of Object.entries(input)) {
+    if (k === "version" || k === "defaultMode") continue;
+    if (!SECURITY_KNOWN_CAPABILITIES.has(k)) {
+      logger?.debug?.("security policy: dropping unknown capability", { capability: k });
+      continue;
+    }
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+
+    // Generic per-capability sanitizer: keep recognized fields,
+    // clamp `mode` to the enum, leave everything else as-is.
+    // Capability-specific value validation (e.g. "permitRootLogin
+    // must be 'yes' or 'no'") would force a per-capability switch
+    // here — we punt that to the backend validator + the enforcer,
+    // since both are better-equipped to surface validation errors
+    // back to the operator. Agent-side we just keep the field
+    // alive so the enforcer can decide.
+    const sanitized: any = { ...(v as object) };
+    if ("mode" in sanitized) {
+      sanitized.mode = coerceMode(sanitized.mode);
+    }
+    (out as any)[k] = sanitized;
+  }
+
   return out;
 }
 
@@ -190,6 +344,21 @@ export class PolicyRuntime extends EventEmitter {
     return this.policy.update?.intervalSeconds || DEFAULT_POLICY.update!.intervalSeconds!;
   }
 
+  // Returns the security policy block, or null if the operator hasn't
+  // authored one. Callers (the security enforcer in src/security/
+  // enforcer.ts) treat null as "no security policy active — skip the
+  // entire enforcement pipeline".
+  //
+  // We don't merge in defaults here because security capabilities are
+  // OPT-IN: an unset capability means "no opinion", which is
+  // semantically different from "default value applied". The
+  // enforcer handles the per-capability default-mode resolution
+  // (combining `security.defaultMode` with each capability's own
+  // `mode`).
+  getSecurityPolicy(): SecurityPolicy | null {
+    return this.policy.security ?? null;
+  }
+
   getEnabledPlugins(): string[] {
     return this.policy.plugins?.enabled || DEFAULT_POLICY.plugins!.enabled!;
   }
@@ -251,6 +420,7 @@ export class PolicyRuntime extends EventEmitter {
     this.emit("pluginsChanged", this.getEnabledPlugins());
     this.emit("modulesChanged", this.listEnabledModules());
     this.emit("featuresChanged", this.policy.features);
+    this.emit("securityPolicyChanged", this.getSecurityPolicy());
   }
 
   // ---------- validation ----------
@@ -320,6 +490,16 @@ export class PolicyRuntime extends EventEmitter {
       ...(fromAgent.features ? stripDroppedFeatures(fromAgent.features) : {})
     };
 
+    // Security block — accept as-is for fields we recognize, drop
+    // unknown keys. We validate cheaply: every capability sub-object
+    // gets its `mode` clamped to the allowed enum, and unknown
+    // capabilities (e.g. a typo or a future field arriving at an
+    // older agent) are silently dropped so they don't surface as
+    // garbage in `snapshot()`.
+    const mergedSecurity = policy.security !== undefined
+      ? sanitizeSecurityPolicy(policy.security, this.logger)
+      : undefined;
+
     const validated: RuntimePolicy = {
       version: policy.version,
       inventory: mergedInventory,
@@ -328,7 +508,8 @@ export class PolicyRuntime extends EventEmitter {
       update: mergedUpdate,
       plugins: mergedPlugins,
       modules: mergedModules,
-      features: mergedFeatures
+      features: mergedFeatures,
+      security: mergedSecurity
     };
 
     // validate inventory
