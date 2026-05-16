@@ -1,90 +1,522 @@
-name: Build & Release Tracenium Agent
+# .github/workflows/release.yml
+#
+# Build all five Tracenium Agent installers on push to `main` and
+# publish them to Azure Blob Storage. The branch hygiene gate is at
+# the merge boundary: developers work on `Package-Prepare`, and a
+# manual PR / merge to `main` is what triggers a release.
+#
+# ────────────────────────────────────────────────────────────────────
+# Required GitHub Secrets (Repo Settings → Secrets and variables → Actions)
+# ────────────────────────────────────────────────────────────────────
+#
+# Azure (service-principal auth via client secret):
+#   AZURE_TENANT_ID                  (uuid; non-secret, public)
+#   AZURE_CLIENT_ID                  (uuid of the App Registration that has
+#                                     both Trusted Signing signer perms AND
+#                                     "Storage Blob Data Contributor" on the
+#                                     cwsinveid storage account)
+#   AZURE_CLIENT_SECRET              (the rotated client secret from the
+#                                     App Registration's "Certificates &
+#                                     secrets" tab)
+#
+# macOS code signing + notarization:
+#   MACOS_CERT_P12_BASE64            (base64 of "Developer ID Application"
+#                                     .p12 export, including private key)
+#   MACOS_CERT_PASSWORD              (password used at .p12 export time)
+#   MACOS_KEYCHAIN_PASSWORD          (any random string; protects the
+#                                     ephemeral keychain we create in CI)
+#   ASC_KEY_P8_BASE64                (base64 of AuthKey_XXXXXX.p8 from
+#                                     App Store Connect)
+#   ASC_KEY_ID                       (10-char Key ID — printed in the
+#                                     keys list at appstoreconnect.apple.com)
+#   ASC_ISSUER_ID                    (UUID of the Apple Developer team —
+#                                     printed at top of the keys page)
+#
+# ────────────────────────────────────────────────────────────────────
+# One-time Azure RBAC setup
+# ────────────────────────────────────────────────────────────────────
+#
+# Roles on the App Registration's service principal:
+#   - "Trusted Signing Certificate Profile Signer" on CertusWS-Signing
+#     account → safecertus-cp-public profile
+#   - "Storage Blob Data Contributor" on the cwsinveid storage account
+#     (or just on the `tracenium` container, scoped down)
+#
+# Subscription resolution: we don't pass AZURE_SUBSCRIPTION_ID. The SP's
+# `az login --service-principal` selects its default subscription
+# automatically (works when the SP has access to exactly one). If you
+# add a second subscription later, this workflow needs an explicit
+# `az account set --subscription <id>` step before the blob upload.
+# ────────────────────────────────────────────────────────────────────
+
+name: Release
 
 on:
-  workflow_dispatch:
   push:
-    tags:
-      - "v*.*.*"
+    # Both branches trigger the 4 BUILD jobs. The `publish` job is
+    # gated below to run ONLY on `main` — that's the two-stage validation
+    # model:
+    #
+    #   1. push to Package-Prepare → builds + signs all 5 artifacts,
+    #      uploads as GitHub Actions artifacts (downloadable from the run
+    #      summary). NO blob upload. Operators install locally to verify.
+    #
+    #   2. merge Package-Prepare → main → same 4 builds, AND `publish`
+    #      job runs. Blobs replaced in Azure storage, agent metadata
+    #      endpoint reflects the new version.
+    #
+    # If you ever decide Package-Prepare is too noisy, drop it here.
+    branches: [main, Package-Prepare]
+  workflow_dispatch:    # manual fallback (e.g. re-release without a code change)
 
+# Service-principal auth uses a client secret (not OIDC), so we don't
+# need id-token: write. Conservative minimum here — we only READ the
+# repo contents, no commits or comments back.
 permissions:
-  contents: write
+  contents: read
+
+# Don't run two release builds in parallel for the same ref. The
+# publish step's blob upload is `--overwrite`, so a race would produce
+# garbled metadata on the latest blob. We let in-flight runs FINISH
+# (no cancel-in-progress) to avoid leaving partial uploads behind.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build on ${{ matrix.os }}
-    timeout-minutes: 60
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-
+  # ──────────────────────────────────────────────────────────────────
+  # prepare — resolve the version + node version ONCE, fan out
+  # ──────────────────────────────────────────────────────────────────
+  prepare:
+    name: Prepare release context
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.r.outputs.version }}
+      node_version: ${{ steps.r.outputs.node_version }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - id: r
+        name: Resolve version + node version
+        run: |
+          set -eu
+          version=$(jq -r .version package.json)
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "ERROR: package.json missing 'version' field" >&2
+            exit 1
+          fi
+          node_version=$(tr -d '[:space:]' < .nodeversion)
+          if [ -z "$node_version" ]; then
+            echo "ERROR: .nodeversion missing or empty" >&2
+            exit 1
+          fi
+          echo "version=$version"            | tee -a "$GITHUB_OUTPUT"
+          echo "node_version=$node_version"  | tee -a "$GITHUB_OUTPUT"
+
+  # ──────────────────────────────────────────────────────────────────
+  # linux — produces Tracenium-Agent-<v>-x64.{deb,rpm}
+  # ──────────────────────────────────────────────────────────────────
+  linux:
+    name: Build · Linux x64 (.deb + .rpm)
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ needs.prepare.outputs.node_version }}
+          cache: npm
 
-      - name: Create .env file
+      # nfpm packager isn't in apt; install from the GitHub release.
+      # Pinning to a known-good version — bump deliberately.
+      - name: Install nfpm
         run: |
-          echo "SERVER_BASE_URL=http://192.168.68.104:3000" > .env
-          echo "AGENT_ID=auto" >> .env
+          NFPM_VERSION=2.39.0
+          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_amd64.deb" -o /tmp/nfpm.deb
+          sudo dpkg -i /tmp/nfpm.deb
+          nfpm --version
 
-      # --------------------------
-      # WINDOWS FIXES
-      # --------------------------
-      - name: Clean npm cache (Windows)
-        if: matrix.os == 'windows-latest'
-        run: npm cache clean --force
+      - name: Install repo dependencies (host)
+        run: npm ci
 
-      - name: Clean node_modules (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          if (Test-Path node_modules) {
-            Remove-Item -Recurse -Force node_modules
-          }
-
-      # --------------------------
-      # INSTALL DEPENDENCIES
-      # --------------------------
-      - name: Install dependencies
-        run: npm install
-
-      # --------------------------
-      # LINUX BUILD DEPS
-      # --------------------------
-      - name: Install Linux build deps
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y rpm fakeroot dpkg
-
-      # --------------------------
-      # BUILD APP
-      # --------------------------
-      - name: Build App
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: npm run build
-
-      # --------------------------
-      # PUBLISH TO GITHUB RELEASES
-      # SOLO LINUX PUBLICA
-      # --------------------------
-      - name: Upload Release Artifacts
-        uses: softprops/action-gh-release@v2
-        if: matrix.os == 'ubuntu-latest' && startsWith(github.ref, 'refs/tags/')
+      # Cache the bundled node tarball + the staging node_modules across
+      # runs. Both are content-addressed by lockfile + .nodeversion, so
+      # the cache key invalidates automatically when either changes.
+      - name: Restore Linux build cache
+        uses: actions/cache@v4
         with:
-          draft: false
-          files: |
-            dist/*.msi
-            dist/*.pkg
-            dist/*.deb
-            dist/*.rpm
-            dist/*.zip
-            dist/*latest*.yml
+          path: |
+            build/.node-cache
+            build/linux/.node-cache
+            build/linux/staging/node_modules
+          key: linux-build-${{ needs.prepare.outputs.node_version }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Build .deb + .rpm
+        run: npm run pkg:linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: |
+            build/linux/pkg-out/Tracenium-Agent-${{ needs.prepare.outputs.version }}-x64.deb
+            build/linux/pkg-out/Tracenium-Agent-${{ needs.prepare.outputs.version }}-x64.rpm
+          retention-days: 14
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────
+  # macos — produces Tracenium-Agent-<v>-arm64.pkg
+  # Runs on macos-14 (Apple Silicon, Xcode pre-installed)
+  # ──────────────────────────────────────────────────────────────────
+  macos:
+    name: Build · macOS arm64 (.pkg)
+    needs: prepare
+    runs-on: macos-14
+    env:
+      TRACENIUM_AGENT_ARCH: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ needs.prepare.outputs.node_version }}
+          cache: npm
+
+      - name: Install repo dependencies (host)
+        run: npm ci
+
+      # ── Import code-signing identity into a temporary keychain ──
+      # We DON'T touch the default login.keychain. Everything we add
+      # goes into a per-run keychain that disappears with the runner.
+      - name: Import codesign identity
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD:   ${{ secrets.MACOS_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD:     ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          set -eu
+          KEYCHAIN_PATH="$RUNNER_TEMP/tracenium.keychain-db"
+
+          # Fresh keychain each run.
+          security create-keychain     -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600              "$KEYCHAIN_PATH"
+          security unlock-keychain     -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import cert + private key from the base64'd p12.
+          P12_PATH="$RUNNER_TEMP/cert.p12"
+          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > "$P12_PATH"
+          security import "$P12_PATH" \
+            -P "$MACOS_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+          rm -f "$P12_PATH"
+
+          # Add the new keychain to the search list so `codesign --sign
+          # "Developer ID Application: ..."` finds the identity.
+          existing=$(security list-keychains -d user | tr -d '"')
+          security list-keychain -d user -s $KEYCHAIN_PATH $existing
+
+          # Without this, macOS pops a UI prompt asking permission to
+          # use the key — which hangs the runner indefinitely.
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+
+          # Sanity-print which identities are now visible to codesign.
+          security find-identity -v -p codesigning
+
+      - name: Restore macOS build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/.node-cache
+          key: macos-arm64-${{ needs.prepare.outputs.node_version }}
+
+      - name: Build .pkg
+        # The script auto-resolves the codesign identity from the
+        # keychain (DEFAULT_CODESIGN_IDENTITY = "Developer ID Application:
+        # CERTUS ITM LLC (3CN673MCWH)"). Override path stays open via
+        # TRACENIUM_CODESIGN_IDENTITY env if the cert org changes.
+        run: npm run pkg:macos
+
+      # ── Notarize the .pkg so Gatekeeper accepts it without warning ──
+      - name: Notarize .pkg
+        env:
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          ASC_KEY_ID:        ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID:     ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -eu
+          KEY_PATH="$RUNNER_TEMP/asc.p8"
+          echo "$ASC_KEY_P8_BASE64" | base64 --decode > "$KEY_PATH"
+
+          PKG="build/pkg-out/Tracenium-Agent-${{ needs.prepare.outputs.version }}-arm64.pkg"
+          if [ ! -f "$PKG" ]; then
+            echo "ERROR: expected .pkg not produced: $PKG" >&2
+            ls -la build/pkg-out/ >&2
+            exit 1
+          fi
+
+          # --wait blocks until Apple's notary service finishes. Takes
+          # 1-5 min typically, can spike to 15 min on heavy days.
+          xcrun notarytool submit "$PKG" \
+            --key       "$KEY_PATH" \
+            --key-id    "$ASC_KEY_ID" \
+            --issuer    "$ASC_ISSUER_ID" \
+            --wait
+
+          rm -f "$KEY_PATH"
+
+          # Staple the notarization ticket so Gatekeeper finds it
+          # offline (no Apple round-trip on install).
+          xcrun stapler staple "$PKG"
+          xcrun stapler validate "$PKG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: build/pkg-out/Tracenium-Agent-${{ needs.prepare.outputs.version }}-arm64.pkg
+          retention-days: 14
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────
+  # windows-x64 — produces Tracenium-Agent-<v>-x64.msi (signed)
+  # ──────────────────────────────────────────────────────────────────
+  windows-x64:
+    name: Build · Windows x64 (.msi)
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ needs.prepare.outputs.node_version }}
+          architecture: x64
+          cache: npm
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install WiX 6
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 6.*
+          # WiX UI extension needs explicit add for v4+ command line.
+          # The script uses -ext WixToolset.UI.wixext / .Util.wixext;
+          # wix CLI resolves them via the NuGet feed at build time.
+          wix --version
+
+      - name: Install repo dependencies (host)
+        run: npm ci
+
+      - name: Restore Windows x64 build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/.node-cache
+          key: windows-x64-${{ needs.prepare.outputs.node_version }}
+
+      # Cross-compile .NET binaries. The .sh runs fine on Windows via
+      # Git Bash, which is preinstalled on windows-latest runners.
+      - name: Build .NET binaries (PrivSvc + AgentTray)
+        shell: bash
+        run: ONLY_X64=1 ./scripts/build-windows-binaries.sh
+
+      - name: Build AgentCore (x64 native — esbuild + node + better-sqlite3)
+        shell: pwsh
+        run: pwsh ./scripts/build-agentcore-windows.ps1 -Arch x64
+
+      - name: Build MSI
+        shell: pwsh
+        run: pwsh ./scripts/build-windows-msi.ps1 -Arch x64
+
+      # ── Sign MSI with Azure Trusted Signing ──
+      # The trusted-signing-action accepts SP credentials directly via
+      # azure-tenant-id / azure-client-id / azure-client-secret — no
+      # separate azure/login step needed.
+      - name: Sign MSI (Azure Trusted Signing)
+        uses: azure/trusted-signing-action@v0.5.9
+        with:
+          azure-tenant-id:              ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id:              ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret:          ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint:                     https://cus.codesigning.azure.net/
+          trusted-signing-account-name: CertusWS-Signing
+          certificate-profile-name:     safecertus-cp-public
+          files-folder:                 ${{ github.workspace }}\build\win-msi\x64
+          files-folder-filter:          msi
+          file-digest:                  SHA256
+          timestamp-rfc3161:            http://timestamp.acs.microsoft.com
+          timestamp-digest:             SHA256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: build/win-msi/x64/Tracenium-Agent-${{ needs.prepare.outputs.version }}-x64.msi
+          retention-days: 14
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────
+  # windows-arm64 — same flow as x64 but on ARM64 native runner
+  # NOTE: `windows-11-arm` was GA'd by GitHub in 2024-2025. If your
+  # org hasn't enabled ARM runners yet, this job will queue forever.
+  # Check: Org Settings → Actions → Runner groups → ARM-compatible.
+  # ──────────────────────────────────────────────────────────────────
+  windows-arm64:
+    name: Build · Windows arm64 (.msi)
+    needs: prepare
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ needs.prepare.outputs.node_version }}
+          architecture: arm64
+          cache: npm
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install WiX 6
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 6.*
+          wix --version
+
+      - name: Install repo dependencies (host)
+        run: npm ci
+
+      - name: Restore Windows arm64 build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/.node-cache
+          key: windows-arm64-${{ needs.prepare.outputs.node_version }}
+
+      - name: Build .NET binaries (PrivSvc + AgentTray)
+        shell: bash
+        run: ONLY_ARM64=1 ./scripts/build-windows-binaries.sh
+
+      - name: Build AgentCore (arm64 native — esbuild + node + better-sqlite3)
+        shell: pwsh
+        run: pwsh ./scripts/build-agentcore-windows.ps1 -Arch arm64
+
+      - name: Build MSI
+        shell: pwsh
+        run: pwsh ./scripts/build-windows-msi.ps1 -Arch arm64
+
+      - name: Sign MSI (Azure Trusted Signing)
+        uses: azure/trusted-signing-action@v0.5.9
+        with:
+          azure-tenant-id:              ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id:              ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret:          ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint:                     https://cus.codesigning.azure.net/
+          trusted-signing-account-name: CertusWS-Signing
+          certificate-profile-name:     safecertus-cp-public
+          files-folder:                 ${{ github.workspace }}\build\win-msi\arm64
+          files-folder-filter:          msi
+          file-digest:                  SHA256
+          timestamp-rfc3161:            http://timestamp.acs.microsoft.com
+          timestamp-digest:             SHA256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64
+          path: build/win-msi/arm64/Tracenium-Agent-${{ needs.prepare.outputs.version }}-arm64.msi
+          retention-days: 14
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────────────────────────
+  # publish — download all 5 artifacts and upload to Azure Blob.
+  #
+  # Gated to `main` only — Package-Prepare runs produce SIGNED artifacts
+  # downloadable from the Actions run (for validation install), but
+  # never touch the blob storage. Merge to `main` is the explicit
+  # promote-to-prod gesture.
+  #
+  # Also: needs every build job to succeed. If anyone fails, the
+  # release stays at the previous version — no partial publishes.
+  # ──────────────────────────────────────────────────────────────────
+  publish:
+    name: Publish to Azure Blob
+    if: github.ref == 'refs/heads/main'
+    needs: [prepare, linux, macos, windows-x64, windows-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+
+      # Re-stage downloaded artifacts into the layout publish-binaries.sh
+      # expects. Each upload-artifact above named the directory by job,
+      # so dl/{linux-x64,macos-arm64,windows-x64,windows-arm64} hold the
+      # respective files at their root.
+      - name: Stage artifacts into build/ layout
+        run: |
+          set -eu
+          V=${{ needs.prepare.outputs.version }}
+
+          mkdir -p build/pkg-out
+          mkdir -p build/linux/pkg-out
+          mkdir -p build/win-msi/x64
+          mkdir -p build/win-msi/arm64
+
+          cp "dl/macos-arm64/Tracenium-Agent-$V-arm64.pkg"     build/pkg-out/
+          cp "dl/linux-x64/Tracenium-Agent-$V-x64.deb"         build/linux/pkg-out/
+          cp "dl/linux-x64/Tracenium-Agent-$V-x64.rpm"         build/linux/pkg-out/
+          cp "dl/windows-x64/Tracenium-Agent-$V-x64.msi"       build/win-msi/x64/
+          cp "dl/windows-arm64/Tracenium-Agent-$V-arm64.msi"   build/win-msi/arm64/
+
+          echo "=== staged artifacts ==="
+          find build/pkg-out build/linux/pkg-out build/win-msi -type f -exec ls -lh {} \;
+
+      # `az login --service-principal` selects the SP's only-accessible
+      # subscription automatically. If you ever grant the SP access to
+      # multiple subscriptions, add `az account set --subscription <id>`
+      # immediately after.
+      - name: Azure login (service principal)
+        env:
+          AZURE_TENANT_ID:     ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID:     ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          az login --service-principal \
+            --tenant   "$AZURE_TENANT_ID" \
+            --username "$AZURE_CLIENT_ID" \
+            --password "$AZURE_CLIENT_SECRET" \
+            --output none
+          az account show --output table
+
+      - name: Publish all 5 artifacts to blob storage
+        env:
+          # publish-binaries.sh defaults to --auth-mode key (looks for a
+          # storage account key). In CI we use --auth-mode login so the
+          # OIDC-authenticated service principal's RBAC role
+          # (Storage Blob Data Contributor) is what authorizes uploads.
+          # No storage account keys in secrets.
+          TRACENIUM_AZ_AUTH_MODE: login
+          TRACENIUM_AGENT_VERSION: ${{ needs.prepare.outputs.version }}
+        run: ./scripts/publish-binaries.sh
+
+      - name: Print summary
+        run: |
+          V=${{ needs.prepare.outputs.version }}
+          echo "## Release $V published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Verify backend metadata:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          for p in "macos:arm64" "windows:arm64" "windows:x64" "linux:x64"; do
+            platform="${p%:*}"
+            arch="${p#*:}"
+            echo "curl -sS 'https://api.tracenium.com/api/v1/binaries/agent/metadata?platform=$platform&arch=$arch' | jq ." >> $GITHUB_STEP_SUMMARY
+          done
+          echo '```' >> $GITHUB_STEP_SUMMARY
