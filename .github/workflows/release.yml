@@ -75,13 +75,30 @@ on:
     #
     # If you ever decide Package-Prepare is too noisy, drop it here.
     branches: [main, Package-Prepare]
-  workflow_dispatch:    # manual fallback (e.g. re-release without a code change)
+  workflow_dispatch:
+    inputs:
+      strict_notarize:
+        description: "Fail if macOS notarization fails (default: false — ship signed-only pkg as fallback)"
+        type: boolean
+        default: false
+      force_rebuild:
+        description: "On main: ignore Package-Prepare artifact promotion and rebuild from scratch"
+        type: boolean
+        default: false
+      promote_run_id:
+        description: "On main: promote artifacts from this specific Package-Prepare run ID (overrides auto-detection)"
+        required: false
+        type: string
 
 # Service-principal auth uses a client secret (not OIDC), so we don't
-# need id-token: write. Conservative minimum here — we only READ the
-# repo contents, no commits or comments back.
+# need id-token: write. The other reads:
+#   - contents:  checkout, read package.json/.nodeversion
+#   - actions:   cross-run download-artifact (the `publish` job on main
+#                pulls artifacts from a previous Package-Prepare run
+#                instead of rebuilding — see `resolve` job)
 permissions:
   contents: read
+  actions: read
 
 # Opt all JavaScript-based actions (checkout, setup-node, upload-artifact,
 # download-artifact, cache, azure/login, etc.) onto Node 24 ahead of the
@@ -106,21 +123,56 @@ concurrency:
 
 jobs:
   # ──────────────────────────────────────────────────────────────────
-  # prepare — resolve the version + node version ONCE, fan out
+  # resolve — figure out version, node version, AND build_mode.
+  #
+  # build_mode controls whether the 4 build jobs run fresh or are
+  # skipped in favor of promoting artifacts from a prior Package-Prepare
+  # run. Two values:
+  #
+  #   "full"    — run all 4 build jobs. The publish job downloads
+  #               artifacts from THIS run.
+  #
+  #   "promote" — skip the 4 build jobs. The publish job downloads
+  #               artifacts from the Package-Prepare run identified by
+  #               `source_run_id` and uploads them to blob unchanged.
+  #               No build minutes burned on main.
+  #
+  # When does promote happen?
+  #   - On Package-Prepare push:  always "full" (we need to BUILD)
+  #   - On main push:
+  #       - If `force_rebuild` input set:    "full"  (manual override)
+  #       - If `promote_run_id` input set:   "promote" with that run
+  #       - Else: look up the most recent successful release.yml run
+  #               on Package-Prepare with the SAME head SHA as current
+  #               main HEAD. Found → "promote" with that run. Not
+  #               found → "full" (e.g. merge-commit / squash-merge to
+  #               main produces a new SHA; fast-forward preserves it).
+  #
+  # Operator tip: if you want the promote path on every release, adopt
+  # fast-forward merging:
+  #   git checkout main && git merge --ff-only Package-Prepare && git push
+  # Merge-commits and squash-merges will rebuild (safer default — no
+  # silent shipping of un-rebuilt code).
   # ──────────────────────────────────────────────────────────────────
-  prepare:
-    name: Prepare release context
+  resolve:
+    name: Resolve release context
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.r.outputs.version }}
-      node_version: ${{ steps.r.outputs.node_version }}
+      version:       ${{ steps.r.outputs.version }}
+      node_version:  ${{ steps.r.outputs.node_version }}
+      build_mode:    ${{ steps.r.outputs.build_mode }}
+      source_run_id: ${{ steps.r.outputs.source_run_id }}
     steps:
       - uses: actions/checkout@v4
 
       - id: r
-        name: Resolve version + node version
+        name: Resolve version + node version + build mode
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
+
+          # ── Version + node version (same as before) ──
           version=$(jq -r .version package.json)
           if [ -z "$version" ] || [ "$version" = "null" ]; then
             echo "ERROR: package.json missing 'version' field" >&2
@@ -134,19 +186,57 @@ jobs:
           echo "version=$version"            | tee -a "$GITHUB_OUTPUT"
           echo "node_version=$node_version"  | tee -a "$GITHUB_OUTPUT"
 
+          # ── Build mode resolution ──
+          build_mode="full"
+          source_run_id=""
+
+          # Package-Prepare always builds.
+          if [ "${{ github.ref }}" = "refs/heads/Package-Prepare" ]; then
+            echo "Branch is Package-Prepare — build_mode=full"
+          # Manual override: force_rebuild from workflow_dispatch.
+          elif [ "${{ inputs.force_rebuild }}" = "true" ]; then
+            echo "force_rebuild=true input set — build_mode=full"
+          # Manual override: promote from a specific run.
+          elif [ -n "${{ inputs.promote_run_id }}" ]; then
+            echo "promote_run_id input set: ${{ inputs.promote_run_id }} — build_mode=promote"
+            build_mode="promote"
+            source_run_id="${{ inputs.promote_run_id }}"
+          # Auto-detect: any successful Package-Prepare run on the same SHA?
+          else
+            SHA="${{ github.sha }}"
+            echo "Looking up Package-Prepare runs for SHA $SHA ..."
+            # API returns runs sorted by created_at desc; take the first match.
+            run_id=$(gh api \
+              "/repos/${{ github.repository }}/actions/workflows/release.yml/runs?branch=Package-Prepare&status=success&per_page=20" \
+              --jq "[.workflow_runs[] | select(.head_sha == \"$SHA\")] | .[0].id // empty")
+
+            if [ -n "$run_id" ]; then
+              echo "Found Package-Prepare build for $SHA: run $run_id — build_mode=promote"
+              build_mode="promote"
+              source_run_id="$run_id"
+            else
+              echo "No Package-Prepare build for $SHA — build_mode=full"
+              echo "(typical for merge-commits or squash-merges; fast-forward merges preserve SHA)"
+            fi
+          fi
+
+          echo "build_mode=$build_mode"           | tee -a "$GITHUB_OUTPUT"
+          echo "source_run_id=$source_run_id"     | tee -a "$GITHUB_OUTPUT"
+
   # ──────────────────────────────────────────────────────────────────
   # linux — produces Tracenium-Agent-<v>-x64.{deb,rpm}
   # ──────────────────────────────────────────────────────────────────
   linux:
     name: Build · Linux x64 (.deb + .rpm)
-    needs: prepare
+    needs: resolve
+    if: needs.resolve.outputs.build_mode == 'full'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ needs.prepare.outputs.node_version }}
+          node-version: ${{ needs.resolve.outputs.node_version }}
           cache: npm
 
       # nfpm packager isn't in apt; install from the GitHub release.
@@ -171,7 +261,7 @@ jobs:
             build/.node-cache
             build/linux/.node-cache
             build/linux/staging/node_modules
-          key: linux-build-${{ needs.prepare.outputs.node_version }}-${{ hashFiles('package-lock.json') }}
+          key: linux-build-${{ needs.resolve.outputs.node_version }}-${{ hashFiles('package-lock.json') }}
 
       - name: Build .deb + .rpm
         run: npm run pkg:linux
@@ -180,8 +270,8 @@ jobs:
         with:
           name: linux-x64
           path: |
-            build/linux/pkg-out/Tracenium-Agent-${{ needs.prepare.outputs.version }}-x64.deb
-            build/linux/pkg-out/Tracenium-Agent-${{ needs.prepare.outputs.version }}-x64.rpm
+            build/linux/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-x64.deb
+            build/linux/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-x64.rpm
           retention-days: 14
           if-no-files-found: error
 
@@ -191,7 +281,8 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   macos:
     name: Build · macOS arm64 (.pkg)
-    needs: prepare
+    needs: resolve
+    if: needs.resolve.outputs.build_mode == 'full'
     runs-on: macos-14
     # 45-min cap. The build itself takes ~5 min; notarization is the
     # tail — Apple's notary queue is normally 1-5 min but can spike
@@ -205,7 +296,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ needs.prepare.outputs.node_version }}
+          node-version: ${{ needs.resolve.outputs.node_version }}
           cache: npm
 
       - name: Install repo dependencies (host)
@@ -275,7 +366,7 @@ jobs:
         with:
           path: |
             build/.node-cache
-          key: macos-arm64-${{ needs.prepare.outputs.node_version }}
+          key: macos-arm64-${{ needs.resolve.outputs.node_version }}
 
       - name: Build .pkg
         # The script auto-resolves the codesign identity from the
@@ -289,8 +380,25 @@ jobs:
       # reason shows up in the Actions log (otherwise notarytool only
       # says "Invalid" with no context, which makes the failure
       # impossible to diagnose without a separate manual query).
-      - name: Notarize .pkg
+      # Best-effort notarize. Apple's notary service has ~98% uptime
+      # but occasional queue spikes hang submissions for 30+ min. We
+      # don't want a transient Apple-side issue to block a release —
+      # the pkg ALREADY has every Mach-O binary inside signed with
+      # Developer ID + hardened runtime + timestamp + the outer pkg
+      # productsigned with Developer ID Installer. That alone is enough
+      # for:
+      #   - MDM-pushed installs (Jamf, Intune, Kandji) — silent
+      #   - Direct download installs — one-time "right-click → Open"
+      #     bypass on the user's first install
+      # Notarize only adds: removing the one-time bypass on direct
+      # downloads. So shipping signed-only is a valid fallback.
+      #
+      # Override: workflow_dispatch with `strict_notarize: true` makes
+      # the job FAIL if notarize doesn't succeed (use this for releases
+      # you want bit-perfect Gatekeeper-trusted).
+      - name: Notarize .pkg (best-effort)
         id: notarize
+        continue-on-error: true
         env:
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
           ASC_KEY_ID:        ${{ secrets.ASC_KEY_ID }}
@@ -300,24 +408,15 @@ jobs:
           KEY_PATH="$RUNNER_TEMP/asc.p8"
           echo "$ASC_KEY_P8_BASE64" | base64 --decode > "$KEY_PATH"
 
-          PKG="build/pkg-out/Tracenium-Agent-${{ needs.prepare.outputs.version }}-arm64.pkg"
+          PKG="build/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-arm64.pkg"
           if [ ! -f "$PKG" ]; then
             echo "ERROR: expected .pkg not produced: $PKG" >&2
             ls -la build/pkg-out/ >&2
             exit 1
           fi
 
-          # Submit and capture the submission ID so we can fetch the log
-          # whether the result is Accepted or Invalid. --output-format json
-          # makes the response machine-parseable.
-          #
-          # --timeout caps the wait. Apple's notary is usually 1-5 min,
-          # but queue spikes can push it to 30+ min. Without --timeout,
-          # notarytool would hang indefinitely on a wedged submission
-          # (we saw a 28-min stuck submission canceled manually). 30 min
-          # is the longest "normal" Apple turnaround; anything past that
-          # is almost certainly Apple-side wedging and we'd rather fail
-          # fast + retry than burn runner minutes.
+          # --timeout caps wait at 30 min. Apple's queue is usually
+          # 1-5 min; 30 min is the longest "normal" turnaround.
           SUBMIT_JSON=$(xcrun notarytool submit "$PKG" \
             --key       "$KEY_PATH" \
             --key-id    "$ASC_KEY_ID" \
@@ -329,10 +428,9 @@ jobs:
 
           SUBMISSION_ID=$(echo "$SUBMIT_JSON" | jq -r '.id')
           STATUS=$(echo "$SUBMIT_JSON" | jq -r '.status')
-          echo "submission_id=$SUBMISSION_ID" >> "$GITHUB_OUTPUT"
 
-          # Always print Apple's detailed log — it's the only source of
-          # truth for "Invalid" verdicts and useful even on Accepted ones.
+          # Always fetch Apple's detailed log — useful diagnostic even
+          # for Accepted submissions; critical for Invalid ones.
           echo ""
           echo "=== notarytool log ($SUBMISSION_ID) ==="
           xcrun notarytool log "$SUBMISSION_ID" \
@@ -347,15 +445,46 @@ jobs:
             exit 1
           fi
 
-          # Staple the notarization ticket so Gatekeeper finds it
-          # offline (no Apple round-trip on install).
+      # Staple the notarization ticket ONLY if the submit step succeeded.
+      # If staple fails when notarize succeeded, the pkg is still
+      # technically notarized at Apple, but Gatekeeper would need to
+      # network-check on every install — annoying but not blocking.
+      - name: Staple notarization ticket
+        if: steps.notarize.outcome == 'success'
+        run: |
+          set -eu
+          PKG="build/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-arm64.pkg"
           xcrun stapler staple "$PKG"
           xcrun stapler validate "$PKG"
+
+      # Always summarize the notarize outcome so the operator sees the
+      # state in the run summary without reading the full job log.
+      - name: Summarize notarize outcome
+        run: |
+          if [ "${{ steps.notarize.outcome }}" = "success" ]; then
+            echo "::notice::macOS pkg fully notarized + stapled — installs without Gatekeeper warning"
+          else
+            echo "::warning::macOS notarize FAILED or timed out — shipping signed-only pkg as fallback"
+            echo "::warning::This pkg installs silently via MDM (Jamf/Intune/Kandji)."
+            echo "::warning::Direct-download installs will require ONE-time right-click → Open."
+            echo "::warning::To notarize manually later (Mac with cert + ASC key):"
+            echo "::warning::  xcrun notarytool submit <pkg> --key <p8> --key-id <id> --issuer <id> --wait"
+            echo "::warning::  xcrun stapler staple <pkg>"
+          fi
+
+      # Strict mode: when the operator triggered the workflow with
+      # `strict_notarize: true`, treat a failed notarize as a job
+      # failure. Default is best-effort (silent fallback to signed-only).
+      - name: Enforce strict notarize (when requested)
+        if: inputs.strict_notarize == true && steps.notarize.outcome != 'success'
+        run: |
+          echo "ERROR: strict_notarize=true and notarization did not succeed" >&2
+          exit 1
 
       - uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
-          path: build/pkg-out/Tracenium-Agent-${{ needs.prepare.outputs.version }}-arm64.pkg
+          path: build/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-arm64.pkg
           retention-days: 14
           if-no-files-found: error
 
@@ -364,14 +493,15 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   windows-x64:
     name: Build · Windows x64 (.msi)
-    needs: prepare
+    needs: resolve
+    if: needs.resolve.outputs.build_mode == 'full'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ needs.prepare.outputs.node_version }}
+          node-version: ${{ needs.resolve.outputs.node_version }}
           architecture: x64
           cache: npm
 
@@ -410,7 +540,7 @@ jobs:
         with:
           path: |
             build/.node-cache
-          key: windows-x64-${{ needs.prepare.outputs.node_version }}
+          key: windows-x64-${{ needs.resolve.outputs.node_version }}
 
       # Cross-compile .NET binaries. The .sh runs fine on Windows via
       # Git Bash, which is preinstalled on windows-latest runners.
@@ -448,7 +578,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: build/win-msi/x64/Tracenium-Agent-${{ needs.prepare.outputs.version }}-x64.msi
+          path: build/win-msi/x64/Tracenium-Agent-${{ needs.resolve.outputs.version }}-x64.msi
           retention-days: 14
           if-no-files-found: error
 
@@ -460,14 +590,15 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   windows-arm64:
     name: Build · Windows arm64 (.msi)
-    needs: prepare
+    needs: resolve
+    if: needs.resolve.outputs.build_mode == 'full'
     runs-on: windows-11-arm
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ needs.prepare.outputs.node_version }}
+          node-version: ${{ needs.resolve.outputs.node_version }}
           architecture: arm64
           cache: npm
 
@@ -495,7 +626,7 @@ jobs:
         with:
           path: |
             build/.node-cache
-          key: windows-arm64-${{ needs.prepare.outputs.node_version }}
+          key: windows-arm64-${{ needs.resolve.outputs.node_version }}
 
       - name: Build .NET binaries (PrivSvc + AgentTray)
         shell: bash
@@ -527,7 +658,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-arm64
-          path: build/win-msi/arm64/Tracenium-Agent-${{ needs.prepare.outputs.version }}-arm64.msi
+          path: build/win-msi/arm64/Tracenium-Agent-${{ needs.resolve.outputs.version }}-arm64.msi
           retention-days: 14
           if-no-files-found: error
 
@@ -544,14 +675,45 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   publish:
     name: Publish to Azure Blob
-    if: github.ref == 'refs/heads/main'
-    needs: [prepare, linux, macos, windows-x64, windows-arm64]
+    # Run only on main. The condition is wider than just `ref == main`
+    # because we need to handle the case where the 4 build jobs were
+    # SKIPPED (build_mode=promote) — by default GitHub Actions would
+    # skip downstream jobs in that case. `always()` makes us evaluate
+    # regardless, and we explicitly check the dependency outcomes:
+    #   - resolve MUST have succeeded (always required)
+    #   - build jobs must be EITHER success (full mode) OR skipped
+    #     (promote mode). Failure of any build job aborts publish.
+    if: |
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      needs.resolve.result == 'success' &&
+      (needs.linux.result == 'success' || needs.linux.result == 'skipped') &&
+      (needs.macos.result == 'success' || needs.macos.result == 'skipped') &&
+      (needs.windows-x64.result == 'success' || needs.windows-x64.result == 'skipped') &&
+      (needs.windows-arm64.result == 'success' || needs.windows-arm64.result == 'skipped')
+    needs: [resolve, linux, macos, windows-x64, windows-arm64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      # Download artifacts from the CORRECT run:
+      #   - build_mode=full:    this current run produced the artifacts
+      #     (run-id defaults to github.run_id)
+      #   - build_mode=promote: a Package-Prepare run produced them
+      #     (run-id = needs.resolve.outputs.source_run_id)
+      # `github-token` is required when run-id is from a DIFFERENT run.
+      - name: Show release source
+        run: |
+          if [ "${{ needs.resolve.outputs.build_mode }}" = "promote" ]; then
+            echo "::notice::Promoting artifacts from Package-Prepare run ${{ needs.resolve.outputs.source_run_id }}"
+          else
+            echo "::notice::Using artifacts built in this run (build_mode=full)"
+          fi
+
       - uses: actions/download-artifact@v4
         with:
+          run-id: ${{ needs.resolve.outputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
           path: dl
 
       # Re-stage downloaded artifacts into the layout publish-binaries.sh
@@ -561,7 +723,7 @@ jobs:
       - name: Stage artifacts into build/ layout
         run: |
           set -eu
-          V=${{ needs.prepare.outputs.version }}
+          V=${{ needs.resolve.outputs.version }}
 
           mkdir -p build/pkg-out
           mkdir -p build/linux/pkg-out
@@ -602,12 +764,12 @@ jobs:
           # (Storage Blob Data Contributor) is what authorizes uploads.
           # No storage account keys in secrets.
           TRACENIUM_AZ_AUTH_MODE: login
-          TRACENIUM_AGENT_VERSION: ${{ needs.prepare.outputs.version }}
+          TRACENIUM_AGENT_VERSION: ${{ needs.resolve.outputs.version }}
         run: ./scripts/publish-binaries.sh
 
       - name: Print summary
         run: |
-          V=${{ needs.prepare.outputs.version }}
+          V=${{ needs.resolve.outputs.version }}
           echo "## Release $V published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Verify backend metadata:" >> $GITHUB_STEP_SUMMARY
