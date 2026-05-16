@@ -18,13 +18,13 @@
   <key>KeepAlive</key>
   <true/>
 
-  <key>WorkingDirectory</key>
-  <string>/Library/Application Support/Tracenium/PrivSvc/macos</string>
-
   <key>StandardOutPath</key>
   <string>/Library/Application Support/Tracenium/Logs/privsvc.stdout.log</string>
 
   <key>StandardErrorPath</key>
   <string>/Library/Application Support/Tracenium/Logs/privsvc.stderr.log</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Library/Application Support/Tracenium/PrivSvc/macos</string>
 </dict>
 </plist>

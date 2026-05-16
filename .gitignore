@@ -9,3 +9,27 @@ node_modules/
 *.dmg
 *.msi
 .env
+
+# ── Build outputs (Phase A consolidation, May 2026) ─────────────────
+# /build/ holds transient outputs from build-*.sh + esbuild + nfpm.
+# Historical: a previous commit accidentally tracked ~600 files under
+# build/ (caches, intermediate node tarballs, etc). Cleaning those up
+# is a separate task — for now we only ignore NEW additions:
+build/macos/
+build/linux/
+build/windows/
+build/win-binaries/
+build/win-msi/
+build/agentcore/
+build/.node-cache/
+build/.npm-cache/
+
+# ── WiX intermediate outputs (Windows MSI build) ────────────────────
+*.wixpdb
+*.wixobj
+build.log
+
+# ── OS / IDE noise ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Thumbs.db:encryptable

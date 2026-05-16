@@ -1,0 +1,73 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Fragment>
+
+    <Directory Id="ProgramFiles64Folder">
+
+      <Directory Id="TRACENIUM" Name="Tracenium">
+
+        <!-- ROOT COMPONENT -->
+        <Component Id="TraceniumRootComponent" Guid="*">
+          <CreateFolder/>
+          <RegistryValue Root="HKLM"
+                         Key="Software\CertusWS\Tracenium"
+                         Name="Installed"
+                         Type="integer"
+                         Value="1"
+                         KeyPath="yes"/>
+        </Component>
+
+        <Directory Id="AGENTCORE_DIR" Name="AgentCore">
+
+          <Directory Id="APP_DIR" Name="app">
+            <Directory Id="DIST_DIR" Name="dist"/>
+            <Directory Id="NODE_MODULES_DIR" Name="node_modules"/>
+          </Directory>
+
+          <Directory Id="NODE_DIR" Name="node"/>
+          <Directory Id="LOGS_DIR" Name="logs"/>
+
+        </Directory>
+
+        <Directory Id="AGENTTRAY_DIR" Name="AgentTray"/>
+
+        <Directory Id="PRIVSVC_DIR" Name="PrivSvc">
+          <Directory Id="PRIVSVC_ASSETS_DIR" Name="assets"/>
+        </Directory>
+
+      </Directory>
+
+    </Directory>
+
+  </Fragment>
+
+  <Fragment>
+
+    <Component Id="CleanupFolders"
+               Directory="TRACENIUM"
+               Guid="*">
+
+      <RemoveFolder Id="RemovePrivSvc"
+                    Directory="PRIVSVC_DIR"
+                    On="uninstall"/>
+
+      <RemoveFolder Id="RemoveAgentCore"
+                    Directory="AGENTCORE_DIR"
+                    On="uninstall"/>
+
+      <RemoveFolder Id="RemoveAgentTray"
+                    Directory="AGENTTRAY_DIR"
+                    On="uninstall"/>
+
+      <RegistryValue Root="HKLM"
+                     Key="Software\CertusWS\Tracenium"
+                     Name="Cleanup"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes"/>
+
+    </Component>
+
+  </Fragment>
+
+</Wix>

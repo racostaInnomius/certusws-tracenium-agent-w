@@ -1,0 +1,258 @@
+# scripts/build-agentcore-windows.ps1
+#
+# Build the AgentCore tree (the node bundle that the MSI installs as a
+# Windows service via WinSW). Runs ONLY on a Windows host — the better-
+# sqlite3 native binding must be rebuilt against the host's ABI, and
+# WinSW is a Windows-only program.
+#
+# What it produces:
+#
+#   build\win-binaries\<arch>\AgentCore\
+#     ├── TraceniumAgentCore.exe       # WinSW wrapper (per-arch download)
+#     ├── TraceniumAgentCore.xml       # WinSW service config (from repo)
+#     ├── node\node.exe                # Node 24 runtime (per-arch download)
+#     ├── logs\                        # empty dir for runtime logs
+#     └── app\
+#         ├── dist\index.js            # esbuild bundle (arch-agnostic JS)
+#         └── node_modules\            # ONLY native deps (better-sqlite3
+#                                        + bindings + file-uri-to-path),
+#                                        rebuilt for host arch.
+#
+# The arch comes from the host (the runner you executed this on). To
+# match your current 2-machine workflow:
+#   * On an ARM64 W11 (your VM)    → pass -Arch arm64 (or let auto-detect)
+#   * On an x64 W11   (your physical) → pass -Arch x64
+# In CI both archs run in parallel on matrix runners
+# (windows-latest = x64, windows-11-arm = arm64).
+#
+# Why ONLY native deps in node_modules instead of full npm install:
+# the agent bundle is produced by esbuild with --bundle, which inlines
+# ALL pure-JS deps into dist/index.js. Native modules can't be bundled
+# (they're .node files loaded by dlopen), so they MUST be shipped as
+# separate node_modules entries that better-sqlite3 / bindings reach via
+# require() at runtime. Shipping the full node_modules would bloat the
+# MSI by ~200 MB of unused JS. This staging mirrors what
+# build-linux-binaries.sh does on the Linux side.
+
+[CmdletBinding()]
+param(
+  [ValidateSet("x64", "arm64", "auto")]
+  [string]$Arch = "auto",
+
+  [string]$NodeVersion = ""  # Optional override; default reads .nodeversion
+)
+
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"  # silence Invoke-WebRequest progress bar (huge in CI logs)
+
+# ── Resolve paths ────────────────────────────────────────────────────
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot  = Split-Path -Parent $ScriptDir
+
+if (-not (Test-Path "$RepoRoot/package.json")) {
+  throw "Could not find agent repo root at $RepoRoot (package.json missing)"
+}
+
+# ── Resolve arch ─────────────────────────────────────────────────────
+if ($Arch -eq "auto") {
+  # PROCESSOR_ARCHITECTURE values on Windows:
+  #   AMD64 → x64
+  #   ARM64 → arm64
+  $hostArch = $env:PROCESSOR_ARCHITECTURE
+  switch ($hostArch) {
+    "AMD64" { $Arch = "x64" }
+    "ARM64" { $Arch = "arm64" }
+    default { throw "Unsupported host arch: $hostArch (PROCESSOR_ARCHITECTURE)" }
+  }
+}
+
+# ── Resolve NodeVersion ──────────────────────────────────────────────
+if (-not $NodeVersion) {
+  $nodeversionFile = Join-Path $RepoRoot ".nodeversion"
+  if (Test-Path $nodeversionFile) {
+    $NodeVersion = (Get-Content $nodeversionFile -Raw).Trim()
+  } else {
+    throw "No .nodeversion file at $nodeversionFile and -NodeVersion not passed"
+  }
+}
+
+# ── Tooling preflight ────────────────────────────────────────────────
+# node + npm must be installed on the host. In CI we use actions/setup-node@v4;
+# locally the operator installs Node directly. We DON'T require the host's
+# node to match $NodeVersion — host node only runs npm for the rebuild step;
+# the BUNDLED node we package is downloaded fresh.
+foreach ($cmd in @("node", "npm", "npx")) {
+  if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
+    throw "Required command '$cmd' not found in PATH. Install Node.js or use actions/setup-node."
+  }
+}
+
+Write-Host "==== build-agentcore-windows ====" -ForegroundColor Cyan
+Write-Host "  Repo:        $RepoRoot"
+Write-Host "  Arch:        $Arch"
+Write-Host "  NodeVersion: $NodeVersion"
+Write-Host "  Host node:   $(node --version)"
+Write-Host ""
+
+# ── Output layout ────────────────────────────────────────────────────
+$OutBase = Join-Path $RepoRoot "build/win-binaries/$Arch/AgentCore"
+$OutApp  = Join-Path $OutBase  "app"
+$OutDist = Join-Path $OutApp   "dist"
+$OutNm   = Join-Path $OutApp   "node_modules"
+$OutNode = Join-Path $OutBase  "node"
+$OutLogs = Join-Path $OutBase  "logs"
+
+# Clean re-stage — pkg-root style. Avoids accidental cross-arch
+# contamination if the same checkout is used for both archs sequentially.
+if (Test-Path $OutBase) { Remove-Item $OutBase -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $OutBase, $OutApp, $OutDist, $OutNm, $OutNode, $OutLogs | Out-Null
+
+# ── 1. esbuild the agent bundle ──────────────────────────────────────
+# Output is a single JS file. Arch-agnostic — esbuild produces the same
+# bytes on x64 and arm64 hosts given the same source + lockfile.
+# Reuse host node_modules for esbuild itself (we expect `npm ci` has
+# already run at the repo root in the workflow).
+Write-Host "→ esbuild agent core" -ForegroundColor Yellow
+Push-Location $RepoRoot
+try {
+  $esbuild = Join-Path $RepoRoot "node_modules/.bin/esbuild.cmd"
+  if (-not (Test-Path $esbuild)) {
+    # Fallback: maybe the dev hasn't run `npm ci` yet. Do it now,
+    # silently. CI workflows should `npm ci` before this script, but a
+    # local "just run the script" invocation should still work.
+    Write-Host "  (host node_modules missing — running npm ci)" -ForegroundColor DarkGray
+    npm ci --no-audit --no-fund
+  }
+  & node "node_modules/.bin/esbuild" `
+    "src/index.ts" `
+    --bundle `
+    --platform=node `
+    --format=cjs `
+    --target=node24 `
+    --external:better-sqlite3 `
+    --outfile="$OutDist/index.js"
+  if ($LASTEXITCODE -ne 0) { throw "esbuild failed" }
+} finally {
+  Pop-Location
+}
+
+# ── 2. Stage native deps + rebuild better-sqlite3 ────────────────────
+# Strategy: create a minimal package.json under $OutApp that only
+# declares the three native runtime deps (better-sqlite3 + its peers).
+# Then `npm install --omit=dev` there → host node-gyp compiles
+# better-sqlite3 for the host's ABI automatically. Same pattern used
+# by build-linux-binaries.sh on Linux.
+Write-Host "→ staging native deps + rebuilding better-sqlite3 for $Arch" -ForegroundColor Yellow
+$repoPkg = Get-Content (Join-Path $RepoRoot "package.json") -Raw | ConvertFrom-Json
+$nativeDeps = @{
+  # Pin to the SAME versions as the host package.json. better-sqlite3
+  # is the only one whose native binding actually gets compiled; the
+  # other two are pure-JS but ship as transitive deps of better-sqlite3
+  # and Node's require resolver expects them at sibling paths.
+  "better-sqlite3"     = $repoPkg.dependencies."better-sqlite3"
+  "bindings"           = "*"
+  "file-uri-to-path"   = "*"
+}
+$nativePkg = @{
+  name = "tracenium-agentcore-native"
+  version = "0.0.0"
+  private = $true
+  dependencies = $nativeDeps
+}
+$nativePkg | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $OutApp "package.json") -Encoding UTF8
+
+Push-Location $OutApp
+try {
+  # --omit=dev: no devDeps. --build-from-source: force native compile
+  # (don't pull a prebuilt binary that might be wrong-arch). --no-audit
+  # --no-fund: quieter CI logs.
+  npm install --omit=dev --build-from-source --no-audit --no-fund
+  if ($LASTEXITCODE -ne 0) { throw "npm install (native deps) failed" }
+} finally {
+  Pop-Location
+}
+
+# Sanity check: did better-sqlite3 actually produce the .node binding?
+$nativeBinding = Join-Path $OutNm "better-sqlite3/build/Release/better_sqlite3.node"
+if (-not (Test-Path $nativeBinding)) {
+  throw "better-sqlite3 native binding missing at $nativeBinding — rebuild failed silently"
+}
+Write-Host "  ✓ better-sqlite3 binding present: $(((Get-Item $nativeBinding).Length / 1KB)) KB"
+
+# ── 3. Download bundled node.exe for target arch ─────────────────────
+$nodeFilename = "node.exe"
+$nodeUrl = "https://nodejs.org/dist/v$NodeVersion/win-$Arch/$nodeFilename"
+$cacheDir = Join-Path $RepoRoot "build/.node-cache"
+$cachedNode = Join-Path $cacheDir "node-v$NodeVersion-win-$Arch.exe"
+New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+
+if (-not (Test-Path $cachedNode)) {
+  Write-Host "→ downloading node.exe ($NodeVersion / win-$Arch)" -ForegroundColor Yellow
+  Invoke-WebRequest -Uri $nodeUrl -OutFile $cachedNode -UseBasicParsing
+
+  # SHA256 verification against nodejs.org's official SHASUMS256.txt.
+  $sumsUrl = "https://nodejs.org/dist/v$NodeVersion/SHASUMS256.txt"
+  $sums = (Invoke-WebRequest -Uri $sumsUrl -UseBasicParsing).Content
+  # nodejs.org's SHASUMS256.txt lists files relative to the dist root,
+  # so a Windows node.exe shows up as "win-x64/node.exe" not bare
+  # "node.exe". Match accordingly.
+  $expectedLine = $sums -split "`n" | Where-Object { $_ -match "  win-$Arch/node\.exe$" }
+  if (-not $expectedLine) {
+    Remove-Item $cachedNode -Force
+    throw "Could not find SHA256 entry for win-$Arch/node.exe in $sumsUrl"
+  }
+  $expectedSha = ($expectedLine -split "\s+")[0]
+  $actualSha = (Get-FileHash $cachedNode -Algorithm SHA256).Hash.ToLower()
+  if ($expectedSha.ToLower() -ne $actualSha) {
+    Remove-Item $cachedNode -Force
+    throw "node.exe SHA256 mismatch (expected $expectedSha, got $actualSha)"
+  }
+  Write-Host "  ✓ node.exe SHA256 verified"
+} else {
+  Write-Host "→ reusing cached node.exe" -ForegroundColor DarkGray
+}
+
+Copy-Item $cachedNode (Join-Path $OutNode "node.exe") -Force
+
+# ── 4. Download WinSW wrapper for target arch ────────────────────────
+# WinSW is the service wrapper that launches `node app\dist\index.js`
+# as a Windows service. We download the official build from their
+# GitHub releases — per-arch binary, ~1 MB.
+$winswVersion = "3.0.0"
+$winswFilename = if ($Arch -eq "arm64") { "WinSW-arm64.exe" } else { "WinSW-x64.exe" }
+$winswUrl = "https://github.com/winsw/winsw/releases/download/v$winswVersion/$winswFilename"
+$cachedWinsw = Join-Path $cacheDir "winsw-$winswVersion-$Arch.exe"
+
+if (-not (Test-Path $cachedWinsw)) {
+  Write-Host "→ downloading WinSW $winswVersion ($Arch)" -ForegroundColor Yellow
+  Invoke-WebRequest -Uri $winswUrl -OutFile $cachedWinsw -UseBasicParsing
+  # WinSW publishes SHA256 separately; we trust HTTPS + github.com for
+  # now. If supply-chain hardening matters, add a pinned hash check
+  # here (the hash is stable per release).
+} else {
+  Write-Host "→ reusing cached WinSW" -ForegroundColor DarkGray
+}
+
+# WiX expects the file named TraceniumAgentCore.exe (matches the
+# service-id in the .xml config and the registry entries).
+Copy-Item $cachedWinsw (Join-Path $OutBase "TraceniumAgentCore.exe") -Force
+
+# ── 5. Copy WinSW XML config from repo ───────────────────────────────
+# Single source of truth — same XML on both archs. The %BASE% env var
+# WinSW resolves at runtime points to the install dir, so the XML
+# doesn't need per-arch paths.
+$xmlSrc = Join-Path $RepoRoot "packaging/windows/core-service/TraceniumAgentCore.xml"
+if (-not (Test-Path $xmlSrc)) {
+  throw "WinSW config missing at $xmlSrc"
+}
+Copy-Item $xmlSrc (Join-Path $OutBase "TraceniumAgentCore.xml") -Force
+
+# ── Done ─────────────────────────────────────────────────────────────
+Write-Host ""
+Write-Host "==== AgentCore staged for $Arch ====" -ForegroundColor Green
+Write-Host "  Output: $OutBase"
+Get-ChildItem $OutBase -Recurse -File | ForEach-Object {
+  $rel = $_.FullName.Substring($OutBase.Length + 1)
+  $sz  = [math]::Round($_.Length / 1KB, 1)
+  Write-Host ("    {0,12} KB  {1}" -f $sz, $rel)
+}

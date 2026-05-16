@@ -1,0 +1,143 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Fragment>
+
+    <ComponentGroup Id="AgentCoreFiles">
+
+      <!-- ============================= -->
+      <!-- WinSW Service -->
+      <!-- ============================= -->
+
+      <Component Id="AgentCoreService"
+                 Directory="AGENTCORE_DIR"
+                 Guid="3ee4b2f9-71af-4d35-bf59-ae1e30c6a078">
+
+        <File Id="WinSWExe"
+              Source="binaries\AgentCore\TraceniumAgentCore.exe"
+              KeyPath="yes"/>
+
+        <File Id="WinSWXml"
+              Source="binaries\AgentCore\TraceniumAgentCore.xml"/>
+
+        <!-- ============================= -->
+        <!-- Registry configuration -->
+        <!-- ============================= -->
+
+        <RegistryKey Root="HKLM"
+                     Key="Software\CertusWS\Tracenium">
+
+          <RegistryValue Name="ENROLLMENT_TOKEN"
+                         Type="string"
+                         Value="[ENROLLMENT_TOKEN]"/>
+
+          <RegistryValue Name="ServerBaseUrl"
+                         Type="string"
+                         Value="https://api.tracenium.com" />
+
+        </RegistryKey>
+
+        <!-- ============================= -->
+        <!-- Windows Service installation -->
+        <!-- ============================= -->
+
+        <ServiceInstall
+            Id="InstallAgentCore"
+            Name="TraceniumAgentCore"
+            DisplayName="Tracenium Agent Core"
+            Description="Tracenium Endpoint Agent"
+            Start="auto"
+            Type="ownProcess"
+            ErrorControl="normal"
+            Account="LocalSystem">
+
+          <!-- CRÍTICO: dependencia explícita -->
+          <ServiceDependency Id="TraceniumPrivSvc"/>
+
+        </ServiceInstall>
+
+        <!-- Control lifecycle -->
+        <ServiceControl
+            Id="AgentCoreControl"
+            Name="TraceniumAgentCore"
+            Stop="both"
+            Start="install"
+            Remove="uninstall"
+            Wait="yes"/>
+
+      </Component>
+
+
+      <!-- ============================= -->
+      <!-- Node runtime -->
+      <!-- ============================= -->
+
+      <!--
+        WiX 6 resuelve <Files Include> relativo al cwd donde se invocó
+        `wix build` (= la raíz del installer dir), no al .wxs. Por eso
+        las rutas van SIN `..\` al inicio. Si en el futuro se cambia a
+        invocar wix build desde otro cwd, ajustar aquí o pasar
+        -bindpath explícito.
+      -->
+      <Files Include="binaries\AgentCore\node\**\*"
+             Directory="NODE_DIR" />
+
+
+      <!-- ============================= -->
+      <!-- Node application -->
+      <!-- ============================= -->
+
+      <Files Include="binaries\AgentCore\app\**\*"
+             Directory="APP_DIR" />
+
+
+      <!-- ============================= -->
+      <!-- Logs folder -->
+      <!-- ============================= -->
+
+      <Component Id="LogsFolder"
+                 Directory="LOGS_DIR"
+                 Guid="1e00cbfe-0965-4d3f-b2e6-599512ec1234">
+
+        <CreateFolder/>
+
+      </Component>
+
+
+      <!-- ============================= -->
+      <!-- Interactive tray app -->
+      <!-- ============================= -->
+
+      <!--
+        AgentTray es single-file self-contained: el publish produce
+        UN SOLO Tracenium.AgentTray.exe sin DLLs ni archivos auxiliares
+        (managed assemblies van comprimidos dentro del EXE; native libs
+        se extraen a %TEMP% en runtime vía IncludeNativeLibrariesForSelfExtract).
+        Por eso no hay <Files Include="**\*"> harvest aquí — el File
+        explícito de arriba es suficiente. Si en el futuro el csproj
+        cambia a multi-file publish, agregar el harvest de vuelta —
+        WiX 4 NO soporta Exclude en <Files>, así que no se puede
+        excluir el .exe del glob; toca usar Subdirectory con un dir
+        intermedio o cambiar a <ComponentGroup> con archivos listados
+        a mano.
+      -->
+      <Component Id="AgentTrayComponent"
+                 Directory="AGENTTRAY_DIR"
+                 Guid="*">
+
+        <File Id="AgentTrayExe"
+              Source="binaries\AgentTray\Tracenium.AgentTray.exe"
+              KeyPath="yes"/>
+
+        <RegistryValue Root="HKLM"
+                       Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                       Name="TraceniumAgentTray"
+                       Type="string"
+                       Value="&quot;[AGENTTRAY_DIR]Tracenium.AgentTray.exe&quot;"/>
+
+      </Component>
+
+    </ComponentGroup>
+
+  </Fragment>
+
+</Wix>

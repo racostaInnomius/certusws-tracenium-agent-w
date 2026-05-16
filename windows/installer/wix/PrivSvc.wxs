@@ -1,0 +1,60 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Fragment>
+
+    <ComponentGroup Id="PrivSvcComponent">
+
+      <!-- ============================= -->
+      <!-- Privileged Service -->
+      <!-- ============================= -->
+
+      <Component Id="PrivSvcServiceComponent"
+                 Directory="PRIVSVC_DIR"
+                 Guid="*">
+
+        <File Id="PrivSvcExe"
+              Source="binaries\PrivSvc\Tracenium.PrivSvc.Windows.exe"
+              KeyPath="yes"/>
+
+        <ServiceInstall
+            Id="InstallPrivSvc"
+            Name="TraceniumPrivSvc"
+            DisplayName="Tracenium Privilege Service"
+            Description="Tracenium privileged cryptographic service"
+            Start="auto"
+            Type="ownProcess"
+            ErrorControl="normal"
+            Account="LocalSystem" />
+
+        <!-- Control lifecycle -->
+        <ServiceControl
+            Id="PrivSvcControl"
+            Name="TraceniumPrivSvc"
+            Stop="both"
+            Start="install"
+            Remove="uninstall"
+            Wait="yes"/>
+
+      </Component>
+
+
+      <!-- ============================= -->
+      <!-- Root CA Asset -->
+      <!-- ============================= -->
+
+      <Component Id="PrivSvcRootCAComponent"
+                 Directory="PRIVSVC_ASSETS_DIR"
+                 Guid="*">
+
+        <File Id="RootCAFile"
+              Source="assets\root-ca.crt"
+              KeyPath="yes"
+              Vital="yes"/>
+
+      </Component>
+
+    </ComponentGroup>
+
+  </Fragment>
+
+</Wix>

@@ -1,0 +1,70 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Package
+      Name="Tracenium Agent"
+      Manufacturer="CertusWS"
+      Version="1.1.15"
+      UpgradeCode="8F2C0D63-0C36-4D71-BE70-4A1A1A1F83F0"
+      InstallerVersion="500"
+      Compressed="yes"
+      Scope="perMachine">
+
+    <!-- ============================= -->
+    <!-- MEDIA -->
+    <!-- ============================= -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- ============================= -->
+    <!-- MAJOR UPGRADE -->
+    <!-- ============================= -->
+    <MajorUpgrade
+        DowngradeErrorMessage="A newer version of Tracenium Agent is already installed."
+        Schedule="afterInstallInitialize"
+        AllowSameVersionUpgrades="no"
+        AllowDowngrades="no" />
+
+    <!-- ============================= -->
+    <!-- ICONO (Apps & Features) -->
+    <!-- ============================= -->
+    <Icon Id="TraceniumIcon.ico" SourceFile="assets\tracenium.ico" />
+    <Property Id="ARPPRODUCTICON" Value="TraceniumIcon.ico" />
+
+    <!-- Custom WixUI branding assets -->
+    <WixVariable Id="WixUIDialogBmp" Value="assets\wix-dialog.bmp" />
+    <WixVariable Id="WixUIBannerBmp" Value="assets\wix-banner.bmp" />
+
+    <!-- ============================= -->
+    <!-- PROPERTIES -->
+    <!-- ============================= -->
+    <Property Id="WIXUI_INSTALLDIR" Value="TRACENIUM" />
+    <Property Id="ENROLLMENT_TOKEN" Secure="yes" Hidden="yes">
+      <RegistrySearch Id="ExistingEnrollmentToken"
+                      Root="HKLM"
+                      Key="Software\CertusWS\Tracenium"
+                      Name="ENROLLMENT_TOKEN"
+                      Type="raw" />
+    </Property>
+
+    <!-- Custom MSI UI sequence with enrollment token prompt -->
+    <UIRef Id="TraceniumUI" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+
+    <!-- ============================= -->
+    <!-- IMPORTANTE -->
+    <!-- NO usar StopServices / StartServices aquí -->
+    <!-- El control de servicios ya está en ServiceControl -->
+    <!-- ============================= -->
+
+    <!-- ============================= -->
+    <!-- FEATURES -->
+    <!-- ============================= -->
+    <Feature Id="MainFeature" Title="Tracenium Agent" Level="1">
+      <ComponentGroupRef Id="AgentCoreFiles" />
+      <ComponentGroupRef Id="PrivSvcComponent" />
+      <ComponentRef Id="CleanupFolders" />
+      <ComponentRef Id="TraceniumRootComponent"/>
+    </Feature>
+
+  </Package>
+
+</Wix>

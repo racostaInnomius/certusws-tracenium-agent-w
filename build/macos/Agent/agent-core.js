@@ -24830,9 +24830,13 @@ var package_default = {
     build: "tsc",
     "build:privsvc:linux": "tsc -p privsvc/linux/tsconfig.json",
     "build:privsvc:macos": "tsc -p privsvc/macos/tsconfig.json",
-    "pkg:linux": "../scripts/build-linux-binaries.sh",
-    "pkg:linux:arm64": "TRACENIUM_AGENT_ARCH=arm64 ../scripts/build-linux-binaries.sh",
-    "pkg:macos": "../scripts/build-macos-pkg.sh"
+    "pkg:linux": "./scripts/build-linux-binaries.sh",
+    "pkg:linux:arm64": "TRACENIUM_AGENT_ARCH=arm64 ./scripts/build-linux-binaries.sh",
+    "pkg:macos": "./scripts/build-macos-pkg.sh",
+    "pkg:windows:binaries": "./scripts/build-windows-binaries.sh",
+    "pkg:windows:agentcore": "pwsh ./scripts/build-agentcore-windows.ps1",
+    "pkg:windows:msi": "pwsh ./scripts/build-windows-msi.ps1",
+    publish: "./scripts/publish-binaries.sh"
   }
 };
 
