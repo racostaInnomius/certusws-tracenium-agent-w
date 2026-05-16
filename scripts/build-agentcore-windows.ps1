@@ -230,28 +230,32 @@ if (-not (Test-Path $cachedNode)) {
 
 Copy-Item $cachedNode (Join-Path $OutNode "node.exe") -Force
 
-# ── 4. Download WinSW wrapper for target arch ────────────────────────
+# ── 4. Copy WinSW wrapper for target arch from the repo ─────────────
 # WinSW is the service wrapper that launches `node app\dist\index.js`
-# as a Windows service. We download the official build from their
-# GitHub releases — per-arch binary, ~1 MB.
-$winswVersion = "3.0.0"
-$winswFilename = if ($Arch -eq "arm64") { "WinSW-arm64.exe" } else { "WinSW-x64.exe" }
-$winswUrl = "https://github.com/winsw/winsw/releases/download/v$winswVersion/$winswFilename"
-$cachedWinsw = Join-Path $cacheDir "winsw-$winswVersion-$Arch.exe"
-
-if (-not (Test-Path $cachedWinsw)) {
-  Write-Host "→ downloading WinSW $winswVersion ($Arch)" -ForegroundColor Yellow
-  Invoke-WebRequest -Uri $winswUrl -OutFile $cachedWinsw -UseBasicParsing
-  # WinSW publishes SHA256 separately; we trust HTTPS + github.com for
-  # now. If supply-chain hardening matters, add a pinned hash check
-  # here (the hash is stable per release).
-} else {
-  Write-Host "→ reusing cached WinSW" -ForegroundColor DarkGray
+# as a Windows service. We ship per-arch binaries committed at
+# packaging/windows/core-service/TraceniumAgentCore-<arch>.exe.
+#
+# Why committed instead of downloaded: WinSW v3 hasn't had a stable
+# final release yet, and the URLs across their alpha drops have moved
+# (some releases have `WinSW-x64.exe`, others have `WinSW-net4.exe`,
+# others nothing for that arch). Pinning the binary in the repo
+# trades ~17 MB × 2 of repo size for reproducible CI builds that
+# don't break when an upstream tag moves.
+#
+# NOTE on arm64: today we ship the SAME binary as x64 in the arm64
+# slot (Windows ARM64 runs x64 EXEs via emulation). Replace
+# TraceniumAgentCore-arm64.exe with a native arm64 build whenever
+# WinSW publishes a stable v3 with arm64 support.
+$winswSrc = Join-Path $RepoRoot "packaging/windows/core-service/TraceniumAgentCore-$Arch.exe"
+if (-not (Test-Path $winswSrc)) {
+  throw @"
+WinSW binary missing: $winswSrc
+Commit a Windows service wrapper EXE at that path before re-running.
+The arm64 file can be a copy of the x64 file (runs via Windows emulation).
+"@
 }
-
-# WiX expects the file named TraceniumAgentCore.exe (matches the
-# service-id in the .xml config and the registry entries).
-Copy-Item $cachedWinsw (Join-Path $OutBase "TraceniumAgentCore.exe") -Force
+Copy-Item $winswSrc (Join-Path $OutBase "TraceniumAgentCore.exe") -Force
+Write-Host "→ copied WinSW wrapper from repo ($Arch)" -ForegroundColor Yellow
 
 # ── 5. Copy WinSW XML config from repo ───────────────────────────────
 # Single source of truth — same XML on both archs. The %BASE% env var

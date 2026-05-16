@@ -75,6 +75,19 @@ on:
 permissions:
   contents: read
 
+# Opt all JavaScript-based actions (checkout, setup-node, upload-artifact,
+# download-artifact, cache, azure/login, etc.) onto Node 24 ahead of the
+# 2026-06-02 forced migration. Node 20 is deprecated since 2025-09-19 and
+# will be removed from runners on 2026-09-16; running on the supported
+# major now avoids a re-test scramble in two weeks.
+#
+# This env var ONLY affects the runtime that hosts the actions
+# themselves — it has no relationship to our `.nodeversion` (the Node
+# version we ship inside the agent payload), nor to the host Node that
+# `actions/setup-node@v4` installs for `npm ci`.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 # Don't run two release builds in parallel for the same ref. The
 # publish step's blob upload is `--overwrite`, so a race would produce
 # garbled metadata on the latest blob. We let in-flight runs FINISH
@@ -241,7 +254,12 @@ jobs:
         run: npm run pkg:macos
 
       # ── Notarize the .pkg so Gatekeeper accepts it without warning ──
+      # On failure we ALWAYS fetch Apple's per-file verdict log so the
+      # reason shows up in the Actions log (otherwise notarytool only
+      # says "Invalid" with no context, which makes the failure
+      # impossible to diagnose without a separate manual query).
       - name: Notarize .pkg
+        id: notarize
         env:
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
           ASC_KEY_ID:        ${{ secrets.ASC_KEY_ID }}
@@ -258,15 +276,36 @@ jobs:
             exit 1
           fi
 
-          # --wait blocks until Apple's notary service finishes. Takes
-          # 1-5 min typically, can spike to 15 min on heavy days.
-          xcrun notarytool submit "$PKG" \
+          # Submit and capture the submission ID so we can fetch the log
+          # whether the result is Accepted or Invalid. --output-format json
+          # makes the response machine-parseable.
+          SUBMIT_JSON=$(xcrun notarytool submit "$PKG" \
             --key       "$KEY_PATH" \
             --key-id    "$ASC_KEY_ID" \
             --issuer    "$ASC_ISSUER_ID" \
-            --wait
+            --output-format json \
+            --wait)
+          echo "$SUBMIT_JSON"
+
+          SUBMISSION_ID=$(echo "$SUBMIT_JSON" | jq -r '.id')
+          STATUS=$(echo "$SUBMIT_JSON" | jq -r '.status')
+          echo "submission_id=$SUBMISSION_ID" >> "$GITHUB_OUTPUT"
+
+          # Always print Apple's detailed log — it's the only source of
+          # truth for "Invalid" verdicts and useful even on Accepted ones.
+          echo ""
+          echo "=== notarytool log ($SUBMISSION_ID) ==="
+          xcrun notarytool log "$SUBMISSION_ID" \
+            --key    "$KEY_PATH" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER_ID" || true
 
           rm -f "$KEY_PATH"
+
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "ERROR: notarization status=$STATUS (see Apple log above)" >&2
+            exit 1
+          fi
 
           # Staple the notarization ticket so Gatekeeper finds it
           # offline (no Apple round-trip on install).

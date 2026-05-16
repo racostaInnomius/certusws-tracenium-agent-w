@@ -10,6 +10,12 @@ node_modules/
 *.msi
 .env
 
+# Exception: WinSW service wrapper binaries committed to the repo as
+# the Windows service entry point. They're pinned (per-arch) instead
+# of downloaded at build time so CI doesn't depend on WinSW's release
+# infrastructure (their v3 URLs have moved across alpha releases).
+!packaging/windows/core-service/*.exe
+
 # ── Build outputs (Phase A consolidation, May 2026) ─────────────────
 # /build/ holds transient outputs from build-*.sh + esbuild + nfpm.
 # Historical: a previous commit accidentally tracked ~600 files under

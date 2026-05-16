@@ -500,6 +500,67 @@ find "$PKG_ROOT" -name ".DS_Store" -delete
 
 chmod +x "$SCRIPTS_DIR/preinstall" "$SCRIPTS_DIR/postinstall"
 
+# ─────────────────────────────────────────────────────────────────────
+# Sign all Mach-O binaries inside the pkg payload BEFORE pkgbuild.
+#
+# Why this is necessary for notarization:
+#   Apple's notary service rejects any .pkg that contains an unsigned
+#   executable, even if the .pkg itself or the .app inside it IS signed.
+#   "Invalid" status from notarytool with no further context is the
+#   typical symptom — running `xcrun notarytool log <id>` reveals the
+#   per-binary verdicts.
+#
+# The unsigned binaries in our payload are:
+#   * Library/Application Support/Tracenium/Runtime/node     (downloaded
+#     from nodejs.org — unsigned by Apple definition)
+#   * Library/Application Support/Tracenium/Agent/node_modules/
+#       better-sqlite3/build/Release/better_sqlite3.node      (Mach-O
+#     dylib produced by node-gyp during npm rebuild, unsigned)
+#
+# Status.app and its inner exe are already signed in build_status_app_bundle.
+# JS files (agent-core.js, privsvc.js) don't need signing.
+#
+# Signing format:
+#   --options runtime        hardened runtime (required for notary)
+#   --timestamp              embedded timestamp (required for notary)
+#   --sign "$IDENTITY"       Developer ID Application cert
+#   (no entitlements file — defaults are fine for these helpers)
+# ─────────────────────────────────────────────────────────────────────
+if [ "$(printf "%s" "${TRACENIUM_CODESIGN_IDENTITY:-}" | tr '[:upper:]' '[:lower:]')" = "skip" ]; then
+  echo "Skipping internal-binary codesign (TRACENIUM_CODESIGN_IDENTITY=skip)."
+else
+  # Resolve identity the same way build_status_app_bundle did so the
+  # whole pkg is signed under ONE identity. Reading from env or
+  # hardcoded default mirrors that function.
+  CODESIGN_ID="${TRACENIUM_CODESIGN_IDENTITY:-Developer ID Application: CERTUS ITM LLC (3CN673MCWH)}"
+
+  sign_internal_bin() {
+    local target="$1"
+    if [ ! -f "$target" ]; then
+      return 0   # not present in this build — skip silently
+    fi
+    # Strip xattrs that codesign refuses (FinderInfo, quarantine, etc.).
+    /usr/bin/xattr -c "$target" || true
+    echo "→ codesign $target"
+    codesign --force \
+      --options runtime \
+      --timestamp \
+      --sign "$CODESIGN_ID" \
+      "$target"
+    codesign --verify --strict --verbose=2 "$target"
+  }
+
+  PKG_PREFIX="$PKG_ROOT/Library/Application Support/Tracenium"
+  sign_internal_bin "$PKG_PREFIX/Runtime/node"
+
+  # Sign every .node native binding under the Agent's node_modules.
+  # Today this is just better_sqlite3.node, but the find loop is
+  # future-proof for the day we add another native dep.
+  find "$PKG_PREFIX/Agent/node_modules" -name "*.node" -type f 2>/dev/null | while IFS= read -r nodebin; do
+    sign_internal_bin "$nodebin"
+  done
+fi
+
 ICONSET_DIR="$ROOT_DIR/build/pkg-icon.iconset"
 rm -rf "$ICONSET_DIR"
 mkdir -p "$ICONSET_DIR"
