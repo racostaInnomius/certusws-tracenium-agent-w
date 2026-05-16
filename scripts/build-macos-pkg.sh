@@ -675,6 +675,62 @@ if Rez -append "$ICON_REZ" -o "$FINAL_PKG" 2>/dev/null; then
   SetFile -a C "$FINAL_PKG" 2>/dev/null || true
 fi
 
+# ─────────────────────────────────────────────────────────────────────
+# Sign the OUTER .pkg with Developer ID Installer cert.
+#
+# Apple's notary service rejects unsigned .pkg files with error:
+#   "The binary is not signed" — path: <pkg-filename>
+# even when every binary INSIDE the pkg is properly signed. The pkg
+# wrapper itself must be signed with a Developer ID INSTALLER cert
+# (different from Developer ID Application that signs Mach-O binaries
+# — the team certs are issued separately under the same Developer
+# Program but for different purposes).
+#
+# Same skip-via-env model as the internal-binary signing earlier:
+#   TRACENIUM_INSTALLER_IDENTITY=skip → no productsign (local builds
+#     without an Installer cert; notarize WILL fail, but build still
+#     completes for "I just want to test the pkg locally" flows).
+#   TRACENIUM_INSTALLER_IDENTITY="Developer ID Installer: …" → use this.
+#   unset → fall back to DEFAULT_INSTALLER_IDENTITY (CERTUS ITM LLC).
+#
+# IMPORTANT: this step must come AFTER the Rez/SetFile icon attachment,
+# because Rez mutates the .pkg bytes (writes 'icns' resource) and would
+# invalidate any pre-existing signature. Sign LAST.
+# ─────────────────────────────────────────────────────────────────────
+DEFAULT_INSTALLER_IDENTITY="Developer ID Installer: CERTUS ITM LLC (3CN673MCWH)"
+INSTALLER_ID="${TRACENIUM_INSTALLER_IDENTITY:-$DEFAULT_INSTALLER_IDENTITY}"
+
+if [ "$(printf "%s" "$INSTALLER_ID" | tr '[:upper:]' '[:lower:]')" = "skip" ]; then
+  echo "Skipping pkg productsign (TRACENIUM_INSTALLER_IDENTITY=skip)."
+  echo "  NOTE: notarization WILL fail without an Installer-signed pkg."
+elif ! security find-identity -v 2>/dev/null | grep -qF "$INSTALLER_ID"; then
+  echo "" >&2
+  echo "WARNING: Installer identity not in keychain — pkg will NOT be signed." >&2
+  echo "         Configured: $INSTALLER_ID" >&2
+  echo "         Available identities:" >&2
+  security find-identity -v 2>/dev/null | sed 's/^/           /' >&2
+  echo "" >&2
+  echo "         To enable productsign:" >&2
+  echo "           1. https://developer.apple.com/account/resources/certificates/list" >&2
+  echo "              Add a 'Developer ID Installer' cert (free under your Dev Program)." >&2
+  echo "           2. Import to Keychain + export as .p12 (same flow as the App cert)." >&2
+  echo "           3. Set TRACENIUM_INSTALLER_IDENTITY to its exact name." >&2
+  echo "" >&2
+  echo "         Or pass TRACENIUM_INSTALLER_IDENTITY=skip to silence this." >&2
+else
+  echo "→ productsign $FINAL_PKG with $INSTALLER_ID"
+  SIGNED_PKG="${FINAL_PKG}.signed"
+  productsign \
+    --sign "$INSTALLER_ID" \
+    --timestamp \
+    "$FINAL_PKG" \
+    "$SIGNED_PKG"
+  mv -f "$SIGNED_PKG" "$FINAL_PKG"
+
+  # Verify the signature took.
+  pkgutil --check-signature "$FINAL_PKG" | sed 's/^/  /'
+fi
+
 # -----------------------------------------------------------------------------
 # Post-build: sha256 digest + optional upload to Azure Blob Storage
 # -----------------------------------------------------------------------------

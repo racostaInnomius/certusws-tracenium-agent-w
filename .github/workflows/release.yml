@@ -21,8 +21,16 @@
 #
 # macOS code signing + notarization:
 #   MACOS_CERT_P12_BASE64            (base64 of "Developer ID Application"
-#                                     .p12 export, including private key)
-#   MACOS_CERT_PASSWORD              (password used at .p12 export time)
+#                                     .p12 export — signs Mach-O binaries
+#                                     INSIDE the pkg: node, .node files,
+#                                     Status.app)
+#   MACOS_CERT_PASSWORD              (password used at App-cert .p12 export)
+#   MACOS_INSTALLER_P12_BASE64       (base64 of "Developer ID Installer"
+#                                     .p12 export — signs the OUTER pkg;
+#                                     this is a DIFFERENT cert from the
+#                                     App one, generated separately on
+#                                     developer.apple.com)
+#   MACOS_INSTALLER_PASSWORD         (password used at Installer-cert .p12)
 #   MACOS_KEYCHAIN_PASSWORD          (any random string; protects the
 #                                     ephemeral keychain we create in CI)
 #   ASC_KEY_P8_BASE64                (base64 of AuthKey_XXXXXX.p8 from
@@ -198,14 +206,22 @@ jobs:
       - name: Install repo dependencies (host)
         run: npm ci
 
-      # ── Import code-signing identity into a temporary keychain ──
+      # ── Import code-signing identities into a temporary keychain ──
       # We DON'T touch the default login.keychain. Everything we add
       # goes into a per-run keychain that disappears with the runner.
-      - name: Import codesign identity
+      #
+      # Two distinct identities live in this keychain:
+      #   1. Developer ID Application — signs Mach-O binaries
+      #      (node, *.node bindings, Status.app)
+      #   2. Developer ID Installer   — signs the .pkg wrapper itself
+      #      (REQUIRED for notarization — see build-macos-pkg.sh comment)
+      - name: Import codesign identities
         env:
-          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
-          MACOS_CERT_PASSWORD:   ${{ secrets.MACOS_CERT_PASSWORD }}
-          KEYCHAIN_PASSWORD:     ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          MACOS_CERT_P12_BASE64:      ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD:        ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_INSTALLER_P12_BASE64: ${{ secrets.MACOS_INSTALLER_P12_BASE64 }}
+          MACOS_INSTALLER_PASSWORD:   ${{ secrets.MACOS_INSTALLER_PASSWORD }}
+          KEYCHAIN_PASSWORD:          ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
         run: |
           set -eu
           KEYCHAIN_PATH="$RUNNER_TEMP/tracenium.keychain-db"
@@ -215,29 +231,39 @@ jobs:
           security set-keychain-settings -lut 21600              "$KEYCHAIN_PATH"
           security unlock-keychain     -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Import cert + private key from the base64'd p12.
-          P12_PATH="$RUNNER_TEMP/cert.p12"
-          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > "$P12_PATH"
-          security import "$P12_PATH" \
+          # 1. Application cert (codesign for Mach-O binaries inside pkg)
+          APP_P12="$RUNNER_TEMP/app-cert.p12"
+          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > "$APP_P12"
+          security import "$APP_P12" \
             -P "$MACOS_CERT_PASSWORD" \
             -A -t cert -f pkcs12 \
             -k "$KEYCHAIN_PATH"
-          rm -f "$P12_PATH"
+          rm -f "$APP_P12"
 
-          # Add the new keychain to the search list so `codesign --sign
-          # "Developer ID Application: ..."` finds the identity.
+          # 2. Installer cert (productsign for the outer pkg)
+          INST_P12="$RUNNER_TEMP/installer-cert.p12"
+          echo "$MACOS_INSTALLER_P12_BASE64" | base64 --decode > "$INST_P12"
+          security import "$INST_P12" \
+            -P "$MACOS_INSTALLER_PASSWORD" \
+            -A -t cert -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+          rm -f "$INST_P12"
+
+          # Add the new keychain to the search list so `codesign` and
+          # `productsign` find the identities.
           existing=$(security list-keychains -d user | tr -d '"')
           security list-keychain -d user -s $KEYCHAIN_PATH $existing
 
-          # Without this, macOS pops a UI prompt asking permission to
-          # use the key — which hangs the runner indefinitely.
+          # Allow apple tools + codesign + productsign to use the keys
+          # without UI prompt (which would hang the runner).
           security set-key-partition-list \
-            -S apple-tool:,apple:,codesign: \
+            -S apple-tool:,apple:,codesign:,productsign: \
             -s -k "$KEYCHAIN_PASSWORD" \
             "$KEYCHAIN_PATH"
 
-          # Sanity-print which identities are now visible to codesign.
-          security find-identity -v -p codesigning
+          # Sanity-print all identities now visible to apple tools.
+          echo "=== signing identities ==="
+          security find-identity -v "$KEYCHAIN_PATH"
 
       - name: Restore macOS build cache
         uses: actions/cache@v4
@@ -339,14 +365,21 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Install WiX 6
+      - name: Install WiX 6 + extensions
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 6.*
-          # WiX UI extension needs explicit add for v4+ command line.
-          # The script uses -ext WixToolset.UI.wixext / .Util.wixext;
-          # wix CLI resolves them via the NuGet feed at build time.
+          # WiX 4+ removed the bundled extensions. `wix build -ext NAME`
+          # ONLY references the extension by name — the binary must be
+          # installed first via `wix extension add`. Without this step
+          # the build fails with "Could not find extension: <NAME>".
+          # `--global` installs to the user-wide extension store so any
+          # subsequent `wix` invocation in the same job picks them up
+          # regardless of cwd.
+          wix extension add --global WixToolset.UI.wixext
+          wix extension add --global WixToolset.Util.wixext
           wix --version
+          wix extension list --global
 
       - name: Install repo dependencies (host)
         run: npm ci
@@ -421,11 +454,16 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Install WiX 6
+      - name: Install WiX 6 + extensions
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 6.*
+          # See windows-x64 job comment — extensions are not auto-fetched
+          # by `-ext NAME`; they must be installed separately.
+          wix extension add --global WixToolset.UI.wixext
+          wix extension add --global WixToolset.Util.wixext
           wix --version
+          wix extension list --global
 
       - name: Install repo dependencies (host)
         run: npm ci
