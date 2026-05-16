@@ -179,13 +179,43 @@ $nativePkg | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $OutApp "pac
 
 Push-Location $OutApp
 try {
-  # --omit=dev: no devDeps. --build-from-source: force native compile
-  # (don't pull a prebuilt binary that might be wrong-arch). --no-audit
-  # --no-fund: quieter CI logs.
-  npm install --omit=dev --build-from-source --no-audit --no-fund
+  # Two modes depending on host vs. target arch:
+  #
+  # Native arch (host == target):
+  #   `--build-from-source` forces node-gyp to compile the binding
+  #   fresh. Guarantees ABI match and avoids any "wrong-arch prebuild
+  #   slipped in" surprise. This is the path build-linux-binaries.sh
+  #   takes on Linux.
+  #
+  # Cross arch (host != target, e.g. x64 host building arm64 MSI):
+  #   We can't compile a foreign-arch binary from this host's gcc
+  #   without setting up cross-compilers. Instead, we install in
+  #   PREBUILD mode: npm_config_arch + target_platform tell npm to
+  #   download the precompiled .node binding for the requested arch
+  #   from better-sqlite3's GitHub release. We trust the prebuild
+  #   because better-sqlite3 publishes them per release with checksums.
+  #
+  #   The win-arm64 prebuild has been shipped by better-sqlite3 since
+  #   v11.x. If a future version drops it, this script will fail at
+  #   npm install with a clear "no prebuild found" error — at which
+  #   point the right answer is to either pin to a version that has
+  #   the prebuild or revert this job to a native arm64 runner.
+  $hostArch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
+  $env:npm_config_arch = $Arch
+  $env:npm_config_target_platform = "win32"
+
+  if ($hostArch -eq $Arch) {
+    Write-Host "  (native build: host=$hostArch == target=$Arch)" -ForegroundColor DarkGray
+    npm install --omit=dev --build-from-source --no-audit --no-fund
+  } else {
+    Write-Host "  (cross-compile: host=$hostArch -> target=$Arch — using prebuilds)" -ForegroundColor DarkGray
+    npm install --omit=dev --no-audit --no-fund
+  }
   if ($LASTEXITCODE -ne 0) { throw "npm install (native deps) failed" }
 } finally {
   Pop-Location
+  Remove-Item env:npm_config_arch -ErrorAction SilentlyContinue
+  Remove-Item env:npm_config_target_platform -ErrorAction SilentlyContinue
 }
 
 # Sanity check: did better-sqlite3 actually produce the .node binding?

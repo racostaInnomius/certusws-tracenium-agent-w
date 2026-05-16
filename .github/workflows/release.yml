@@ -415,14 +415,19 @@ jobs:
             exit 1
           fi
 
-          # --timeout caps wait at 30 min. Apple's queue is usually
-          # 1-5 min; 30 min is the longest "normal" turnaround.
+          # --timeout caps wait at 10 min. Apple's queue is usually
+          # 1-5 min for our pkg size; 10 min covers normal load + buffer.
+          # Set tighter than typical advice (30 min) because every minute
+          # waiting is 10x cost on macOS runners — and best-effort
+          # fallback means a timeout just ships signed-only instead of
+          # blocking the release. Operator can re-run later if they want
+          # to retry notarization at a less saturated time.
           SUBMIT_JSON=$(xcrun notarytool submit "$PKG" \
             --key       "$KEY_PATH" \
             --key-id    "$ASC_KEY_ID" \
             --issuer    "$ASC_ISSUER_ID" \
             --output-format json \
-            --timeout   1800 \
+            --timeout   600 \
             --wait)
           echo "$SUBMIT_JSON"
 
@@ -583,23 +588,40 @@ jobs:
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────
-  # windows-arm64 — same flow as x64 but on ARM64 native runner
-  # NOTE: `windows-11-arm` was GA'd by GitHub in 2024-2025. If your
-  # org hasn't enabled ARM runners yet, this job will queue forever.
-  # Check: Org Settings → Actions → Runner groups → ARM-compatible.
+  # windows-arm64 — produces Tracenium-Agent-<v>-arm64.msi (signed)
+  #
+  # CROSS-COMPILED FROM x64 host (windows-latest), NOT from an arm64
+  # native runner. Reason: `windows-11-arm` + `azure/trusted-signing-
+  # action` hit "SignTool failed with exit code 3" because the action
+  # bundles signtool x64 which runs under emulation on the arm64 host
+  # and has an internal error path with Authenticode + Trusted Signing
+  # dlib. SignTool x64 on x64 host (this job) works fine — that's why
+  # the windows-x64 job above succeeds.
+  #
+  # Cross-compile is safe because:
+  #   - dotnet publish -r win-arm64 produces native arm64 PE binaries
+  #     from any host (we already use this from macOS in
+  #     build-windows-binaries.sh)
+  #   - better-sqlite3 publishes prebuilt win32-arm64 .node bindings
+  #     since v11.x. The PowerShell helper sets npm_config_arch=arm64
+  #     so npm fetches the prebuild instead of trying to compile.
+  #   - WinSW arm64 binary is committed to the repo (currently a copy
+  #     of x64; runs via Windows ARM64 emulation, which is what the
+  #     existing production MSIs already ship).
   # ──────────────────────────────────────────────────────────────────
   windows-arm64:
     name: Build · Windows arm64 (.msi)
     needs: resolve
     if: needs.resolve.outputs.build_mode == 'full'
-    runs-on: windows-11-arm
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ needs.resolve.outputs.node_version }}
-          architecture: arm64
+          # Host is x64; we cross-compile for arm64 inside the scripts.
+          architecture: x64
           cache: npm
 
       - uses: actions/setup-dotnet@v4
@@ -610,9 +632,6 @@ jobs:
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 6.*
-          # See windows-x64 job comment — pin extensions to /6.0.0 to
-          # match the wix v6 CLI; without the pin NuGet resolves to
-          # 7.x which has a wixext7/ root that v6 can't read.
           wix extension add --global WixToolset.UI.wixext/6.0.0
           wix extension add --global WixToolset.Util.wixext/6.0.0
           wix --version
@@ -626,13 +645,15 @@ jobs:
         with:
           path: |
             build/.node-cache
-          key: windows-arm64-${{ needs.resolve.outputs.node_version }}
+          # Key includes 'crosscompile' so we don't accidentally share
+          # a cache with a future native-arm64 run if we switch back.
+          key: windows-arm64-crosscompile-${{ needs.resolve.outputs.node_version }}
 
-      - name: Build .NET binaries (PrivSvc + AgentTray)
+      - name: Build .NET binaries for arm64 (cross-compile from x64)
         shell: bash
         run: ONLY_ARM64=1 ./scripts/build-windows-binaries.sh
 
-      - name: Build AgentCore (arm64 native — esbuild + node + better-sqlite3)
+      - name: Build AgentCore (arm64 — cross from x64, using npm prebuilds)
         shell: pwsh
         run: pwsh ./scripts/build-agentcore-windows.ps1 -Arch arm64
 
