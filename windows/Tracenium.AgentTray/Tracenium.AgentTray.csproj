@@ -90,19 +90,46 @@
     fails the build before the MSI can pick up a broken EXE.
     ===========================================================================
   -->
-  <Target Name="VerifyTrayIconEmbedded" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+  <!--
+    Condition (extended May 2026):
+      OS == Windows_NT
+        Skip on Mac/Linux hosts — System.Reflection.Assembly.LoadFile
+        requires a Windows .NET runtime AND a compatible target arch.
+      AND SkipVerifyTrayIcon != true
+        Explicit skip flag (passed via -p:SkipVerifyTrayIcon=true from
+        build-windows-binaries.sh when cross-compiling). This is the
+        primary skip mechanism — the auto-detection below is a backup
+        for hand-run `dotnet publish` invocations that don't go through
+        our script.
+      AND (RuntimeIdentifier empty OR matches host SDK's RID)
+        Skip when CROSS-COMPILING between Windows archs (host x64 →
+        target arm64, or vice versa). The DLL emitted is for the
+        TARGET arch and the HOST's runtime can't LoadFile it across
+        archs ("BadImageFormatException: This assembly was compiled
+        for a different processor"). The verification still runs on
+        same-arch builds (most common dev + CI case for the primary
+        arch); the cross-arch build is covered by:
+          - <ValidateTrayIconSource> BeforeBuild (icon source exists)
+          - MSBuild's native <EmbeddedResource> processing (resource
+            name derived from project namespace + filename — drift
+            shows up immediately at runtime on either arch).
+  -->
+  <Target Name="VerifyTrayIconEmbedded"
+          AfterTargets="Build"
+          Condition="'$(OS)' == 'Windows_NT' AND '$(SkipVerifyTrayIcon)' != 'true' AND ('$(RuntimeIdentifier)' == '' OR '$(RuntimeIdentifier)' == '$(NETCoreSdkRuntimeIdentifier)')">
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$ErrorActionPreference='Stop'; $asm=[System.Reflection.Assembly]::LoadFile((Resolve-Path '$(TargetPath)').Path); $names=$asm.GetManifestResourceNames(); $expected='$(TrayIconResourceName)'; if ($names -notcontains $expected) { Write-Host ('Embedded resources found: ' + ($names -join ', ')); throw ('Expected embedded resource missing: ' + $expected) }; $stream=$asm.GetManifestResourceStream($expected); if ($stream -eq $null) { throw ('Resource stream null for: ' + $expected) }; if ($stream.Length -le 0) { throw ('Resource stream is empty for: ' + $expected) }; Write-Host ('Tray icon embedded OK: ' + $expected + ' (' + $stream.Length + ' bytes)')&quot;"
           ConsoleToMsBuild="true" />
   </Target>
 
   <!--
-    En cross-compile (Mac/Linux → Windows) la verificación post-build
-    queda cubierta de otra manera: BeforeBuild ya verifica que el ICO
-    fuente existe, y MSBuild procesa el <EmbeddedResource> nativamente.
-    Si el resource name se rompiera, el TrayIconLoader.LoadOrFallback()
-    cae al SystemIcons.Application en runtime — no rompe el agente,
-    solo muestra el ícono genérico de Windows. El script Bash de build
-    (build-windows-binaries.sh) sí valida que el EXE producido tenga
-    tamaño razonable como sanity check operativo.
+    Cross-compile coverage notes (when VerifyTrayIconEmbedded is skipped):
+      - BeforeBuild ValidateTrayIconSource catches a missing ICO file
+      - MSBuild's <EmbeddedResource> processes the icon natively
+      - If the resource NAME ever drifts (rename, namespace move),
+        TrayIconLoader.LoadOrFallback() falls back to SystemIcons.Application
+        at runtime — the agent doesn't crash, the tray just shows a
+        generic Windows icon. Tolerable degradation.
+      - build-windows-binaries.sh validates that the EXE produced has
+        a reasonable size as an operational sanity check.
   -->
 </Project>

@@ -147,6 +147,45 @@ clean_and_publish() {
   rm -rf "$outdir"
   mkdir -p "$outdir"
 
+  # Cross-compile detection. The AgentTray csproj has a post-build
+  # VerifyTrayIconEmbedded target that calls [Assembly]::LoadFile on
+  # the produced DLL — that fails with BadImageFormatException when
+  # host arch != target arch (e.g. x64 host publishing win-arm64 DLL).
+  # We pass -p:SkipVerifyTrayIcon=true to opt out of the check in
+  # those cases. The csproj also auto-detects via
+  # NETCoreSdkRuntimeIdentifier as a fallback, but this explicit flag
+  # is the primary mechanism (more obvious + safer if MSBuild's
+  # RuntimeIdentifier handling changes in future SDK versions).
+  #
+  # Host arch (running this script):
+  #   Linux / macOS                                    → not Windows; csproj target self-skips on OS
+  #   Windows x64                                       → host=x64
+  #   Windows arm64 (rare for our CI, but valid)        → host=arm64
+  host_arch=""
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      # Windows via Git Bash. PROCESSOR_ARCHITECTURE in env distinguishes.
+      case "${PROCESSOR_ARCHITECTURE:-}" in
+        AMD64) host_arch="x64" ;;
+        ARM64) host_arch="arm64" ;;
+      esac
+      ;;
+  esac
+
+  # Map our RID to a comparable arch token.
+  target_arch=""
+  case "$rid" in
+    win-x64)   target_arch="x64" ;;
+    win-arm64) target_arch="arm64" ;;
+  esac
+
+  skip_verify_args=""
+  if [ -n "$host_arch" ] && [ -n "$target_arch" ] && [ "$host_arch" != "$target_arch" ]; then
+    # Cross-arch on a Windows host. Skip the post-build verifier.
+    skip_verify_args="-p:SkipVerifyTrayIcon=true"
+    echo "  (cross-compile $host_arch -> $target_arch on Windows host — skipping VerifyTrayIconEmbedded)"
+  fi
+
   if [ "$selfcontained" = "true" ]; then
     # PrivSvc: explicit self-contained on the CLI overrides the
     # csproj's <SelfContained>false</SelfContained>. We keep that
@@ -160,6 +199,7 @@ clean_and_publish() {
       -p:PublishSingleFile=true \
       -p:DebugType=none \
       -p:DebugSymbols=false \
+      $skip_verify_args \
       -o "$outdir"
   else
     # AgentTray: csproj already has SingleFile + SelfContained=true +
@@ -167,6 +207,7 @@ clean_and_publish() {
     dotnet publish "$proj" \
       -c Release \
       -r "$rid" \
+      $skip_verify_args \
       -o "$outdir"
   fi
 }
