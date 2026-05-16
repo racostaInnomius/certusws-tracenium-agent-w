@@ -193,6 +193,11 @@ jobs:
     name: Build · macOS arm64 (.pkg)
     needs: prepare
     runs-on: macos-14
+    # 45-min cap. The build itself takes ~5 min; notarization is the
+    # tail — Apple's notary queue is normally 1-5 min but can spike
+    # to 20-30 min on heavy days. 45 min covers a bad day without
+    # letting a wedged submission burn the runner indefinitely.
+    timeout-minutes: 45
     env:
       TRACENIUM_AGENT_ARCH: arm64
     steps:
@@ -305,11 +310,20 @@ jobs:
           # Submit and capture the submission ID so we can fetch the log
           # whether the result is Accepted or Invalid. --output-format json
           # makes the response machine-parseable.
+          #
+          # --timeout caps the wait. Apple's notary is usually 1-5 min,
+          # but queue spikes can push it to 30+ min. Without --timeout,
+          # notarytool would hang indefinitely on a wedged submission
+          # (we saw a 28-min stuck submission canceled manually). 30 min
+          # is the longest "normal" Apple turnaround; anything past that
+          # is almost certainly Apple-side wedging and we'd rather fail
+          # fast + retry than burn runner minutes.
           SUBMIT_JSON=$(xcrun notarytool submit "$PKG" \
             --key       "$KEY_PATH" \
             --key-id    "$ASC_KEY_ID" \
             --issuer    "$ASC_ISSUER_ID" \
             --output-format json \
+            --timeout   1800 \
             --wait)
           echo "$SUBMIT_JSON"
 
@@ -371,13 +385,20 @@ jobs:
           dotnet tool install --global wix --version 6.*
           # WiX 4+ removed the bundled extensions. `wix build -ext NAME`
           # ONLY references the extension by name — the binary must be
-          # installed first via `wix extension add`. Without this step
-          # the build fails with "Could not find extension: <NAME>".
+          # installed first via `wix extension add`.
+          #
+          # CRITICAL: pin extension versions to the WiX major. Without
+          # the /6.0.0 pin, NuGet resolves to the latest (currently
+          # 7.x), which only ships a `wixext7/` package root and is
+          # rejected by wix v6 with:
+          #   WIX6101: Could not find expected package root folder wixext6
+          # The build then fails at extension-add (exit 1).
+          #
           # `--global` installs to the user-wide extension store so any
           # subsequent `wix` invocation in the same job picks them up
           # regardless of cwd.
-          wix extension add --global WixToolset.UI.wixext
-          wix extension add --global WixToolset.Util.wixext
+          wix extension add --global WixToolset.UI.wixext/6.0.0
+          wix extension add --global WixToolset.Util.wixext/6.0.0
           wix --version
           wix extension list --global
 
@@ -458,10 +479,11 @@ jobs:
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 6.*
-          # See windows-x64 job comment — extensions are not auto-fetched
-          # by `-ext NAME`; they must be installed separately.
-          wix extension add --global WixToolset.UI.wixext
-          wix extension add --global WixToolset.Util.wixext
+          # See windows-x64 job comment — pin extensions to /6.0.0 to
+          # match the wix v6 CLI; without the pin NuGet resolves to
+          # 7.x which has a wixext7/ root that v6 can't read.
+          wix extension add --global WixToolset.UI.wixext/6.0.0
+          wix extension add --global WixToolset.Util.wixext/6.0.0
           wix --version
           wix extension list --global
 
