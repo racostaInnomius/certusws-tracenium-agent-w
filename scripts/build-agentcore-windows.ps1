@@ -115,15 +115,31 @@ New-Item -ItemType Directory -Force -Path $OutBase, $OutApp, $OutDist, $OutNm, $
 Write-Host "→ esbuild agent core" -ForegroundColor Yellow
 Push-Location $RepoRoot
 try {
-  $esbuild = Join-Path $RepoRoot "node_modules/.bin/esbuild.cmd"
-  if (-not (Test-Path $esbuild)) {
-    # Fallback: maybe the dev hasn't run `npm ci` yet. Do it now,
-    # silently. CI workflows should `npm ci` before this script, but a
-    # local "just run the script" invocation should still work.
+  # Invoke esbuild via its JS entry, NOT via node_modules/.bin/esbuild.
+  #
+  # The .bin/esbuild file is npm's POSIX shell shim — running `node`
+  # against it on Windows fails with:
+  #     node_modules\.bin\esbuild:2
+  #     basedir=$(dirname "$(echo "$0" | sed -e 's,\\,/,g')")
+  #               ^^^^^^^
+  #     SyntaxError: missing ) after argument list
+  # (because node tried to parse the bash script as JavaScript).
+  #
+  # Calling `node node_modules/esbuild/bin/esbuild` works the SAME way
+  # on every platform — it's a tiny JS launcher that knows how to find
+  # esbuild's native binary inside its own package.
+  $esbuildJs = Join-Path $RepoRoot "node_modules/esbuild/bin/esbuild"
+  if (-not (Test-Path $esbuildJs)) {
+    # Fallback for local invocations without a prior `npm ci`. CI
+    # workflows always run npm ci first, so this is just for the
+    # "I cloned the repo and ran the script" case.
     Write-Host "  (host node_modules missing — running npm ci)" -ForegroundColor DarkGray
     npm ci --no-audit --no-fund
   }
-  & node "node_modules/.bin/esbuild" `
+  if (-not (Test-Path $esbuildJs)) {
+    throw "esbuild JS entry not found at $esbuildJs even after npm ci. Check package.json devDependencies."
+  }
+  & node $esbuildJs `
     "src/index.ts" `
     --bundle `
     --platform=node `

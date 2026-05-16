@@ -177,9 +177,30 @@ if [ ! -f "$NODE_CACHED" ]; then
 fi
 
 NODE_EXTRACTED="$NODE_CACHE_DIR/node-v$NODE_VERSION-linux-$NODE_ARCH"
-if [ ! -d "$NODE_EXTRACTED" ]; then
+
+# Defensive completeness check: a previous run (or actions/cache@v4
+# restore) can leave the EXTRACTED-DIR present but with partial
+# contents — typically the top-level folder exists but `bin/node`
+# inside doesn't. Guarding only on dir-presence makes the cp below
+# fail at runtime with a vague "cannot stat" error. Instead, treat
+# the absence of bin/node as "extraction incomplete, redo it".
+if [ ! -x "$NODE_EXTRACTED/bin/node" ]; then
   echo "→ extracting node"
-  tar -C "$NODE_CACHE_DIR" -xJf "$NODE_CACHED"
+  rm -rf "$NODE_EXTRACTED"
+  if ! tar -C "$NODE_CACHE_DIR" -xJf "$NODE_CACHED"; then
+    echo "ERROR: tar -xJf failed for $NODE_CACHED" >&2
+    rm -f "$NODE_CACHED"
+    exit 1
+  fi
+fi
+
+if [ ! -x "$NODE_EXTRACTED/bin/node" ]; then
+  echo "ERROR: after extraction, $NODE_EXTRACTED/bin/node is still missing" >&2
+  echo "       Tarball may be corrupt — dropping cache and aborting." >&2
+  echo "       Re-run the workflow; next attempt will redownload from scratch." >&2
+  ls -la "$NODE_EXTRACTED" 2>&1 | sed 's/^/         /' >&2 || true
+  rm -rf "$NODE_CACHED" "$NODE_EXTRACTED"
+  exit 1
 fi
 
 cp "$NODE_EXTRACTED/bin/node" "$PKG_ROOT/node"

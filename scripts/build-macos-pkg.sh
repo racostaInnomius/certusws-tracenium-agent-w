@@ -416,6 +416,34 @@ build_agent_bundle
 build_privsvc_bundle
 build_status_app_bundle
 
+# Stage native deps into the Agent payload.
+#
+# Why: build_agent_bundle's esbuild call uses `--external:better-sqlite3`,
+# so the bundle expects to resolve better-sqlite3 from node_modules/ at
+# runtime (it's a C++ binding, can't be bundled). We need to ship the
+# host's better-sqlite3 + its sibling deps under
+# $BUILD_DIR/Agent/node_modules/. Same convention the Linux build uses.
+#
+# Pre-CI this directory was usually already populated by a previous
+# local run that pre-staged the files into build/. In CI the checkout
+# is clean, so we MUST do this copy explicitly.
+#
+# After this stage step the existing ABI-mismatch detector below will
+# rebuild better-sqlite3 against the BUNDLED node (different ABI from
+# the host node that ran npm), so what we copy here is just the source
+# tree — the .node binding gets rewritten by rebuild_better_sqlite3.
+mkdir -p "$BUILD_DIR/Agent/node_modules"
+for pkg in better-sqlite3 bindings file-uri-to-path; do
+  if [ -d "$ROOT_DIR/node_modules/$pkg" ]; then
+    rm -rf "$BUILD_DIR/Agent/node_modules/$pkg"
+    cp -R "$ROOT_DIR/node_modules/$pkg" "$BUILD_DIR/Agent/node_modules/"
+  else
+    echo "ERROR: required native dep '$pkg' missing from host node_modules" >&2
+    echo "       Run 'npm ci' at the repo root before invoking this script." >&2
+    exit 1
+  fi
+done
+
 if [ ! -f "$BUILD_DIR/PrivSvc/macos/privsvc.js" ]; then
   echo "Missing PrivSvc bundle: $BUILD_DIR/PrivSvc/macos/privsvc.js" >&2
   exit 1
