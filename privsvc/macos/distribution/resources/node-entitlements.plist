@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Entitlements applied to the bundled Node.js binary (and any .node
+  native modules loaded by it) when codesigning under hardened
+  runtime. Without these, the kernel kills the process with SIGTRAP
+  the first time V8 tries to mmap an executable JIT page.
+
+  com.apple.security.cs.allow-jit
+    Allow V8 to allocate pages with PROT_EXEC | MAP_JIT. This is the
+    minimum required entitlement for any JavaScript runtime under
+    hardened runtime. Without it: Trace/BPT trap: 5 on first JIT
+    allocation (every Node script ever, including ours).
+
+  com.apple.security.cs.allow-unsigned-executable-memory
+    Older V8 paths use plain mmap(PROT_EXEC) without MAP_JIT. Kept
+    for compatibility; future V8 versions may drop this need.
+
+  com.apple.security.cs.disable-library-validation
+    Hardened runtime by default refuses to load dylibs that aren't
+    Apple-signed or signed by the SAME team as the loader. Our
+    better_sqlite3.node is signed by us (matches Node's team after
+    we re-sign it), but a future Node version might dlopen a system
+    library that has a different signer (e.g., a Homebrew-pulled
+    OpenSSL during dev). Disabling library validation tolerates that
+    case. Notarize accepts this entitlement without complaint.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

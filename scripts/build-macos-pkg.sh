@@ -534,6 +534,18 @@ else
   # hardcoded default mirrors that function.
   CODESIGN_ID="${TRACENIUM_CODESIGN_IDENTITY:-Developer ID Application: CERTUS ITM LLC (3CN673MCWH)}"
 
+  # Entitlements applied when signing Node + native .node files.
+  # CRITICAL: without these, hardened-runtime'd Node crashes with
+  # Trace/BPT trap: 5 (SIGTRAP) the first time V8 tries to allocate
+  # a JIT page. The file lives in the repo so the build is
+  # reproducible; see the plist's header comment for details.
+  NODE_ENTITLEMENTS="$ROOT_DIR/privsvc/macos/distribution/resources/node-entitlements.plist"
+  if [ ! -f "$NODE_ENTITLEMENTS" ]; then
+    echo "ERROR: missing entitlements file: $NODE_ENTITLEMENTS" >&2
+    echo "       Required for hardened-runtime'd Node to run V8's JIT." >&2
+    exit 1
+  fi
+
   sign_internal_bin() {
     local target="$1"
     if [ ! -f "$target" ]; then
@@ -542,9 +554,15 @@ else
     # Strip xattrs that codesign refuses (FinderInfo, quarantine, etc.).
     /usr/bin/xattr -c "$target" || true
     echo "→ codesign $target"
+    # --entitlements is REQUIRED here because hardened runtime
+    # (--options runtime) without the allow-jit entitlement kills
+    # any V8 process at first JIT allocation. The same entitlement
+    # set is harmless for non-JIT binaries (.node native modules),
+    # so we apply uniformly.
     codesign --force \
       --options runtime \
       --timestamp \
+      --entitlements "$NODE_ENTITLEMENTS" \
       --sign "$CODESIGN_ID" \
       "$target"
     codesign --verify --strict --verbose=2 "$target"
