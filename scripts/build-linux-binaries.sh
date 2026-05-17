@@ -17,7 +17,7 @@
 #
 # Usage:
 #   ./scripts/build-linux-pkg.sh
-#   TRACENIUM_AGENT_VERSION=1.1.15 ./scripts/build-linux-pkg.sh
+#   TRACENIUM_AGENT_VERSION=1.1.16 ./scripts/build-linux-pkg.sh
 #   TRACENIUM_AGENT_ARCH=arm64 ./scripts/build-linux-pkg.sh
 #
 # Run-host requirements:

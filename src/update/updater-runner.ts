@@ -2,6 +2,8 @@
 
 import { spawn } from "child_process";
 import fs from "fs";
+import os from "os";
+import path from "path";
 import type { RunUpdateResult } from "./update-types";
 import { updateUpdateState } from "./update-state";
 
@@ -10,40 +12,114 @@ export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
     throw new Error(`msi_not_found: ${msiPath}`);
   }
 
-  const args = ["/i", msiPath, "/qn", "/norestart"];
+  // ── Why we don't `spawn("msiexec", ...)` directly ─────────────────
+  // The agent runs as a Windows Service under LocalSystem via WinSW.
+  // Windows wraps the service's processes in a Job Object. If we spawn
+  // msiexec as a CHILD of this process, msiexec lives inside the same
+  // Job Object. The MSI itself then issues a STOP_SIGNAL to the
+  // TraceniumAgentCore service so it can replace node.exe and the .dll
+  // payload — but stopping the service tears down the Job Object,
+  // which KILLS our msiexec child mid-install. Result: half-applied
+  // install, files in inconsistent state, agent stuck on the prior
+  // version forever (saw this on ETE-3X5P8F4 + TNS-OPER-SNOC04 in
+  // 1.1.14 → 1.1.16 rollout — exact mirror of the pre-0655a70 Linux
+  // bug where dpkg got killed by systemd's cgroup tear-down).
+  //
+  // The Linux fix uses `systemd-run --scope` to launch dpkg outside
+  // privsvc's cgroup. The Windows equivalent is to schedule a one-shot
+  // Task Scheduler task that runs msiexec under the Task Scheduler's
+  // own job hierarchy — completely independent of our service's Job
+  // Object. We give it a small delay so the agent has time to
+  // gracefully exit before msiexec starts hammering the install dir.
+  //
+  // schtasks is part of Windows since Vista. The /f flag overwrites
+  // any prior task with the same name (e.g. from a previous failed
+  // attempt). /ru SYSTEM grants the task LocalSystem privileges
+  // without needing a password. Task auto-deletes after running via
+  // /z + /sd /ed combo (we set ed = now + 1 hour as the cutoff).
+
+  // 1. Write a tiny .cmd shim that:
+  //    - waits 10 seconds (gives the agent time to be stopped cleanly)
+  //    - runs msiexec
+  //    - deletes itself afterwards
+  // Using a shim instead of inlining the command in /tr keeps quoting
+  // sane for paths with spaces (Program Files, etc.).
+  const shimPath = path.join(
+    os.tmpdir(),
+    `tracenium-update-${Date.now()}-${process.pid}.cmd`
+  );
+  const shimContents = [
+    "@echo off",
+    "rem One-shot update launcher — see updater-runner.ts header for rationale.",
+    "timeout /t 10 /nobreak >nul",
+    `msiexec.exe /i "${msiPath}" /qn /norestart`,
+    "set MSIEXEC_RC=%ERRORLEVEL%",
+    "rem self-delete after run",
+    `del /q "%~f0"`,
+    "exit /b %MSIEXEC_RC%"
+  ].join("\r\n");
 
   try {
-    const child = spawn("msiexec", args, {
+    fs.writeFileSync(shimPath, shimContents, "utf8");
+  } catch (err: any) {
+    throw new Error(`update_shim_write_failed: ${err?.message || err}`);
+  }
+
+  // 2. Compute "start in 30 seconds" for the schtasks /st HH:MM time.
+  // schtasks accepts HH:mm only (no seconds), so we round up.
+  const startAt = new Date(Date.now() + 60_000);
+  const hh = String(startAt.getHours()).padStart(2, "0");
+  const mm = String(startAt.getMinutes()).padStart(2, "0");
+  const startTime = `${hh}:${mm}`;
+
+  const taskName = `TraceniumAgentUpdate_${Date.now()}`;
+  const schArgs = [
+    "/create",
+    "/tn", taskName,
+    "/tr", shimPath,
+    "/sc", "ONCE",
+    "/st", startTime,
+    "/ru", "SYSTEM",
+    "/rl", "HIGHEST",
+    "/f"
+  ];
+
+  try {
+    const child = spawn("schtasks.exe", schArgs, {
       detached: true,
       stdio: "ignore",
       windowsHide: true
     });
 
     child.on("error", (err) => {
-      console.error("[update] msiexec spawn error", {
+      console.error("[update] schtasks spawn error", {
         error: err?.message || err,
-        path: msiPath
+        taskName,
+        shimPath
       });
     });
 
     child.unref();
 
-    console.log("[update] msiexec launched", {
-      path: msiPath,
-      pid: child.pid
+    console.log("[update] scheduled msiexec via Task Scheduler", {
+      taskName,
+      startTime,
+      shimPath,
+      msiPath
     });
 
     return {
       started: true,
-      command: "msiexec",
-      args
+      command: "schtasks.exe",
+      args: schArgs
     };
   } catch (err: any) {
-    console.error("[update] failed to start msiexec", {
+    console.error("[update] failed to create scheduled update task", {
       error: err?.message || err,
-      path: msiPath
+      msiPath
     });
-
+    // Don't leave a leaked shim file behind.
+    try { fs.unlinkSync(shimPath); } catch {}
     throw err;
   }
 }
