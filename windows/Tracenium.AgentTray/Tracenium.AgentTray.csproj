@@ -6,6 +6,20 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
 
+    <!-- Win32 VersionInfo resource — populated by MSBuild into the
+         emitted PE. Shows up in Explorer Properties → Details tab,
+         Task Manager "Verified Signer" column, and (most importantly)
+         contributes to the binary's Authenticode reputation footprint
+         when the Trusted Signing cert builds rep across Defender's
+         cloud. Company MUST match the cert subject (CERTUS ITM LLC) so
+         the Publisher fields line up consistently. -->
+    <Company>CERTUS ITM LLC</Company>
+    <Product>Tracenium Agent</Product>
+    <Authors>CERTUS ITM LLC</Authors>
+    <Copyright>Copyright © CERTUS ITM LLC</Copyright>
+    <AssemblyTitle>Tracenium Agent Tray</AssemblyTitle>
+    <Description>Tracenium Agent — system tray status indicator</Description>
+
     <!-- Permite ejecutar `dotnet publish -r win-x64` desde macOS/Linux.
          Sin esto el SDK rechaza el TargetFramework net8.0-windows fuera
          de Windows con NETSDK1100. Solo afecta al build, no al runtime. -->

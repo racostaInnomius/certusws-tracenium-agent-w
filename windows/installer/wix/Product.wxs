@@ -1,8 +1,22 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
 
+  <!-- Manufacturer MUST match the legal entity on the Trusted Signing
+       cert (CERTUS ITM LLC). The cert is issued to that exact name and
+       "Editor:" / "Publisher:" UI surfaces across Windows (SmartScreen
+       install dialog, Apps & Features, signed binary properties) need
+       to be consistent to not erode user trust. Previously this said
+       "CertusWS" — our trade name, not the legal entity on the cert —
+       so the install dialog said "CERTUS ITM LLC" while Apps & Features
+       said "CertusWS". Aligned both via this attribute. NOTE: registry
+       paths under HKLM\Software\CertusWS\Tracenium intentionally stay
+       at "CertusWS" — the agent reads SERVER_BASE_URL et al. from that
+       exact path at runtime, and migrating it would orphan every
+       already-enrolled device. The visible Publisher and the on-disk
+       registry hive serve different purposes; only the former needs to
+       match the cert. -->
   <Package
       Name="Tracenium Agent"
-      Manufacturer="CertusWS"
+      Manufacturer="CERTUS ITM LLC"
       Version="1.1.17"
       UpgradeCode="8F2C0D63-0C36-4D71-BE70-4A1A1A1F83F0"
       InstallerVersion="500"

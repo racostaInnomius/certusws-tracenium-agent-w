@@ -14,6 +14,20 @@
          Sin esto el SDK rechaza el TargetFramework net8.0-windows fuera
          de Windows con NETSDK1100. Solo afecta al build, no al runtime. -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+
+    <!-- Win32 VersionInfo resource embedded into the emitted PE. Shows
+         in Explorer Properties → Details, Task Manager "Verified Signer"
+         column, and contributes to the binary's Authenticode reputation
+         footprint when the Trusted Signing cert builds rep across
+         Defender's cloud. Company MUST match the cert subject
+         (CERTUS ITM LLC) so the Publisher fields line up consistently
+         across the MSI, the binary, and the signature. -->
+    <Company>CERTUS ITM LLC</Company>
+    <Product>Tracenium Agent</Product>
+    <Authors>CERTUS ITM LLC</Authors>
+    <Copyright>Copyright © CERTUS ITM LLC</Copyright>
+    <AssemblyTitle>Tracenium Privilege Service</AssemblyTitle>
+    <Description>Tracenium Agent — privileged cryptographic + gRPC bridge service</Description>
   </PropertyGroup>
 
   <ItemGroup>

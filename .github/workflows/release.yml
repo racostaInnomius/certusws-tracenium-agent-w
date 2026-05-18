@@ -565,14 +565,76 @@ jobs:
         shell: pwsh
         run: pwsh ./scripts/build-agentcore-windows.ps1 -Arch x64
 
+      # ── Sign IN-PACKAGE binaries BEFORE MSI assembly ─────────────
+      #
+      # Each .exe / .node carries its own Authenticode signature and
+      # builds its own reputation footprint in Defender's cloud.
+      # Previously only the outer MSI was signed, leaving the .exes
+      # (TraceniumAgentCore.exe, Tracenium.AgentTray.exe,
+      # Tracenium.PrivSvc.Windows.exe) and better_sqlite3.node as
+      # unsigned PE binaries on disk after install. That triggered:
+      #   - Defender "Block at First Sight" on Tracenium.PrivSvc.Windows.exe
+      #     during the 1.1.14→1.1.16 rollout (ETE-3X5P8F4 + TNS-OPER-SNOC04)
+      #   - Empty "Verified Signer" column in Task Manager / Process
+      #     Explorer (looks unprofessional, erodes operator trust)
+      #   - No per-binary reputation gain for our Trusted Signing cert,
+      #     making the "Windows protegió su PC" SmartScreen warning
+      #     persist much longer than necessary.
+      #
+      # node.exe (Node 24 runtime) is EXCLUDED from our signing because
+      # nodejs.org already signs it with the Node.js Foundation cert,
+      # which has accumulated years of Defender reputation that
+      # overwriting with our newer cert would forfeit. We move it
+      # aside, sign everything else recursively, then move it back.
+      - name: Stage node.exe out of signing scope (preserve nodejs.org cert)
+        shell: pwsh
+        run: |
+          $node = "build\win-binaries\x64\AgentCore\node"
+          if (Test-Path $node) {
+            New-Item -ItemType Directory -Force -Path "build\_holdout" | Out-Null
+            Move-Item $node "build\_holdout\node-x64" -Force
+            Write-Host "→ staged node.exe to build\_holdout\node-x64 (will restore post-signing)"
+          } else {
+            Write-Host "  (no node.exe to stage — unexpected; signing will proceed)"
+          }
+
+      - name: Sign in-package binaries (.exe + .node)
+        uses: azure/trusted-signing-action@v0.5.9
+        with:
+          azure-tenant-id:              ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id:              ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret:          ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint:                     https://cus.codesigning.azure.net/
+          trusted-signing-account-name: CertusWS-Signing
+          certificate-profile-name:     safecertus-cp-public
+          files-folder:                 ${{ github.workspace }}\build\win-binaries\x64
+          files-folder-filter:          exe,node
+          files-folder-recurse:         true
+          file-digest:                  SHA256
+          timestamp-rfc3161:            http://timestamp.acs.microsoft.com
+          timestamp-digest:             SHA256
+
+      - name: Restore node.exe into AgentCore tree
+        # if: always() so we restore even if the signing step failed,
+        # avoiding a workspace half-mutated for any post-fail debugging.
+        if: always()
+        shell: pwsh
+        run: |
+          $holdout = "build\_holdout\node-x64"
+          if (Test-Path $holdout) {
+            Move-Item $holdout "build\win-binaries\x64\AgentCore\node" -Force
+            Write-Host "→ restored node.exe to AgentCore\node\"
+          }
+
       - name: Build MSI
         shell: pwsh
         run: pwsh ./scripts/build-windows-msi.ps1 -Arch x64
 
-      # ── Sign MSI with Azure Trusted Signing ──
-      # The trusted-signing-action accepts SP credentials directly via
-      # azure-tenant-id / azure-client-id / azure-client-secret — no
-      # separate azure/login step needed.
+      # ── Sign the outer MSI envelope ──
+      # The MSI itself needs its own signature so SmartScreen recognizes
+      # the installer at double-click time. The in-package binaries
+      # signed above carry their signatures intact through the MSI's
+      # CAB compression (Authenticode survives MSI packaging).
       - name: Sign MSI (Azure Trusted Signing)
         uses: azure/trusted-signing-action@v0.5.9
         with:
@@ -664,6 +726,45 @@ jobs:
       - name: Build AgentCore (arm64 — cross from x64, using npm prebuilds)
         shell: pwsh
         run: pwsh ./scripts/build-agentcore-windows.ps1 -Arch arm64
+
+      # ── Sign in-package binaries — see x64 job for full rationale ──
+      - name: Stage node.exe out of signing scope (preserve nodejs.org cert)
+        shell: pwsh
+        run: |
+          $node = "build\win-binaries\arm64\AgentCore\node"
+          if (Test-Path $node) {
+            New-Item -ItemType Directory -Force -Path "build\_holdout" | Out-Null
+            Move-Item $node "build\_holdout\node-arm64" -Force
+            Write-Host "→ staged node.exe to build\_holdout\node-arm64 (will restore post-signing)"
+          } else {
+            Write-Host "  (no node.exe to stage — unexpected; signing will proceed)"
+          }
+
+      - name: Sign in-package binaries (.exe + .node)
+        uses: azure/trusted-signing-action@v0.5.9
+        with:
+          azure-tenant-id:              ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id:              ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret:          ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint:                     https://cus.codesigning.azure.net/
+          trusted-signing-account-name: CertusWS-Signing
+          certificate-profile-name:     safecertus-cp-public
+          files-folder:                 ${{ github.workspace }}\build\win-binaries\arm64
+          files-folder-filter:          exe,node
+          files-folder-recurse:         true
+          file-digest:                  SHA256
+          timestamp-rfc3161:            http://timestamp.acs.microsoft.com
+          timestamp-digest:             SHA256
+
+      - name: Restore node.exe into AgentCore tree
+        if: always()
+        shell: pwsh
+        run: |
+          $holdout = "build\_holdout\node-arm64"
+          if (Test-Path $holdout) {
+            Move-Item $holdout "build\win-binaries\arm64\AgentCore\node" -Force
+            Write-Host "→ restored node.exe to AgentCore\node\"
+          }
 
       - name: Build MSI
         shell: pwsh
