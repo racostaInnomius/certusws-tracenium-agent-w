@@ -1,4 +1,5 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
   <Fragment>
 
@@ -24,7 +25,28 @@
             Start="auto"
             Type="ownProcess"
             ErrorControl="normal"
-            Account="LocalSystem" />
+            Account="LocalSystem">
+
+          <!-- ── SCM failure actions: restart on any abnormal exit ──
+               Required for the bridge's self-rescue logic to work
+               (GrpcBridge.cs calls Environment.Exit(2) when it can't
+               complete a HELLO ACK handshake across many reconnect
+               cycles, and we need SCM to resurrect the service).
+
+               Restart on first, second, and third failures — beyond
+               that something is structurally broken on the host and
+               we want a human to look. ResetPeriod=1 day means three
+               restarts within 24h is the budget; longer-running
+               flap-free uptime resets the count.
+            ── -->
+          <util:ServiceConfig
+              FirstFailureActionType="restart"
+              SecondFailureActionType="restart"
+              ThirdFailureActionType="none"
+              RestartServiceDelayInSeconds="5"
+              ResetPeriodInDays="1" />
+
+        </ServiceInstall>
 
         <!-- Control lifecycle -->
         <ServiceControl

@@ -43,6 +43,34 @@ public sealed class GrpcBridge : IDisposable
     private static readonly TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan _helloAckTimeout = TimeSpan.FromSeconds(30);
 
+    // ── Self-rescue thresholds ────────────────────────────────────────
+    //
+    // When the bridge can't complete a HELLO ACK handshake across many
+    // reconnect cycles, exit the process so the Windows Service Control
+    // Manager restarts privsvc with a brand-new socket pool, DNS resolver
+    // cache, and gRPC channel. PrivSvc.wxs configures SCM failure
+    // actions (restart with 5s delay) so the next process spawns clean.
+    //
+    // The threshold (10 consecutive failures, ~10 minutes with the
+    // backoff cap at 60s) is the trade-off between "tolerate transient
+    // network flaps" and "don't leave a host stuck for hours pretending
+    // to be online while the agent can't actually process anything".
+    // Real-world precedent: device 7d1162d7-...-08c7a62f20b4 stayed in
+    // the flap pattern for 30+ minutes during the 1.1.16→1.1.17 rollout,
+    // ate an agent_update job that ended in status=timeout, and required
+    // a manual `Restart-Service Tracenium*` to recover. The agent must
+    // be able to do that for itself.
+    //
+    // _helloSendStuckThreshold covers the specific failure mode where
+    // the HELLO message can't even reach the wire (the gRPC subchannel
+    // resolution is stuck): without this, HelloTimeoutLoop just logs
+    // "HELLO timeout ignored: HELLO not fully sent yet" forever without
+    // escalating. 60s is long enough to skip transient TLS/DNS hiccups
+    // and short enough to flip the bridge into a clean reconnect cycle.
+    private const int _maxConsecutiveReconnectFailures = 10;
+    private static readonly TimeSpan _helloSendStuckThreshold = TimeSpan.FromSeconds(60);
+    private bool _exitTriggered = false;
+
     private enum BridgeState
     {
     Disconnected,
@@ -143,6 +171,46 @@ private BridgeState _state = BridgeState.Disconnected;
             _reconnectAttempt++;
             var delay = ComputeReconnectDelay(_reconnectAttempt);
             Log($"Scheduling reconnect attempt={_reconnectAttempt} delay={delay.TotalSeconds}s reason={reason}");
+
+            // ── Self-rescue: SCM-mediated process restart ─────────────
+            //
+            // The counter only grows past 1 when HELLO ACK never lands —
+            // _reconnectAttempt resets in the HELLO ACK handler, not here.
+            // Crossing the threshold therefore means we've spent ~10
+            // minutes of exponential backoff without ever completing a
+            // handshake, so an in-process recovery isn't going to help.
+            // Exit the service and let SCM (configured by PrivSvc.wxs
+            // <util:ServiceConfig>) restart us with fresh OS-level
+            // resources (sockets, DNS resolver, gRPC channel pool).
+            if (_reconnectAttempt > _maxConsecutiveReconnectFailures && !_exitTriggered)
+            {
+                _exitTriggered = true;
+                Log($"CRITICAL: bridge stuck after {_reconnectAttempt} consecutive failed HELLO ACKs — exiting for SCM restart (reason={reason})");
+                try
+                {
+                    PushToAll(new
+                    {
+                        v = 1,
+                        method = "grpc.control.selfRescue",
+                        @params = new
+                        {
+                            consecutiveFailures = _reconnectAttempt,
+                            lastReason = reason,
+                            atUtc = DateTime.UtcNow.ToString("o")
+                        }
+                    });
+                }
+                catch { /* never let push errors block exit */ }
+                // Fire-and-forget so we release the reconnect lock before
+                // the runtime tears the process down. 250ms gives the
+                // last log line time to flush.
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(250);
+                    Environment.Exit(2);
+                });
+                return;
+            }
 
             _ = Task.Run(async () =>
             {
@@ -692,8 +760,22 @@ private const int MaxPendingPushEvents = 50;
 
                 IsConnected = false; // will be set to true upon HELLO ACK
                 _state = BridgeState.Connecting;
-                _reconnectAttempt = 0;
                 _reconnectScheduled = false;
+
+                // _reconnectAttempt is INTENTIONALLY NOT reset here.
+                //
+                // Before the self-rescue work, the counter was zeroed as
+                // soon as the gRPC channel was created — but channel
+                // creation is cheap and happens even when the host's
+                // network can't actually complete a HELLO. The result:
+                // bridge could flap forever with attempt=1 because every
+                // failed-handshake cycle reset the counter on the next
+                // attempt. The threshold-based self-rescue couldn't ever
+                // trigger.
+                //
+                // Reset moved to the HELLO ACK handler (~L1000) — the
+                // only point where we KNOW the handshake actually
+                // completed end-to-end.
 
                 Log($"GrpcBridge connected connectedAt={_connectedAtUtc:O}");
 
@@ -980,6 +1062,12 @@ private const int MaxPendingPushEvents = 50;
                             _helloAckTcs.TrySetResult(true);
                         }
 
+                        // True handshake-complete moment: NOW it's safe
+                        // to clear the consecutive-failure counter. See
+                        // the comment in Connect() (~L693) for the
+                        // history on why this lives here and not there.
+                        _reconnectAttempt = 0;
+
                         Log($"HELLO ACK received — stream ready state={_state} isConnected={IsConnected} helloAcked={_helloAcked}");
 
                         // EMITIR CONNECTED SOLO AQUÍ (READY REAL)
@@ -1155,13 +1243,52 @@ private const int MaxPendingPushEvents = 50;
                     // HELLO ya fue ACK → terminar el loop
                     if (_helloStartTicks == 0)
                         return;
+
+                    var elapsed = ElapsedMs(_helloStartTicks);
+
                     if (_lastSendUtc == DateTime.MinValue)
                     {
-                        Log("HELLO timeout ignored: HELLO not fully sent yet");
+                        // HELLO never made it onto the wire.
+                        //
+                        // Previously this branch logged "ignored" and
+                        // `continue`d forever. That left the bridge in a
+                        // half-up state when the gRPC subchannel got
+                        // stuck (e.g., transient TLS/socket failure
+                        // during connect): channel "created", streaming
+                        // call "started", but no actual byte ever sent.
+                        // The watchdog couldn't kick in because the
+                        // dead-stream threshold only fires after we
+                        // observe activity; HelloAckTimeout couldn't
+                        // fire because it skipped this branch entirely.
+                        //
+                        // Escalate after _helloSendStuckThreshold (60s)
+                        // by closing the channel and scheduling a fresh
+                        // reconnect. ScheduleReconnect increments
+                        // _reconnectAttempt — repeated stuck-sends will
+                        // eventually hit the self-rescue threshold and
+                        // SCM-restart the service.
+                        if (elapsed > _helloSendStuckThreshold.TotalMilliseconds)
+                        {
+                            Log($"HELLO send stuck — never reached wire after {elapsed:F0}ms — closing + reconnecting");
+                            PushToAll(new
+                            {
+                                v = 1,
+                                method = "grpc.control.helloSendStuck",
+                                @params = new
+                                {
+                                    stuckMs = elapsed,
+                                    thresholdSeconds = _helloSendStuckThreshold.TotalSeconds
+                                }
+                            });
+                            Close();
+                            ScheduleReconnect("hello_send_stuck");
+                            return;
+                        }
+
+                        Log($"HELLO timeout ignored: HELLO not fully sent yet (stuckMs={elapsed:F0})");
                         continue;
                     }
 
-                var elapsed = ElapsedMs(_helloStartTicks);
                 if (elapsed > _helloAckTimeout.TotalMilliseconds)
                 {
                     Log($"HELLO ACK timeout after {elapsed:F2}ms");
