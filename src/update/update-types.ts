@@ -1,7 +1,7 @@
 // src/update/update-types.ts
 
 export type AgentBinaryPlatform = "windows" | "macos" | "linux";
-export type AgentBinaryFormat = "msi" | "exe" | "pkg";
+export type AgentBinaryFormat = "msi" | "exe" | "pkg" | "deb" | "rpm";
 export type AgentBinaryArch = "x64" | "arm64";
 
 export interface AgentBinaryFileMetadata {

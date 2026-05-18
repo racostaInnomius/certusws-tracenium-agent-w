@@ -115,17 +115,34 @@ function getArch(): "x64" | "arm64" {
   return process.arch === "arm64" ? "arm64" : "x64";
 }
 
-function getBinaryFormat(): "msi" | "pkg" {
-  return getPlatform() === "macos" ? "pkg" : "msi";
+// Map (platform, linux-family) → the key in metadata.files we should
+// look at. Up through 1.1.16 this was hard-coded to "macOS = pkg,
+// everything else = msi" — which meant Linux agents asked for an msi
+// section that doesn't exist for `platform=linux` metadata, logged
+// `metadata has no msi section`, and silently declared
+// `update_completed` without installing anything. Confirmed in the
+// wild on the Ubuntu host a169cbd3-…-74e12ccd0177 stuck at 1.1.15.
+function getBinaryFormat(): "msi" | "pkg" | "deb" | "rpm" {
+  const platform = getPlatform();
+  if (platform === "macos") return "pkg";
+  if (platform === "windows") return "msi";
+  // linux
+  return detectFamily().family === "debian" ? "deb" : "rpm";
+}
+
+function getBinaryGroupForCurrentPlatform(
+  metadata: AgentMetadataResponse
+): Record<string, AgentBinaryFileMetadata> | undefined {
+  const format = getBinaryFormat();
+  return metadata.files?.[format];
 }
 
 function getBinaryMetadataForCurrentPlatform(
   metadata: AgentMetadataResponse
 ): AgentBinaryFileMetadata | undefined {
   const arch = getArch();
-  return getPlatform() === "macos"
-    ? metadata.files?.pkg?.[arch]
-    : metadata.files?.msi?.[arch];
+  const group = getBinaryGroupForCurrentPlatform(metadata);
+  return group?.[arch];
 }
 
 function buildHeaders(ctx: AgentContext): Record<string, string> {
@@ -400,6 +417,8 @@ export function checkForAvailableUpdate(
   }
 
   const arch = getArch();
+  const format = getBinaryFormat();
+  const binaryGroup = getBinaryGroupForCurrentPlatform(metadata);
 
   console.log("[update] evaluating metadata", {
     currentVersion,
@@ -407,17 +426,13 @@ export function checkForAvailableUpdate(
     arch,
     forceUpdate: metadata.forceUpdate === true,
     allowDowngrade: metadata.allowDowngrade === true,
-    binaryFormat: getBinaryFormat(),
-    hasBinaryGroup: getPlatform() === "macos" ? !!metadata.files?.pkg : !!metadata.files?.msi,
+    binaryFormat: format,
+    hasBinaryGroup: !!binaryGroup,
     hasArch: !!getBinaryMetadataForCurrentPlatform(metadata)
   });
 
-  if (getPlatform() === "macos" && !metadata.files?.pkg) {
-    console.warn("[update] metadata has no pkg section");
-  }
-
-  if (getPlatform() !== "macos" && !metadata.files?.msi) {
-    console.warn("[update] metadata has no msi section");
+  if (!binaryGroup) {
+    console.warn(`[update] metadata has no ${format} section`);
   }
 
   const binaryForArch = getBinaryMetadataForCurrentPlatform(metadata);
@@ -425,8 +440,8 @@ export function checkForAvailableUpdate(
   if (!binaryForArch) {
     console.warn("[update] no compatible binary found in metadata", {
       arch,
-      format: getBinaryFormat(),
-      availableArchs: Object.keys((getPlatform() === "macos" ? metadata.files?.pkg : metadata.files?.msi) || {})
+      format,
+      availableArchs: Object.keys(binaryGroup || {})
     });
 
     return {
