@@ -308,64 +308,45 @@ $wrapperExe = Join-Path $OutBase "TraceniumAgentCore.exe"
 Copy-Item $winswSrc $wrapperExe -Force
 Write-Host "→ copied WinSW wrapper from repo ($Arch)" -ForegroundColor Yellow
 
-# ── Override WinSW's VersionInfo block with our identity ─────────────
+# ── NOTE on VersionInfo rewrite ──────────────────────────────────────
 #
 # WinSW.exe ships with CompanyName="CloudBees, Inc.", ProductName=
 # "Windows Service Wrapper", LegalCopyright="(c) 2008-2020 Kohsuke
-# Kawaguchi, ...". That's accurate for the upstream binary, but once we
-# sign it as CERTUS ITM LLC and ship it inside our MSI, the mismatch
-# between the signature subject (CERTUS ITM LLC) and the embedded
-# VersionInfo (CloudBees) is jarring in Task Manager / Process Explorer
-# "Verified Signer" vs "Description" / "Company" columns — it makes the
-# wrapper look like third-party software piggybacking on our cert.
+# Kawaguchi, ...". Cosmetically it would be nicer for Task Manager /
+# Process Explorer to show CERTUS ITM LLC consistently across all four
+# .exes (Tray, PrivSvc, AgentCore wrapper).
 #
-# We use rcedit (https://github.com/electron/rcedit) to rewrite the
-# VersionInfo PE resource WITHOUT recompiling WinSW. Safe operation: the
-# .NET assembly inside (WinSW is .NET) isn't touched, only the Win32
-# Resource directory. This MUST happen BEFORE the trusted-signing step
-# in CI — modifying the .exe after signing would invalidate the
-# signature.
+# We TRIED rcedit (https://github.com/electron/rcedit) v2.0.0:
+#   & rcedit-x64.exe TraceniumAgentCore.exe --set-version-string ...
+# Result: rcedit exits 0 but produces a PE that SignTool then rejects
+# with 0x800700C1 (ERROR_BAD_EXE_FORMAT). Confirmed on both x64 and
+# arm64 builds in CI run 26041422393 (Tracenium-Agent-1.1.18 attempt).
+# Root cause appears to be WinSW v3's specific .NET single-file
+# layout — rcedit's resource-section rewrite path leaves the optional
+# headers in a state SignTool's PE parser rejects.
 #
-# rcedit is a tiny self-contained .exe (~1 MB). We cache it under
-# build/.tools/ so reruns don't re-download. The release tag (v2.0.0)
-# is pinned in the URL — GitHub release artifacts at a tagged URL are
-# immutable, so the URL itself acts as a version lock. For stronger
-# supply-chain hardening we should also SHA-pin: compute the hash from
-# a downloaded copy and add a verification block here. Today we trust
-# HTTPS + GitHub's immutable release-tag URL — same trust model as our
-# nodejs.org tarball download in build-linux-binaries.sh, modulo the
-# SHASUMS verification (rcedit doesn't publish a SHASUMS file).
-$rceditUrl = "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe"
-$toolsDir  = Join-Path $RepoRoot "build/.tools"
-$rceditExe = Join-Path $toolsDir "rcedit-x64.exe"
-
-New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
-if (-not (Test-Path $rceditExe)) {
-  Write-Host "→ downloading rcedit v2.0.0" -ForegroundColor Yellow
-  Invoke-WebRequest -Uri $rceditUrl -OutFile $rceditExe -UseBasicParsing
-  $sha = (Get-FileHash $rceditExe -Algorithm SHA256).Hash.ToLower()
-  Write-Host "  rcedit SHA256: $sha   (pin this value in the URL guard if you want strict verification)"
-}
-
-# Version strings:
-#   --set-version-string Version  → arbitrary semver-friendly string
-#   --set-file-version            → 4-part numeric (a.b.c.d)
-#   --set-product-version         → SemVer 2.0 OK
-$semver        = $repoPkg.version          # e.g. "1.1.17" or "1.1.17-rc1"
-$numericVersion = ($semver -replace '-.*$','') + '.0'   # strip pre-release suffix, append .0
-
-Write-Host "→ rewriting WinSW VersionInfo (Company → CERTUS ITM LLC, version → $semver)" -ForegroundColor Yellow
-& $rceditExe $wrapperExe `
-  --set-version-string "CompanyName"      "CERTUS ITM LLC" `
-  --set-version-string "ProductName"      "Tracenium Agent" `
-  --set-version-string "FileDescription"  "Tracenium Agent Core Service" `
-  --set-version-string "LegalCopyright"   "Copyright (c) CERTUS ITM LLC" `
-  --set-version-string "OriginalFilename" "TraceniumAgentCore.exe" `
-  --set-version-string "InternalName"     "TraceniumAgentCore" `
-  --set-file-version    $numericVersion `
-  --set-product-version $semver
-if ($LASTEXITCODE -ne 0) { throw "rcedit failed to rewrite VersionInfo on $wrapperExe" }
-Write-Host "  ✓ VersionInfo rewritten" -ForegroundColor Green
+# The other three .NET single-files (AgentTray.exe, PrivSvc.exe,
+# better_sqlite3.node) sign cleanly because their VersionInfo is set
+# at COMPILE time via the .csproj <Company>/<Product>/<FileVersion>
+# properties — no post-build resource rewrite needed. Only the
+# pre-built WinSW wrapper requires the workaround that doesn't work.
+#
+# Options to revisit later:
+#   1. Rebuild WinSW from source with our AssemblyInfo (real fix,
+#      bigger effort).
+#   2. Try a different resource editor (verpatch, ResourceHacker CLI)
+#      and see if either handles WinSW's PE layout.
+#   3. Move to a non-WinSW service wrapper (NSSM, a hand-rolled .NET
+#      Worker Service like our PrivSvc, or a Service Control Manager
+#      wrapper from .NET 8's WindowsServiceLifetime).
+#
+# Today we accept the cosmetic mismatch and rely on the SIGNATURE
+# subject ("Verified Signer: CERTUS ITM LLC") + the MSI Manufacturer
+# (Apps & Features Publisher: CERTUS ITM LLC) to project the right
+# brand. The Properties dialog → Details tab for THIS specific binary
+# will show CloudBees-era VersionInfo; in practice nobody looks there
+# except for triage, and the signature is what matters for SmartScreen
+# / Defender reputation building.
 
 # ── 5. Copy WinSW XML config from repo ───────────────────────────────
 # Single source of truth — same XML on both archs. The %BASE% env var
