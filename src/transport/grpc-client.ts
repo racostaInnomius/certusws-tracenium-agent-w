@@ -579,6 +579,33 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       .catch((err) => {
         const errCode = String(err?.code || "");
         const errMessage = String(err?.message || err || "");
+
+        // "stream ended" is thrown by ensureConnected() when the local
+        // side has already torn down (ended && localClose). This is
+        // EXPECTED during the update teardown sequence: msiexec stops
+        // the privsvc service → in-flight IPC writes throw "PrivSvc
+        // timeout" → bridge calls stream.end() → ended+localClose flip
+        // true → any subsequent stream.write that's already queued in
+        // writeChain hits the early-throw and lands here. Emitting it
+        // as `error` on an EventEmitter that has no 'error' listener
+        // crashes the process with "Unhandled rejection" — visible in
+        // TraceniumAgentCore_*.err.log every time an update fires. The
+        // event is cosmetic (the install proceeds correctly via Task
+        // Scheduler regardless), but the err.log noise misleads triage
+        // into thinking the update itself failed. Downgrade to a debug
+        // log + drop the in-flight tracking entry; nothing to recover.
+        if (/stream ended/i.test(errMessage)) {
+          ctx.logger?.debug?.("[grpc-client] write dropped after local teardown", {
+            messageType: msg ? Object.keys(msg).join(",") : "?",
+            ended,
+            localClose
+          });
+          if (msg?.facts?.eventId) {
+            inFlightEvents.delete(String(msg.facts.eventId));
+          }
+          return;
+        }
+
         if (errCode === "EPIPE" || /EPIPE/i.test(errMessage)) {
           ctx.logger?.warn("[grpc-client] EPIPE detected, marking connection as broken", {
             errCode,

@@ -694,6 +694,26 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
         };
       }
 
+      // ── Optional payload overrides (Phase 11) ────────────────────
+      //
+      // The dispatcher MAY include `downloadUrl` + `expectedHash` in
+      // the payload to force a specific binary location instead of
+      // routing through the `/binaries/agent/metadata` lookup. Useful
+      // for hot-fixes, controlled downgrades, and rescuing devices on
+      // a broken update-task that wouldn't otherwise pick up the
+      // metadata's latestVersion. Both fields must travel together —
+      // runUpdateTask enforces the pairing and rejects half-set
+      // overrides explicitly so we don't silently fall back to a
+      // metadata lookup the operator didn't authorize.
+      //
+      // Hash is normalized to lowercase hex on the agent side because
+      // downstream comparison is case-insensitive but it's cheaper to
+      // canonicalize once than to lowercase on every compare.
+      const downloadUrl = payload?.downloadUrl ? String(payload.downloadUrl).trim() : undefined;
+      const expectedHash = payload?.expectedHash
+        ? String(payload.expectedHash).trim().toLowerCase()
+        : undefined;
+
       if ((ctx as any)._agentUpdateInProgress) {
         return {
           status: 1,
@@ -705,6 +725,8 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       try {
         await runUpdateTask(ctx, {
           targetVersion: version,
+          downloadUrl,
+          expectedHash,
           logger: ctx.logger
         });
 

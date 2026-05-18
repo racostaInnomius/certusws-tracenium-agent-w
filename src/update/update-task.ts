@@ -68,11 +68,31 @@ export async function runUpdateTask(
       error?: (...args: any[]) => void;
     };
     targetVersion?: string;
+    // ── Job-payload override (Phase 11) ────────────────────────────
+    // When the backend dispatches an `agent_update` job with an
+    // explicit `downloadUrl` + `expectedHash` in the payload, skip the
+    // /metadata fetch and the latest-version comparison: trust the
+    // operator that this is the version to install, and download from
+    // the URL directly. Used for:
+    //   - Forced downgrades (`allowDowngrade=true` semantics without
+    //     touching the global metadata.allowDowngrade flag)
+    //   - Hot-fix MSIs hosted on a side channel (e.g. a one-off pkg
+    //     uploaded to a private blob for a single tenant)
+    //   - Rescuing devices on a broken version of update-task itself
+    //     that wouldn't otherwise pick up the new metadata
+    // Both fields must be present together; passing only the URL
+    // without a hash is rejected upstream by performXxxUpdate.
+    downloadUrl?: string;
+    expectedHash?: string;
   }
 ) {
   const logger = opts?.logger;
   const force = opts?.force === true;
   const targetVersion = opts?.targetVersion ? String(opts.targetVersion).trim() : undefined;
+  const downloadUrlOverride = opts?.downloadUrl ? String(opts.downloadUrl).trim() : undefined;
+  const expectedHashOverride = opts?.expectedHash
+    ? String(opts.expectedHash).trim().toLowerCase()
+    : undefined;
   const intervalMs = opts?.intervalMs ?? 6 * 60 * 60 * 1000;
 
   const isWindows = ctx.agent?.platform === "windows" || process.platform === "win32";
@@ -112,6 +132,52 @@ export async function runUpdateTask(
   }
 
   if (!force && !shouldCheckNow(intervalMs)) {
+    return;
+  }
+
+  // ── Fast-path: job payload override ───────────────────────────────
+  //
+  // If the backend job carried an explicit downloadUrl + expectedHash,
+  // bypass the entire metadata-resolution pipeline and go straight to
+  // the installer. We MUST have targetVersion too — the install logic
+  // needs to know what version to attempt (logged + persisted into
+  // update state so the post-restart HELLO can reconcile).
+  if (downloadUrlOverride && expectedHashOverride && targetVersion) {
+    logger?.info?.("[update] using job-payload download override", {
+      currentVersion,
+      targetVersion,
+      downloadUrl: downloadUrlOverride
+    });
+
+    updateUpdateState({
+      updateInProgress: true,
+      lastAttemptedVersion: targetVersion,
+      lastAttemptedAtUtc: new Date().toISOString()
+    });
+
+    const run = isMacos
+      ? await performMacosPkgUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride)
+      : isWindows
+        ? await performWindowsMsiUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride)
+        : await performLinuxUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride);
+
+    logger?.warn?.("[update] update started (payload override)", {
+      targetVersion,
+      format: isMacos ? "pkg" : isWindows ? "msi" : "deb-or-rpm",
+      command: run.command,
+      args: run.args
+    });
+    return;
+  }
+
+  // If only PART of the override pair was supplied, that's a backend
+  // bug — we refuse rather than silently degrading into a metadata
+  // lookup the operator didn't ask for.
+  if ((downloadUrlOverride && !expectedHashOverride) || (!downloadUrlOverride && expectedHashOverride)) {
+    logger?.error?.("[update] job-payload override incomplete; need BOTH downloadUrl + expectedHash", {
+      hasUrl: !!downloadUrlOverride,
+      hasHash: !!expectedHashOverride
+    });
     return;
   }
 

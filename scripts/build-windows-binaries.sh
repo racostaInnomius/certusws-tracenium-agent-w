@@ -60,6 +60,34 @@ fi
 PRIVSVC_PROJECT="$AGENT_REPO_DIR/privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj"
 AGENTTRAY_PROJECT="$AGENT_REPO_DIR/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj"
 
+# ── Version resolution ───────────────────────────────────────────────
+# Pulled from package.json (single source of truth across all five
+# packagers — same pattern as build-linux-binaries.sh + build-macos-pkg.sh).
+# Passed into `dotnet publish` as Version + AssemblyVersion + FileVersion
+# so the emitted PE binaries' VersionInfo block carries the actual
+# release version (1.1.17 etc.) instead of the SDK's default 1.0.0.0.
+#
+# This shows up in Explorer Properties → Details and in `signtool verify`
+# output. Previously this was missing — the .exes shipped with
+# FileVersion=1.0.0.0 while the surrounding MSI said 1.1.17, which
+# looks sloppy and complicates triage when someone reports "my agent
+# is on version X but the .exe says Y".
+#
+# AssemblyVersion / FileVersion require a 4-part numeric (a.b.c.d), so
+# we strip any semver pre-release suffix (e.g. "1.1.17-rc1" → "1.1.17")
+# before adding the trailing ".0". The full semver-friendly string still
+# rides on `-p:Version=` which accepts any SemVer 2.0 value.
+if [ -n "${TRACENIUM_AGENT_VERSION:-}" ]; then
+  VERSION="$TRACENIUM_AGENT_VERSION"
+else
+  VERSION="$(/usr/bin/sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$AGENT_REPO_DIR/package.json" | head -n 1)"
+fi
+if [ -z "$VERSION" ]; then
+  echo "ERROR: Could not resolve version from package.json (or TRACENIUM_AGENT_VERSION env)." >&2
+  exit 1
+fi
+NUMERIC_VERSION="$(printf '%s' "$VERSION" | sed 's/-.*//').0"
+
 # Stage outputs sit inside the agent repo's build/ tree, one subdir
 # per (project × arch) combo. From here, build-windows-msi.ps1 (run on
 # a Windows host) consumes these EXEs together with the AgentCore
@@ -186,6 +214,11 @@ clean_and_publish() {
     echo "  (cross-compile $host_arch -> $target_arch on Windows host — skipping VerifyTrayIconEmbedded)"
   fi
 
+  # -p:Version / -p:AssemblyVersion / -p:FileVersion: stamp release
+  # version into the emitted PE's VersionInfo block. See VERSION /
+  # NUMERIC_VERSION resolution near the top of the script.
+  version_args="-p:Version=$VERSION -p:AssemblyVersion=$NUMERIC_VERSION -p:FileVersion=$NUMERIC_VERSION"
+
   if [ "$selfcontained" = "true" ]; then
     # PrivSvc: explicit self-contained on the CLI overrides the
     # csproj's <SelfContained>false</SelfContained>. We keep that
@@ -199,6 +232,7 @@ clean_and_publish() {
       -p:PublishSingleFile=true \
       -p:DebugType=none \
       -p:DebugSymbols=false \
+      $version_args \
       $skip_verify_args \
       -o "$outdir"
   else
@@ -207,6 +241,7 @@ clean_and_publish() {
     dotnet publish "$proj" \
       -c Release \
       -r "$rid" \
+      $version_args \
       $skip_verify_args \
       -o "$outdir"
   fi

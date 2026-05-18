@@ -225,6 +225,26 @@ if (-not (Test-Path $nativeBinding)) {
 }
 Write-Host "  ✓ better-sqlite3 binding present: $(((Get-Item $nativeBinding).Length / 1KB)) KB"
 
+# ── Drop test_extension.node ─────────────────────────────────────────
+# better-sqlite3's own binding.gyp compiles a sibling target
+# `test_extension` alongside the real `better_sqlite3` binding when we
+# run `npm install --build-from-source` (x64 native path on CI). It's a
+# tiny C++ fixture (~50 KB) used by better-sqlite3's test suite only —
+# the agent never loads it. The cross-compile path (arm64, uses
+# better-sqlite3's prebuilt tarball) never ships it because prebuilds
+# only contain the production binding.
+#
+# Leaving test_extension.node in the MSI: harmless (we sign it in CI,
+# so it'd carry our cert), but it inflates the install footprint and
+# tells anyone inspecting the binaries that we're shipping a test
+# fixture by mistake — looks sloppy. Drop it here, before WiX picks
+# the tree up.
+$testExtension = Join-Path $OutNm "better-sqlite3/build/Release/test_extension.node"
+if (Test-Path $testExtension) {
+  Remove-Item $testExtension -Force
+  Write-Host "  → removed test_extension.node (test fixture, never loaded at runtime)"
+}
+
 # ── 3. Download bundled node.exe for target arch ─────────────────────
 $nodeFilename = "node.exe"
 $nodeUrl = "https://nodejs.org/dist/v$NodeVersion/win-$Arch/$nodeFilename"
@@ -284,8 +304,68 @@ Commit a Windows service wrapper EXE at that path before re-running.
 The arm64 file can be a copy of the x64 file (runs via Windows emulation).
 "@
 }
-Copy-Item $winswSrc (Join-Path $OutBase "TraceniumAgentCore.exe") -Force
+$wrapperExe = Join-Path $OutBase "TraceniumAgentCore.exe"
+Copy-Item $winswSrc $wrapperExe -Force
 Write-Host "→ copied WinSW wrapper from repo ($Arch)" -ForegroundColor Yellow
+
+# ── Override WinSW's VersionInfo block with our identity ─────────────
+#
+# WinSW.exe ships with CompanyName="CloudBees, Inc.", ProductName=
+# "Windows Service Wrapper", LegalCopyright="(c) 2008-2020 Kohsuke
+# Kawaguchi, ...". That's accurate for the upstream binary, but once we
+# sign it as CERTUS ITM LLC and ship it inside our MSI, the mismatch
+# between the signature subject (CERTUS ITM LLC) and the embedded
+# VersionInfo (CloudBees) is jarring in Task Manager / Process Explorer
+# "Verified Signer" vs "Description" / "Company" columns — it makes the
+# wrapper look like third-party software piggybacking on our cert.
+#
+# We use rcedit (https://github.com/electron/rcedit) to rewrite the
+# VersionInfo PE resource WITHOUT recompiling WinSW. Safe operation: the
+# .NET assembly inside (WinSW is .NET) isn't touched, only the Win32
+# Resource directory. This MUST happen BEFORE the trusted-signing step
+# in CI — modifying the .exe after signing would invalidate the
+# signature.
+#
+# rcedit is a tiny self-contained .exe (~1 MB). We cache it under
+# build/.tools/ so reruns don't re-download. The release tag (v2.0.0)
+# is pinned in the URL — GitHub release artifacts at a tagged URL are
+# immutable, so the URL itself acts as a version lock. For stronger
+# supply-chain hardening we should also SHA-pin: compute the hash from
+# a downloaded copy and add a verification block here. Today we trust
+# HTTPS + GitHub's immutable release-tag URL — same trust model as our
+# nodejs.org tarball download in build-linux-binaries.sh, modulo the
+# SHASUMS verification (rcedit doesn't publish a SHASUMS file).
+$rceditUrl = "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe"
+$toolsDir  = Join-Path $RepoRoot "build/.tools"
+$rceditExe = Join-Path $toolsDir "rcedit-x64.exe"
+
+New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+if (-not (Test-Path $rceditExe)) {
+  Write-Host "→ downloading rcedit v2.0.0" -ForegroundColor Yellow
+  Invoke-WebRequest -Uri $rceditUrl -OutFile $rceditExe -UseBasicParsing
+  $sha = (Get-FileHash $rceditExe -Algorithm SHA256).Hash.ToLower()
+  Write-Host "  rcedit SHA256: $sha   (pin this value in the URL guard if you want strict verification)"
+}
+
+# Version strings:
+#   --set-version-string Version  → arbitrary semver-friendly string
+#   --set-file-version            → 4-part numeric (a.b.c.d)
+#   --set-product-version         → SemVer 2.0 OK
+$semver        = $repoPkg.version          # e.g. "1.1.17" or "1.1.17-rc1"
+$numericVersion = ($semver -replace '-.*$','') + '.0'   # strip pre-release suffix, append .0
+
+Write-Host "→ rewriting WinSW VersionInfo (Company → CERTUS ITM LLC, version → $semver)" -ForegroundColor Yellow
+& $rceditExe $wrapperExe `
+  --set-version-string "CompanyName"      "CERTUS ITM LLC" `
+  --set-version-string "ProductName"      "Tracenium Agent" `
+  --set-version-string "FileDescription"  "Tracenium Agent Core Service" `
+  --set-version-string "LegalCopyright"   "Copyright (c) CERTUS ITM LLC" `
+  --set-version-string "OriginalFilename" "TraceniumAgentCore.exe" `
+  --set-version-string "InternalName"     "TraceniumAgentCore" `
+  --set-file-version    $numericVersion `
+  --set-product-version $semver
+if ($LASTEXITCODE -ne 0) { throw "rcedit failed to rewrite VersionInfo on $wrapperExe" }
+Write-Host "  ✓ VersionInfo rewritten" -ForegroundColor Green
 
 # ── 5. Copy WinSW XML config from repo ───────────────────────────────
 # Single source of truth — same XML on both archs. The %BASE% env var
