@@ -18,6 +18,20 @@
 #   AZURE_CLIENT_SECRET              (the rotated client secret from the
 #                                     App Registration's "Certificates &
 #                                     secrets" tab)
+#   AZURE_SUBSCRIPTION_ID            (uuid of the subscription that owns
+#                                     the cwsinveid storage account.
+#                                     Required because we pass
+#                                     `--allow-no-subscriptions` to
+#                                     `az login` — the SP has only data
+#                                     plane roles (no subscription-level
+#                                     Reader), so subscription
+#                                     auto-discovery doesn't surface
+#                                     anything and `az login` fails with
+#                                     "No subscriptions found for ***".
+#                                     Get it with:
+#                                       az account list --query "[].id" -o tsv
+#                                     or copy from Azure Portal →
+#                                     Subscriptions blade.)
 #
 # macOS code signing + notarization:
 #   MACOS_CERT_P12_BASE64            (base64 of "Developer ID Application"
@@ -50,11 +64,16 @@
 #   - "Storage Blob Data Contributor" on the cwsinveid storage account
 #     (or just on the `tracenium` container, scoped down)
 #
-# Subscription resolution: we don't pass AZURE_SUBSCRIPTION_ID. The SP's
-# `az login --service-principal` selects its default subscription
-# automatically (works when the SP has access to exactly one). If you
-# add a second subscription later, this workflow needs an explicit
-# `az account set --subscription <id>` step before the blob upload.
+# Subscription resolution: AZURE_SUBSCRIPTION_ID is passed explicitly
+# and applied via `az account set` after `az login --allow-no-
+# subscriptions`. This is the safe-by-default setup because the SP only
+# holds the two data-plane / signing roles above — no subscription-level
+# Reader — so `az login` without `--allow-no-subscriptions` fails with
+# "No subscriptions found for ***" even when the SP has perfectly valid
+# access to the storage account. Adding subscription-level Reader to the
+# SP would also fix the symptom but broadens its blast radius
+# unnecessarily; passing the subscription explicitly keeps the SP scoped
+# tight.
 # ────────────────────────────────────────────────────────────────────
 
 name: Release
@@ -869,21 +888,41 @@ jobs:
           echo "=== staged artifacts ==="
           find build/pkg-out build/linux/pkg-out build/win-msi -type f -exec ls -lh {} \;
 
-      # `az login --service-principal` selects the SP's only-accessible
-      # subscription automatically. If you ever grant the SP access to
-      # multiple subscriptions, add `az account set --subscription <id>`
-      # immediately after.
+      # `az login` with `--allow-no-subscriptions` succeeds even when
+      # the SP has no subscription-level role (which is our case — the
+      # SP only holds Trusted Signing Signer + Storage Blob Data
+      # Contributor at the storage-account scope). Without that flag,
+      # `az login --service-principal` errors out with "No subscriptions
+      # found for ***" before any of our subsequent commands can run,
+      # because azure-cli's default behavior is to enumerate
+      # subscriptions immediately after auth. With the flag, auth
+      # succeeds and we pin the working subscription via `az account
+      # set` so all subsequent commands (storage upload, etc.) target
+      # the right tenant.
+      #
+      # See repo-level secret AZURE_SUBSCRIPTION_ID for value origin.
       - name: Azure login (service principal)
         env:
-          AZURE_TENANT_ID:     ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID:     ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET:   ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
+          if [ -z "$AZURE_SUBSCRIPTION_ID" ]; then
+            echo "ERROR: AZURE_SUBSCRIPTION_ID secret is missing." >&2
+            echo "       Set it in repo Settings → Secrets and variables → Actions." >&2
+            echo "       Value: the UUID of the subscription that owns cwsinveid." >&2
+            exit 1
+          fi
+
           az login --service-principal \
             --tenant   "$AZURE_TENANT_ID" \
             --username "$AZURE_CLIENT_ID" \
             --password "$AZURE_CLIENT_SECRET" \
+            --allow-no-subscriptions \
             --output none
+
+          az account set --subscription "$AZURE_SUBSCRIPTION_ID"
           az account show --output table
 
       - name: Publish all 5 artifacts to blob storage
