@@ -246,21 +246,43 @@ cp -r "$ROOT_DIR/privsvc" "$STAGING_DIR/privsvc"
 cp -r "$ROOT_DIR/proto"   "$STAGING_DIR/proto"
 [ -f "$ROOT_DIR/tsconfig.json" ] && cp "$ROOT_DIR/tsconfig.json" "$STAGING_DIR/tsconfig.json"
 
-# Install node_modules only when the staged lock is stale (or cold).
-# `npm ci` wipes node_modules before installing, so reusing across
-# builds is meaningful.
+# ALWAYS refresh package.json + package-lock.json into staging — even
+# when we plan to skip `npm ci`.
+#
+# Why: `src/bootstrap/config.ts` does `import pkg from "../../package.json"`,
+# and esbuild resolves that to `staging/package.json` at bundle time,
+# inlining the literal JSON (including `version`) into the output. If
+# the staged copy is stale, the bundle ships the WRONG agentVersion —
+# even though the .deb filename and dpkg metadata are correct (because
+# those come from `$VERSION` resolved above, not from inside the bundle).
+#
+# Confirmed in CI on 1.1.17: actions/cache restored `staging/` with the
+# previous build's package.json. CI logged "reusing cached staging
+# node_modules (lock unchanged)" → the `if NEED_INSTALL=1` branch below
+# never ran → the staged package.json from the prior cache cycle (still
+# at 1.1.15) was bundled. Agent reported `Agent hello context
+# agentVersion: '1.1.15'` despite being installed as 1.1.17-1.
+#
+# Fix: do the refresh unconditionally. It's a 1 KB copy — irrelevant
+# to build time. The `npm ci` skip logic stays, but now keys off a
+# separate marker file (`.last-installed-lock-hash`) so we don't lose
+# the optimization.
+cp "$ROOT_DIR/package.json"      "$STAGING_DIR/package.json"
+cp "$ROOT_DIR/package-lock.json" "$STAGING_DIR/package-lock.json"
+
 NEED_INSTALL=0
 if [ ! -d "$STAGING_DIR/node_modules" ]; then
   NEED_INSTALL=1
-elif ! cmp -s "$ROOT_DIR/package-lock.json" "$STAGING_DIR/package-lock.json" 2>/dev/null; then
+elif [ ! -f "$STAGING_DIR/.last-installed-lock-hash" ]; then
+  NEED_INSTALL=1
+elif ! cmp -s "$STAGING_DIR/.last-installed-lock-hash" "$STAGING_DIR/package-lock.json" 2>/dev/null; then
   NEED_INSTALL=1
 fi
 
 if [ "$NEED_INSTALL" = "1" ]; then
-  cp "$ROOT_DIR/package.json"      "$STAGING_DIR/package.json"
-  cp "$ROOT_DIR/package-lock.json" "$STAGING_DIR/package-lock.json"
   echo "→ npm ci (staging — isolated from \$ROOT_DIR/node_modules)"
   (cd "$STAGING_DIR" && npm ci --cache "$NPM_CACHE_DIR")
+  cp "$STAGING_DIR/package-lock.json" "$STAGING_DIR/.last-installed-lock-hash"
 else
   echo "→ reusing cached staging node_modules (lock unchanged)"
 fi

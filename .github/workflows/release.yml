@@ -261,7 +261,15 @@ jobs:
             build/.node-cache
             build/linux/.node-cache
             build/linux/staging/node_modules
-          key: linux-build-${{ needs.resolve.outputs.node_version }}-${{ hashFiles('package-lock.json') }}
+          # Hash BOTH package-lock.json AND package.json so a version
+          # bump invalidates the cache. We hit a bug on 1.1.17 where
+          # the staging dir held an old package.json (matching node_modules
+          # from a prior build with a non-bumped lock), esbuild inlined
+          # that stale `pkg.version` into the bundle, and the agent
+          # reported the wrong version despite the .deb being labeled
+          # correctly. See scripts/build-linux-binaries.sh for the
+          # in-script defense; this cache key is the second layer.
+          key: linux-build-${{ needs.resolve.outputs.node_version }}-${{ hashFiles('package-lock.json', 'package.json') }}
 
       - name: Build .deb + .rpm
         run: npm run pkg:linux
