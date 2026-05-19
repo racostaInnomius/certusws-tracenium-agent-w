@@ -351,7 +351,7 @@ if (-not (Test-Path $rceditExe)) {
 #   --set-version-string Version  → arbitrary semver-friendly string
 #   --set-file-version            → 4-part numeric (a.b.c.d)
 #   --set-product-version         → SemVer 2.0 OK
-$semver        = $repoPkg.version          # e.g. "1.1.17" or "1.1.17-rc1"
+$semver        = $repoPkg.version          # e.g. "1.1.18" or "1.1.18-rc1"
 $numericVersion = ($semver -replace '-.*$','') + '.0'   # strip pre-release suffix, append .0
 
 Write-Host "→ rewriting WinSW VersionInfo (Company → CERTUS ITM LLC, version → $semver)" -ForegroundColor Yellow

@@ -17,7 +17,7 @@
 #
 # Usage:
 #   ./scripts/build-linux-pkg.sh
-#   TRACENIUM_AGENT_VERSION=1.1.17 ./scripts/build-linux-pkg.sh
+#   TRACENIUM_AGENT_VERSION=1.1.18 ./scripts/build-linux-pkg.sh
 #   TRACENIUM_AGENT_ARCH=arm64 ./scripts/build-linux-pkg.sh
 #
 # Run-host requirements:
@@ -256,12 +256,12 @@ cp -r "$ROOT_DIR/proto"   "$STAGING_DIR/proto"
 # even though the .deb filename and dpkg metadata are correct (because
 # those come from `$VERSION` resolved above, not from inside the bundle).
 #
-# Confirmed in CI on 1.1.17: actions/cache restored `staging/` with the
+# Confirmed in CI on 1.1.18: actions/cache restored `staging/` with the
 # previous build's package.json. CI logged "reusing cached staging
 # node_modules (lock unchanged)" → the `if NEED_INSTALL=1` branch below
 # never ran → the staged package.json from the prior cache cycle (still
-# at 1.1.17) was bundled. Agent reported `Agent hello context
-# agentVersion: '1.1.17'` despite being installed as 1.1.17-1.
+# at 1.1.18) was bundled. Agent reported `Agent hello context
+# agentVersion: '1.1.18'` despite being installed as 1.1.18-1.
 #
 # Fix: do the refresh unconditionally. It's a 1 KB copy — irrelevant
 # to build time. The `npm ci` skip logic stays, but now keys off a

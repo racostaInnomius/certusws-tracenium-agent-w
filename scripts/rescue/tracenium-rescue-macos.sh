@@ -5,7 +5,7 @@
 # self-update. Reinstalls the agent from a locally-supplied .pkg.
 #
 # Usage:
-#   sudo ./tracenium-rescue-macos.sh /path/to/Tracenium-Agent-1.1.17-arm64.pkg
+#   sudo ./tracenium-rescue-macos.sh /path/to/Tracenium-Agent-1.1.18-arm64.pkg
 #
 # What it does:
 #   1. Stops the existing daemons via launchctl bootout
@@ -20,7 +20,7 @@ set -eu
 
 PKG="${1:-}"
 if [ -z "$PKG" ] || [ ! -f "$PKG" ]; then
-  echo "Usage: sudo $0 /path/to/Tracenium-Agent-1.1.17-arm64.pkg" >&2
+  echo "Usage: sudo $0 /path/to/Tracenium-Agent-1.1.18-arm64.pkg" >&2
   exit 1
 fi
 
@@ -89,5 +89,5 @@ if [ -n "$CRASHES_AGENT" ] && [ "$CRASHES_AGENT" -gt 0 ] 2>/dev/null; then
 fi
 
 echo ""
-echo "✓ Rescue complete. Device should report 1.1.17 to backend within 1-2 min."
-echo "  Verify: should appear at version 1.1.17 in the portal."
+echo "✓ Rescue complete. Device should report 1.1.18 to backend within 1-2 min."
+echo "  Verify: should appear at version 1.1.18 in the portal."

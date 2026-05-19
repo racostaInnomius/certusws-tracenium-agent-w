@@ -914,9 +914,37 @@ stream = client.Connect();
         return;
       }
       const silentMs = Date.now() - lastActivityMs;
-      if (silentMs > SILENCE_THRESHOLD_MS) {
-        ctx.logger?.warn?.("gRPC stream: server silent past threshold, forcing reconnect", {
+
+      // Outbound liveness signal — track the LAST time we successfully
+      // wrote something onto the gRPC stream via PrivSvc. Without this
+      // counterpart, the watchdog used to false-fire every
+      // SILENCE_THRESHOLD_MS on idle devices: the server doesn't ACK
+      // heartbeats by design, so on a device that isn't generating
+      // FACTS, `lastServerActivityMs` legitimately doesn't update —
+      // but the stream is perfectly alive (heartbeats keep flowing
+      // outbound, the bridge's HTTP/2 keepalive ping-pong runs every
+      // 20s underneath, etc.). Real zombie streams DO show up here:
+      // if the wire is half-open, the bridge's `WriteAsync` throws,
+      // privsvc returns ok:false, and `lastClientSendOkMs` stops
+      // updating — that's when we want to fire.
+      //
+      // Confirmed empirically in VM logs 2026-05-19 after host Mac
+      // wake from sleep: 27 spurious reconnects over 2h, every cycle
+      // ending with `silentMs ≈ 271000 / thresholdMs: 270000`, every
+      // HELLO ACK succeeding, every FACTS ACK succeeding, every
+      // heartbeat sent — pure agent-side false positive.
+      const lastSendOkMs = (stream as any).getLastClientSendOkMs?.();
+      const sendIdleMs = typeof lastSendOkMs === "number"
+        ? Date.now() - lastSendOkMs
+        : Infinity; // older bridge build → defer to receive-only check
+
+      // Require BOTH directions stale before declaring zombie. Either
+      // direction having recent activity is sufficient evidence the
+      // stream is alive end-to-end.
+      if (silentMs > SILENCE_THRESHOLD_MS && sendIdleMs > SILENCE_THRESHOLD_MS) {
+        ctx.logger?.warn?.("gRPC stream: bidirectional silence past threshold, forcing reconnect", {
           silentMs,
+          sendIdleMs,
           thresholdMs: SILENCE_THRESHOLD_MS
         });
         // Mark tray disconnected immediately. The PrivSvc bridge is
