@@ -30,6 +30,11 @@ import {
   upsertSoftwareBaseline,
   deleteSoftwareByIds
 } from "../../../domain/software-baseline-repo";
+import { collectCupsPrinters } from "./printers-cups";
+import {
+  buildPrinterInventoryWithBaseline,
+  emptyPrinterInventory
+} from "./printers-pipeline";
 
 // execFile takes an argv array — no shell interpolation, so package
 // names returned by dpkg/rpm/snap/flatpak that happen to contain shell
@@ -612,6 +617,19 @@ export const linuxProvider = {
     const hardware = await collectLinuxHardware();
     const security = await collectLinuxSecurity(ctx);
 
+    // Printers via CUPS lpstat — see macos.ts for the placement
+    // rationale (must be set BEFORE the software try-block because
+    // the software no-changes branch returns the whole AmpNamespace
+    // early). On headless Linux without CUPS installed this returns
+    // an empty inventory cleanly.
+    let printers = emptyPrinterInventory();
+    try {
+      const raw = await collectCupsPrinters();
+      printers = buildPrinterInventoryWithBaseline(raw);
+    } catch (err: any) {
+      console.warn("[LINUX] printer collection failed, shipping empty", err?.message || err);
+    }
+
     let software: AmpNamespace["software"] = {
       count: 0,
       items: undefined,
@@ -692,7 +710,7 @@ export const linuxProvider = {
             hasChanges: false
           };
 
-          return { hardware, security, software };
+          return { hardware, security, software, printers };
         }
       }
 
@@ -700,6 +718,6 @@ export const linuxProvider = {
       console.error("[LINUX] collection failed", err);
     }
 
-    return { hardware, security, software };
+    return { hardware, security, software, printers };
   }
 };

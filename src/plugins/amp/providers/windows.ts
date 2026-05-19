@@ -7,6 +7,11 @@ import { computeSoftwareDelta, toBaselineOps } from "../../../domain/software-in
 import { loadSoftwareBaseline, upsertSoftwareBaseline, deleteSoftwareByIds } from "../../../domain/software-baseline-repo";
 import type { AmpNamespace } from "../../../domain/amp-types";
 import type { SoftwareApplication } from "../../../domain/normalize-app";
+import { collectWindowsPrinters } from "./printers-windows";
+import {
+  buildPrinterInventoryWithBaseline,
+  emptyPrinterInventory
+} from "./printers-pipeline";
 
 // Verbose inventory diagnostics (raw counts, delta summaries, payload
 // size estimates) — useful during development, noisy in production.
@@ -325,10 +330,25 @@ export const windowsProvider = {
       // keep empty
     }
 
+    // Printers — independent of software/security so we wrap in its
+    // own try/catch. A printer-collection failure should never
+    // poison the rest of the AMP namespace; we just ship an empty
+    // (hasChanges=false) PrinterInventory and move on.
+    let printers = emptyPrinterInventory();
+    try {
+      const raw = await collectWindowsPrinters(ctx);
+      printers = buildPrinterInventoryWithBaseline(raw);
+    } catch (err: any) {
+      ctx.logger?.warn?.("[printers] collection failed, shipping empty inventory", {
+        error: err?.message || String(err)
+      });
+    }
+
     return {
       hardware: base.hardware,
       security,
-      software
+      software,
+      printers
     };
   }
 };

@@ -11,6 +11,11 @@ import type { SoftwareApplication } from "../../../domain/normalize-app";
 
 import { normalizeApp } from "../../../domain/normalize-app";
 import { computeSoftwareDelta, toBaselineOps } from "../../../domain/software-inventory-delta";
+import { collectCupsPrinters } from "./printers-cups";
+import {
+  buildPrinterInventoryWithBaseline,
+  emptyPrinterInventory
+} from "./printers-pipeline";
 import {
   loadSoftwareBaseline,
   upsertSoftwareBaseline,
@@ -572,6 +577,19 @@ export const macProvider = {
     const hardware = await collectMacHardware();
     const security = await collectMacSecurity(ctx);
 
+    // Printers collected here (BEFORE software) so both return paths
+    // below — the no-changes early return inside the software try-
+    // block AND the final return — can include them. If we put this
+    // after software, the no-changes early return would skip
+    // printers entirely on every steady-state cycle.
+    let printers = emptyPrinterInventory();
+    try {
+      const raw = await collectCupsPrinters();
+      printers = buildPrinterInventoryWithBaseline(raw);
+    } catch (err: any) {
+      console.warn("[MACOS] printer collection failed, shipping empty", err?.message || err);
+    }
+
     let software: AmpNamespace["software"] = {
       count: 0,
       items: undefined,
@@ -654,7 +672,8 @@ export const macProvider = {
           return {
             hardware,
             security,
-            software
+            software,
+            printers
           };
         }
       }
@@ -665,7 +684,8 @@ export const macProvider = {
     return {
       hardware,
       security,
-      software
+      software,
+      printers
     };
   }
 };
