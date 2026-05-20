@@ -308,47 +308,6 @@ $wrapperExe = Join-Path $OutBase "TraceniumAgentCore.exe"
 Copy-Item $winswSrc $wrapperExe -Force
 Write-Host "→ copied WinSW wrapper from repo ($Arch)" -ForegroundColor Yellow
 
-<<<<<<< HEAD
-# ── NOTE on VersionInfo rewrite ──────────────────────────────────────
-#
-# WinSW.exe ships with CompanyName="CloudBees, Inc.", ProductName=
-# "Windows Service Wrapper", LegalCopyright="(c) 2008-2020 Kohsuke
-# Kawaguchi, ...". Cosmetically it would be nicer for Task Manager /
-# Process Explorer to show CERTUS ITM LLC consistently across all four
-# .exes (Tray, PrivSvc, AgentCore wrapper).
-#
-# We TRIED rcedit (https://github.com/electron/rcedit) v2.0.0:
-#   & rcedit-x64.exe TraceniumAgentCore.exe --set-version-string ...
-# Result: rcedit exits 0 but produces a PE that SignTool then rejects
-# with 0x800700C1 (ERROR_BAD_EXE_FORMAT). Confirmed on both x64 and
-# arm64 builds in CI run 26041422393 (Tracenium-Agent-1.1.18 attempt).
-# Root cause appears to be WinSW v3's specific .NET single-file
-# layout — rcedit's resource-section rewrite path leaves the optional
-# headers in a state SignTool's PE parser rejects.
-#
-# The other three .NET single-files (AgentTray.exe, PrivSvc.exe,
-# better_sqlite3.node) sign cleanly because their VersionInfo is set
-# at COMPILE time via the .csproj <Company>/<Product>/<FileVersion>
-# properties — no post-build resource rewrite needed. Only the
-# pre-built WinSW wrapper requires the workaround that doesn't work.
-#
-# Options to revisit later:
-#   1. Rebuild WinSW from source with our AssemblyInfo (real fix,
-#      bigger effort).
-#   2. Try a different resource editor (verpatch, ResourceHacker CLI)
-#      and see if either handles WinSW's PE layout.
-#   3. Move to a non-WinSW service wrapper (NSSM, a hand-rolled .NET
-#      Worker Service like our PrivSvc, or a Service Control Manager
-#      wrapper from .NET 8's WindowsServiceLifetime).
-#
-# Today we accept the cosmetic mismatch and rely on the SIGNATURE
-# subject ("Verified Signer: CERTUS ITM LLC") + the MSI Manufacturer
-# (Apps & Features Publisher: CERTUS ITM LLC) to project the right
-# brand. The Properties dialog → Details tab for THIS specific binary
-# will show CloudBees-era VersionInfo; in practice nobody looks there
-# except for triage, and the signature is what matters for SmartScreen
-# / Defender reputation building.
-=======
 # ── DO NOT rewrite WinSW's VersionInfo with rcedit ───────────────────
 #
 # This used to invoke `rcedit-x64.exe TraceniumAgentCore.exe
@@ -392,7 +351,6 @@ Write-Host "→ copied WinSW wrapper from repo ($Arch)" -ForegroundColor Yellow
 # emitted binary is still a valid PE by signing it locally with
 # signtool before pushing. Don't push to CI on a hunch — every retry
 # loop here costs ~10 minutes of Trusted Signing API time.
->>>>>>> Package-Prepare
 
 # ── 5. Copy WinSW XML config from repo ───────────────────────────────
 # Single source of truth — same XML on both archs. The %BASE% env var
