@@ -71,7 +71,7 @@ public sealed class Router
             "ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 service = "TraceniumPrivSvc",
-                version = "1.1.17",
+                version = "1.1.18",
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
@@ -84,6 +84,7 @@ public sealed class Router
 
             // Inventory / compliance
             "software.inventory" => SoftwareInventory.Handle(req),
+            "printer.inventory" => PrinterInventory.Handle(req),
             "security.compliance" => SecurityCompliance.Handle(req),
             "patch.scan" => PatchManagement.HandleScan(req),
             "patch.install" => PatchManagement.HandleInstall(req),

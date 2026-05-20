@@ -308,6 +308,7 @@ $wrapperExe = Join-Path $OutBase "TraceniumAgentCore.exe"
 Copy-Item $winswSrc $wrapperExe -Force
 Write-Host "→ copied WinSW wrapper from repo ($Arch)" -ForegroundColor Yellow
 
+<<<<<<< HEAD
 # ── NOTE on VersionInfo rewrite ──────────────────────────────────────
 #
 # WinSW.exe ships with CompanyName="CloudBees, Inc.", ProductName=
@@ -347,6 +348,51 @@ Write-Host "→ copied WinSW wrapper from repo ($Arch)" -ForegroundColor Yellow
 # will show CloudBees-era VersionInfo; in practice nobody looks there
 # except for triage, and the signature is what matters for SmartScreen
 # / Defender reputation building.
+=======
+# ── DO NOT rewrite WinSW's VersionInfo with rcedit ───────────────────
+#
+# This used to invoke `rcedit-x64.exe TraceniumAgentCore.exe
+# --set-version-string CompanyName "CERTUS ITM LLC" ...` so the
+# wrapper's embedded VersionInfo would match the signature subject in
+# Task Manager. It DID NOT WORK with WinSW v3:
+#
+#   1. rcedit v2.0.0 exits 0 but produces a PE that the subsequent
+#      Trusted Signing step rejects with 0x800700C1
+#      (ERROR_BAD_EXE_FORMAT).
+#   2. Failures observed on BOTH x64 and arm64 builds in CI runs
+#      26041422393 (1.1.17 first attempt) and again after the 1.1.18
+#      bump — same exit code, same binary corruption pattern.
+#   3. Root cause appears to be WinSW v3's .NET single-file packed
+#      layout: rcedit's resource-section rewriter assumes a flatter
+#      PE structure than what WinSW ships, so it relocates the
+#      optional header in a way SignTool's parser rejects.
+#
+# Net effect of skipping: TraceniumAgentCore.exe ships with the
+# upstream WinSW VersionInfo (CompanyName="CloudBees, Inc.", Product=
+# "Windows Service Wrapper"). It's cosmetic — the Authenticode
+# signature is still CERTUS ITM LLC, which is what Task Manager's
+# "Verified Signer" column and the SmartScreen install dialog show.
+# The mismatch only appears in Explorer's Properties → Details tab,
+# which is rarely looked at outside of triage.
+#
+# Cleaner alternatives for the future (each its own follow-up):
+#
+#   (a) Rebuild WinSW from source with our own AssemblyInfo and skip
+#       the binary rewrite entirely. Most idiomatic; requires
+#       importing the WinSW source tree and a separate dotnet build.
+#   (b) Try `verpatch` (https://github.com/pavel-a/ddverpatch) or
+#       ResourceHacker CLI as drop-in replacements. They handle some
+#       PE layouts that rcedit doesn't.
+#   (c) Migrate off WinSW to a native .NET 8 Worker Service like the
+#       one we already use for PrivSvc, which we DO control end-to-
+#       end. Pro: kills the WinSW dependency entirely. Con: bigger
+#       refactor of how AgentCore is launched as a Windows service.
+#
+# **Critical**: if you ever try rcedit again, ALWAYS verify the
+# emitted binary is still a valid PE by signing it locally with
+# signtool before pushing. Don't push to CI on a hunch — every retry
+# loop here costs ~10 minutes of Trusted Signing API time.
+>>>>>>> Package-Prepare
 
 # ── 5. Copy WinSW XML config from repo ───────────────────────────────
 # Single source of truth — same XML on both archs. The %BASE% env var

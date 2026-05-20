@@ -1,5 +1,4 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
-     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
 
   <Fragment>
 
@@ -25,28 +24,30 @@
             Start="auto"
             Type="ownProcess"
             ErrorControl="normal"
-            Account="LocalSystem">
+            Account="LocalSystem" />
 
-          <!-- ── SCM failure actions: restart on any abnormal exit ──
-               Required for the bridge's self-rescue logic to work
-               (GrpcBridge.cs calls Environment.Exit(2) when it can't
-               complete a HELLO ACK handshake across many reconnect
-               cycles, and we need SCM to resurrect the service).
+        <!-- ── Note on missing util:ServiceConfig ──
+             We previously embedded a <util:ServiceConfig> element here
+             to wire SCM restart-on-failure actions (so privsvc would
+             be resurrected when GrpcBridge.cs calls Environment.Exit(2)
+             from the self-rescue path). That broke MSI install with
+             "Service 'Tracenium Agent Core' failed to start" because
+             AgentCore depends on PrivSvc via <ServiceDependency> and
+             PrivSvc's ServiceInstall didn't reach SERVICE_RUNNING
+             during the InstallExecuteSequence — suspected cause is
+             the way util.wixext 6.0.0 schedules the
+             MsiInstallServiceConfig action vs StartServices.
 
-               Restart on first, second, and third failures — beyond
-               that something is structurally broken on the host and
-               we want a human to look. ResetPeriod=1 day means three
-               restarts within 24h is the budget; longer-running
-               flap-free uptime resets the count.
-            ── -->
-          <util:ServiceConfig
-              FirstFailureActionType="restart"
-              SecondFailureActionType="restart"
-              ThirdFailureActionType="none"
-              RestartServiceDelayInSeconds="5"
-              ResetPeriodInDays="1" />
-
-        </ServiceInstall>
+             Until we either:
+               (a) move the failure-actions config out-of-band via a
+                   CustomAction calling `sc.exe failure ... actions=
+                   restart/5000/restart/5000/`, or
+               (b) use the native WiX 6 ServiceConfigFailureActions
+                   element with explicit sequencing,
+             we ship without SCM-mediated restart. The self-rescue
+             Environment.Exit(2) call still runs, just nothing
+             resurrects the process after — equivalent to the pre-
+             self-rescue behavior, no regression vs 1.1.16. -->
 
         <!-- Control lifecycle -->
         <ServiceControl

@@ -19,8 +19,9 @@ let stopGrpcStream: (() => void) | null = null;
 // Polls the trayStatus store every minute. If its last successful save
 // happened more than MAX_STATUS_STALE_MS ago, the event loop is wedged
 // somewhere (a worker promise that never settles, a privsvc socket
-// half-open with no error event, etc.) and we exit so launchd recycles
-// us with clean state.
+// half-open with no error event, etc.) and we exit so the service
+// manager (launchd on macOS, systemd on Linux, WinSW + SCM on Windows)
+// recycles us with clean state.
 //
 // Why this exists: every other layer of self-healing — worker
 // stuck-flags, cached-client invalidation, scheduleReconnect — depends
@@ -251,10 +252,18 @@ export async function startService() {
           // the global one writes to stdout/stderr directly. We want
           // the breadcrumb to land regardless of which subsystem is on
           // fire.
+          // Service-manager name in the log message is picked at
+          // runtime so the breadcrumb is accurate per-platform. The
+          // mechanism is identical: non-zero exit → SM relaunches
+          // (KeepAlive=true on launchd, Restart=always on systemd,
+          // WinSW's <onfailure action="restart"> on Windows).
+          const recycler =
+            process.platform === "win32" ? "WinSW" :
+            process.platform === "darwin" ? "launchd" : "systemd";
           logger.error(
             "Liveness watchdog: tray status not updated in " +
               `${Math.round(staleMs / 1000)}s (> ${MAX_STATUS_STALE_MS / 1000}s threshold). ` +
-              "Event loop is wedged. Exiting so launchd can recycle the process."
+              `Event loop is wedged. Exiting so ${recycler} can recycle the process.`
           );
           // Same 250ms flush window as the crash handlers in
           // service.ts. unref so the timer can't keep the loop alive

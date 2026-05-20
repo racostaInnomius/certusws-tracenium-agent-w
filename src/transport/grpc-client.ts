@@ -126,6 +126,32 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
   let lastServerActivityMs = Date.now();
   (stream as any).getLastServerActivityMs = () => lastServerActivityMs;
 
+  // Counterpart to `lastServerActivityMs`, tracking OUTBOUND traffic.
+  // Stamped whenever a `priv.call("grpc.heartbeat")` or
+  // `priv.call("grpc.facts.send")` returns ok:true — that means the
+  // bridge accepted our IPC AND wrote the bytes onto the live gRPC
+  // stream without erroring. If the wire were zombie, the bridge's
+  // `_call.RequestStream.WriteAsync` would throw and the IPC would
+  // return ok:false (handled below by `emit("error")` → reconnect).
+  //
+  // The reason this exists: the server doesn't ACK heartbeats by
+  // design (looked at bridge logs 2026-05-19 — confirmed). On idle
+  // devices that aren't generating FACTS, NOTHING comes back from
+  // the server for minutes at a stretch. The previous armWatchdog
+  // in grpc-stream.ts relied solely on `lastServerActivityMs` to
+  // detect zombies, so it false-positived every SILENCE_THRESHOLD_MS
+  // and forced a useless reconnect cycle. We now require BOTH stale-
+  // receive AND stale-send to declare a stream zombie — catching the
+  // genuine cases (kernel surface write errors via HTTP/2 keepalive
+  // → ok:false → lastClientSendOkMs stops updating) while leaving
+  // healthy-but-idle streams alone.
+  //
+  // Initialized to "now" for the same reason as lastServerActivityMs:
+  // a fresh stream shouldn't be flagged as send-silent before its
+  // first heartbeat tick.
+  let lastClientSendOkMs = Date.now();
+  (stream as any).getLastClientSendOkMs = () => lastClientSendOkMs;
+
   // Mirror of grpc-stream.ts SILENCE_THRESHOLD_MS. Kept here as a
   // local constant (not imported) to avoid a circular dep — grpc-stream
   // already imports from this file. If the threshold changes there,
@@ -463,6 +489,10 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               // persisted outbox stays IN_FLIGHT until the backend ACK arrives, so a
               // stale-flight TTL can retry if the bridge dies before remote ACK.
               inFlightEvents.delete(eventId);
+              // Bridge accepted FACTS payload AND wrote it to the live
+              // gRPC stream without erroring → wire is alive. Updates
+              // the send-side liveness signal the watchdog gates on.
+              lastClientSendOkMs = Date.now();
               ctx.logger?.info?.("[grpc-client] IPC accepted; awaiting remote ACK", { eventId });
               return;
             }
@@ -503,6 +533,10 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
           // Release local dedupe only; backend ACK remains responsible for SENT.
           inFlightEvents.delete(eventId);
+          // All N chunks accepted by bridge AND written to the live
+          // gRPC stream → wire is alive. Same liveness signal as the
+          // single-shot facts path above.
+          lastClientSendOkMs = Date.now();
           ctx.logger?.info("[grpc-client] FACTS chunked IPC accepted; awaiting remote ACK", { eventId });
 
           return;
@@ -553,6 +587,11 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               connectPromise = null;
               // Surface to stream.on('error') so scheduleReconnect() runs.
               stream.emit("error", new Error(`heartbeat_failed:${errorCode || errorMessage}`));
+            } else {
+              // Bridge accepted heartbeat AND wrote it to the live
+              // gRPC stream without erroring → wire is alive. See
+              // `lastClientSendOkMs` declaration for full rationale.
+              lastClientSendOkMs = Date.now();
             }
             try {
               ctx.trayStatus.markHeartbeat();

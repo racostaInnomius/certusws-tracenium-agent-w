@@ -6,11 +6,26 @@ namespace Tracenium.PrivSvc.Windows.Ipc;
 
 public static class PatchManagement
 {
+    // Scan timeout: 60s. Windows Update Agent Search() is usually
+    // 5-15s on a healthy host; 60s covers a slow WSUS round-trip
+    // or a host that hasn't pinged Microsoft in months and needs to
+    // refresh the metadata catalog before searching.
+    private const int ScanTimeoutMs = 60_000;
+
+    // Install timeout: 90 min. Covers the worst common case (kernel
+    // + .NET runtime + servicing-stack update in a single batch,
+    // with download from a cold cache). Anything longer is almost
+    // always WUA wedged on its own (e.g., Component-Based-Servicing
+    // store corruption) and Kill-ing is the safe action — the next
+    // scan will surface "this update is still pending" and the
+    // operator can investigate locally.
+    private const int InstallTimeoutMs = 90 * 60_000;
+
     public static Task<PrivSvcResponse> HandleScan(PrivSvcRequest req)
     {
         try
         {
-            var output = RunPs(@"
+            var psResult = RunPs(@"
 $session = New-Object -ComObject Microsoft.Update.Session
 $searcher = $session.CreateUpdateSearcher()
 $result = $searcher.Search(""IsInstalled=0 and IsHidden=0 and Type='Software'"")
@@ -56,10 +71,25 @@ $securityItems = @($items | Where-Object {
   securityUpdateCount = $securityItems.Count
   items = $items
 } | ConvertTo-Json -Depth 8
-");
+", ScanTimeoutMs);
 
-            if (string.IsNullOrWhiteSpace(output))
+            // Timeout, kill, OR PowerShell wrote nothing to stdout
+            // (defensive — should always have at least the JSON).
+            if (psResult.TimedOut)
             {
+                return Task.FromResult(
+                    PrivSvcResponse.Fail(req.Id, "patch_scan_timeout",
+                        $"Windows Update scan exceeded {ScanTimeoutMs / 1000}s. " +
+                        $"stderr_tail: {Tail(psResult.Stderr, 500)}")
+                );
+            }
+
+            if (string.IsNullOrWhiteSpace(psResult.Stdout))
+            {
+                // Treat empty-stdout as "unknown" rather than failure
+                // — preserves pre-hardening behavior on the rare case
+                // where WUA returns no items AND no errors. Stderr
+                // (if any) goes into a soft note for the operator.
                 return Task.FromResult(PrivSvcResponse.Success(req.Id, new
                 {
                     status = "unknown",
@@ -67,22 +97,34 @@ $securityItems = @($items | Where-Object {
                     scannedAtUtc = DateTime.UtcNow.ToString("O"),
                     updateCount = 0,
                     securityUpdateCount = 0,
-                    items = Array.Empty<object>()
+                    items = Array.Empty<object>(),
+                    note = string.IsNullOrWhiteSpace(psResult.Stderr)
+                        ? null
+                        : $"empty_stdout; stderr_tail: {Tail(psResult.Stderr, 200)}"
                 }));
             }
 
-            using var doc = JsonDocument.Parse(output);
-            var result = JsonSerializer.Deserialize<object>(doc.RootElement.GetRawText());
-
-            return Task.FromResult(PrivSvcResponse.Success(req.Id, result ?? new
+            // Defensive JSON parse — if PowerShell threw mid-script
+            // we may get partial JSON or a thrown exception trace
+            // instead of ConvertTo-Json output. Return that raw text
+            // (truncated) as an error so the agent + backend can see
+            // the actual diagnostic instead of "scan failed: Unexpected
+            // character at line 1, column 1".
+            try
             {
-                status = "unknown",
-                source = "windows_update_agent",
-                scannedAtUtc = DateTime.UtcNow.ToString("O"),
-                updateCount = 0,
-                securityUpdateCount = 0,
-                items = Array.Empty<object>()
-            }));
+                using var doc = JsonDocument.Parse(psResult.Stdout);
+                var result = JsonSerializer.Deserialize<object>(doc.RootElement.GetRawText());
+                return Task.FromResult(PrivSvcResponse.Success(req.Id, result!));
+            }
+            catch (JsonException jex)
+            {
+                return Task.FromResult(
+                    PrivSvcResponse.Fail(req.Id, "patch_scan_invalid_json",
+                        $"{jex.Message} | exit_code={psResult.ExitCode} | " +
+                        $"stdout_head: {Head(psResult.Stdout, 300)} | " +
+                        $"stderr_tail: {Tail(psResult.Stderr, 300)}")
+                );
+            }
         }
         catch (Exception ex)
         {
@@ -113,7 +155,7 @@ $securityItems = @($items | Where-Object {
             var kbArticleIds = GetStringArray(parameters, "kbArticleIds");
             var modeJson = JsonSerializer.Serialize(mode);
 
-            var output = RunPs($@"
+            var psResult = RunPs($@"
 $mode = {modeJson}
 $targetKbs = @({string.Join(",", kbArticleIds.Select(kb => JsonSerializer.Serialize(kb)))})
 $session = New-Object -ComObject Microsoft.Update.Session
@@ -267,16 +309,58 @@ $status = if ($mode -eq 'download') {{
   results = $results
   selected = $selected
 }} | ConvertTo-Json -Depth 8
-");
+", InstallTimeoutMs);
 
-            if (string.IsNullOrWhiteSpace(output))
+            // Timeout: WUA wedged or actually still running past 90
+            // min. Either way, we don't have a useful result to ship
+            // back. The next scan will surface real state (if updates
+            // landed they show as installed; if not they're still in
+            // the available list).
+            if (psResult.TimedOut)
             {
-                return Task.FromResult(PrivSvcResponse.Fail(req.Id, "patch_install_error", "empty_response"));
+                return Task.FromResult(
+                    PrivSvcResponse.Fail(req.Id, "patch_install_timeout",
+                        $"Windows Update install exceeded {InstallTimeoutMs / 60_000}min. " +
+                        $"Process was killed. stderr_tail: {Tail(psResult.Stderr, 500)}")
+                );
             }
 
-            using var doc = JsonDocument.Parse(output);
-            var result = JsonSerializer.Deserialize<object>(doc.RootElement.GetRawText());
-            return Task.FromResult(PrivSvcResponse.Success(req.Id, result!));
+            if (string.IsNullOrWhiteSpace(psResult.Stdout))
+            {
+                // Process exited but emitted no JSON. Possible causes:
+                //   - PowerShell crashed before ConvertTo-Json ran
+                //   - WUA threw a fatal COM error mid-execution
+                //   - The user policy blocks WUA from running
+                // Return whatever stderr we captured so the operator
+                // sees the actual reason.
+                return Task.FromResult(
+                    PrivSvcResponse.Fail(req.Id, "patch_install_empty_response",
+                        $"exit_code={psResult.ExitCode}; " +
+                        $"stderr_tail: {Tail(psResult.Stderr, 500)}")
+                );
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(psResult.Stdout);
+                var result = JsonSerializer.Deserialize<object>(doc.RootElement.GetRawText());
+                return Task.FromResult(PrivSvcResponse.Success(req.Id, result!));
+            }
+            catch (JsonException jex)
+            {
+                // PowerShell ran to completion but the output is
+                // malformed JSON. Almost always a thrown exception
+                // ABOVE the ConvertTo-Json call — could be the COM
+                // bind failing, AcceptEula throwing, etc. Return
+                // the head of stdout (likely the trace) + stderr
+                // tail so the operator can diagnose.
+                return Task.FromResult(
+                    PrivSvcResponse.Fail(req.Id, "patch_install_invalid_json",
+                        $"{jex.Message} | exit_code={psResult.ExitCode} | " +
+                        $"stdout_head: {Head(psResult.Stdout, 400)} | " +
+                        $"stderr_tail: {Tail(psResult.Stderr, 300)}")
+                );
+            }
         }
         catch (Exception ex)
         {
@@ -286,7 +370,71 @@ $status = if ($mode -eq 'download') {{
         }
     }
 
-    private static string RunPs(string command)
+    /// <summary>
+    /// First N characters of a string, with `…` suffix if truncated.
+    /// Used for diagnostic preview of stdout/stderr in error
+    /// responses without flooding the IPC channel.
+    /// </summary>
+    private static string Head(string s, int n)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Length <= n ? s : s.Substring(0, n) + "…";
+    }
+
+    /// <summary>
+    /// Last N characters of a string, with `…` prefix if truncated.
+    /// Most error spew is at the END of stderr (final exception
+    /// trace), so tailing is more useful than heading there.
+    /// </summary>
+    private static string Tail(string s, int n)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Length <= n ? s : "…" + s.Substring(s.Length - n);
+    }
+
+    /// <summary>
+    /// Result of a PowerShell invocation. Both stdout AND stderr are
+    /// captured so callers can propagate errors back to the IPC
+    /// client — the previous implementation only logged stderr to
+    /// stdout (`Console.WriteLine`), leaving the agent + backend
+    /// blind to what went wrong inside the script body.
+    /// </summary>
+    private sealed record PsResult(string Stdout, string Stderr, int ExitCode, bool TimedOut);
+
+    /// <summary>
+    /// Run a PowerShell snippet and return both pipes + exit code +
+    /// a timeout flag.
+    ///
+    /// Hardening (2026-05-20) over the previous version:
+    ///
+    /// (1) ASYNC PIPE READS via BeginOutput/ErrorReadLine() + a
+    ///     ManualResetEvent on each. The old code did `ReadToEnd()`
+    ///     on stdout FIRST then stderr — if the script wrote more
+    ///     than the OS pipe buffer (~64KB) to stderr while the
+    ///     reader was still on stdout, the child blocked on its
+    ///     stderr write and we deadlocked. Patch install scripts
+    ///     for big Windows Updates can absolutely produce that much
+    ///     stderr (verbose logging, COM error spew). Async readers
+    ///     drain both pipes concurrently so no deadlock is possible.
+    ///
+    /// (2) REAL TIMEOUT enforced via WaitForExit(timeoutMs) AFTER
+    ///     the reads started. Old code passed `30000` AFTER both
+    ///     ReadToEnd calls had already blocked — the timeout was
+    ///     therefore unreachable in practice (the reads always
+    ///     completed before the WaitForExit ran). New code uses the
+    ///     caller-supplied `timeoutMs` and KILLS the process on
+    ///     expiry, returning `TimedOut=true` to the caller.
+    ///
+    /// (3) CALLER-SUPPLIED TIMEOUT. Scan can finish in &lt;30s but
+    ///     install is routinely 5-30 min for kernel updates. Old
+    ///     code hardcoded 30000ms for both — a real install hit
+    ///     the latent ReadToEnd block forever (or until WUA itself
+    ///     gave up). Callers now pass an appropriate ceiling:
+    ///     HandleScan uses 60_000 (1 min), HandleInstall uses
+    ///     90 * 60_000 (90 min — covers even kernel + .NET runtime
+    ///     updates with download).
+    /// </summary>
+    private static PsResult RunPs(string command, int timeoutMs)
     {
         var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
         var psi = new ProcessStartInfo("powershell",
@@ -299,19 +447,67 @@ $status = if ($mode -eq 'download') {{
         };
 
         using var proc = Process.Start(psi);
-        if (proc == null) return "";
+        if (proc == null) return new PsResult("", "Process.Start returned null", -1, false);
 
-        var stdout = proc.StandardOutput.ReadToEnd();
-        var stderr = proc.StandardError.ReadToEnd();
+        var stdoutBuilder = new System.Text.StringBuilder();
+        var stderrBuilder = new System.Text.StringBuilder();
 
-        proc.WaitForExit(30000);
+        // Lock objects so reader callbacks don't race on Append.
+        // StringBuilder isn't thread-safe.
+        var stdoutLock = new object();
+        var stderrLock = new object();
+
+        proc.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data == null) return;
+            lock (stdoutLock) { stdoutBuilder.AppendLine(e.Data); }
+        };
+        proc.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data == null) return;
+            lock (stderrLock) { stderrBuilder.AppendLine(e.Data); }
+        };
+
+        proc.BeginOutputReadLine();
+        proc.BeginErrorReadLine();
+
+        bool exited = proc.WaitForExit(timeoutMs);
+        if (!exited)
+        {
+            // Hit the hard timeout. Kill the process so the OS handle
+            // and the WUA COM session both release. Capture whatever
+            // pipes had buffered before we killed it — useful for
+            // diagnostics (partial JSON, last error log line).
+            try { proc.Kill(); } catch { /* already gone */ }
+            // Wait briefly for the async readers to drain post-kill.
+            // Without this the StringBuilders may be empty even if
+            // the child had written useful debug lines moments before.
+            proc.WaitForExit(2000);
+
+            string stdoutPartial, stderrPartial;
+            lock (stdoutLock) { stdoutPartial = stdoutBuilder.ToString(); }
+            lock (stderrLock) { stderrPartial = stderrBuilder.ToString(); }
+
+            return new PsResult(stdoutPartial, stderrPartial, -1, true);
+        }
+
+        // Process exited cleanly (or with error). Drain readers
+        // — they may still be processing the last line.
+        proc.WaitForExit();
+
+        string stdout, stderr;
+        lock (stdoutLock) { stdout = stdoutBuilder.ToString(); }
+        lock (stderrLock) { stderr = stderrBuilder.ToString(); }
 
         if (!string.IsNullOrWhiteSpace(stderr))
         {
+            // Keep the breadcrumb in service logs for grep-ability.
+            // The full stderr is ALSO returned to the caller (new in
+            // this hardening) so the agent + backend can surface it.
             Console.WriteLine($"[PrivSvc][PatchManagement] PowerShell stderr: {stderr}");
         }
 
-        return stdout;
+        return new PsResult(stdout, stderr, proc.ExitCode, false);
     }
 
     private static string? GetString(Dictionary<string, object> obj, string key)

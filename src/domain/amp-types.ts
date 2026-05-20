@@ -2,6 +2,8 @@
 
 import type { SoftwareDelta } from "./software-inventory-delta";
 import type { SoftwareApplication } from "./normalize-app";
+import type { Printer } from "./printer";
+import type { PrinterDelta } from "./printer-inventory-delta";
 
 export type HardwareStatic = {
   system?: any;
@@ -113,7 +115,42 @@ export type SoftwareInventory = {
 };
 
 /**
+ * Printer inventory model. Same shape as SoftwareInventory: count is
+ * always present, items[] only when hasChanges=true (or first run /
+ * forced baseline), delta only when a non-first-run cycle detected
+ * changes. The backend mirrors software's projection pattern — a
+ * `device_printers` table maintained incrementally by add/remove/
+ * update events.
+ */
+export type PrinterInventory = {
+  count: number;
+
+  /**
+   * Present ONLY when hasChanges = true OR forced (baseline snapshot).
+   * On a no-changes cycle we elide this to keep FACTS_SNAPSHOT slim;
+   * the backend already knows the current state via its projection.
+   */
+  items?: Printer[];
+
+  /**
+   * Optional delta. Only populated on cycles where a baseline already
+   * exists locally AND changes were detected.
+   */
+  delta?: PrinterDelta | null;
+
+  /**
+   * Scheduler driver — same role as SoftwareInventory.hasChanges.
+   */
+  hasChanges: boolean;
+};
+
+/**
  * AMP namespace (Asset Management Plugin)
+ *
+ * `printers` is intentionally OPTIONAL. Agents that don't yet collect
+ * printers (older builds, platforms with no collector) simply omit the
+ * field, and the backend ignores its absence — keeps the wire schema
+ * additive and lets us roll out collector + backend in either order.
  */
 export type AmpNamespace = {
   hardware: {
@@ -122,4 +159,5 @@ export type AmpNamespace = {
   };
   security: SecurityInfo;
   software: SoftwareInventory;
+  printers?: PrinterInventory;
 };
