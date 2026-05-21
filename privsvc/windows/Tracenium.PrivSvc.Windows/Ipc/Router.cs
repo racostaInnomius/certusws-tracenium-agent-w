@@ -103,6 +103,14 @@ public sealed class Router
             "grpc.ack" => IpcGrpcHandlers.HandleAck(req),
             "grpc.heartbeat" => IpcGrpcHandlers.HandleHeartbeat(req),
 
+            // RCP M1.S1 — agent-side outbound signaling. The
+            // Node.js plugin sends these when the WebRTC peer
+            // generates an answer / discovers a candidate / closes.
+            "grpc.send.remoteSessionAnswer" => IpcGrpcHandlers.HandleRemoteSessionAnswer(req),
+            "grpc.send.remoteSessionIce" => IpcGrpcHandlers.HandleRemoteSessionIce(req),
+            "grpc.send.remoteSessionClose" => IpcGrpcHandlers.HandleRemoteSessionClose(req),
+            "grpc.send.remoteSessionError" => IpcGrpcHandlers.HandleRemoteSessionError(req),
+
             // SDP — Phase 1-E. See Ipc/Sdp.cs.
             "sdp.detect" => Sdp.HandleDetect(req),
             "sdp.download" => Sdp.HandleDownload(req),

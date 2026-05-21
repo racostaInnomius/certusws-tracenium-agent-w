@@ -753,6 +753,42 @@ export function startGrpcStream(ctx: AgentContext) {
   // later it can safely set `reconnecting = true` again.
   reconnecting = false;
 
+  // RCP M1.S1 — install the outbound control-message write surface
+  // for plugins that don't fit the FACTS / job lifecycle. The RCP
+  // SessionManager calls this to send RemoteSessionAnswer / Ice /
+  // Close / Error back to the backend over the existing stream.
+  // We route through PrivSvc (same path as ACKs) so PrivSvc remains
+  // the single owner of the gRPC connection.
+  if (!ctx.sendControl) {
+    ctx.sendControl = (msg: any) => {
+      // Identify the oneof variant for PrivSvc routing. Each
+      // method maps to a single proto field on the C# side. PrivSvc
+      // serializes the params into the appropriate ControlMessage
+      // and writes to the gRPC stream.
+      const variants: Array<[string, string]> = [
+        ["remoteSessionAnswer", "grpc.send.remoteSessionAnswer"],
+        ["remoteSessionIce", "grpc.send.remoteSessionIce"],
+        ["remoteSessionClose", "grpc.send.remoteSessionClose"],
+        ["remoteSessionError", "grpc.send.remoteSessionError"]
+      ];
+      for (const [field, method] of variants) {
+        if (msg && msg[field]) {
+          (ctx.priv as any)
+            .call({ v: 1, id: `${field}-${Date.now()}`, method, params: msg[field] })
+            .catch((err: any) => {
+              ctx.logger?.warn?.(`[rcp] ${method} failed`, {
+                err: err?.message || String(err)
+              });
+            });
+          return;
+        }
+      }
+      ctx.logger?.warn?.("[rcp] sendControl: unknown message shape", {
+        keys: msg ? Object.keys(msg) : []
+      });
+    };
+  }
+
   let startDelayTimer: NodeJS.Timeout | null = null;
   let retryTimer: NodeJS.Timeout | null = null;
   let reconnectTimer: NodeJS.Timeout | null = null;
@@ -1367,6 +1403,39 @@ stream = client.Connect();
       ctx.logger?.warn?.("gRPC control message: disconnect requested by server");
       stop();
       scheduleReconnect("server_disconnect");
+      return;
+    }
+
+    // RCP M1.S1 — signaling dispatch. The plugin manages WebRTC
+    // peers + DataChannel I/O; we just route the inbound proto
+    // oneof variants to it. Lazy import keeps the bootstrap cost
+    // zero for agents that never receive an RCP offer.
+    if (
+      msg.remoteSessionOffer ||
+      msg.remoteSessionIce ||
+      msg.remoteSessionClose ||
+      msg.remoteSessionError
+    ) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { handleRemoteSessionMessage } = require("../plugins/rcp");
+      const params =
+        msg.remoteSessionOffer ||
+        msg.remoteSessionIce ||
+        msg.remoteSessionClose ||
+        msg.remoteSessionError;
+      const type = msg.remoteSessionOffer
+        ? "offer"
+        : msg.remoteSessionIce
+        ? "ice"
+        : msg.remoteSessionClose
+        ? "close"
+        : "error";
+      handleRemoteSessionMessage(ctx, type, params).catch((err: any) => {
+        ctx.logger?.error?.("[rcp] dispatch failed", {
+          type,
+          err: err?.message || String(err)
+        });
+      });
       return;
     }
   });

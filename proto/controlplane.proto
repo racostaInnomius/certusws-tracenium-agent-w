@@ -87,6 +87,81 @@ message AgentUpdate {
   string version = 2;
 }
 
+// ---------------- REMOTE CONTROL (RCP) SIGNALING ----------------
+//
+// WebRTC signaling messages for the RCP family (rcp.shell first, then
+// rcp.file in M2, rcp.screen in M3). The actual I/O — keystrokes,
+// output, file chunks, screen frames — flows over a WebRTC peer
+// connection established directly between the operator's browser and
+// this agent. The backend mediates only:
+//   1. Authorization (admin_master gate on session start)
+//   2. Signaling relay (SDP offer/answer + ICE candidates)
+//   3. Lifecycle audit + transcript upload (in M1.S3)
+//
+// All signaling messages carry sessionId — multiple concurrent
+// sessions can be in flight on the same gRPC stream. See
+// RCP_DESIGN_DECISIONS_v2.md for the full architecture.
+
+// Backend → Agent. The browser created an SDP offer (acting as
+// offerer); the backend forwards it after verifying the operator's
+// admin_master role and that this device belongs to the operator's
+// tenant. Agent's job: create a PeerConnection, set remote
+// description, generate an answer, reply with RemoteSessionAnswer.
+message RemoteSessionOffer {
+  string sessionId = 1;
+  string sdp = 2;
+  // Capability the session is requesting. Agent rejects via
+  // RemoteSessionError if it doesn't advertise this capability
+  // (e.g. rcp.shell when policy.features.remoteShell is false).
+  string capability = 3;
+  // Hard cap so the agent can pre-allocate / refuse to spawn.
+  int32 sessionTimeoutSeconds = 4;
+}
+
+// Agent → Backend. The agent's SDP answer in response to a
+// RemoteSessionOffer. Backend forwards to the operator's browser
+// over the WebSocket signaling channel.
+message RemoteSessionAnswer {
+  string sessionId = 1;
+  string sdp = 2;
+}
+
+// Bidirectional. ICE candidates discovered by either side after the
+// initial offer/answer. The candidate string is the standard SDP
+// "candidate:" line; sdpMid and sdpMLineIndex identify which media
+// section it belongs to (matters once we add video tracks in M3).
+message RemoteSessionIce {
+  string sessionId = 1;
+  string candidate = 2;
+  string sdpMid = 3;
+  int32 sdpMLineIndex = 4;
+}
+
+// Bidirectional. Tear-down marker. The agent sends it when the
+// shell exits or an idle timeout fires; the backend sends it when
+// the operator's browser disconnects past the grace window. After
+// either side sends close, the receiver should release the
+// PeerConnection and audit the session as ended.
+message RemoteSessionClose {
+  string sessionId = 1;
+  // Free-form. Audit log shows this on the closed session row.
+  // Conventional values: "user_closed", "operator_disconnected",
+  // "idle_timeout", "hard_cap_timeout", "agent_error",
+  // "policy_denied", "capability_unavailable".
+  string reason = 2;
+}
+
+// Bidirectional. Surfaces a structured error before close. Use cases:
+//   - agent rejects capability (policy off, no PTY available)
+//   - SDP parse failure
+//   - ICE failed to establish within window
+// Backend persists into remote_session_events for audit.
+message RemoteSessionError {
+  string sessionId = 1;
+  string code = 2;
+  string message = 3;
+}
+
 // ---------------- CONTROL PLANE MESSAGE ----------------
 
 message ControlMessage {
@@ -109,5 +184,15 @@ message ControlMessage {
     // bidirectional
     Ack ack = 11;
     Error error = 12;
+
+    // RCP signaling (Sprint 1 of M1). See RemoteSession* message
+    // docs above. Field numbers 20-29 reserved for the RCP family
+    // to leave room for future signaling variants without
+    // colliding with existing oneof tags.
+    RemoteSessionOffer remoteSessionOffer   = 20;  // server -> agent
+    RemoteSessionAnswer remoteSessionAnswer = 21;  // agent -> server
+    RemoteSessionIce remoteSessionIce       = 22;  // bidirectional
+    RemoteSessionClose remoteSessionClose   = 23;  // bidirectional
+    RemoteSessionError remoteSessionError   = 24;  // bidirectional
   }
 }

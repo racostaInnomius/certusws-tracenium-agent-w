@@ -679,4 +679,84 @@ public static class IpcGrpcHandlers
             return PrivSvcResponse.Fail(req.Id, "grpc_heartbeat_error", ex.Message);
         }
     }
+
+    // ── RCP M1.S1 — outbound signaling handlers ───────────────────────
+    //
+    // Each handler unpacks the params dict from agent-core and calls
+    // the corresponding Send* method on GrpcBridgeSingleton. Error
+    // shape matches HandleAck above so the TS client sees consistent
+    // {ok}/{error,code,message} envelopes.
+
+    public static async Task<PrivSvcResponse> HandleRemoteSessionAnswer(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId = GetString(p, "sessionId");
+            var sdp = GetString(p, "sdp");
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new Exception("sessionId required");
+            await GrpcBridgeSingleton.Instance.SendRemoteSessionAnswer(sessionId, sdp ?? "");
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_answer_error", ex.Message);
+        }
+    }
+
+    public static async Task<PrivSvcResponse> HandleRemoteSessionIce(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId = GetString(p, "sessionId");
+            var candidate = GetString(p, "candidate");
+            var sdpMid = GetString(p, "sdpMid");
+            var sdpMLineIndexStr = GetString(p, "sdpMLineIndex");
+            int sdpMLineIndex = 0;
+            if (!string.IsNullOrWhiteSpace(sdpMLineIndexStr)) int.TryParse(sdpMLineIndexStr, out sdpMLineIndex);
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new Exception("sessionId required");
+            await GrpcBridgeSingleton.Instance.SendRemoteSessionIce(sessionId, candidate ?? "", sdpMid ?? "", sdpMLineIndex);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_ice_error", ex.Message);
+        }
+    }
+
+    public static async Task<PrivSvcResponse> HandleRemoteSessionClose(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId = GetString(p, "sessionId");
+            var reason = GetString(p, "reason");
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new Exception("sessionId required");
+            await GrpcBridgeSingleton.Instance.SendRemoteSessionClose(sessionId, reason ?? "");
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_close_error", ex.Message);
+        }
+    }
+
+    public static async Task<PrivSvcResponse> HandleRemoteSessionError(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId = GetString(p, "sessionId");
+            var code = GetString(p, "code");
+            var message = GetString(p, "message");
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new Exception("sessionId required");
+            await GrpcBridgeSingleton.Instance.SendRemoteSessionError(sessionId, code ?? "", message ?? "");
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_error_error", ex.Message);
+        }
+    }
 }

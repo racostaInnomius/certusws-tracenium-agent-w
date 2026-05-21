@@ -16,6 +16,8 @@
     "child_process": "^1.0.2",
     "crypto": "^1.0.1",
     "dotenv": "^16.4.5",
+    "node-datachannel": "^0.32.3",
+    "node-pty": "^1.1.0",
     "node-wmi": "^0.0.5",
     "os": "^0.1.2",
     "path": "^0.12.7",
