@@ -18,6 +18,7 @@
 
 import type { AgentContext } from "../../core/agent-context";
 import { PtySession } from "./pty-session";
+import { TranscriptBuffer } from "./transcript-buffer";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const nodeDatachannel = require("node-datachannel");
@@ -28,6 +29,14 @@ type PeerSessionArgs = {
   ctx: AgentContext;
   sendAnswer: (sdp: string) => void;
   sendIce: (candidate: string, sdpMid: string, sdpMLineIndex: number) => void;
+  // Sprint 3 — transcript chunk uploader. The SessionManager wires
+  // this to ctx.sendControl({ remoteSessionTranscript: ... }).
+  sendTranscript: (chunk: {
+    stream: "stdout";
+    tsDeltaSeconds: number;
+    data: string;
+    bytesCount: number;
+  }) => void;
   onTeardown: (reason: string) => void;
   sessionTimeoutSeconds: number;
 };
@@ -43,6 +52,10 @@ export class PeerSession {
   // open guarantees we only run a shell for a peer that actually
   // connected.
   private pty: PtySession | null = null;
+  // Sprint 3 — buffers stdout into ~5s/~8KB chunks then uploads
+  // via gRPC for audit. Allocated when the DataChannel opens
+  // (same lifecycle as the PTY).
+  private transcript: TranscriptBuffer | null = null;
   private hardTimer: NodeJS.Timeout | null = null;
   private disposed = false;
 
@@ -99,6 +112,25 @@ export class PeerSession {
       // Sprint 2 — allocate the PTY now (not at offer time). If
       // spawning fails (rare: missing shell, OS handle exhaustion)
       // we surface RemoteSessionError + tear down.
+      //
+      // Sprint 3 — also allocate the transcript buffer. We
+      // initialize its origin to NOW (data channel open ≈ session
+      // start from the operator's perspective; the backend's
+      // remote_sessions.started_at is set at the same moment by
+      // signaling-relay.markSessionActive).
+      const sessionStartedAtMs = Date.now();
+      this.transcript = new TranscriptBuffer(sessionStartedAtMs, (chunk) => {
+        if (this.disposed) return;
+        try {
+          args.sendTranscript(chunk);
+        } catch (err: any) {
+          ctx.logger?.warn?.("[rcp] transcript flush failed", {
+            sessionId,
+            err: err?.message
+          });
+        }
+      });
+
       try {
         this.pty = new PtySession({
           sessionId,
@@ -114,6 +146,25 @@ export class PeerSession {
                 sessionId,
                 err: err?.message
               });
+            }
+            // Sprint 3 — tee PTY output into the transcript
+            // buffer. We only tap `send` calls (not raw PTY
+            // onData) because the JSON envelope wraps the actual
+            // stdout — the transcript needs the inner data
+            // payload, not the JSON.
+            //
+            // Parse-and-extract is cheap (one JSON.parse per
+            // flush; sub-millisecond on stdout-sized strings).
+            try {
+              const parsed = JSON.parse(text);
+              if (
+                parsed?.type === "stdout" &&
+                typeof parsed.data === "string"
+              ) {
+                this.transcript?.append(parsed.data);
+              }
+            } catch {
+              /* not a JSON envelope we recognize — skip */
             }
           },
           onExit: (code, reason) => {
@@ -211,6 +262,16 @@ export class PeerSession {
       /* ignore */
     }
     this.pty = null;
+    // Flush any remaining transcript bytes before the channel
+    // goes away. Order matters: dispose() calls flush() and the
+    // sendTranscript callback runs synchronously (gRPC send is
+    // fire-and-forget via PrivSvc).
+    try {
+      this.transcript?.dispose();
+    } catch {
+      /* ignore */
+    }
+    this.transcript = null;
     try {
       this.dataChannel?.close?.();
     } catch {

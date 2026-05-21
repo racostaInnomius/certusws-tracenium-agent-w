@@ -100,6 +100,7 @@ export class SessionManager {
       sendAnswer: (s) => this.sendAnswer(sessionId, s),
       sendIce: (cand, mid, mline) =>
         this.sendIce(sessionId, cand, mid, mline),
+      sendTranscript: (chunk) => this.sendTranscript(sessionId, chunk),
       onTeardown: (reason) => {
         this.sessions.delete(sessionId);
         this.sendClose(sessionId, reason);
@@ -193,6 +194,26 @@ export class SessionManager {
   private sendError(sessionId: string, code: string, message: string): void {
     this.ctx.sendControl?.({
       remoteSessionError: { sessionId, code, message }
+    });
+  }
+
+  private sendTranscript(
+    sessionId: string,
+    chunk: {
+      stream: "stdout";
+      tsDeltaSeconds: number;
+      data: string;
+      bytesCount: number;
+    }
+  ): void {
+    this.ctx.sendControl?.({
+      remoteSessionTranscript: {
+        sessionId,
+        stream: chunk.stream,
+        tsDeltaSeconds: chunk.tsDeltaSeconds,
+        data: chunk.data,
+        bytesCount: chunk.bytesCount
+      }
     });
   }
 }

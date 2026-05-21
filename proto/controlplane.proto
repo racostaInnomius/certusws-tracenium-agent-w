@@ -162,6 +162,31 @@ message RemoteSessionError {
   string message = 3;
 }
 
+// Agent → Backend (M1.S3). Append-only chunk of session output.
+// Flushed every ~5s or when the buffer reaches ~8KB, whichever
+// triggers first. Backend persists into remote_session_io and uses
+// it as a liveness signal (idle-timeout sweep treats sessions with
+// recent transcript activity as alive).
+//
+// Stream is a string instead of an enum so a future opt-in stdin
+// recording lands without a proto bump; values are 'stdout' or
+// 'stdin'. M1 ships stdout only.
+message RemoteSessionTranscript {
+  string sessionId = 1;
+  string stream = 2;
+  // Offset from the session's started_at, in seconds (fractional).
+  // Matches asciinema v2's "time" field exactly so replay can
+  // serialize the chunks back to the standard format with no
+  // recomputation.
+  double tsDeltaSeconds = 3;
+  // UTF-8. May contain ANSI escapes; replay renders them via
+  // xterm.js. Capped at 64 KB per chunk by the agent.
+  string data = 4;
+  // Convenience for backend aggregates without measuring UTF-8
+  // bytes on every chunk. Set by the agent at flush time.
+  int32 bytesCount = 5;
+}
+
 // ---------------- CONTROL PLANE MESSAGE ----------------
 
 message ControlMessage {
@@ -194,5 +219,6 @@ message ControlMessage {
     RemoteSessionIce remoteSessionIce       = 22;  // bidirectional
     RemoteSessionClose remoteSessionClose   = 23;  // bidirectional
     RemoteSessionError remoteSessionError   = 24;  // bidirectional
+    RemoteSessionTranscript remoteSessionTranscript = 25; // agent -> server (M1.S3)
   }
 }

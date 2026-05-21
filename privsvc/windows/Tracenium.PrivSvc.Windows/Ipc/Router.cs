@@ -110,6 +110,7 @@ public sealed class Router
             "grpc.send.remoteSessionIce" => IpcGrpcHandlers.HandleRemoteSessionIce(req),
             "grpc.send.remoteSessionClose" => IpcGrpcHandlers.HandleRemoteSessionClose(req),
             "grpc.send.remoteSessionError" => IpcGrpcHandlers.HandleRemoteSessionError(req),
+            "grpc.send.remoteSessionTranscript" => IpcGrpcHandlers.HandleRemoteSessionTranscript(req),
 
             // SDP — Phase 1-E. See Ipc/Sdp.cs.
             "sdp.detect" => Sdp.HandleDetect(req),

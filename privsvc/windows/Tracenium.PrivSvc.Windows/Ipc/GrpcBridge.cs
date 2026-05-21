@@ -1725,6 +1725,31 @@ private const int MaxPendingPushEvents = 50;
         catch (Exception ex) { Log($"SendRemoteSessionError error sessionId={sessionId} {ex}"); }
     }
 
+    // RCP M1.S3 — agent → backend transcript chunks. Same direct-
+    // write pattern as Ack/Answer but transcript can be many KB at
+    // a time so we don't log per-send (would flood the privsvc log).
+    public async Task SendRemoteSessionTranscript(string sessionId, string stream, double tsDeltaSeconds, string data, int bytesCount, CancellationToken ct = default)
+    {
+        if (_call is null) { Log($"SendRemoteSessionTranscript skipped: no active call sessionId={sessionId}"); return; }
+        if (string.IsNullOrWhiteSpace(sessionId)) return;
+        try
+        {
+            await _call.RequestStream.WriteAsync(new ControlMessage
+            {
+                RemoteSessionTranscript = new RemoteSessionTranscript
+                {
+                    SessionId = sessionId,
+                    Stream = stream ?? "stdout",
+                    TsDeltaSeconds = tsDeltaSeconds,
+                    Data = data ?? string.Empty,
+                    BytesCount = bytesCount
+                }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+        }
+        catch (Exception ex) { Log($"SendRemoteSessionTranscript error sessionId={sessionId} {ex}"); }
+    }
+
     public void Dispose() => Close();
 }
 

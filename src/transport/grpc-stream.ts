@@ -769,7 +769,10 @@ export function startGrpcStream(ctx: AgentContext) {
         ["remoteSessionAnswer", "grpc.send.remoteSessionAnswer"],
         ["remoteSessionIce", "grpc.send.remoteSessionIce"],
         ["remoteSessionClose", "grpc.send.remoteSessionClose"],
-        ["remoteSessionError", "grpc.send.remoteSessionError"]
+        ["remoteSessionError", "grpc.send.remoteSessionError"],
+        // Sprint 3 — transcript chunks (agent → server) for audit
+        // persistence into remote_session_io.
+        ["remoteSessionTranscript", "grpc.send.remoteSessionTranscript"]
       ];
       for (const [field, method] of variants) {
         if (msg && msg[field]) {

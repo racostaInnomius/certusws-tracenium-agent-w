@@ -759,4 +759,31 @@ public static class IpcGrpcHandlers
             return PrivSvcResponse.Fail(req.Id, "grpc_remote_error_error", ex.Message);
         }
     }
+
+    // RCP M1.S3 — agent → backend transcript chunks. Latency-tolerant
+    // (these are buffered every ~5s) so we don't need the
+    // direct-write fast path that Answer/Ice use.
+    public static async Task<PrivSvcResponse> HandleRemoteSessionTranscript(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId = GetString(p, "sessionId");
+            var stream = GetString(p, "stream");
+            var data = GetString(p, "data");
+            var tsStr = GetString(p, "tsDeltaSeconds");
+            var bytesStr = GetString(p, "bytesCount");
+            double tsDeltaSeconds = 0;
+            int bytesCount = 0;
+            if (!string.IsNullOrWhiteSpace(tsStr)) double.TryParse(tsStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out tsDeltaSeconds);
+            if (!string.IsNullOrWhiteSpace(bytesStr)) int.TryParse(bytesStr, out bytesCount);
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new Exception("sessionId required");
+            await GrpcBridgeSingleton.Instance.SendRemoteSessionTranscript(sessionId, stream ?? "stdout", tsDeltaSeconds, data ?? "", bytesCount);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_transcript_error", ex.Message);
+        }
+    }
 }
