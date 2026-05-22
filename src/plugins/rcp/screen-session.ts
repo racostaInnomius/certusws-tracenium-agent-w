@@ -1,30 +1,39 @@
 // src/plugins/rcp/screen-session.ts
 //
-// RCP M3.S2 — screen capture + streaming session (chunked transport).
+// RCP M3.S4 — screen capture + streaming + input forwarding.
+//   - M3.S1: capture loop + JPEG frame delivery
+//   - M3.S2: chunked frame delivery for large frames (SCTP 65 KB cap)
+//   - M3.S3: cursor position embedded in frame/frameStart for overlay
+//   - M3.S4: synthetic input (mouse/keyboard) forwarded to PrivSvc.SendInput
 //
 // One ScreenSession is created per active rcp.screen DataChannel.
 // It drives a periodic capture loop using the PrivSvc screen.capture
 // IPC method (C# GDI+, works in Windows Session 0) and streams JPEG
-// frames to the browser over the DataChannel.
-//
-// M3.S2 adds chunked frame delivery to stay within the SCTP ~65 KB
-// DataChannel message size limit. Frames ≤ FRAME_CHUNK_MAX chars are
-// sent as a single "frame" message (backward-compat with M3.S1 clients).
-// Larger frames are split into "frameStart" / "frameChunk[]" / "frameDone".
+// frames + cursor pos to the browser over the DataChannel.
 //
 // Protocol (see ScreenShareViewer.jsx for the browser side):
 //
 //   Agent → Browser:
-//     { op: "screenInfo",  width, height, fps }      // once at open
-//     { op: "frame",  seq, width, height, data }     // small frame (≤ limit)
-//     { op: "frameStart", seq, width, height, chunks } // large frame header
-//     { op: "frameChunk", seq, idx, data }           // one chunk
-//     { op: "frameDone",  seq }                      // all chunks sent
+//     { op: "screenInfo",  width, height, fps }                  // once at open
+//     { op: "frame",  seq, width, height, data, cursorX, cursorY } // small (≤ limit)
+//     { op: "frameStart", seq, width, height, chunks, cursorX, cursorY } // large
+//     { op: "frameChunk", seq, idx, data }                       // one chunk
+//     { op: "frameDone",  seq }                                  // all chunks sent
 //     { op: "error", code, message }
 //
 //   Browser → Agent:
-//     { op: "setQuality",  fps, quality }  // 1-100 JPEG quality
-//     { op: "stop" }                       // graceful close
+//     { op: "setQuality",  fps, quality }            // 1-100 JPEG quality
+//     { op: "stop" }                                 // graceful close
+//     { op: "mouseMove",  x, y }                     // M3.S4 — display-native px
+//     { op: "mouseDown",  button, x, y }             // button: 0=L 1=M 2=R
+//     { op: "mouseUp",    button, x, y }
+//     { op: "wheel",      deltaX, deltaY, x, y }     // browser pixel deltas
+//     { op: "keyDown",    code }                     // JS KeyboardEvent.code
+//     { op: "keyUp",      code }
+//     { op: "releaseAll" }                           // emergency release
+//
+// cursorX/Y are -1 when PrivSvc couldn't read the position (rare:
+// lock screen, RDP detach). The browser hides the overlay in that case.
 //
 // The agent also fires RemoteScreenAudit gRPC events at "started" and
 // "stopped"/"error" via the sendScreenAudit callback so the backend
@@ -136,7 +145,55 @@ export class ScreenSession {
       case "stop":
         this.stopCapture("operator_stopped");
         break;
+
+      // M3.S4 — input forwarding. The browser sends mouse + keyboard
+      // events as JSON; we forward them to PrivSvc.SendInject. Each
+      // call is fire-and-forget — IPC errors are logged but never
+      // tear down the session (a transient SendInput failure should
+      // not kill the screen stream).
+      case "mouseMove":
+      case "mouseDown":
+      case "mouseUp":
+      case "wheel":
+      case "keyDown":
+      case "keyUp":
+      case "releaseAll":
+        this.forwardInput(op, msg);
+        break;
     }
+  }
+
+  // M3.S4 — Forward an input op to PrivSvc.SendInput via IPC.
+  // We strip the message down to the fields PrivSvc actually needs
+  // and pass `op` explicitly so the C# router knows which branch
+  // to take inside InputInjection.Inject.
+  private forwardInput(op: string, msg: any): void {
+    const { ctx, sessionId } = this.args;
+    const params: Record<string, any> = { op };
+    // Mouse fields (coordinates + button)
+    if ("x" in msg)      params.x      = Number(msg.x);
+    if ("y" in msg)      params.y      = Number(msg.y);
+    if ("button" in msg) params.button = Number(msg.button);
+    // Wheel deltas
+    if ("deltaX" in msg) params.deltaX = Number(msg.deltaX);
+    if ("deltaY" in msg) params.deltaY = Number(msg.deltaY);
+    // Keyboard
+    if ("code" in msg)   params.code   = String(msg.code);
+
+    (ctx.priv as any)
+      .call({
+        v: 1,
+        id: `input.inject.${Date.now()}`,
+        method: "input.inject",
+        params
+      })
+      .catch((err: any) => {
+        ctx.logger?.debug?.("[rcp.screen] input.inject failed", {
+          sessionId,
+          op,
+          err: err?.message
+        });
+      });
   }
 
   // M3.S2 — split a large base64 JPEG string into FRAME_CHUNK_MAX
@@ -144,17 +201,30 @@ export class ScreenSession {
   // The browser reassembles before rendering; any chunk dropped by
   // the unreliable DataChannel causes the whole frame to be discarded
   // when the browser receives the next frameStart.
+  //
+  // M3.S3 — cursor pos rides on frameStart so the overlay updates in
+  // lockstep with the frame, even if a chunk is dropped.
   private sendFrameChunked(
     seq: number,
     width: number,
     height: number,
-    data: string
+    data: string,
+    cursorX: number,
+    cursorY: number
   ): void {
     const chunks: string[] = [];
     for (let i = 0; i < data.length; i += FRAME_CHUNK_MAX) {
       chunks.push(data.slice(i, i + FRAME_CHUNK_MAX));
     }
-    this.send({ op: "frameStart", seq, width, height, chunks: chunks.length });
+    this.send({
+      op: "frameStart",
+      seq,
+      width,
+      height,
+      chunks: chunks.length,
+      cursorX,
+      cursorY
+    });
     for (let idx = 0; idx < chunks.length; idx++) {
       this.send({ op: "frameChunk", seq, idx, data: chunks[idx] });
     }
@@ -198,6 +268,10 @@ export class ScreenSession {
       const data: string = String(result.result?.data ?? "");
       const width: number = Number(result.result?.width ?? 0);
       const height: number = Number(result.result?.height ?? 0);
+      // M3.S3 — cursor pos comes from C# GetCursorPos. -1 means
+      // PrivSvc couldn't read it (rare; lock screen, RDP detach).
+      const cursorX: number = Number(result.result?.cursorX ?? -1);
+      const cursorY: number = Number(result.result?.cursorY ?? -1);
 
       if (!data) return;
 
@@ -222,11 +296,14 @@ export class ScreenSession {
 
       // M3.S2 — send as a single message when small enough; chunk
       // otherwise to stay under the SCTP DataChannel size limit.
+      // M3.S3 — cursorX/Y travel on the frame (single message) or
+      // frameStart (chunked) so the browser can overlay the cursor in
+      // sync with the underlying frame.
       const frameSeq = this.seq++;
       if (data.length <= FRAME_CHUNK_MAX) {
-        this.send({ op: "frame", seq: frameSeq, width, height, data });
+        this.send({ op: "frame", seq: frameSeq, width, height, data, cursorX, cursorY });
       } else {
-        this.sendFrameChunked(frameSeq, width, height, data);
+        this.sendFrameChunked(frameSeq, width, height, data, cursorX, cursorY);
       }
     } catch (err: any) {
       ctx.logger?.warn?.("[rcp.screen] capture error", {

@@ -868,4 +868,13 @@ public static class IpcGrpcHandlers
             }
         });
     }
+
+    // ── M3.S4 — synthetic input injection (SendInput) ─────────────────────────
+
+    public static Task<PrivSvcResponse> HandleInputInject(PrivSvcRequest req)
+    {
+        // SendInput is non-blocking; we still wrap in Task.Run so a slow
+        // call doesn't tie up the IPC dispatcher thread.
+        return Task.Run(() => InputInjection.Inject(req));
+    }
 }

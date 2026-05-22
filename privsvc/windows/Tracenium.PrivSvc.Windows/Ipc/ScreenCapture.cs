@@ -60,6 +60,14 @@ internal static class ScreenCapture
     [DllImport("user32.dll")]
     private static extern int GetSystemMetrics(int nIndex);
 
+    // M3.S3 — cursor position for overlay rendering.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X; public int Y; }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out POINT lpPoint);
+
     private const int SM_CXSCREEN = 0;  // primary monitor width
     private const int SM_CYSCREEN = 1;  // primary monitor height
     private const int SRCCOPY = 0x00CC0020;
@@ -118,13 +126,24 @@ internal static class ScreenCapture
             encParams.Param[0] = new EncoderParameter(Encoder.Quality, (long)quality);
             bmp.Save(ms, JpegCodec, encParams);
 
+            // M3.S3 — capture cursor position for browser overlay.
+            // Failure is non-fatal; we simply omit the cursor in that case.
+            int cursorX = -1, cursorY = -1;
+            if (GetCursorPos(out POINT cp))
+            {
+                cursorX = cp.X;
+                cursorY = cp.Y;
+            }
+
             var base64 = Convert.ToBase64String(ms.ToArray());
             return PrivSvcResponse.Success(reqId, new
             {
-                ok     = true,
-                data   = base64,
+                ok      = true,
+                data    = base64,
                 width,
-                height
+                height,
+                cursorX,
+                cursorY
             });
         }
         catch (Exception ex)

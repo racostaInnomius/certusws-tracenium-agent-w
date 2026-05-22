@@ -119,6 +119,9 @@ public sealed class Router
             // RCP M3.S1 — screen capture IPC (Node.js → PrivSvc).
             // PrivSvc owns the GDI+ BitBlt call; result is base64 JPEG.
             "screen.capture" => IpcGrpcHandlers.HandleScreenCapture(req),
+            // RCP M3.S4 — synthetic input injection (mouse + keyboard)
+            // forwarded from the operator's browser via the agent.
+            "input.inject" => IpcGrpcHandlers.HandleInputInject(req),
 
             // SDP — Phase 1-E. See Ipc/Sdp.cs.
             "sdp.detect" => Sdp.HandleDetect(req),
