@@ -256,6 +256,37 @@ if (Test-Path $testExtension) {
   Write-Host "  → removed test_extension.node (test fixture, never loaded at runtime)"
 }
 
+# ── Prune non-Windows prebuilt bindings ──────────────────────────────
+# Some native packages (node-pty especially) ship prebuilt .node files
+# for every platform they support — darwin-arm64, darwin-x64, linux-*,
+# win32-x64, win32-arm64, etc. — all under `<pkg>/prebuilds/<platform>`.
+# For a Windows MSI we only need the win32 binding matching $Arch.
+#
+# Authenticode SignTool in the CI workflow recursively signs every file
+# under the staging tree (it doesn't filter by extension). Mach-O / ELF
+# .node files are not Windows PE format, so signtool rejects them with:
+#   "This file format cannot be signed because it is not recognized."
+# Observed in the 1.1.19 first attempt — workflow failed signing
+# darwin-arm64/pty.node and darwin-x64/pty.node from node-pty.
+#
+# We prune to win32-$Arch only (not all win32 dirs) because shipping
+# the other arch's binding in this package is just dead weight — the
+# arm64 MSI doesn't need win32-x64/pty.node and vice versa, and signing
+# files we don't use wastes a Trusted Signing API call per file.
+Write-Host "→ pruning non-Windows prebuilds (keep only win32-$Arch)" -ForegroundColor Yellow
+Get-ChildItem -Path $OutNm -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+  $pkgName = $_.Name
+  $prebuildsDir = Join-Path $_.FullName "prebuilds"
+  if (Test-Path $prebuildsDir) {
+    Get-ChildItem -Path $prebuildsDir -Directory | Where-Object {
+      $_.Name -ne "win32-$Arch"
+    } | ForEach-Object {
+      Write-Host "  pruned $pkgName/prebuilds/$($_.Name)" -ForegroundColor DarkGray
+      Remove-Item -Recurse -Force $_.FullName
+    }
+  }
+}
+
 # ── 3. Download bundled node.exe for target arch ─────────────────────
 $nodeFilename = "node.exe"
 $nodeUrl = "https://nodejs.org/dist/v$NodeVersion/win-$Arch/$nodeFilename"
