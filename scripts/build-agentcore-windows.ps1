@@ -193,36 +193,52 @@ try {
   # Two modes depending on host vs. target arch:
   #
   # Native arch (host == target):
-  #   `--build-from-source` forces node-gyp to compile the binding
-  #   fresh. Guarantees ABI match and avoids any "wrong-arch prebuild
-  #   slipped in" surprise. This is the path build-linux-binaries.sh
-  #   takes on Linux.
+  #   Step 1: `npm install` WITHOUT --build-from-source. Every native
+  #   dep grabs its own prebuild if available — node-datachannel pulls
+  #   its napi-v8 win32-$Arch prebuild, node-pty pulls its win32-$Arch
+  #   prebuild, better-sqlite3 also tries to grab a prebuild.
+  #   Step 2: `npm rebuild better-sqlite3 --build-from-source` forces
+  #   ONLY sqlite3 to rebuild fresh against the host's headers, so its
+  #   ABI matches the bundled node we ship in the MSI. We don't rebuild
+  #   the other two because:
+  #     - node-datachannel's --build-from-source path is broken
+  #       (prebuild@13.0.1 throws "expected first argument to be an
+  #       array"). Its napi-v8 prebuild is forward-compatible with
+  #       Node 24, so the prebuild path Just Works.
+  #     - node-pty's prebuilds are also forward-compatible and there's
+  #       no ABI mismatch concern (it doesn't load against the bundled
+  #       sqlite linkage like better-sqlite3 does).
   #
   # Cross arch (host != target, e.g. x64 host building arm64 MSI):
-  #   We can't compile a foreign-arch binary from this host's gcc
-  #   without setting up cross-compilers. Instead, we install in
-  #   PREBUILD mode: npm_config_arch + target_platform tell npm to
-  #   download the precompiled .node binding for the requested arch
-  #   from better-sqlite3's GitHub release. We trust the prebuild
-  #   because better-sqlite3 publishes them per release with checksums.
-  #
-  #   The win-arm64 prebuild has been shipped by better-sqlite3 since
-  #   v11.x. If a future version drops it, this script will fail at
-  #   npm install with a clear "no prebuild found" error — at which
-  #   point the right answer is to either pin to a version that has
-  #   the prebuild or revert this job to a native arm64 runner.
+  #   We can't compile a foreign-arch binary from this host without
+  #   cross-compilers. Install in PREBUILD-ONLY mode: npm_config_arch
+  #   + target_platform tell each package's prebuild-install which
+  #   target binary to fetch. better-sqlite3 has shipped win-arm64
+  #   prebuilds since v11.x; node-datachannel ships win32-arm64;
+  #   node-pty ships win32-arm64. If any drops the arm64 prebuild in
+  #   a future version, this script fails with a clear "no prebuild
+  #   found" error.
   $hostArch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
   $env:npm_config_arch = $Arch
   $env:npm_config_target_platform = "win32"
 
-  if ($hostArch -eq $Arch) {
-    Write-Host "  (native build: host=$hostArch == target=$Arch)" -ForegroundColor DarkGray
-    npm install --omit=dev --build-from-source --no-audit --no-fund
-  } else {
-    Write-Host "  (cross-compile: host=$hostArch -> target=$Arch — using prebuilds)" -ForegroundColor DarkGray
-    npm install --omit=dev --no-audit --no-fund
-  }
+  # Step 1 — install all native deps using their prebuilds. Applies
+  # to both native and cross-compile modes; --build-from-source is
+  # intentionally absent so node-datachannel and node-pty don't fall
+  # into their broken / unnecessary build paths.
+  Write-Host "  step 1: npm install (prebuilds for all native deps)" -ForegroundColor DarkGray
+  npm install --omit=dev --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { throw "npm install (native deps) failed" }
+
+  # Step 2 — only on native-arch builds, rebuild better-sqlite3 from
+  # source. Cross-arch builds skip this and trust the win-$Arch prebuild.
+  if ($hostArch -eq $Arch) {
+    Write-Host "  step 2: rebuild better-sqlite3 from source (native build)" -ForegroundColor DarkGray
+    npm rebuild better-sqlite3 --build-from-source --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw "npm rebuild better-sqlite3 failed" }
+  } else {
+    Write-Host "  step 2 skipped: cross-compile uses better-sqlite3 prebuild" -ForegroundColor DarkGray
+  }
 } finally {
   Pop-Location
   Remove-Item env:npm_config_arch -ErrorAction SilentlyContinue
