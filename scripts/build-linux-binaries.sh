@@ -388,6 +388,17 @@ if [ -f "$ROOT_DIR/privsvc/macos/distribution/resources/root-ca.crt" ]; then
   echo "→ using bundled root CA from macOS resources"
 fi
 
+# Windows PrivSvc ships the same Root CA as a committed asset. Use it
+# as the canonical source for Linux too — single file in the repo,
+# kept in sync as part of the Windows build. This is also the only
+# location the file lives in the public repo today (the macOS path
+# above is a leftover from the original layout; packaging/linux/assets
+# is reserved for an explicit per-distro override).
+if [ -z "$ROOT_CA_SRC" ] && [ -f "$ROOT_DIR/privsvc/windows/Tracenium.PrivSvc.Windows/assets/root-ca.crt" ]; then
+  ROOT_CA_SRC="$ROOT_DIR/privsvc/windows/Tracenium.PrivSvc.Windows/assets/root-ca.crt"
+  echo "→ using bundled root CA from Windows PrivSvc assets"
+fi
+
 # Also accept a Linux-specific override if a future operator wants
 # to ship a different root for Linux only.
 if [ -z "$ROOT_CA_SRC" ] && [ -f "$ROOT_DIR/packaging/linux/assets/root-ca.crt" ]; then
