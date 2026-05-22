@@ -294,6 +294,8 @@ echo "→ esbuild agent core"
   --format=cjs \
   --target=node24 \
   --external:better-sqlite3 \
+  --external:node-pty \
+  --external:node-datachannel \
   --outfile="$PKG_ROOT/agent/index.js"
 
 echo "→ esbuild privsvc"
@@ -344,7 +346,13 @@ fi
 # (MODULE_NOT_FOUND on first agent start), which makes the manual
 # update path a non-issue.
 mkdir -p "$PKG_ROOT/agent/node_modules"
-for pkg in better-sqlite3 bindings file-uri-to-path; do
+# RCP M1+M2+M3 — node-pty (shell PTY) and node-datachannel (WebRTC) are
+# native modules with .node bindings. esbuild can't bundle .node files
+# (hence --external:node-pty/--external:node-datachannel above), so we
+# ship the whole package directory next to the bundle. The bundled
+# `require("node-pty")` / `require("node-datachannel")` resolves to
+# $PKG_ROOT/agent/node_modules/* at runtime via Node's standard lookup.
+for pkg in better-sqlite3 bindings file-uri-to-path node-pty node-datachannel; do
   if [ -d "$STAGING_DIR/node_modules/$pkg" ]; then
     cp -r "$STAGING_DIR/node_modules/$pkg" "$PKG_ROOT/agent/node_modules/"
   else

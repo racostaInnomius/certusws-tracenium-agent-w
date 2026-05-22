@@ -146,6 +146,8 @@ try {
     --format=cjs `
     --target=node24 `
     --external:better-sqlite3 `
+    --external:node-pty `
+    --external:node-datachannel `
     --outfile="$OutDist/index.js"
   if ($LASTEXITCODE -ne 0) { throw "esbuild failed" }
 } finally {
@@ -168,6 +170,15 @@ $nativeDeps = @{
   "better-sqlite3"     = $repoPkg.dependencies."better-sqlite3"
   "bindings"           = "*"
   "file-uri-to-path"   = "*"
+  # RCP M1+M2+M3 — native modules required at runtime by the agent's
+  # RCP plugin. Both ship .node bindings (PTY for shell sessions,
+  # WebRTC for file/screen DataChannels) so esbuild can't bundle them
+  # — they're marked --external above and staged here as sibling
+  # packages. Both publish prebuilds for win-x64; node-datachannel
+  # also has win-arm64 prebuilds (>=0.5.x), node-pty needs the
+  # build-from-source path on arm64 hosts.
+  "node-pty"           = $repoPkg.dependencies."node-pty"
+  "node-datachannel"   = $repoPkg.dependencies."node-datachannel"
 }
 $nativePkg = @{
   name = "tracenium-agentcore-native"
