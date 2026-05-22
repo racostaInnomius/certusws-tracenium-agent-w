@@ -786,4 +786,86 @@ public static class IpcGrpcHandlers
             return PrivSvcResponse.Fail(req.Id, "grpc_remote_transcript_error", ex.Message);
         }
     }
+
+    // ── M2.S1 — file transfer audit ────────────────────────────────────────────
+
+    public static async Task<PrivSvcResponse> HandleRemoteFileTransferAudit(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId        = GetString(p, "sessionId")   ?? throw new Exception("sessionId required");
+            var transferId       = GetString(p, "transferId")  ?? "";
+            var direction        = GetString(p, "direction")   ?? "";
+            var remotePath       = GetString(p, "remotePath")  ?? "";
+            var filename         = GetString(p, "filename")    ?? "";
+            var status           = GetString(p, "status")      ?? "";
+            var errorMessage     = GetString(p, "errorMessage") ?? "";
+
+            long sizeBytes = 0, transferredBytes = 0;
+            var sizStr  = GetString(p, "sizeBytes");
+            var trnsStr = GetString(p, "transferredBytes");
+            if (!string.IsNullOrWhiteSpace(sizStr))  long.TryParse(sizStr,  out sizeBytes);
+            if (!string.IsNullOrWhiteSpace(trnsStr)) long.TryParse(trnsStr, out transferredBytes);
+
+            await GrpcBridgeSingleton.Instance.SendRemoteFileTransferAudit(
+                sessionId, transferId, direction, remotePath, filename,
+                sizeBytes, transferredBytes, status, errorMessage);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_file_transfer_audit_error", ex.Message);
+        }
+    }
+
+    // ── M3.S1 — screen share audit ─────────────────────────────────────────────
+
+    public static async Task<PrivSvcResponse> HandleRemoteScreenAudit(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId    = GetString(p, "sessionId")    ?? throw new Exception("sessionId required");
+            var evt          = GetString(p, "event")        ?? "";
+            var errorMessage = GetString(p, "errorMessage") ?? "";
+
+            int width = 0, height = 0, fps = 0;
+            var wStr = GetString(p, "width");  var hStr = GetString(p, "height");
+            var fStr = GetString(p, "fps");
+            if (!string.IsNullOrWhiteSpace(wStr)) int.TryParse(wStr, out width);
+            if (!string.IsNullOrWhiteSpace(hStr)) int.TryParse(hStr, out height);
+            if (!string.IsNullOrWhiteSpace(fStr)) int.TryParse(fStr, out fps);
+
+            await GrpcBridgeSingleton.Instance.SendRemoteScreenAudit(
+                sessionId, evt, width, height, fps, errorMessage);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_screen_audit_error", ex.Message);
+        }
+    }
+
+    // ── M3.S1 — screen capture (GDI+) ─────────────────────────────────────────
+
+    public static Task<PrivSvcResponse> HandleScreenCapture(PrivSvcRequest req)
+    {
+        return Task.Run(() =>
+        {
+            try
+            {
+                var p = req.Params ?? new Dictionary<string, object>();
+                var qualStr = GetString(p, "quality");
+                int quality = 80;
+                if (!string.IsNullOrWhiteSpace(qualStr)) int.TryParse(qualStr, out quality);
+                quality = Math.Max(1, Math.Min(100, quality));
+                return ScreenCapture.Capture(req.Id, quality);
+            }
+            catch (Exception ex)
+            {
+                return PrivSvcResponse.Fail(req.Id, "screen_capture_error", ex.Message);
+            }
+        });
+    }
 }

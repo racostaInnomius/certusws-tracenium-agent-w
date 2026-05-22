@@ -1,24 +1,25 @@
 // src/plugins/rcp/peer-session.ts
 //
-// RCP M1 — one WebRTC peer connection wrapping `node-datachannel`.
+// RCP M3.S1 — one WebRTC peer connection wrapping `node-datachannel`.
 //
 // Lifecycle:
-//   - constructor: builds PeerConnection with empty config (ICE
-//     servers are inferred from the offer's SDP in M1.S1; M2 wires
-//     the agent-side TURN config from policy when we need it).
-//   - acceptOffer: sets remote description, generates answer,
-//     sends via sendAnswer callback.
+//   - constructor: builds PeerConnection with empty config.
+//   - acceptOffer: sets remote description, generates answer.
 //   - addRemoteIce: forwards browser-side candidates to the peer.
 //   - dispose: closes the connection and any open DataChannel.
 //
-// Sprint 1 wired a placeholder echo handler on the DataChannel.
-// Sprint 2 replaced it with a real PTY (see pty-session.ts) —
-// inbound messages are forwarded as stdin to a spawned shell,
-// PTY stdout/stderr come back through the channel.
+// onDataChannel routes to the session type by capability:
+//   rcp.shell  → PtySession + TranscriptBuffer  (M1.S2 / M1.S3)
+//   rcp.file   → FileSession                    (M2.S1)
+//   rcp.screen → ScreenSession                  (M3.S1)
 
 import type { AgentContext } from "../../core/agent-context";
 import { PtySession } from "./pty-session";
 import { TranscriptBuffer } from "./transcript-buffer";
+import { FileSession } from "./file-session";
+import type { FileTransferAuditPayload } from "./file-session";
+import { ScreenSession } from "./screen-session";
+import type { ScreenAuditPayload } from "./screen-session";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const nodeDatachannel = require("node-datachannel");
@@ -29,14 +30,17 @@ type PeerSessionArgs = {
   ctx: AgentContext;
   sendAnswer: (sdp: string) => void;
   sendIce: (candidate: string, sdpMid: string, sdpMLineIndex: number) => void;
-  // Sprint 3 — transcript chunk uploader. The SessionManager wires
-  // this to ctx.sendControl({ remoteSessionTranscript: ... }).
+  // M1.S3 — transcript chunk uploader (rcp.shell only).
   sendTranscript: (chunk: {
     stream: "stdout";
     tsDeltaSeconds: number;
     data: string;
     bytesCount: number;
   }) => void;
+  // M2.S1 — file transfer audit uploader (rcp.file only).
+  sendFileTransferAudit: (audit: FileTransferAuditPayload) => void;
+  // M3.S1 — screen share audit uploader (rcp.screen only).
+  sendScreenAudit: (audit: ScreenAuditPayload) => void;
   onTeardown: (reason: string) => void;
   sessionTimeoutSeconds: number;
 };
@@ -46,16 +50,13 @@ export class PeerSession {
   // DataChannel established by the OFFERER (browser). We don't
   // create one locally; we wait for `onDataChannel`.
   private dataChannel: any | null = null;
-  // PTY allocated when the DataChannel opens (Sprint 2). null
-  // until then. We don't spawn the shell at offer time because the
-  // browser may abandon mid-handshake — spawning on data-channel
-  // open guarantees we only run a shell for a peer that actually
-  // connected.
+  // rcp.shell — PTY + transcript buffer (M1.S2 / M1.S3)
   private pty: PtySession | null = null;
-  // Sprint 3 — buffers stdout into ~5s/~8KB chunks then uploads
-  // via gRPC for audit. Allocated when the DataChannel opens
-  // (same lifecycle as the PTY).
   private transcript: TranscriptBuffer | null = null;
+  // rcp.file — file browser / transfer session (M2.S1)
+  private fileSession: FileSession | null = null;
+  // rcp.screen — screen capture + streaming session (M3.S1)
+  private screenSession: ScreenSession | null = null;
   private hardTimer: NodeJS.Timeout | null = null;
   private disposed = false;
 
@@ -104,110 +105,129 @@ export class PeerSession {
 
     this.peer.onDataChannel((dc: any) => {
       this.dataChannel = dc;
+      const cap = args.capability;
       ctx.logger?.info?.("[rcp] data channel open", {
         sessionId,
+        capability: cap,
         label: dc.getLabel?.()
       });
 
-      // Sprint 2 — allocate the PTY now (not at offer time). If
-      // spawning fails (rare: missing shell, OS handle exhaustion)
-      // we surface RemoteSessionError + tear down.
-      //
-      // Sprint 3 — also allocate the transcript buffer. We
-      // initialize its origin to NOW (data channel open ≈ session
-      // start from the operator's perspective; the backend's
-      // remote_sessions.started_at is set at the same moment by
-      // signaling-relay.markSessionActive).
-      const sessionStartedAtMs = Date.now();
-      this.transcript = new TranscriptBuffer(sessionStartedAtMs, (chunk) => {
-        if (this.disposed) return;
-        try {
-          args.sendTranscript(chunk);
-        } catch (err: any) {
-          ctx.logger?.warn?.("[rcp] transcript flush failed", {
-            sessionId,
-            err: err?.message
-          });
-        }
-      });
-
-      try {
-        this.pty = new PtySession({
-          sessionId,
-          ctx,
-          send: (text) => {
-            // Defensive: dataChannel might have closed between an
-            // onData event and the time we serialize.
-            if (this.disposed) return;
-            try {
-              dc.sendMessage(text);
-            } catch (err: any) {
-              ctx.logger?.warn?.("[rcp] data channel send failed", {
-                sessionId,
-                err: err?.message
-              });
-            }
-            // Sprint 3 — tee PTY output into the transcript
-            // buffer. We only tap `send` calls (not raw PTY
-            // onData) because the JSON envelope wraps the actual
-            // stdout — the transcript needs the inner data
-            // payload, not the JSON.
-            //
-            // Parse-and-extract is cheap (one JSON.parse per
-            // flush; sub-millisecond on stdout-sized strings).
-            try {
-              const parsed = JSON.parse(text);
-              if (
-                parsed?.type === "stdout" &&
-                typeof parsed.data === "string"
-              ) {
-                this.transcript?.append(parsed.data);
-              }
-            } catch {
-              /* not a JSON envelope we recognize — skip */
-            }
-          },
-          onExit: (code, reason) => {
-            // Shell terminated. We tear down the peer (which
-            // triggers args.onTeardown → SessionManager removes us
-            // and sends RemoteSessionClose to backend).
-            ctx.logger?.info?.("[rcp] shell exit, scheduling teardown", {
+      // ── rcp.shell — PTY + transcript (M1.S2 / M1.S3) ────────────
+      if (cap === "rcp.shell") {
+        const sessionStartedAtMs = Date.now();
+        this.transcript = new TranscriptBuffer(sessionStartedAtMs, (chunk) => {
+          if (this.disposed) return;
+          try {
+            args.sendTranscript(chunk);
+          } catch (err: any) {
+            ctx.logger?.warn?.("[rcp] transcript flush failed", {
               sessionId,
-              code,
-              reason
-            });
-            setImmediate(() => {
-              if (this.disposed) return;
-              args.onTeardown(reason);
+              err: err?.message
             });
           }
         });
-      } catch (err: any) {
-        ctx.logger?.error?.("[rcp] PTY spawn failed at channel open", {
-          sessionId,
-          err: err?.message || String(err)
+
+        try {
+          this.pty = new PtySession({
+            sessionId,
+            ctx,
+            send: (text) => {
+              if (this.disposed) return;
+              try {
+                dc.sendMessage(text);
+              } catch (err: any) {
+                ctx.logger?.warn?.("[rcp] data channel send failed", {
+                  sessionId,
+                  err: err?.message
+                });
+              }
+              // Tee PTY output into transcript buffer.
+              try {
+                const parsed = JSON.parse(text);
+                if (
+                  parsed?.type === "stdout" &&
+                  typeof parsed.data === "string"
+                ) {
+                  this.transcript?.append(parsed.data);
+                }
+              } catch {
+                /* not a recognized JSON envelope — skip */
+              }
+            },
+            onExit: (code, reason) => {
+              ctx.logger?.info?.("[rcp] shell exit, scheduling teardown", {
+                sessionId,
+                code,
+                reason
+              });
+              setImmediate(() => {
+                if (this.disposed) return;
+                args.onTeardown(reason);
+              });
+            }
+          });
+        } catch (err: any) {
+          ctx.logger?.error?.("[rcp] PTY spawn failed at channel open", {
+            sessionId,
+            err: err?.message || String(err)
+          });
+          setImmediate(() => args.onTeardown("pty_spawn_failed"));
+          return;
+        }
+
+        dc.onMessage((msg: any) => {
+          if (this.disposed || !this.pty) return;
+          const text =
+            typeof msg === "string"
+              ? msg
+              : msg && typeof msg === "object" && "toString" in msg
+              ? msg.toString()
+              : String(msg);
+          this.pty.handleMessage(text);
         });
-        setImmediate(() => args.onTeardown("pty_spawn_failed"));
+
+        dc.onClosed(() => {
+          ctx.logger?.info?.("[rcp] shell data channel closed", { sessionId });
+          this.pty?.dispose("data_channel_closed");
+          this.pty = null;
+        });
         return;
       }
 
-      dc.onMessage((msg: any) => {
-        if (this.disposed || !this.pty) return;
-        const text =
-          typeof msg === "string"
-            ? msg
-            : msg && typeof msg === "object" && "toString" in msg
-            ? msg.toString()
-            : String(msg);
-        this.pty.handleMessage(text);
-      });
+      // ── rcp.file — file browser / transfer (M2.S1) ───────────────
+      if (cap === "rcp.file") {
+        this.fileSession = new FileSession(dc, {
+          sessionId,
+          ctx,
+          sendFileTransferAudit: args.sendFileTransferAudit,
+          onTeardown: (reason) => {
+            this.fileSession = null;
+            if (!this.disposed) args.onTeardown(reason);
+          }
+        });
+        return;
+      }
 
-      dc.onClosed(() => {
-        ctx.logger?.info?.("[rcp] data channel closed", { sessionId });
-        // Browser closed the channel — kill the shell.
-        this.pty?.dispose("data_channel_closed");
-        this.pty = null;
+      // ── rcp.screen — screen capture + streaming (M3.S1) ──────────
+      if (cap === "rcp.screen") {
+        this.screenSession = new ScreenSession(dc, {
+          sessionId,
+          ctx,
+          sendScreenAudit: args.sendScreenAudit,
+          onTeardown: (reason) => {
+            this.screenSession = null;
+            if (!this.disposed) args.onTeardown(reason);
+          }
+        });
+        return;
+      }
+
+      // Unknown capability — shouldn't reach here (gated in session-manager)
+      ctx.logger?.warn?.("[rcp] unhandled capability on data channel open", {
+        sessionId,
+        capability: cap
       });
+      setImmediate(() => args.onTeardown("unknown_capability"));
     });
 
     // Hard cap timer — even if the operator forgets to close, the
@@ -253,25 +273,33 @@ export class PeerSession {
       clearTimeout(this.hardTimer);
       this.hardTimer = null;
     }
-    // Kill the shell BEFORE tearing down the channel — gives the
-    // PTY's exit handler a moment to fire and queue its final
-    // 'exit' message, even if the data channel races ahead.
+    // rcp.shell — kill the PTY first, then flush transcript.
     try {
       this.pty?.dispose(reason);
     } catch {
       /* ignore */
     }
     this.pty = null;
-    // Flush any remaining transcript bytes before the channel
-    // goes away. Order matters: dispose() calls flush() and the
-    // sendTranscript callback runs synchronously (gRPC send is
-    // fire-and-forget via PrivSvc).
     try {
       this.transcript?.dispose();
     } catch {
       /* ignore */
     }
     this.transcript = null;
+    // rcp.file — clean up uploads / temp files.
+    try {
+      this.fileSession?.dispose(reason);
+    } catch {
+      /* ignore */
+    }
+    this.fileSession = null;
+    // rcp.screen — stop the capture loop.
+    try {
+      this.screenSession?.dispose(reason);
+    } catch {
+      /* ignore */
+    }
+    this.screenSession = null;
     try {
       this.dataChannel?.close?.();
     } catch {

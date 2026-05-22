@@ -187,6 +187,57 @@ message RemoteSessionTranscript {
   int32 bytesCount = 5;
 }
 
+// Agent → Backend (M2.S1). Audit event for a file transfer over
+// WebRTC DataChannel (rcp.file sessions). The actual file bytes
+// flow P2P over the DataChannel; the backend never touches them —
+// this message is purely an audit hook so the backend can persist
+// who transferred what and whether it succeeded.
+//
+// The agent fires one event at 'started' and one at the terminal
+// status ('completed' | 'failed' | 'cancelled'). The backend
+// UPSERTs on transfer_id so both events land in the same audit row.
+//
+// direction: "download" = agent→browser; "upload" = browser→agent.
+message RemoteFileTransferAudit {
+  string sessionId        = 1;
+  // Agent-minted UUID, stable across the transfer lifecycle.
+  string transferId       = 2;
+  // "download" | "upload"
+  string direction        = 3;
+  // Full POSIX/Win32 path on the device.
+  string remotePath       = 4;
+  // basename(remotePath). Convenience field.
+  string filename         = 5;
+  // Total bytes of the file. 0 if not yet known at 'started'.
+  int64  sizeBytes        = 6;
+  // Bytes actually transferred at the time of this event.
+  int64  transferredBytes = 7;
+  // "started" | "completed" | "failed" | "cancelled"
+  string status           = 8;
+  // Set on 'failed'. Empty otherwise.
+  string errorMessage     = 9;
+}
+
+// Agent → Backend (M3.S1). Lifecycle audit for a screen share
+// session over WebRTC DataChannel (rcp.screen sessions). The
+// actual frame bytes flow P2P over the DataChannel; the backend
+// only records session-level events.
+//
+// The agent fires "started" when the DataChannel opens and
+// "stopped" or "error" when it closes.
+message RemoteScreenAudit {
+  string sessionId    = 1;
+  // "started" | "stopped" | "error"
+  string event        = 2;
+  // Screen resolution the agent is streaming at.
+  int32  width        = 3;
+  int32  height       = 4;
+  // Target frames per second agreed at negotiation time.
+  int32  fps          = 5;
+  // Set on "error". Empty otherwise.
+  string errorMessage = 6;
+}
+
 // ---------------- CONTROL PLANE MESSAGE ----------------
 
 message ControlMessage {
@@ -220,5 +271,7 @@ message ControlMessage {
     RemoteSessionClose remoteSessionClose   = 23;  // bidirectional
     RemoteSessionError remoteSessionError   = 24;  // bidirectional
     RemoteSessionTranscript remoteSessionTranscript = 25; // agent -> server (M1.S3)
+    RemoteFileTransferAudit remoteFileTransferAudit  = 26; // agent -> server (M2.S1)
+    RemoteScreenAudit       remoteScreenAudit        = 27; // agent -> server (M3.S1)
   }
 }

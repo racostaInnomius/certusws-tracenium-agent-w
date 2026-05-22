@@ -1750,6 +1750,68 @@ private const int MaxPendingPushEvents = 50;
         catch (Exception ex) { Log($"SendRemoteSessionTranscript error sessionId={sessionId} {ex}"); }
     }
 
+    // M2.S1 — file transfer audit (agent → server).
+    public async Task SendRemoteFileTransferAudit(
+        string sessionId, string transferId, string direction,
+        string remotePath, string filename,
+        long sizeBytes, long transferredBytes,
+        string status, string errorMessage,
+        CancellationToken ct = default)
+    {
+        if (_call is null) { Log($"SendRemoteFileTransferAudit skipped: no active call sessionId={sessionId}"); return; }
+        if (string.IsNullOrWhiteSpace(sessionId)) return;
+        try
+        {
+            await _call.RequestStream.WriteAsync(new ControlMessage
+            {
+                RemoteFileTransferAudit = new RemoteFileTransferAudit
+                {
+                    SessionId        = sessionId,
+                    TransferId       = transferId       ?? string.Empty,
+                    Direction        = direction        ?? string.Empty,
+                    RemotePath       = remotePath       ?? string.Empty,
+                    Filename         = filename         ?? string.Empty,
+                    SizeBytes        = sizeBytes,
+                    TransferredBytes = transferredBytes,
+                    Status           = status           ?? string.Empty,
+                    ErrorMessage     = errorMessage     ?? string.Empty
+                }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+            Log($"RemoteFileTransferAudit sent sessionId={sessionId} transferId={transferId} status={status}");
+        }
+        catch (Exception ex) { Log($"SendRemoteFileTransferAudit error sessionId={sessionId} {ex}"); }
+    }
+
+    // M3.S1 — screen share audit (agent → server).
+    public async Task SendRemoteScreenAudit(
+        string sessionId, string evt,
+        int width, int height, int fps,
+        string errorMessage,
+        CancellationToken ct = default)
+    {
+        if (_call is null) { Log($"SendRemoteScreenAudit skipped: no active call sessionId={sessionId}"); return; }
+        if (string.IsNullOrWhiteSpace(sessionId)) return;
+        try
+        {
+            await _call.RequestStream.WriteAsync(new ControlMessage
+            {
+                RemoteScreenAudit = new RemoteScreenAudit
+                {
+                    SessionId    = sessionId,
+                    Event        = evt          ?? string.Empty,
+                    Width        = width,
+                    Height       = height,
+                    Fps          = fps,
+                    ErrorMessage = errorMessage ?? string.Empty
+                }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+            Log($"RemoteScreenAudit sent sessionId={sessionId} event={evt} {width}x{height}@{fps}fps");
+        }
+        catch (Exception ex) { Log($"SendRemoteScreenAudit error sessionId={sessionId} {ex}"); }
+    }
+
     public void Dispose() => Close();
 }
 

@@ -772,7 +772,12 @@ export function startGrpcStream(ctx: AgentContext) {
         ["remoteSessionError", "grpc.send.remoteSessionError"],
         // Sprint 3 — transcript chunks (agent → server) for audit
         // persistence into remote_session_io.
-        ["remoteSessionTranscript", "grpc.send.remoteSessionTranscript"]
+        ["remoteSessionTranscript", "grpc.send.remoteSessionTranscript"],
+        // M2.S1 + M3.S1 — audit hooks for file transfer and screen share
+        // sessions. The actual I/O flows P2P; these messages carry only
+        // session lifecycle metadata for backend audit rows.
+        ["remoteFileTransferAudit", "grpc.send.remoteFileTransferAudit"],
+        ["remoteScreenAudit",       "grpc.send.remoteScreenAudit"]
       ];
       for (const [field, method] of variants) {
         if (msg && msg[field]) {

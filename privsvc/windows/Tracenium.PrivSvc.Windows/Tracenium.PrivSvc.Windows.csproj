@@ -37,6 +37,9 @@
     <PackageReference Include="Grpc.Tools" Version="2.67.0">
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <!-- M3.S1 — GDI+ JPEG encoding for the screen.capture IPC handler.
+         Supported on net8.0-windows; PrivSvc only ships on Windows. -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,22 +1,17 @@
 // src/plugins/rcp/index.ts
 //
-// RCP (Remote Control Plugin) — M1.S1 skeleton.
+// RCP (Remote Control Plugin) — M3.S1.
 //
 // Responsibilities owned by this module:
 //
-//   - Advertise capability strings on Hello when policy enables them
-//     (`rcp.shell` when `policy.features.remoteShell === true`).
+//   - Advertise capability strings on Hello when policy enables them:
+//       rcp.shell  — policy.features.remoteShell  (M1)
+//       rcp.file   — policy.features.remoteFile   (M2.S1)
+//       rcp.screen — policy.features.remoteScreen (M3.S1)
 //   - Handle inbound RemoteSession* control messages from the
 //     backend by delegating to the SessionManager.
 //   - Send outbound signaling (Answer / Ice / Close / Error) via the
 //     gRPC client write surface.
-//
-// What this module does NOT do (yet):
-//
-//   - Spawn PTYs. Sprint 2 hooks the PTY into the DataChannel.
-//   - Persist transcripts. Sprint 3.
-//   - Enforce session caps. Backend already caps at the start of a
-//     session; the agent trusts those checks.
 //
 // See RCP_DESIGN_DECISIONS_v2.md for the architecture overview.
 
@@ -43,13 +38,37 @@ export function initRcp(ctx: AgentContext): SessionManager {
 
 /**
  * Returns true if the agent should advertise `rcp.shell` on Hello.
- * Called from `grpc-client.ts` when computing the capabilities
- * array. Reading the policy at advertisement time (not init) means
- * a policy push that flips the flag picks up on the next reconnect.
+ * Called from `grpc-client.ts` when computing the capabilities array.
+ * Reading the policy at advertisement time (not init) means a policy
+ * push that flips the flag picks up on the next reconnect.
  */
 export function rcpShellAdvertised(ctx: AgentContext): boolean {
   try {
     return Boolean(ctx.policyRuntime.isFeatureEnabled("remoteShell"));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns true if the agent should advertise `rcp.file` on Hello.
+ * Gated on policy.features.remoteFile (M2.S1).
+ */
+export function rcpFileAdvertised(ctx: AgentContext): boolean {
+  try {
+    return Boolean(ctx.policyRuntime.isFeatureEnabled("remoteFile"));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns true if the agent should advertise `rcp.screen` on Hello.
+ * Gated on policy.features.remoteScreen (M3.S1).
+ */
+export function rcpScreenAdvertised(ctx: AgentContext): boolean {
+  try {
+    return Boolean(ctx.policyRuntime.isFeatureEnabled("remoteScreen"));
   } catch {
     return false;
   }

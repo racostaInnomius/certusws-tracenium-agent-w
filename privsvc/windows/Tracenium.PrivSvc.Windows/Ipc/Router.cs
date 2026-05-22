@@ -112,6 +112,14 @@ public sealed class Router
             "grpc.send.remoteSessionError" => IpcGrpcHandlers.HandleRemoteSessionError(req),
             "grpc.send.remoteSessionTranscript" => IpcGrpcHandlers.HandleRemoteSessionTranscript(req),
 
+            // RCP M2.S1 — file transfer audit (agent → server).
+            "grpc.send.remoteFileTransferAudit" => IpcGrpcHandlers.HandleRemoteFileTransferAudit(req),
+            // RCP M3.S1 — screen share audit (agent → server).
+            "grpc.send.remoteScreenAudit" => IpcGrpcHandlers.HandleRemoteScreenAudit(req),
+            // RCP M3.S1 — screen capture IPC (Node.js → PrivSvc).
+            // PrivSvc owns the GDI+ BitBlt call; result is base64 JPEG.
+            "screen.capture" => IpcGrpcHandlers.HandleScreenCapture(req),
+
             // SDP — Phase 1-E. See Ipc/Sdp.cs.
             "sdp.detect" => Sdp.HandleDetect(req),
             "sdp.download" => Sdp.HandleDownload(req),

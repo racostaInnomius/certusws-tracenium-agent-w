@@ -1,6 +1,6 @@
 // src/plugins/rcp/session-manager.ts
 //
-// RCP M1.S1 — orchestrates concurrent WebRTC peer connections, one
+// RCP M3.S1 — orchestrates concurrent WebRTC peer connections, one
 // per active session. The manager:
 //
 //   - Allocates a PeerSession on RemoteSessionOffer
@@ -8,6 +8,8 @@
 //   - Tears down on RemoteSessionClose / RemoteSessionError
 //   - Limits the number of concurrent peers (defense in depth — the
 //     backend also enforces session caps before sending the offer)
+//   - Sends audit gRPC messages for file transfer (M2.S1) and screen
+//     share (M3.S1) sessions via ctx.sendControl
 //
 // The actual WebRTC handshake lives in `peer-session.ts`; this
 // module owns the lifecycle map.
@@ -70,26 +72,27 @@ export class SessionManager {
       return;
     }
 
-    // Capability gate — re-checks the policy flag for `rcp.shell`.
-    // M2/M3 widen this to file/screen.
-    if (capability === "rcp.shell") {
-      const enabled = Boolean(
-        this.ctx.policyRuntime?.isFeatureEnabled?.("remoteShell")
-      );
-      if (!enabled) {
-        this.ctx.logger?.warn?.("[rcp] offer rejected: remoteShell disabled", {
-          sessionId
-        });
-        this.sendError(sessionId, "POLICY_DISABLED", "remoteShell policy is off");
-        return;
-      }
-    } else {
-      // file / screen not yet supported by the agent.
-      this.sendError(
+    // Capability gate — re-checks the policy flag for each capability.
+    // The backend SHOULD have already verified this (capability must be
+    // advertised in Hello), but we enforce here as defense in depth.
+    type CapabilityPolicyMap = Record<string, "remoteShell" | "remoteFile" | "remoteScreen">;
+    const CAPABILITY_POLICY: CapabilityPolicyMap = {
+      "rcp.shell":  "remoteShell",
+      "rcp.file":   "remoteFile",
+      "rcp.screen": "remoteScreen"
+    };
+    const policyFeature = CAPABILITY_POLICY[capability];
+    if (!policyFeature) {
+      this.sendError(sessionId, "CAPABILITY_UNKNOWN", `unknown capability: ${capability}`);
+      return;
+    }
+    const enabled = Boolean(this.ctx.policyRuntime?.isFeatureEnabled?.(policyFeature));
+    if (!enabled) {
+      this.ctx.logger?.warn?.("[rcp] offer rejected: capability policy disabled", {
         sessionId,
-        "CAPABILITY_NOT_AVAILABLE",
-        `capability ${capability} not implemented in this agent version`
-      );
+        capability
+      });
+      this.sendError(sessionId, "POLICY_DISABLED", `${capability} policy is off`);
       return;
     }
 
@@ -101,6 +104,10 @@ export class SessionManager {
       sendIce: (cand, mid, mline) =>
         this.sendIce(sessionId, cand, mid, mline),
       sendTranscript: (chunk) => this.sendTranscript(sessionId, chunk),
+      sendFileTransferAudit: (audit) =>
+        this.sendFileTransferAudit(sessionId, audit),
+      sendScreenAudit: (audit) =>
+        this.sendScreenAudit(sessionId, audit),
       onTeardown: (reason) => {
         this.sessions.delete(sessionId);
         this.sendClose(sessionId, reason);
@@ -213,6 +220,61 @@ export class SessionManager {
         tsDeltaSeconds: chunk.tsDeltaSeconds,
         data: chunk.data,
         bytesCount: chunk.bytesCount
+      }
+    });
+  }
+
+  // M2.S1 — fire-and-forget audit for file transfer lifecycle events.
+  // Called by FileSession at "started" and at terminal status
+  // ("completed" | "failed" | "cancelled").
+  private sendFileTransferAudit(
+    sessionId: string,
+    audit: {
+      transferId: string;
+      direction: string;
+      remotePath: string;
+      filename: string;
+      sizeBytes: number;
+      transferredBytes: number;
+      status: string;
+      errorMessage: string;
+    }
+  ): void {
+    this.ctx.sendControl?.({
+      remoteFileTransferAudit: {
+        sessionId,
+        transferId: audit.transferId,
+        direction: audit.direction,
+        remotePath: audit.remotePath,
+        filename: audit.filename,
+        sizeBytes: audit.sizeBytes,
+        transferredBytes: audit.transferredBytes,
+        status: audit.status,
+        errorMessage: audit.errorMessage
+      }
+    });
+  }
+
+  // M3.S1 — fire-and-forget audit for screen share lifecycle events.
+  // Called by ScreenSession at "started" and "stopped" / "error".
+  private sendScreenAudit(
+    sessionId: string,
+    audit: {
+      event: string;
+      width: number;
+      height: number;
+      fps: number;
+      errorMessage: string;
+    }
+  ): void {
+    this.ctx.sendControl?.({
+      remoteScreenAudit: {
+        sessionId,
+        event: audit.event,
+        width: audit.width,
+        height: audit.height,
+        fps: audit.fps,
+        errorMessage: audit.errorMessage
       }
     });
   }
