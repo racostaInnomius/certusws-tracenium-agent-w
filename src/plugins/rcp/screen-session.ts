@@ -1,17 +1,25 @@
 // src/plugins/rcp/screen-session.ts
 //
-// RCP M3.S1 — screen capture + streaming session.
+// RCP M3.S2 — screen capture + streaming session (chunked transport).
 //
 // One ScreenSession is created per active rcp.screen DataChannel.
 // It drives a periodic capture loop using the PrivSvc screen.capture
 // IPC method (C# GDI+, works in Windows Session 0) and streams JPEG
 // frames to the browser over the DataChannel.
 //
+// M3.S2 adds chunked frame delivery to stay within the SCTP ~65 KB
+// DataChannel message size limit. Frames ≤ FRAME_CHUNK_MAX chars are
+// sent as a single "frame" message (backward-compat with M3.S1 clients).
+// Larger frames are split into "frameStart" / "frameChunk[]" / "frameDone".
+//
 // Protocol (see ScreenShareViewer.jsx for the browser side):
 //
 //   Agent → Browser:
-//     { op: "screenInfo",  width, height, fps }   // sent once at open
-//     { op: "frame", seq, width, height, data }   // base64 JPEG
+//     { op: "screenInfo",  width, height, fps }      // once at open
+//     { op: "frame",  seq, width, height, data }     // small frame (≤ limit)
+//     { op: "frameStart", seq, width, height, chunks } // large frame header
+//     { op: "frameChunk", seq, idx, data }           // one chunk
+//     { op: "frameDone",  seq }                      // all chunks sent
 //     { op: "error", code, message }
 //
 //   Browser → Agent:
@@ -45,6 +53,11 @@ const MIN_FPS = 1;
 const MAX_FPS = 15;
 const MIN_QUALITY = 10;
 const MAX_QUALITY = 90;
+
+// M3.S2 — max base64 chars per DataChannel message. Keeps each SCTP
+// payload under the practical ~65 KB limit including JSON envelope
+// overhead. 48 KB base64 ≈ 36 KB binary, well inside the limit.
+const FRAME_CHUNK_MAX = 48_000;
 
 export class ScreenSession {
   private readonly dc: any;
@@ -126,6 +139,28 @@ export class ScreenSession {
     }
   }
 
+  // M3.S2 — split a large base64 JPEG string into FRAME_CHUNK_MAX
+  // slices and send them as frameStart / frameChunk[] / frameDone.
+  // The browser reassembles before rendering; any chunk dropped by
+  // the unreliable DataChannel causes the whole frame to be discarded
+  // when the browser receives the next frameStart.
+  private sendFrameChunked(
+    seq: number,
+    width: number,
+    height: number,
+    data: string
+  ): void {
+    const chunks: string[] = [];
+    for (let i = 0; i < data.length; i += FRAME_CHUNK_MAX) {
+      chunks.push(data.slice(i, i + FRAME_CHUNK_MAX));
+    }
+    this.send({ op: "frameStart", seq, width, height, chunks: chunks.length });
+    for (let idx = 0; idx < chunks.length; idx++) {
+      this.send({ op: "frameChunk", seq, idx, data: chunks[idx] });
+    }
+    this.send({ op: "frameDone", seq });
+  }
+
   // ── Capture loop ───────────────────────────────────────────────────────────
 
   private scheduleNext(): void {
@@ -185,7 +220,14 @@ export class ScreenSession {
         this.lastHeight = height;
       }
 
-      this.send({ op: "frame", seq: this.seq++, width, height, data });
+      // M3.S2 — send as a single message when small enough; chunk
+      // otherwise to stay under the SCTP DataChannel size limit.
+      const frameSeq = this.seq++;
+      if (data.length <= FRAME_CHUNK_MAX) {
+        this.send({ op: "frame", seq: frameSeq, width, height, data });
+      } else {
+        this.sendFrameChunked(frameSeq, width, height, data);
+      }
     } catch (err: any) {
       ctx.logger?.warn?.("[rcp.screen] capture error", {
         sessionId,
