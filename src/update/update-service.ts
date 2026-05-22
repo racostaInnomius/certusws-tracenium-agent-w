@@ -116,12 +116,12 @@ function getArch(): "x64" | "arm64" {
 }
 
 // Map (platform, linux-family) → the key in metadata.files we should
-// look at. Up through 1.1.18 this was hard-coded to "macOS = pkg,
+// look at. Up through 1.1.19 this was hard-coded to "macOS = pkg,
 // everything else = msi" — which meant Linux agents asked for an msi
 // section that doesn't exist for `platform=linux` metadata, logged
 // `metadata has no msi section`, and silently declared
 // `update_completed` without installing anything. Confirmed in the
-// wild on the Ubuntu host a169cbd3-…-74e12ccd0177 stuck at 1.1.18.
+// wild on the Ubuntu host a169cbd3-…-74e12ccd0177 stuck at 1.1.19.
 function getBinaryFormat(): "msi" | "pkg" | "deb" | "rpm" {
   const platform = getPlatform();
   if (platform === "macos") return "pkg";

@@ -319,7 +319,7 @@ Write-Host "→ copied WinSW wrapper from repo ($Arch)" -ForegroundColor Yellow
 #      Trusted Signing step rejects with 0x800700C1
 #      (ERROR_BAD_EXE_FORMAT).
 #   2. Failures observed on BOTH x64 and arm64 builds in CI runs
-#      26041422393 (1.1.17 first attempt) and again after the 1.1.18
+#      26041422393 (1.1.17 first attempt) and again after the 1.1.19
 #      bump — same exit code, same binary corruption pattern.
 #   3. Root cause appears to be WinSW v3's .NET single-file packed
 #      layout: rcedit's resource-section rewriter assumes a flatter

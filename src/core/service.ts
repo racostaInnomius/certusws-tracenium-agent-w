@@ -137,6 +137,62 @@ export async function startService() {
     // start control-plane stream
     stopGrpcStream = startGrpcStream(ctx);
 
+    // ── RCP capability re-advertise on policy change ─────────────────
+    //
+    // The `capabilities` field only travels on the initial Hello; once
+    // the gRPC stream is up, the agent has no protocol-level way to
+    // tell the backend "I now also advertise rcp.file". A PolicyUpdate
+    // that flips remoteShell/File/Screen therefore has no observable
+    // effect at the backend until the next full reconnect — by default,
+    // that's the heartbeat-timeout silence window (minutes). For the
+    // RCP UX that's unacceptable: an operator toggles "Remote screen
+    // share" in Policies and expects the Screen button to enable on
+    // the Remote Control page within seconds.
+    //
+    // Fix: watch the policyRuntime for featuresChanged events and
+    // force a reconnect whenever any of the three RCP flags actually
+    // changed (we compare against the previous snapshot so unrelated
+    // featuresChanged events — selfUpdate toggled, etc. — don't trigger
+    // a needless drop). The reconnect path already exists; calling
+    // client.close() on the cached grpc client tears down the stream,
+    // the supervisor in grpc-stream.ts builds a fresh client, and the
+    // next Hello carries the updated capabilities array.
+    //
+    // ~1-2s downtime per RCP flag flip, which is fine — RCP sessions
+    // can't be in flight at the same moment a feature is being toggled
+    // (the same operator is doing both in different tabs).
+    let lastRcpFlags = {
+      remoteShell:  Boolean(ctx.policyRuntime.isFeatureEnabled("remoteShell")),
+      remoteFile:   Boolean(ctx.policyRuntime.isFeatureEnabled("remoteFile")),
+      remoteScreen: Boolean(ctx.policyRuntime.isFeatureEnabled("remoteScreen")),
+    };
+    ctx.policyRuntime.on("featuresChanged", () => {
+      const next = {
+        remoteShell:  Boolean(ctx.policyRuntime.isFeatureEnabled("remoteShell")),
+        remoteFile:   Boolean(ctx.policyRuntime.isFeatureEnabled("remoteFile")),
+        remoteScreen: Boolean(ctx.policyRuntime.isFeatureEnabled("remoteScreen")),
+      };
+      const changed =
+        next.remoteShell  !== lastRcpFlags.remoteShell  ||
+        next.remoteFile   !== lastRcpFlags.remoteFile   ||
+        next.remoteScreen !== lastRcpFlags.remoteScreen;
+      if (!changed) return;
+      log?.info?.(
+        "[rcp] policy flags changed — forcing gRPC reconnect to re-advertise capabilities",
+        { from: lastRcpFlags, to: next }
+      );
+      lastRcpFlags = next;
+      try {
+        // Cached client lives on ctx — see grpc-client.ts. close() is
+        // idempotent and the supervisor reconnects automatically.
+        (ctx as any).__grpcClientInstance?.close?.();
+      } catch (err: any) {
+        log?.warn?.("[rcp] re-advertise close failed", {
+          err: err?.message || String(err),
+        });
+      }
+    });
+
     // start task scheduler (policy-driven)
     await scheduler.start(ctx);
 
