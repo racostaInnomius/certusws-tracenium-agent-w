@@ -96,12 +96,12 @@ public sealed class NamedPipeServer
 
     private async Task HandleClientAsync(NamedPipeServerStream pipe, CancellationToken ct)
     {
+        // Declared at method scope so it is visible in both the try body
+        // and the finally block. Disposed automatically when the method exits.
+        using var clientCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
         try
         {
-            // Linked cancellation source — cancelled when this client disconnects.
-            // Allows queued push tasks to bail before touching the disposed pipe.
-            using var clientCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-
             using var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 64 * 1024, leaveOpen: true);
             using var writer = new StreamWriter(pipe, new UTF8Encoding(false), bufferSize: 64 * 1024, leaveOpen: true)
             {
