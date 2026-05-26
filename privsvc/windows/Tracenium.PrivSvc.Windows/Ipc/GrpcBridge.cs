@@ -56,7 +56,7 @@ public sealed class GrpcBridge : IDisposable
     // network flaps" and "don't leave a host stuck for hours pretending
     // to be online while the agent can't actually process anything".
     // Real-world precedent: device 7d1162d7-...-08c7a62f20b4 stayed in
-    // the flap pattern for 30+ minutes during the 1.1.19→1.1.19 rollout,
+    // the flap pattern for 30+ minutes during the 1.1.20→1.1.20 rollout,
     // ate an agent_update job that ended in status=timeout, and required
     // a manual `Restart-Service Tracenium*` to recover. The agent must
     // be able to do that for itself.

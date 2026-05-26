@@ -281,7 +281,7 @@ jobs:
             build/linux/.node-cache
             build/linux/staging/node_modules
           # Hash BOTH package-lock.json AND package.json so a version
-          # bump invalidates the cache. We hit a bug on 1.1.19 where
+          # bump invalidates the cache. We hit a bug on 1.1.20 where
           # the staging dir held an old package.json (matching node_modules
           # from a prior build with a non-bumped lock), esbuild inlined
           # that stale `pkg.version` into the bundle, and the agent

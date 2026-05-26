@@ -617,6 +617,13 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               meta: { tenantId: ctx.enrollment.tenantId, deviceId }
             });
 
+            // CRITICAL: update tray-status BEFORE any error emissions so the
+            // liveness watchdog is never triggered by a heartbeat failure.
+            // A failed heartbeat is recoverable; a wedge false-positive is not.
+            try {
+              ctx.trayStatus.markHeartbeat();
+            } catch {}
+
             if (!resp?.ok) {
               const errorCode = String(resp?.error?.code || "");
               const errorMessage = String(resp?.error?.message || resp?.error || "heartbeat failed");
@@ -634,10 +641,9 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               // `lastClientSendOkMs` declaration for full rationale.
               lastClientSendOkMs = Date.now();
             }
-            try {
-              ctx.trayStatus.markHeartbeat();
-            } catch {}
           } catch (err: any) {
+            // Update liveness clock even when the IPC call throws.
+            try { ctx.trayStatus.markHeartbeat(); } catch {}
             ctx.logger?.warn("[grpc-client] heartbeat IPC threw — marking connection broken", {
               error: err?.message || String(err)
             });

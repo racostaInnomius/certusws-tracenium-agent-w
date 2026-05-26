@@ -96,6 +96,10 @@ public sealed class NamedPipeServer
 
     private async Task HandleClientAsync(NamedPipeServerStream pipe, CancellationToken ct)
     {
+        // Declared at method scope so it is visible in both the try body
+        // and the finally block. Disposed automatically when the method exits.
+        using var clientCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
         try
         {
             using var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 64 * 1024, leaveOpen: true);
@@ -121,9 +125,14 @@ public sealed class NamedPipeServer
 
                 try
                 {
-                    await writeLock.WaitAsync(ct);
+                    await writeLock.WaitAsync(clientCts.Token);
                     try
                     {
+                        if (!pipe.IsConnected)
+                        {
+                            _logger.LogDebug("Push dropped: pipe not connected.");
+                            return false;
+                        }
                         await writer.WriteLineAsync(json);
                         await writer.FlushAsync();
                         _logger.LogDebug("IPC write completed. bytes={Bytes}", json.Length);
@@ -136,6 +145,12 @@ public sealed class NamedPipeServer
                 }
                 catch (OperationCanceledException)
                 {
+                    return false;
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Benign race: pipe disposed between IsConnected check and write.
+                    _logger.LogDebug("Push dropped: pipe was disposed mid-write.");
                     return false;
                 }
                 catch (IOException ex)
@@ -152,14 +167,20 @@ public sealed class NamedPipeServer
 
             Action<object> push = msg =>
             {
+                // Fast path: skip work if client is already disconnecting/disposed.
+                if (clientCts.IsCancellationRequested) return;
+
+                var clientToken = clientCts.Token;
                 _ = Task.Run(async () =>
                 {
+                    if (clientToken.IsCancellationRequested) return;
                     var ok = await WriteJsonLineAsync(msg);
-                    if (!ok)
+                    if (!ok && !clientToken.IsCancellationRequested)
                     {
-                        _logger.LogWarning("Async IPC push was not delivered.");
+                        // Disposed-mid-write is benign during disconnect races.
+                        _logger.LogDebug("Async IPC push was not delivered.");
                     }
-                }, CancellationToken.None);
+                }, clientToken);
             };
 
             // Protocol: 1 JSON object per line (request), respond with 1 JSON per line
@@ -255,6 +276,8 @@ public sealed class NamedPipeServer
         }
         finally
         {
+            // Signal any in-flight push to bail before touching the pipe.
+            try { clientCts.Cancel(); } catch { }
             try
             {
                 if (pipe.IsConnected) pipe.Disconnect();

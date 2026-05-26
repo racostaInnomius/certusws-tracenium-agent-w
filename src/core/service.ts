@@ -6,6 +6,7 @@ import { startGrpcStream } from "../transport/grpc-stream";
 import { outbox } from "../queue/sqlite-outbox";
 import type { AgentContext } from "./agent-context";
 import { maybeRenewClientCertificate } from "../bootstrap/cert-renewal";
+import { dumpWedgeState } from "../diag/wedge-dump";
 
 let shuttingDown = false;
 let currentCtx: AgentContext | null = null;
@@ -321,10 +322,14 @@ export async function startService() {
               `${Math.round(staleMs / 1000)}s (> ${MAX_STATUS_STALE_MS / 1000}s threshold). ` +
               `Event loop is wedged. Exiting so ${recycler} can recycle the process.`
           );
-          // Same 250ms flush window as the crash handlers in
-          // service.ts. unref so the timer can't keep the loop alive
-          // beyond what's already in there.
-          setTimeout(() => process.exit(1), 250).unref();
+          // Best-effort diagnostic dump — captures JS stack, pending IPC
+          // requests, libuv state, and memory at the moment of the wedge.
+          // Never block exit longer than 500ms total.
+          dumpWedgeState(currentCtx ?? null, logger)
+            .catch(() => {})
+            .finally(() => {
+              setTimeout(() => process.exit(1), 500).unref();
+            });
         }
       } catch (e: any) {
         // The watchdog itself must never throw — otherwise it'd become

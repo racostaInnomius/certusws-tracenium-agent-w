@@ -108,6 +108,13 @@ Copy-Item (Join-Path $BinSrcDir "AgentCore") $StagedBin -Recurse -Force
 Copy-Item (Join-Path $BinSrcDir "AgentTray") $StagedBin -Recurse -Force
 Copy-Item (Join-Path $BinSrcDir "PrivSvc")   $StagedBin -Recurse -Force
 
+# Stage static installer scripts (not produced by the AgentCore build).
+# register-watchdog.ps1 is a repo source file consumed by WiX via
+#   <File Source="binaries\AgentCore\scripts\register-watchdog.ps1">
+$scriptsStageDir = Join-Path $StagedBin "AgentCore\scripts"
+New-Item -ItemType Directory -Force -Path $scriptsStageDir | Out-Null
+Copy-Item (Join-Path $InstallerDir "scripts\register-watchdog.ps1") $scriptsStageDir -Force
+
 # ── Run wix build ────────────────────────────────────────────────────
 # Output goes to a temp filename inside the installer dir, then we move
 # it to its final per-arch home under build/win-msi/.

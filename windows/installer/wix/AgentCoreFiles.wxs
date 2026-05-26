@@ -104,6 +104,22 @@
 
 
       <!-- ============================= -->
+      <!-- Watchdog script (Layer 3 of 3) -->
+      <!-- ============================= -->
+
+      <Component Id="WatchdogScriptComponent"
+                 Directory="AGENTCORE_DIR"
+                 Guid="{61c34c01-0c6f-4ef9-a62e-4768ddd5d419}">
+
+        <File Id="WatchdogScriptFile"
+              Source="binaries\AgentCore\scripts\register-watchdog.ps1"
+              Name="register-watchdog.ps1"
+              KeyPath="yes"/>
+
+      </Component>
+
+
+      <!-- ============================= -->
       <!-- Interactive tray app -->
       <!-- ============================= -->
 
@@ -137,6 +153,51 @@
       </Component>
 
     </ComponentGroup>
+
+
+    <!-- ====================================================================
+         Service Recovery (Layer 2 of 3)
+         Configures Windows SCM to restart TraceniumAgentCore on failure.
+         Independent of WinSW — kicks in if WinSW itself fails or gives up.
+         Counter resets daily (86400 seconds).
+         Using sc.exe directly (not util:ServiceConfig) to avoid the
+         InstallExecuteSequence ordering issue with WixToolset.Util.wixext 6
+         that broke v1.1.16+ (see PrivSvc.wxs lines 29-50 for history).
+         ==================================================================== -->
+    <CustomAction Id="ConfigureAgentCoreRecovery"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand='sc.exe failure "TraceniumAgentCore" reset= 86400 actions= restart/60000/restart/60000/restart/120000'
+                  Execute="deferred"
+                  Return="ignore"
+                  Impersonate="no"/>
+
+    <!-- ====================================================================
+         Watchdog Scheduled Task (Layer 3 of 3) — last-resort safety net.
+         Runs every 5 min as SYSTEM; ensures the service is Running.
+         ==================================================================== -->
+    <CustomAction Id="RegisterTraceniumWatchdog"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand='powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File "[#WatchdogScriptFile]"'
+                  Execute="deferred"
+                  Return="ignore"
+                  Impersonate="no"/>
+
+    <CustomAction Id="UnregisterTraceniumWatchdog"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand='powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -Command "Unregister-ScheduledTask -TaskName TraceniumWatchdog -Confirm:$false -ErrorAction SilentlyContinue"'
+                  Execute="deferred"
+                  Return="ignore"
+                  Impersonate="no"/>
+
+    <InstallExecuteSequence>
+      <!-- Configure recovery + register watchdog after service is installed
+           but before it starts. Re-apply on reinstall/upgrade (idempotent). -->
+      <Custom Action="ConfigureAgentCoreRecovery" After="InstallServices"           Condition="NOT Installed OR REINSTALL"/>
+      <Custom Action="RegisterTraceniumWatchdog"  After="ConfigureAgentCoreRecovery" Condition="NOT Installed OR REINSTALL"/>
+
+      <!-- Remove watchdog on full uninstall only (NOT on upgrade). -->
+      <Custom Action="UnregisterTraceniumWatchdog" Before="RemoveExistingProducts"   Condition='REMOVE="ALL"'/>
+    </InstallExecuteSequence>
 
   </Fragment>
 

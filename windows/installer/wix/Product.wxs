@@ -17,7 +17,7 @@
   <Package
       Name="Tracenium Agent"
       Manufacturer="CERTUS ITM LLC"
-      Version="1.1.19"
+      Version="1.1.20"
       UpgradeCode="8F2C0D63-0C36-4D71-BE70-4A1A1A1F83F0"
       InstallerVersion="500"
       Compressed="yes"

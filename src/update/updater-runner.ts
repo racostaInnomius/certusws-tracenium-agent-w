@@ -22,7 +22,7 @@ export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
   // which KILLS our msiexec child mid-install. Result: half-applied
   // install, files in inconsistent state, agent stuck on the prior
   // version forever (saw this on ETE-3X5P8F4 + TNS-OPER-SNOC04 in
-  // 1.1.14 → 1.1.19 rollout — exact mirror of the pre-0655a70 Linux
+  // 1.1.14 → 1.1.20 rollout — exact mirror of the pre-0655a70 Linux
   // bug where dpkg got killed by systemd's cgroup tear-down).
   //
   // The Linux fix uses `systemd-run --scope` to launch dpkg outside
