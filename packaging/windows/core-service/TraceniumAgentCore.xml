@@ -27,5 +27,16 @@
   <env name="GRPC_ENDPOINT" value="grpc.tracenium.com" />
   <env name="CHANNEL" value="stable" />
 
-  <onfailure action="restart" delay="5 sec" />
+  <!-- ============================================================
+       Service Recovery (Layer 1 of 3)
+       Multi-step backoff with reset window. After 4 rapid failures,
+       backs off to 2 min between restarts. If the service stays up
+       for 15 min, the failure counter resets — preventing WinSW
+       from "giving up" after long chains of historical failures.
+       ============================================================ -->
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
+  <onfailure action="restart" delay="120 sec"/>
+  <resetfailure>15 min</resetfailure>
 </service>

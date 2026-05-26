@@ -53,6 +53,7 @@ type Pending = {
   resolve: (r: PrivSvcResponse) => void;
   reject: (e: Error) => void;
   timer: NodeJS.Timeout;
+  method: string;
 };
 
 export class PrivSvcClient extends EventEmitter {
@@ -320,7 +321,7 @@ export class PrivSvcClient extends EventEmitter {
         reject(new Error("PrivSvc timeout"));
       }, timeoutMs);
 
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, method: req.method });
 
       try {
         const sock = this.socket;
@@ -352,6 +353,18 @@ export class PrivSvcClient extends EventEmitter {
         reject(e);
       }
     });
+  }
+
+  public getPendingCount(): number {
+    return this.pending.size;
+  }
+
+  public getPendingMethods(): string[] {
+    const out: string[] = [];
+    for (const entry of this.pending.values()) {
+      out.push(entry.method);
+    }
+    return out;
   }
 
   close() {
