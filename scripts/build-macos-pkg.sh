@@ -100,6 +100,8 @@ build_agent_bundle() {
       --format=cjs \
       --target=node24 \
       --external:better-sqlite3 \
+      --external:node-pty \
+      --external:node-datachannel \
       --outfile="$BUILD_DIR/Agent/agent-core.js"
   )
 
@@ -433,7 +435,10 @@ build_status_app_bundle
 # the host node that ran npm), so what we copy here is just the source
 # tree — the .node binding gets rewritten by rebuild_better_sqlite3.
 mkdir -p "$BUILD_DIR/Agent/node_modules"
-for pkg in better-sqlite3 bindings file-uri-to-path; do
+# RCP M1+M2+M3 — node-pty + node-datachannel are native modules
+# (esbuild marks them external; runtime lookup expects them as
+# sibling packages next to the bundle).
+for pkg in better-sqlite3 bindings file-uri-to-path node-pty node-datachannel; do
   if [ -d "$ROOT_DIR/node_modules/$pkg" ]; then
     rm -rf "$BUILD_DIR/Agent/node_modules/$pkg"
     cp -R "$ROOT_DIR/node_modules/$pkg" "$BUILD_DIR/Agent/node_modules/"

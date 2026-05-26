@@ -17,7 +17,7 @@
 #
 # Usage:
 #   ./scripts/build-linux-pkg.sh
-#   TRACENIUM_AGENT_VERSION=1.1.18 ./scripts/build-linux-pkg.sh
+#   TRACENIUM_AGENT_VERSION=1.1.19 ./scripts/build-linux-pkg.sh
 #   TRACENIUM_AGENT_ARCH=arm64 ./scripts/build-linux-pkg.sh
 #
 # Run-host requirements:
@@ -256,12 +256,12 @@ cp -r "$ROOT_DIR/proto"   "$STAGING_DIR/proto"
 # even though the .deb filename and dpkg metadata are correct (because
 # those come from `$VERSION` resolved above, not from inside the bundle).
 #
-# Confirmed in CI on 1.1.18: actions/cache restored `staging/` with the
+# Confirmed in CI on 1.1.19: actions/cache restored `staging/` with the
 # previous build's package.json. CI logged "reusing cached staging
 # node_modules (lock unchanged)" → the `if NEED_INSTALL=1` branch below
 # never ran → the staged package.json from the prior cache cycle (still
-# at 1.1.18) was bundled. Agent reported `Agent hello context
-# agentVersion: '1.1.18'` despite being installed as 1.1.18-1.
+# at 1.1.19) was bundled. Agent reported `Agent hello context
+# agentVersion: '1.1.19'` despite being installed as 1.1.19-1.
 #
 # Fix: do the refresh unconditionally. It's a 1 KB copy — irrelevant
 # to build time. The `npm ci` skip logic stays, but now keys off a
@@ -294,6 +294,8 @@ echo "→ esbuild agent core"
   --format=cjs \
   --target=node24 \
   --external:better-sqlite3 \
+  --external:node-pty \
+  --external:node-datachannel \
   --outfile="$PKG_ROOT/agent/index.js"
 
 echo "→ esbuild privsvc"
@@ -344,7 +346,13 @@ fi
 # (MODULE_NOT_FOUND on first agent start), which makes the manual
 # update path a non-issue.
 mkdir -p "$PKG_ROOT/agent/node_modules"
-for pkg in better-sqlite3 bindings file-uri-to-path; do
+# RCP M1+M2+M3 — node-pty (shell PTY) and node-datachannel (WebRTC) are
+# native modules with .node bindings. esbuild can't bundle .node files
+# (hence --external:node-pty/--external:node-datachannel above), so we
+# ship the whole package directory next to the bundle. The bundled
+# `require("node-pty")` / `require("node-datachannel")` resolves to
+# $PKG_ROOT/agent/node_modules/* at runtime via Node's standard lookup.
+for pkg in better-sqlite3 bindings file-uri-to-path node-pty node-datachannel; do
   if [ -d "$STAGING_DIR/node_modules/$pkg" ]; then
     cp -r "$STAGING_DIR/node_modules/$pkg" "$PKG_ROOT/agent/node_modules/"
   else
@@ -378,6 +386,17 @@ ROOT_CA_SRC=""
 if [ -f "$ROOT_DIR/privsvc/macos/distribution/resources/root-ca.crt" ]; then
   ROOT_CA_SRC="$ROOT_DIR/privsvc/macos/distribution/resources/root-ca.crt"
   echo "→ using bundled root CA from macOS resources"
+fi
+
+# Windows PrivSvc ships the same Root CA as a committed asset. Use it
+# as the canonical source for Linux too — single file in the repo,
+# kept in sync as part of the Windows build. This is also the only
+# location the file lives in the public repo today (the macOS path
+# above is a leftover from the original layout; packaging/linux/assets
+# is reserved for an explicit per-distro override).
+if [ -z "$ROOT_CA_SRC" ] && [ -f "$ROOT_DIR/privsvc/windows/Tracenium.PrivSvc.Windows/assets/root-ca.crt" ]; then
+  ROOT_CA_SRC="$ROOT_DIR/privsvc/windows/Tracenium.PrivSvc.Windows/assets/root-ca.crt"
+  echo "→ using bundled root CA from Windows PrivSvc assets"
 fi
 
 # Also accept a Linux-specific override if a future operator wants

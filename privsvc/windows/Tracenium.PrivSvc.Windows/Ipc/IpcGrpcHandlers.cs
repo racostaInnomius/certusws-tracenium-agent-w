@@ -679,4 +679,202 @@ public static class IpcGrpcHandlers
             return PrivSvcResponse.Fail(req.Id, "grpc_heartbeat_error", ex.Message);
         }
     }
+
+    // ── RCP M1.S1 — outbound signaling handlers ───────────────────────
+    //
+    // Each handler unpacks the params dict from agent-core and calls
+    // the corresponding Send* method on GrpcBridgeSingleton. Error
+    // shape matches HandleAck above so the TS client sees consistent
+    // {ok}/{error,code,message} envelopes.
+
+    public static async Task<PrivSvcResponse> HandleRemoteSessionAnswer(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId = GetString(p, "sessionId");
+            var sdp = GetString(p, "sdp");
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new Exception("sessionId required");
+            await GrpcBridgeSingleton.Instance.SendRemoteSessionAnswer(sessionId, sdp ?? "");
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_answer_error", ex.Message);
+        }
+    }
+
+    public static async Task<PrivSvcResponse> HandleRemoteSessionIce(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId = GetString(p, "sessionId");
+            var candidate = GetString(p, "candidate");
+            var sdpMid = GetString(p, "sdpMid");
+            var sdpMLineIndexStr = GetString(p, "sdpMLineIndex");
+            int sdpMLineIndex = 0;
+            if (!string.IsNullOrWhiteSpace(sdpMLineIndexStr)) int.TryParse(sdpMLineIndexStr, out sdpMLineIndex);
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new Exception("sessionId required");
+            await GrpcBridgeSingleton.Instance.SendRemoteSessionIce(sessionId, candidate ?? "", sdpMid ?? "", sdpMLineIndex);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_ice_error", ex.Message);
+        }
+    }
+
+    public static async Task<PrivSvcResponse> HandleRemoteSessionClose(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId = GetString(p, "sessionId");
+            var reason = GetString(p, "reason");
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new Exception("sessionId required");
+            await GrpcBridgeSingleton.Instance.SendRemoteSessionClose(sessionId, reason ?? "");
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_close_error", ex.Message);
+        }
+    }
+
+    public static async Task<PrivSvcResponse> HandleRemoteSessionError(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId = GetString(p, "sessionId");
+            var code = GetString(p, "code");
+            var message = GetString(p, "message");
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new Exception("sessionId required");
+            await GrpcBridgeSingleton.Instance.SendRemoteSessionError(sessionId, code ?? "", message ?? "");
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_error_error", ex.Message);
+        }
+    }
+
+    // RCP M1.S3 — agent → backend transcript chunks. Latency-tolerant
+    // (these are buffered every ~5s) so we don't need the
+    // direct-write fast path that Answer/Ice use.
+    public static async Task<PrivSvcResponse> HandleRemoteSessionTranscript(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId = GetString(p, "sessionId");
+            var stream = GetString(p, "stream");
+            var data = GetString(p, "data");
+            var tsStr = GetString(p, "tsDeltaSeconds");
+            var bytesStr = GetString(p, "bytesCount");
+            double tsDeltaSeconds = 0;
+            int bytesCount = 0;
+            if (!string.IsNullOrWhiteSpace(tsStr)) double.TryParse(tsStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out tsDeltaSeconds);
+            if (!string.IsNullOrWhiteSpace(bytesStr)) int.TryParse(bytesStr, out bytesCount);
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new Exception("sessionId required");
+            await GrpcBridgeSingleton.Instance.SendRemoteSessionTranscript(sessionId, stream ?? "stdout", tsDeltaSeconds, data ?? "", bytesCount);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_transcript_error", ex.Message);
+        }
+    }
+
+    // ── M2.S1 — file transfer audit ────────────────────────────────────────────
+
+    public static async Task<PrivSvcResponse> HandleRemoteFileTransferAudit(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId        = GetString(p, "sessionId")   ?? throw new Exception("sessionId required");
+            var transferId       = GetString(p, "transferId")  ?? "";
+            var direction        = GetString(p, "direction")   ?? "";
+            var remotePath       = GetString(p, "remotePath")  ?? "";
+            var filename         = GetString(p, "filename")    ?? "";
+            var status           = GetString(p, "status")      ?? "";
+            var errorMessage     = GetString(p, "errorMessage") ?? "";
+
+            long sizeBytes = 0, transferredBytes = 0;
+            var sizStr  = GetString(p, "sizeBytes");
+            var trnsStr = GetString(p, "transferredBytes");
+            if (!string.IsNullOrWhiteSpace(sizStr))  long.TryParse(sizStr,  out sizeBytes);
+            if (!string.IsNullOrWhiteSpace(trnsStr)) long.TryParse(trnsStr, out transferredBytes);
+
+            await GrpcBridgeSingleton.Instance.SendRemoteFileTransferAudit(
+                sessionId, transferId, direction, remotePath, filename,
+                sizeBytes, transferredBytes, status, errorMessage);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_file_transfer_audit_error", ex.Message);
+        }
+    }
+
+    // ── M3.S1 — screen share audit ─────────────────────────────────────────────
+
+    public static async Task<PrivSvcResponse> HandleRemoteScreenAudit(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId    = GetString(p, "sessionId")    ?? throw new Exception("sessionId required");
+            var evt          = GetString(p, "event")        ?? "";
+            var errorMessage = GetString(p, "errorMessage") ?? "";
+
+            int width = 0, height = 0, fps = 0;
+            var wStr = GetString(p, "width");  var hStr = GetString(p, "height");
+            var fStr = GetString(p, "fps");
+            if (!string.IsNullOrWhiteSpace(wStr)) int.TryParse(wStr, out width);
+            if (!string.IsNullOrWhiteSpace(hStr)) int.TryParse(hStr, out height);
+            if (!string.IsNullOrWhiteSpace(fStr)) int.TryParse(fStr, out fps);
+
+            await GrpcBridgeSingleton.Instance.SendRemoteScreenAudit(
+                sessionId, evt, width, height, fps, errorMessage);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_screen_audit_error", ex.Message);
+        }
+    }
+
+    // ── M3.S1 — screen capture (GDI+) ─────────────────────────────────────────
+
+    public static Task<PrivSvcResponse> HandleScreenCapture(PrivSvcRequest req)
+    {
+        return Task.Run(() =>
+        {
+            try
+            {
+                var p = req.Params ?? new Dictionary<string, object>();
+                var qualStr = GetString(p, "quality");
+                int quality = 80;
+                if (!string.IsNullOrWhiteSpace(qualStr)) int.TryParse(qualStr, out quality);
+                quality = Math.Max(1, Math.Min(100, quality));
+                return ScreenCapture.Capture(req.Id, quality);
+            }
+            catch (Exception ex)
+            {
+                return PrivSvcResponse.Fail(req.Id, "screen_capture_error", ex.Message);
+            }
+        });
+    }
+
+    // ── M3.S4 — synthetic input injection (SendInput) ─────────────────────────
+
+    public static Task<PrivSvcResponse> HandleInputInject(PrivSvcRequest req)
+    {
+        // SendInput is non-blocking; we still wrap in Task.Run so a slow
+        // call doesn't tie up the IPC dispatcher thread.
+        return Task.Run(() => InputInjection.Inject(req));
+    }
 }

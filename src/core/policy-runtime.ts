@@ -51,11 +51,11 @@ export type RuntimePolicy = {
     // If an older policy document still carries the field, the
     // validator silently drops it.
     //
-    // remoteShell stays as a placeholder for the future RCP (remote
-    // control plugin) — once RCP ships, this flag becomes the
-    // policy-level gate. Today it's accepted in the schema but
-    // unused; the UI shows it as "coming soon".
-    remoteShell?: boolean;
+    // RCP capability gates — each maps to an `rcp.*` capability
+    // advertised in Hello and checked in SessionManager.onOffer.
+    remoteShell?: boolean;    // rcp.shell  (M1)
+    remoteFile?: boolean;     // rcp.file   (M2.S1)
+    remoteScreen?: boolean;   // rcp.screen (M3.S1)
     selfUpdate?: boolean;
   };
 
@@ -81,6 +81,8 @@ export type RuntimePolicy = {
     };
     features?: {
       remoteShell?: boolean;
+      remoteFile?: boolean;
+      remoteScreen?: boolean;
       selfUpdate?: boolean;
     };
   };
@@ -333,6 +335,8 @@ const DEFAULT_POLICY: RuntimePolicy = {
   },
   features: {
     remoteShell: false,
+    remoteFile:  false,
+    remoteScreen: false,
     selfUpdate: true
   }
 };

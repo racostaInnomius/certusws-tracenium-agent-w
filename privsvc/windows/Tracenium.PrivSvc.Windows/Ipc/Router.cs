@@ -71,7 +71,7 @@ public sealed class Router
             "ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 service = "TraceniumPrivSvc",
-                version = "1.1.18",
+                version = "1.1.19",
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
@@ -102,6 +102,26 @@ public sealed class Router
             "grpc.close" => IpcGrpcHandlers.HandleClose(req),
             "grpc.ack" => IpcGrpcHandlers.HandleAck(req),
             "grpc.heartbeat" => IpcGrpcHandlers.HandleHeartbeat(req),
+
+            // RCP M1.S1 — agent-side outbound signaling. The
+            // Node.js plugin sends these when the WebRTC peer
+            // generates an answer / discovers a candidate / closes.
+            "grpc.send.remoteSessionAnswer" => IpcGrpcHandlers.HandleRemoteSessionAnswer(req),
+            "grpc.send.remoteSessionIce" => IpcGrpcHandlers.HandleRemoteSessionIce(req),
+            "grpc.send.remoteSessionClose" => IpcGrpcHandlers.HandleRemoteSessionClose(req),
+            "grpc.send.remoteSessionError" => IpcGrpcHandlers.HandleRemoteSessionError(req),
+            "grpc.send.remoteSessionTranscript" => IpcGrpcHandlers.HandleRemoteSessionTranscript(req),
+
+            // RCP M2.S1 — file transfer audit (agent → server).
+            "grpc.send.remoteFileTransferAudit" => IpcGrpcHandlers.HandleRemoteFileTransferAudit(req),
+            // RCP M3.S1 — screen share audit (agent → server).
+            "grpc.send.remoteScreenAudit" => IpcGrpcHandlers.HandleRemoteScreenAudit(req),
+            // RCP M3.S1 — screen capture IPC (Node.js → PrivSvc).
+            // PrivSvc owns the GDI+ BitBlt call; result is base64 JPEG.
+            "screen.capture" => IpcGrpcHandlers.HandleScreenCapture(req),
+            // RCP M3.S4 — synthetic input injection (mouse + keyboard)
+            // forwarded from the operator's browser via the agent.
+            "input.inject" => IpcGrpcHandlers.HandleInputInject(req),
 
             // SDP — Phase 1-E. See Ipc/Sdp.cs.
             "sdp.detect" => Sdp.HandleDetect(req),

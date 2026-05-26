@@ -56,7 +56,7 @@ public sealed class GrpcBridge : IDisposable
     // network flaps" and "don't leave a host stuck for hours pretending
     // to be online while the agent can't actually process anything".
     // Real-world precedent: device 7d1162d7-...-08c7a62f20b4 stayed in
-    // the flap pattern for 30+ minutes during the 1.1.18→1.1.18 rollout,
+    // the flap pattern for 30+ minutes during the 1.1.19→1.1.19 rollout,
     // ate an agent_update job that ended in status=timeout, and required
     // a manual `Restart-Service Tracenium*` to recover. The agent must
     // be able to do that for itself.
@@ -1191,6 +1191,77 @@ private const int MaxPendingPushEvents = 50;
                         }
                     });
                 }
+
+                // ── RCP M1.S1 signaling: server → agent ────────────
+                // Four message types from the new RCP oneof variants
+                // (proto fields 20-24). PrivSvc just forwards the
+                // shape to AgentCore; the RCP SessionManager owns
+                // the WebRTC peer state.
+
+                if (msg.RemoteSessionOffer is not null)
+                {
+                    PushToAll(new
+                    {
+                        v = 1,
+                        method = "grpc.control.remoteSessionOffer",
+                        @params = new
+                        {
+                            sessionId = msg.RemoteSessionOffer.SessionId ?? "",
+                            sdp = msg.RemoteSessionOffer.Sdp ?? "",
+                            capability = msg.RemoteSessionOffer.Capability ?? "",
+                            sessionTimeoutSeconds = msg.RemoteSessionOffer.SessionTimeoutSeconds,
+                            receivedAtUtc = DateTime.UtcNow.ToString("o")
+                        }
+                    });
+                }
+
+                if (msg.RemoteSessionIce is not null)
+                {
+                    PushToAll(new
+                    {
+                        v = 1,
+                        method = "grpc.control.remoteSessionIce",
+                        @params = new
+                        {
+                            sessionId = msg.RemoteSessionIce.SessionId ?? "",
+                            candidate = msg.RemoteSessionIce.Candidate ?? "",
+                            sdpMid = msg.RemoteSessionIce.SdpMid ?? "",
+                            sdpMLineIndex = msg.RemoteSessionIce.SdpMLineIndex,
+                            receivedAtUtc = DateTime.UtcNow.ToString("o")
+                        }
+                    });
+                }
+
+                if (msg.RemoteSessionClose is not null)
+                {
+                    PushToAll(new
+                    {
+                        v = 1,
+                        method = "grpc.control.remoteSessionClose",
+                        @params = new
+                        {
+                            sessionId = msg.RemoteSessionClose.SessionId ?? "",
+                            reason = msg.RemoteSessionClose.Reason ?? "",
+                            receivedAtUtc = DateTime.UtcNow.ToString("o")
+                        }
+                    });
+                }
+
+                if (msg.RemoteSessionError is not null)
+                {
+                    PushToAll(new
+                    {
+                        v = 1,
+                        method = "grpc.control.remoteSessionError",
+                        @params = new
+                        {
+                            sessionId = msg.RemoteSessionError.SessionId ?? "",
+                            code = msg.RemoteSessionError.Code ?? "",
+                            message = msg.RemoteSessionError.Message ?? "",
+                            receivedAtUtc = DateTime.UtcNow.ToString("o")
+                        }
+                    });
+                }
             }
         }
             catch (Exception ex)
@@ -1559,6 +1630,186 @@ private const int MaxPendingPushEvents = 50;
         {
             Log($"SendAck error eventId={eventId} {ex}");
         }
+    }
+
+    // ── RCP M1.S1 — outbound signaling (agent → server) ──────────────
+    //
+    // Four direct-write methods, mirroring SendAck's pattern. They
+    // bypass _sendQueue because RCP signaling is latency-sensitive
+    // (the operator's browser is waiting) and the queue is sized
+    // for FACTS throughput, not interactive sessions.
+    //
+    // If _call is null (bridge not connected), we drop with a log —
+    // the agent-side SessionManager already treats a failed forward
+    // as a teardown signal.
+
+    public async Task SendRemoteSessionAnswer(string sessionId, string sdp, CancellationToken ct = default)
+    {
+        if (_call is null) { Log($"SendRemoteSessionAnswer skipped: no active call sessionId={sessionId}"); return; }
+        if (string.IsNullOrWhiteSpace(sessionId)) { Log("SendRemoteSessionAnswer skipped: empty sessionId"); return; }
+        try
+        {
+            await _call.RequestStream.WriteAsync(new ControlMessage
+            {
+                RemoteSessionAnswer = new RemoteSessionAnswer
+                {
+                    SessionId = sessionId,
+                    Sdp = sdp ?? string.Empty
+                }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+            Log($"RemoteSessionAnswer sent sessionId={sessionId} sdpBytes={(sdp?.Length ?? 0)}");
+        }
+        catch (Exception ex) { Log($"SendRemoteSessionAnswer error sessionId={sessionId} {ex}"); }
+    }
+
+    public async Task SendRemoteSessionIce(string sessionId, string candidate, string sdpMid, int sdpMLineIndex, CancellationToken ct = default)
+    {
+        if (_call is null) { Log($"SendRemoteSessionIce skipped: no active call sessionId={sessionId}"); return; }
+        if (string.IsNullOrWhiteSpace(sessionId)) { Log("SendRemoteSessionIce skipped: empty sessionId"); return; }
+        try
+        {
+            await _call.RequestStream.WriteAsync(new ControlMessage
+            {
+                RemoteSessionIce = new RemoteSessionIce
+                {
+                    SessionId = sessionId,
+                    Candidate = candidate ?? string.Empty,
+                    SdpMid = sdpMid ?? string.Empty,
+                    SdpMLineIndex = sdpMLineIndex
+                }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+        }
+        catch (Exception ex) { Log($"SendRemoteSessionIce error sessionId={sessionId} {ex}"); }
+    }
+
+    public async Task SendRemoteSessionClose(string sessionId, string reason, CancellationToken ct = default)
+    {
+        if (_call is null) { Log($"SendRemoteSessionClose skipped: no active call sessionId={sessionId}"); return; }
+        if (string.IsNullOrWhiteSpace(sessionId)) { Log("SendRemoteSessionClose skipped: empty sessionId"); return; }
+        try
+        {
+            await _call.RequestStream.WriteAsync(new ControlMessage
+            {
+                RemoteSessionClose = new RemoteSessionClose
+                {
+                    SessionId = sessionId,
+                    Reason = reason ?? string.Empty
+                }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+            Log($"RemoteSessionClose sent sessionId={sessionId} reason={reason}");
+        }
+        catch (Exception ex) { Log($"SendRemoteSessionClose error sessionId={sessionId} {ex}"); }
+    }
+
+    public async Task SendRemoteSessionError(string sessionId, string code, string message, CancellationToken ct = default)
+    {
+        if (_call is null) { Log($"SendRemoteSessionError skipped: no active call sessionId={sessionId}"); return; }
+        if (string.IsNullOrWhiteSpace(sessionId)) { Log("SendRemoteSessionError skipped: empty sessionId"); return; }
+        try
+        {
+            await _call.RequestStream.WriteAsync(new ControlMessage
+            {
+                RemoteSessionError = new RemoteSessionError
+                {
+                    SessionId = sessionId,
+                    Code = code ?? string.Empty,
+                    Message = message ?? string.Empty
+                }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+            Log($"RemoteSessionError sent sessionId={sessionId} code={code}");
+        }
+        catch (Exception ex) { Log($"SendRemoteSessionError error sessionId={sessionId} {ex}"); }
+    }
+
+    // RCP M1.S3 — agent → backend transcript chunks. Same direct-
+    // write pattern as Ack/Answer but transcript can be many KB at
+    // a time so we don't log per-send (would flood the privsvc log).
+    public async Task SendRemoteSessionTranscript(string sessionId, string stream, double tsDeltaSeconds, string data, int bytesCount, CancellationToken ct = default)
+    {
+        if (_call is null) { Log($"SendRemoteSessionTranscript skipped: no active call sessionId={sessionId}"); return; }
+        if (string.IsNullOrWhiteSpace(sessionId)) return;
+        try
+        {
+            await _call.RequestStream.WriteAsync(new ControlMessage
+            {
+                RemoteSessionTranscript = new RemoteSessionTranscript
+                {
+                    SessionId = sessionId,
+                    Stream = stream ?? "stdout",
+                    TsDeltaSeconds = tsDeltaSeconds,
+                    Data = data ?? string.Empty,
+                    BytesCount = bytesCount
+                }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+        }
+        catch (Exception ex) { Log($"SendRemoteSessionTranscript error sessionId={sessionId} {ex}"); }
+    }
+
+    // M2.S1 — file transfer audit (agent → server).
+    public async Task SendRemoteFileTransferAudit(
+        string sessionId, string transferId, string direction,
+        string remotePath, string filename,
+        long sizeBytes, long transferredBytes,
+        string status, string errorMessage,
+        CancellationToken ct = default)
+    {
+        if (_call is null) { Log($"SendRemoteFileTransferAudit skipped: no active call sessionId={sessionId}"); return; }
+        if (string.IsNullOrWhiteSpace(sessionId)) return;
+        try
+        {
+            await _call.RequestStream.WriteAsync(new ControlMessage
+            {
+                RemoteFileTransferAudit = new RemoteFileTransferAudit
+                {
+                    SessionId        = sessionId,
+                    TransferId       = transferId       ?? string.Empty,
+                    Direction        = direction        ?? string.Empty,
+                    RemotePath       = remotePath       ?? string.Empty,
+                    Filename         = filename         ?? string.Empty,
+                    SizeBytes        = sizeBytes,
+                    TransferredBytes = transferredBytes,
+                    Status           = status           ?? string.Empty,
+                    ErrorMessage     = errorMessage     ?? string.Empty
+                }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+            Log($"RemoteFileTransferAudit sent sessionId={sessionId} transferId={transferId} status={status}");
+        }
+        catch (Exception ex) { Log($"SendRemoteFileTransferAudit error sessionId={sessionId} {ex}"); }
+    }
+
+    // M3.S1 — screen share audit (agent → server).
+    public async Task SendRemoteScreenAudit(
+        string sessionId, string evt,
+        int width, int height, int fps,
+        string errorMessage,
+        CancellationToken ct = default)
+    {
+        if (_call is null) { Log($"SendRemoteScreenAudit skipped: no active call sessionId={sessionId}"); return; }
+        if (string.IsNullOrWhiteSpace(sessionId)) return;
+        try
+        {
+            await _call.RequestStream.WriteAsync(new ControlMessage
+            {
+                RemoteScreenAudit = new RemoteScreenAudit
+                {
+                    SessionId    = sessionId,
+                    Event        = evt          ?? string.Empty,
+                    Width        = width,
+                    Height       = height,
+                    Fps          = fps,
+                    ErrorMessage = errorMessage ?? string.Empty
+                }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+            Log($"RemoteScreenAudit sent sessionId={sessionId} event={evt} {width}x{height}@{fps}fps");
+        }
+        catch (Exception ex) { Log($"SendRemoteScreenAudit error sessionId={sessionId} {ex}"); }
     }
 
     public void Dispose() => Close();

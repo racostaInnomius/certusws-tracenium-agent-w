@@ -286,6 +286,27 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         return;
       }
 
+      // RCP M1.S1 — signaling messages from backend. PrivSvc maps
+      // the proto oneof variants to these four methods. The agent
+      // dispatches them to the RCP SessionManager via the
+      // stream's data event (see grpc-stream.ts handler).
+      if (method === "grpc.control.remoteSessionOffer") {
+        stream.emit("data", { remoteSessionOffer: params });
+        return;
+      }
+      if (method === "grpc.control.remoteSessionIce") {
+        stream.emit("data", { remoteSessionIce: params });
+        return;
+      }
+      if (method === "grpc.control.remoteSessionClose") {
+        stream.emit("data", { remoteSessionClose: params });
+        return;
+      }
+      if (method === "grpc.control.remoteSessionError") {
+        stream.emit("data", { remoteSessionError: params });
+        return;
+      }
+
       if (method === "grpc.control.streamClosed" || method === "grpc.disconnected") {
         ctx.logger?.warn("[grpc-client] gRPC bridge reported disconnect");
         connected = false;
@@ -330,10 +351,30 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         const tenantId = String(ctx.enrollment.tenantId || "");
         const deviceId = String(ctx.enrollment.deviceId || "");
         const agentVersion = String(ctx.config.agentVersion || "");
-        const capabilities = Array.from(new Set([
+        // RCP M1.S1 — `rcp.shell` is advertised as a LEAF capability
+        // when policy.features.remoteShell is true. Not part of
+        // `plugins.enabled` because RCP isn't a job-style plugin;
+        // it's a session-style listener. Adding here so backend
+        // (remote-control.service.startSession) can check
+        // capabilities.includes('rcp.shell').
+        const baseCaps = [
           ...(ctx.enrollment.bootstrap.capabilities || []),
           ...ctx.policyRuntime.getEnabledPlugins()
-        ]));
+        ];
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { rcpShellAdvertised, rcpFileAdvertised, rcpScreenAdvertised } = require("../plugins/rcp");
+          // M1 — rcp.shell: policy.features.remoteShell
+          if (rcpShellAdvertised(ctx))  baseCaps.push("rcp.shell");
+          // M2.S1 — rcp.file: policy.features.remoteFile
+          if (rcpFileAdvertised(ctx))   baseCaps.push("rcp.file");
+          // M3.S1 — rcp.screen: policy.features.remoteScreen
+          if (rcpScreenAdvertised(ctx)) baseCaps.push("rcp.screen");
+        } catch {
+          // Plugin module missing or threw — leave RCP caps off
+          // rather than crash bootstrap.
+        }
+        const capabilities = Array.from(new Set(baseCaps));
 
         const clientCertThumbprint = String((ctx.enrollment as any)?.mtls?.clientCertThumbprint || "");
         const issuingCaThumbprint = String((ctx.enrollment as any)?.mtls?.issuingCaThumbprint || "");

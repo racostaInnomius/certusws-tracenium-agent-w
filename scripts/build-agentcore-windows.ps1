@@ -146,6 +146,8 @@ try {
     --format=cjs `
     --target=node24 `
     --external:better-sqlite3 `
+    --external:node-pty `
+    --external:node-datachannel `
     --outfile="$OutDist/index.js"
   if ($LASTEXITCODE -ne 0) { throw "esbuild failed" }
 } finally {
@@ -168,6 +170,15 @@ $nativeDeps = @{
   "better-sqlite3"     = $repoPkg.dependencies."better-sqlite3"
   "bindings"           = "*"
   "file-uri-to-path"   = "*"
+  # RCP M1+M2+M3 — native modules required at runtime by the agent's
+  # RCP plugin. Both ship .node bindings (PTY for shell sessions,
+  # WebRTC for file/screen DataChannels) so esbuild can't bundle them
+  # — they're marked --external above and staged here as sibling
+  # packages. Both publish prebuilds for win-x64; node-datachannel
+  # also has win-arm64 prebuilds (>=0.5.x), node-pty needs the
+  # build-from-source path on arm64 hosts.
+  "node-pty"           = $repoPkg.dependencies."node-pty"
+  "node-datachannel"   = $repoPkg.dependencies."node-datachannel"
 }
 $nativePkg = @{
   name = "tracenium-agentcore-native"
@@ -182,36 +193,52 @@ try {
   # Two modes depending on host vs. target arch:
   #
   # Native arch (host == target):
-  #   `--build-from-source` forces node-gyp to compile the binding
-  #   fresh. Guarantees ABI match and avoids any "wrong-arch prebuild
-  #   slipped in" surprise. This is the path build-linux-binaries.sh
-  #   takes on Linux.
+  #   Step 1: `npm install` WITHOUT --build-from-source. Every native
+  #   dep grabs its own prebuild if available — node-datachannel pulls
+  #   its napi-v8 win32-$Arch prebuild, node-pty pulls its win32-$Arch
+  #   prebuild, better-sqlite3 also tries to grab a prebuild.
+  #   Step 2: `npm rebuild better-sqlite3 --build-from-source` forces
+  #   ONLY sqlite3 to rebuild fresh against the host's headers, so its
+  #   ABI matches the bundled node we ship in the MSI. We don't rebuild
+  #   the other two because:
+  #     - node-datachannel's --build-from-source path is broken
+  #       (prebuild@13.0.1 throws "expected first argument to be an
+  #       array"). Its napi-v8 prebuild is forward-compatible with
+  #       Node 24, so the prebuild path Just Works.
+  #     - node-pty's prebuilds are also forward-compatible and there's
+  #       no ABI mismatch concern (it doesn't load against the bundled
+  #       sqlite linkage like better-sqlite3 does).
   #
   # Cross arch (host != target, e.g. x64 host building arm64 MSI):
-  #   We can't compile a foreign-arch binary from this host's gcc
-  #   without setting up cross-compilers. Instead, we install in
-  #   PREBUILD mode: npm_config_arch + target_platform tell npm to
-  #   download the precompiled .node binding for the requested arch
-  #   from better-sqlite3's GitHub release. We trust the prebuild
-  #   because better-sqlite3 publishes them per release with checksums.
-  #
-  #   The win-arm64 prebuild has been shipped by better-sqlite3 since
-  #   v11.x. If a future version drops it, this script will fail at
-  #   npm install with a clear "no prebuild found" error — at which
-  #   point the right answer is to either pin to a version that has
-  #   the prebuild or revert this job to a native arm64 runner.
+  #   We can't compile a foreign-arch binary from this host without
+  #   cross-compilers. Install in PREBUILD-ONLY mode: npm_config_arch
+  #   + target_platform tell each package's prebuild-install which
+  #   target binary to fetch. better-sqlite3 has shipped win-arm64
+  #   prebuilds since v11.x; node-datachannel ships win32-arm64;
+  #   node-pty ships win32-arm64. If any drops the arm64 prebuild in
+  #   a future version, this script fails with a clear "no prebuild
+  #   found" error.
   $hostArch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
   $env:npm_config_arch = $Arch
   $env:npm_config_target_platform = "win32"
 
-  if ($hostArch -eq $Arch) {
-    Write-Host "  (native build: host=$hostArch == target=$Arch)" -ForegroundColor DarkGray
-    npm install --omit=dev --build-from-source --no-audit --no-fund
-  } else {
-    Write-Host "  (cross-compile: host=$hostArch -> target=$Arch — using prebuilds)" -ForegroundColor DarkGray
-    npm install --omit=dev --no-audit --no-fund
-  }
+  # Step 1 — install all native deps using their prebuilds. Applies
+  # to both native and cross-compile modes; --build-from-source is
+  # intentionally absent so node-datachannel and node-pty don't fall
+  # into their broken / unnecessary build paths.
+  Write-Host "  step 1: npm install (prebuilds for all native deps)" -ForegroundColor DarkGray
+  npm install --omit=dev --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { throw "npm install (native deps) failed" }
+
+  # Step 2 — only on native-arch builds, rebuild better-sqlite3 from
+  # source. Cross-arch builds skip this and trust the win-$Arch prebuild.
+  if ($hostArch -eq $Arch) {
+    Write-Host "  step 2: rebuild better-sqlite3 from source (native build)" -ForegroundColor DarkGray
+    npm rebuild better-sqlite3 --build-from-source --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw "npm rebuild better-sqlite3 failed" }
+  } else {
+    Write-Host "  step 2 skipped: cross-compile uses better-sqlite3 prebuild" -ForegroundColor DarkGray
+  }
 } finally {
   Pop-Location
   Remove-Item env:npm_config_arch -ErrorAction SilentlyContinue
@@ -243,6 +270,37 @@ $testExtension = Join-Path $OutNm "better-sqlite3/build/Release/test_extension.n
 if (Test-Path $testExtension) {
   Remove-Item $testExtension -Force
   Write-Host "  → removed test_extension.node (test fixture, never loaded at runtime)"
+}
+
+# ── Prune non-Windows prebuilt bindings ──────────────────────────────
+# Some native packages (node-pty especially) ship prebuilt .node files
+# for every platform they support — darwin-arm64, darwin-x64, linux-*,
+# win32-x64, win32-arm64, etc. — all under `<pkg>/prebuilds/<platform>`.
+# For a Windows MSI we only need the win32 binding matching $Arch.
+#
+# Authenticode SignTool in the CI workflow recursively signs every file
+# under the staging tree (it doesn't filter by extension). Mach-O / ELF
+# .node files are not Windows PE format, so signtool rejects them with:
+#   "This file format cannot be signed because it is not recognized."
+# Observed in the 1.1.19 first attempt — workflow failed signing
+# darwin-arm64/pty.node and darwin-x64/pty.node from node-pty.
+#
+# We prune to win32-$Arch only (not all win32 dirs) because shipping
+# the other arch's binding in this package is just dead weight — the
+# arm64 MSI doesn't need win32-x64/pty.node and vice versa, and signing
+# files we don't use wastes a Trusted Signing API call per file.
+Write-Host "→ pruning non-Windows prebuilds (keep only win32-$Arch)" -ForegroundColor Yellow
+Get-ChildItem -Path $OutNm -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+  $pkgName = $_.Name
+  $prebuildsDir = Join-Path $_.FullName "prebuilds"
+  if (Test-Path $prebuildsDir) {
+    Get-ChildItem -Path $prebuildsDir -Directory | Where-Object {
+      $_.Name -ne "win32-$Arch"
+    } | ForEach-Object {
+      Write-Host "  pruned $pkgName/prebuilds/$($_.Name)" -ForegroundColor DarkGray
+      Remove-Item -Recurse -Force $_.FullName
+    }
+  }
 }
 
 # ── 3. Download bundled node.exe for target arch ─────────────────────
@@ -319,7 +377,7 @@ Write-Host "→ copied WinSW wrapper from repo ($Arch)" -ForegroundColor Yellow
 #      Trusted Signing step rejects with 0x800700C1
 #      (ERROR_BAD_EXE_FORMAT).
 #   2. Failures observed on BOTH x64 and arm64 builds in CI runs
-#      26041422393 (1.1.17 first attempt) and again after the 1.1.18
+#      26041422393 (1.1.17 first attempt) and again after the 1.1.19
 #      bump — same exit code, same binary corruption pattern.
 #   3. Root cause appears to be WinSW v3's .NET single-file packed
 #      layout: rcedit's resource-section rewriter assumes a flatter

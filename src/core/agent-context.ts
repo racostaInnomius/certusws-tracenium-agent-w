@@ -27,4 +27,11 @@ export type AgentContext = {
   plugins: PluginManager;
   trayStatus: TrayStatusStore;
   logger: any;
+  // RCP M1.S1 — outbound control-message write surface for plugins
+  // that don't follow the FACTS / job lifecycle (i.e. RCP signaling).
+  // The grpc-stream module assigns this on init; it wraps
+  // `ctx.priv.call("grpc.send", { ... })`. Optional in the type so
+  // tests / unit modules that don't bring up the gRPC bridge don't
+  // need to provide it.
+  sendControl?: (msg: any) => void;
 };
