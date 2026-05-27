@@ -43,6 +43,16 @@ export type DetectionRule =
       minVersion?: string;
     }
   | {
+      type: "dpkg_installed";
+      packageName: string;
+      minVersion?: string;
+    }
+  | {
+      type: "rpm_installed";
+      packageName: string;
+      minVersion?: string;
+    }
+  | {
       type: "file_exists";
       path: string;
     }
@@ -77,10 +87,15 @@ const PLATFORM_APPLICABILITY: Record<DetectionRule["type"], Set<NodeJS.Platform>
   registry_uninstall: new Set<NodeJS.Platform>(["win32"]),
   bundle_version: new Set<NodeJS.Platform>(["darwin"]),
   pkg_receipt: new Set<NodeJS.Platform>(["darwin"]),
-  // file_exists and command_exit work cross-platform — Linux Phase 9
-  // SDP relies on these as the only detection types it supports
-  // until backend catalog seeds add native dpkg_installed /
-  // rpm_installed types in a future migration.
+  // Native Linux package-manager detection. Distro-family routing
+  // (debian vs rhel/suse) happens in privsvc — the agent only filters
+  // by OS here. A `dpkg_installed` rule sent to a RHEL host will be
+  // caught privsvc-side and returned as skipped with a clear reason.
+  dpkg_installed: new Set<NodeJS.Platform>(["linux"]),
+  rpm_installed: new Set<NodeJS.Platform>(["linux"]),
+  // file_exists and command_exit work cross-platform — the universal
+  // fallbacks when a software package doesn't register itself in any
+  // native package database.
   file_exists: new Set<NodeJS.Platform>(["win32", "darwin", "linux"]),
   command_exit: new Set<NodeJS.Platform>(["win32", "darwin", "linux"]),
 };
@@ -115,6 +130,15 @@ export function normalizeRule(raw: any): DetectionRule | null {
     case "pkg_receipt": {
       if (typeof raw.pkgId !== "string") return null;
       const out: DetectionRule = { type, pkgId: raw.pkgId };
+      if (typeof raw.minVersion === "string" && raw.minVersion.trim()) {
+        (out as any).minVersion = String(raw.minVersion).trim();
+      }
+      return out;
+    }
+    case "dpkg_installed":
+    case "rpm_installed": {
+      if (typeof raw.packageName !== "string" || !raw.packageName.trim()) return null;
+      const out: DetectionRule = { type, packageName: String(raw.packageName).trim() };
       if (typeof raw.minVersion === "string" && raw.minVersion.trim()) {
         (out as any).minVersion = String(raw.minVersion).trim();
       }

@@ -156,6 +156,162 @@ async function detectFileExists(rule: { path: string }): Promise<DetectionResult
   };
 }
 
+/**
+ * Semver-ish comparison mirrored from the macOS/Windows siblings.
+ * Splits on `.` and `-`, takes the leading digits of each segment,
+ * missing segments default to 0. Returns >0 if a > b, <0 if a < b,
+ * 0 if equal.
+ *
+ * Examples: cmp("1.2.3", "1.2.3") = 0, cmp("1.2.10", "1.2.9") > 0,
+ *          cmp("2.0-beta1", "2.0") = 0 (the trailing "-beta" is dropped).
+ */
+function compareSemver(a: string, b: string): number {
+  const parse = (v: string): number[] =>
+    (v || "")
+      .split(/[.\-]/)
+      .map((seg) => {
+        const m = /^[0-9]+/.exec(seg);
+        return m ? parseInt(m[0], 10) : 0;
+      });
+  const av = parse(a);
+  const bv = parse(b);
+  const n = Math.max(av.length, bv.length);
+  for (let i = 0; i < n; i++) {
+    const ai = i < av.length ? av[i] : 0;
+    const bi = i < bv.length ? bv[i] : 0;
+    if (ai !== bi) return ai > bi ? 1 : -1;
+  }
+  return 0;
+}
+
+function meetsMinVersion(installed: string | null, minVersion: string | undefined): boolean {
+  if (!installed) return false;
+  if (!minVersion) return true;
+  return compareSemver(installed, minVersion) >= 0;
+}
+
+/**
+ * Detect a Debian package via `dpkg-query`. Format string `${Status}|${Version}`
+ * gives us both the install state and the installed version in one
+ * call. "install ok installed" is the only status that means the
+ * package is fully present — half-configured / removed-config-left-
+ * behind states return matched=false with the actual status in the
+ * snapshot for debugging.
+ *
+ * Wrong distro family (e.g. RHEL): dpkg-query is absent → ENOENT →
+ * we surface this as a clear snapshot reason rather than a daemon
+ * crash. The catalog operator sees "binary not found" and knows the
+ * rule is mis-targeted.
+ */
+async function detectDpkgInstalled(rule: {
+  packageName: string;
+  minVersion?: string;
+}): Promise<DetectionResult> {
+  // execFile (no shell) — the catalog's packageName cannot inject
+  // additional dpkg-query flags or shell metas.
+  let installedStatus: string | null = null;
+  let installedVersion: string | null = null;
+  let errorReason: string | null = null;
+
+  try {
+    const { stdout } = await execFileAsync(
+      "/usr/bin/dpkg-query",
+      ["-W", "-f=${Status}|${Version}", rule.packageName],
+      { timeout: 10_000, maxBuffer: 256 * 1024 }
+    );
+    const line = String(stdout || "").trim();
+    const [status, version] = line.split("|");
+    installedStatus = (status || "").trim();
+    installedVersion = (version || "").trim() || null;
+  } catch (err: any) {
+    // dpkg-query exits with code 1 + stderr "no packages found
+    // matching <name>" when the package isn't installed. That's a
+    // perfectly valid not-matched result, not an error. Treat ENOENT
+    // (binary missing — wrong distro) and EACCES separately.
+    if (err?.code === "ENOENT") {
+      errorReason = "dpkg-query not found (wrong distro family for this rule)";
+    } else {
+      const stderr = String(err?.stderr || "");
+      // Common cases worth surfacing: package genuinely not installed
+      if (/no packages? found matching/i.test(stderr)) {
+        installedStatus = "not_installed";
+      } else {
+        errorReason = stderr.slice(0, 200) || (err?.message ?? "dpkg-query failed");
+      }
+    }
+  }
+
+  const isFullyInstalled = installedStatus === "install ok installed";
+  const matched = isFullyInstalled && meetsMinVersion(installedVersion, rule.minVersion);
+
+  return {
+    matched,
+    snapshot: {
+      packageName: rule.packageName,
+      minVersion: rule.minVersion ?? null,
+      installedStatus,
+      installedVersion,
+      errorReason,
+    },
+  };
+}
+
+/**
+ * Detect an RPM package via `rpm -q --qf`. Sister to `detectDpkgInstalled`.
+ * Format string `%{VERSION}-%{RELEASE}` gives us the full installed
+ * version (e.g. "1.20.1-9.el9"). For minVersion compare we only use
+ * the leading semver-shaped part (compareSemver tolerates the
+ * `-9.el9` tail by truncating at the first non-digit).
+ *
+ * Wrong distro family (Debian): rpm binary may be absent or may
+ * return useless results. ENOENT surfaces in snapshot.errorReason.
+ */
+async function detectRpmInstalled(rule: {
+  packageName: string;
+  minVersion?: string;
+}): Promise<DetectionResult> {
+  let installedVersion: string | null = null;
+  let errorReason: string | null = null;
+  let exitCode = 0;
+
+  try {
+    const { stdout } = await execFileAsync(
+      "/usr/bin/rpm",
+      ["-q", "--qf", "%{VERSION}-%{RELEASE}", rule.packageName],
+      { timeout: 10_000, maxBuffer: 256 * 1024 }
+    );
+    installedVersion = String(stdout || "").trim() || null;
+  } catch (err: any) {
+    // rpm -q exits 1 when the package isn't installed. stderr usually
+    // says "package <name> is not installed". Treat as not-matched
+    // rather than an error.
+    exitCode = Number.isFinite(Number(err?.code)) ? Number(err.code) : 1;
+    if (err?.code === "ENOENT") {
+      errorReason = "rpm not found (wrong distro family for this rule)";
+    } else {
+      const stderr = String(err?.stderr || "");
+      if (!/is not installed/i.test(stderr)) {
+        errorReason = stderr.slice(0, 200) || (err?.message ?? "rpm -q failed");
+      }
+    }
+  }
+
+  const matched = installedVersion !== null
+    && exitCode === 0
+    && meetsMinVersion(installedVersion, rule.minVersion);
+
+  return {
+    matched,
+    snapshot: {
+      packageName: rule.packageName,
+      minVersion: rule.minVersion ?? null,
+      installedVersion,
+      exitCode,
+      errorReason,
+    },
+  };
+}
+
 async function detectCommandExit(rule: {
   cmd: string;
   args?: string[];
@@ -236,6 +392,24 @@ export async function handleSdpDetect(req: PrivSvcRequest): Promise<PrivSvcRespo
           cmd: String(rule.cmd),
           args: Array.isArray(rule.args) ? rule.args.map((a: unknown) => String(a)) : undefined,
           stdoutMatches: rule.stdoutMatches ? String(rule.stdoutMatches) : undefined,
+        });
+        break;
+      case "dpkg_installed":
+        if (typeof rule.packageName !== "string" || !rule.packageName.trim()) {
+          return fail(req.id, "bad_request", "dpkg_installed.packageName required");
+        }
+        result = await detectDpkgInstalled({
+          packageName: String(rule.packageName).trim(),
+          minVersion: rule.minVersion ? String(rule.minVersion).trim() : undefined,
+        });
+        break;
+      case "rpm_installed":
+        if (typeof rule.packageName !== "string" || !rule.packageName.trim()) {
+          return fail(req.id, "bad_request", "rpm_installed.packageName required");
+        }
+        result = await detectRpmInstalled({
+          packageName: String(rule.packageName).trim(),
+          minVersion: rule.minVersion ? String(rule.minVersion).trim() : undefined,
         });
         break;
       case "registry_uninstall":

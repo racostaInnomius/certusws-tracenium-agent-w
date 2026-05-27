@@ -7,9 +7,19 @@
 import * as fs from "fs";
 import * as path from "path";
 
+// Structural / duck-typed shape — we accept whatever the caller hands
+// us. We do NOT import the real AgentContext type from core/ to keep
+// wedge-dump.ts free of internal coupling: if the real AgentContext
+// shape grows new required fields, this diagnostic helper should
+// continue to compile against any version of it.
+//
+// `priv` is `any` because we only probe two optional methods on it
+// (`getPendingCount`, `getPendingMethods`) added specifically for
+// diagnostics. The real IPrivSvcClient interface intentionally
+// doesn't include them in its strict surface.
 interface AgentContext {
   trayStatus?: { getLastWriteMs?: () => number };
-  priv?: { getPendingCount?: () => number; getPendingMethods?: () => string[] };
+  priv?: any;
 }
 
 interface Logger {

@@ -8,7 +8,9 @@ import type { Namespaces, DeviceFacts } from "../domain/device-facts";
 import type { PmpNamespace } from "../domain/pmp-types";
 import { updatePmpState, isRemediateInFlight } from "../plugins/pmp/state";
 import { runRemediation } from "../plugins/pmp/remediation";
-import { runSoftwareInstall } from "../plugins/sdp";
+// SDP no longer imported here — `software_install` is dispatched via
+// ctx.plugins.run("sdp.install", ...) so it goes through the
+// PluginManager policy gate uniformly with the other plugins.
 import { runUpdateTask } from "../update/update-task";
 
 const ACK_TIMEOUT_MS = 60_000;
@@ -609,19 +611,34 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
     }
 
     case "software_install": {
-      // SDP — Phase 1. The plugin returns a structured ack contract
-      // (ackStatus / ackMessage / outcome) that we surface as-is to
-      // the orchestrator. The plugin is responsible for owning
-      // concurrency, retries decisions, and the privsvc dance — we
-      // only translate to the runJob ack envelope here.
+      // SDP — Phase 1. Now routed through PluginManager (sdp.install)
+      // so policy gating via pluginEnabled("sdp") is enforced
+      // uniformly with AMP/SCP/PMP. Previously this case imported
+      // `runSoftwareInstall` directly, bypassing the plugin registry.
       //
-      // Outcome ∈ { success, already_installed, reboot_required,
-      //             failed, rejected, timed_out } is encoded in the
-      // ack message as `software_install:<outcome>;...` so the
+      // The plugin returns the structured ack contract
+      // (ackStatus / ackMessage / outcome) that we surface as-is to
+      // the orchestrator. Outcome ∈ { success, already_installed,
+      // reboot_required, failed, rejected, timed_out } is encoded
+      // in the ack message as `software_install:<outcome>;...` so the
       // backend's P1-G ack handler can update software_install_results
       // without needing a new gRPC field.
       try {
-        const ack = await runSoftwareInstall(ctx, jobId, payload);
+        const ack = await ctx.plugins.run("sdp.install", { jobId, payload });
+        if (!ack) {
+          // pluginMgr.run returns null when the plugin is disabled by
+          // policy. Surface as a permanent rejection so the deployment
+          // row in the backend gets a deterministic outcome instead
+          // of waiting for the orchestrator's 30 min timeout.
+          ctx.logger?.warn?.("software_install rejected: sdp plugin disabled by policy", {
+            jobId,
+            deploymentId: Number(payload?.deploymentId) || 0,
+          });
+          return {
+            status: 2,
+            message: `software_install:rejected;deploymentId=${Number(payload?.deploymentId) || 0};reason=plugin_disabled`,
+          };
+        }
         return { status: ack.ackStatus, message: ack.ackMessage };
       } catch (err: any) {
         // runSoftwareInstall is documented as non-throwing — if it

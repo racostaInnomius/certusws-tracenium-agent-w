@@ -87,6 +87,31 @@ export class PluginManager {
     } catch (err: any) {
       this.ctx?.logger?.error?.("Failed to register PMP plugin", err?.message || err);
     }
+
+    try {
+      // SDP — event-driven (no periodic `collect`). The `install`
+      // task is invoked from the gRPC dispatcher when a
+      // `software_install` job arrives. We register it here so that
+      // policy gating (pluginEnabled("sdp")) is enforced uniformly
+      // with AMP/SCP/PMP. Until this registration existed, SDP was
+      // dispatched by a hardcoded `case "software_install"` in
+      // grpc-stream.ts that bypassed the policy check entirely.
+      const { runSoftwareInstall } = await import("../plugins/sdp");
+
+      this.register({
+        name: "sdp",
+        tasks: {
+          install: async (ctx: AgentContext, params?: any) => {
+            const jobId = String(params?.jobId ?? "");
+            const payload = params?.payload ?? {};
+            return runSoftwareInstall(ctx, jobId, payload);
+          }
+        }
+      });
+
+    } catch (err: any) {
+      this.ctx?.logger?.error?.("Failed to register SDP plugin", err?.message || err);
+    }
   }
 
   // -----------------------------

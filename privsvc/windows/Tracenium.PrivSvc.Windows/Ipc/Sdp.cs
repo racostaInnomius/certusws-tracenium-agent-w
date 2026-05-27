@@ -87,7 +87,14 @@ public static class Sdp
                 "registry_uninstall" => DetectRegistryUninstall(rule),
                 "file_exists"        => DetectFileExists(rule),
                 "command_exit"       => DetectCommandExit(rule),
-                "bundle_version" or "pkg_receipt" => new DetectionResult
+                // Non-Windows native package-manager rules: skip
+                // explicitly. The agent's PLATFORM_APPLICABILITY map
+                // normally prevents these from arriving here; this is
+                // defense in depth so a misrouted call surfaces a
+                // clear `skipped` snapshot rather than an
+                // `unknown rule type` error.
+                "bundle_version" or "pkg_receipt"
+                or "dpkg_installed" or "rpm_installed" => new DetectionResult
                 {
                     Matched = false,
                     Snapshot = new

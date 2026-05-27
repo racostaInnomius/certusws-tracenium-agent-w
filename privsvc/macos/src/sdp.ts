@@ -409,12 +409,19 @@ export async function handleSdpDetect(req: PrivSvcRequest): Promise<PrivSvcRespo
         });
         break;
       case "registry_uninstall":
-        // Windows-only. The agent's PLATFORM_APPLICABILITY filter
-        // should prevent us from receiving this — surface the mismatch
-        // explicitly if it does happen.
+        // Windows-only.
         return success(req.id, {
           matched: false,
           snapshot: { skipped: true, reason: "registry_uninstall_not_applicable_on_macos" },
+        });
+      case "dpkg_installed":
+      case "rpm_installed":
+        // Linux-only. PLATFORM_APPLICABILITY in the agent normally
+        // blocks these; surface explicitly if a misrouted call slips
+        // through (defense in depth — better than `unknown rule type`).
+        return success(req.id, {
+          matched: false,
+          snapshot: { skipped: true, reason: `${ruleType}_not_applicable_on_macos` },
         });
       default:
         return fail(req.id, "bad_request", `unknown detection rule type: ${ruleType}`);
