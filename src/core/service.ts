@@ -33,13 +33,26 @@ let stopGrpcStream: (() => void) | null = null;
 // reconnects, jobs, policy changes); a 5-minute silence means
 // everything is stuck.
 //
-// 5 minutes vs 60 seconds for STALE: heartbeats fire every 60s, so 5
-// min is 5 consecutive missed heartbeat-writes. Generous enough that
-// a one-shot slow disk or transient privsvc hiccup doesn't kill us;
-// strict enough that we recover in single-digit minutes instead of
-// the 36 hours of zombie we observed in prod.
+// Threshold tuning history:
+//
+//   v1 (until 2026-06): 5 min stale → process.exit(1).
+//     Problem: a single long-running native call (an SDP install with
+//     msiexec /quiet that takes 3-4 min, a slow RCP offer parsing in
+//     node-datachannel native code, a multi-thousand-program inventory
+//     pass) legitimately blocks the tray writer for longer than 5 min.
+//     The watchdog then KILLS a healthy agent doing real work, WinSW
+//     hits its restart rate limit (default <onfailure delay+max>), and
+//     the service ends up Stopped — "the AgentCore service mysteriously
+//     stops running" symptom we've been chasing for months.
+//
+//   v2 (current): 15 min stale + double-check via forced tray-status write.
+//     Doubled the grace because the cost of a false-negative (don't kill
+//     a wedge for 5 more minutes) is FAR lower than the cost of a false-
+//     positive (kill a healthy agent mid-work, lose all in-flight state,
+//     trip WinSW's restart-storm limiter). And the forced write below
+//     distinguishes "writer is genuinely stuck" from "writer is busy".
 const LIVENESS_CHECK_INTERVAL_MS = 60_000;
-const MAX_STATUS_STALE_MS = 5 * 60 * 1000;
+const MAX_STATUS_STALE_MS = 15 * 60 * 1000;
 // Grace period after startup before the watchdog can fire. Cold
 // bootstrap (enrollment fetch, policy hydrate, outbox recovery) can
 // legitimately take 30–90s on first boot, and we don't write the
@@ -83,6 +96,23 @@ export async function startService() {
       log.info("Outbox recovery completed");
     } catch (e: any) {
       log.warn("Outbox recovery failed", e?.message || e);
+    }
+
+    // Eager probe of the RCP native runtime. If `node-datachannel` is broken
+    // on this host (the historical "AgentCore goes silent on first remote-
+    // control click" failure mode), we want to know NOW — at boot, with an
+    // obvious log — instead of the first operator click silently crashing
+    // the process minutes/hours/days later. See plugins/rcp/index.ts. If the
+    // probe crashes V8 itself (segfault from inside libdatachannel), the
+    // failure shows up in Windows Event Viewer as "Faulting module:
+    // node_datachannel.node" right at startup — much easier to diagnose
+    // than a mysterious post-click disappearance.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { probeRcpNative } = require("../plugins/rcp");
+      probeRcpNative(ctx);
+    } catch (e: any) {
+      log.warn("RCP native probe wrapper threw", e?.message || e);
     }
     log.info("Enrolled", {
       tenantId: ctx.enrollment.tenantId,
@@ -294,7 +324,7 @@ export async function startService() {
     // defense: if every other recovery mechanism fails because the
     // event loop itself is wedged, this exits the process so launchd
     // restarts us. See the constants above for rationale.
-    livenessWatchdogTimer = setInterval(() => {
+    livenessWatchdogTimer = setInterval(async () => {
       if (shuttingDown) return;
       const sinceStartupMs = Date.now() - livenessStartedAtMs;
       if (sinceStartupMs < LIVENESS_STARTUP_GRACE_MS) return;
@@ -303,34 +333,82 @@ export async function startService() {
         const lastWriteMs = currentCtx?.trayStatus?.getLastWriteMs?.();
         if (typeof lastWriteMs !== "number") return; // store not ready yet
         const staleMs = Date.now() - lastWriteMs;
-        if (staleMs > MAX_STATUS_STALE_MS) {
-          // Use the global `logger`, not `log` (= ctx.logger). The ctx
-          // logger may share state with whatever component is wedged;
-          // the global one writes to stdout/stderr directly. We want
-          // the breadcrumb to land regardless of which subsystem is on
-          // fire.
-          // Service-manager name in the log message is picked at
-          // runtime so the breadcrumb is accurate per-platform. The
-          // mechanism is identical: non-zero exit → SM relaunches
-          // (KeepAlive=true on launchd, Restart=always on systemd,
-          // WinSW's <onfailure action="restart"> on Windows).
-          const recycler =
-            process.platform === "win32" ? "WinSW" :
-            process.platform === "darwin" ? "launchd" : "systemd";
-          logger.error(
-            "Liveness watchdog: tray status not updated in " +
-              `${Math.round(staleMs / 1000)}s (> ${MAX_STATUS_STALE_MS / 1000}s threshold). ` +
-              `Event loop is wedged. Exiting so ${recycler} can recycle the process.`
+        if (staleMs <= MAX_STATUS_STALE_MS) return;
+
+        // Stale beyond threshold — BUT before we kill the process, prove
+        // the writer is actually wedged. The v1 watchdog conflated "tray
+        // status hasn't been updated lately" with "event loop is dead";
+        // they're not the same. A long-running native call (msiexec install,
+        // node-datachannel offer parsing, large WMI scan) can monopolize
+        // the loop for many minutes without the writer being broken — once
+        // the call returns, the writer resumes happily and no recycle is
+        // needed.
+        //
+        // The probe: if WE are running, the event loop is processing at
+        // least this setInterval callback. Try a forced status write via
+        // the same path the heartbeat uses. If it returns in <2s, the
+        // writer works — the staleness was caused by something monopolizing
+        // the loop, NOT by a wedge that needs a process recycle. Log the
+        // observation so ops can investigate the long-runner, but don't
+        // kill the agent.
+        //
+        // If the forced write times out or throws, THEN we're genuinely
+        // wedged and the exit path runs as before.
+        const writerProbeOk = await Promise.race([
+          (async () => {
+            try {
+              const ctx = currentCtx;
+              if (!ctx) return false;
+              await ctx.trayStatus?.markHeartbeat?.();
+              const updatedMs = ctx.trayStatus?.getLastWriteMs?.();
+              return (
+                typeof updatedMs === "number" &&
+                Date.now() - updatedMs < 5_000
+              );
+            } catch {
+              return false;
+            }
+          })(),
+          new Promise<boolean>((resolve) =>
+            setTimeout(() => resolve(false), 2_000)
+          ),
+        ]);
+
+        if (writerProbeOk) {
+          // Writer is alive. The staleness was a false positive — something
+          // legitimate (long native call, slow IPC round-trip) was holding
+          // the loop. Log so it's investigable but DO NOT exit.
+          logger.warn(
+            "Liveness watchdog: tray-status was stale for " +
+              `${Math.round(staleMs / 1000)}s but the writer responded to a probe in <2s. ` +
+              "Not exiting — assuming a long-running task held the loop. " +
+              "If you see this repeatedly, investigate what is blocking the event loop."
           );
-          // Best-effort diagnostic dump — captures JS stack, pending IPC
-          // requests, libuv state, and memory at the moment of the wedge.
-          // Never block exit longer than 500ms total.
-          dumpWedgeState(currentCtx ?? null, logger)
-            .catch(() => {})
-            .finally(() => {
-              setTimeout(() => process.exit(1), 500).unref();
-            });
+          return;
         }
+
+        // Writer probe failed. NOW we believe the loop is wedged.
+        //
+        // Service-manager name in the log message is picked at runtime so
+        // the breadcrumb is accurate per-platform. Mechanism is identical:
+        // non-zero exit → SM relaunches (KeepAlive on launchd, Restart on
+        // systemd, WinSW's <onfailure action="restart"> on Windows).
+        const recycler =
+          process.platform === "win32" ? "WinSW" :
+          process.platform === "darwin" ? "launchd" : "systemd";
+        logger.error(
+          "Liveness watchdog: tray status not updated in " +
+            `${Math.round(staleMs / 1000)}s AND forced writer probe failed. ` +
+            `Event loop is wedged. Exiting so ${recycler} can recycle the process.`
+        );
+        // Best-effort diagnostic dump — captures JS stack, pending IPC
+        // requests, libuv state, and memory at the moment of the wedge.
+        // Never block exit longer than 500ms total.
+        dumpWedgeState(currentCtx ?? null, logger)
+          .catch(() => {})
+          .finally(() => {
+            setTimeout(() => process.exit(1), 500).unref();
+          });
       } catch (e: any) {
         // The watchdog itself must never throw — otherwise it'd become
         // the source of the very crash it's trying to prevent. Log

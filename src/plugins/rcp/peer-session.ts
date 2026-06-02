@@ -21,8 +21,41 @@ import type { FileTransferAuditPayload } from "./file-session";
 import { ScreenSession } from "./screen-session";
 import type { ScreenAuditPayload } from "./screen-session";
 
+// Native module load. This is the historical hotspot for "AgentCore goes
+// silent" — `node-datachannel` is a C++ binding around libdatachannel +
+// libjuice + OpenSSL, and on some platforms (notably Windows ARM64 ports
+// without prebuilt binaries) the .node file loads but crashes the V8
+// runtime on first real use (constructing PeerConnection, parsing SDP,
+// etc.). When that happens Node dies instantly with no chance to flush
+// stdout, write a wedge dump, or run any handler — the process simply
+// disappears and WinSW restart-storms until rate-limited to Stopped.
+//
+// The require itself is bracketed in a try so a load-time failure logs
+// clearly instead of taking down the importer chain silently. Runtime
+// crashes from inside libdatachannel can still happen later; those need
+// to be diagnosed via Event Viewer "Faulting module: node_datachannel.node"
+// — see the README troubleshooting section.
+//
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const nodeDatachannel = require("node-datachannel");
+let nodeDatachannel: any;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  nodeDatachannel = require("node-datachannel");
+} catch (err: any) {
+  console.error(
+    "[FATAL] node-datachannel require() failed — RCP will be non-functional",
+    {
+      name: err?.name,
+      code: err?.code,
+      message: err?.message,
+      stack: err?.stack
+    }
+  );
+  // Rethrow so the importer knows. session-manager will surface this on
+  // the first offer via the dispatcher's catch (now wired with verbose
+  // logging from this sprint).
+  throw err;
+}
 
 type PeerSessionArgs = {
   sessionId: string;

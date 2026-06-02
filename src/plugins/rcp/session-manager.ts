@@ -43,6 +43,12 @@ export class SessionManager {
     const sdp = String(params?.sdp || "");
     const capability = String(params?.capability || "");
     const timeoutSeconds = Number(params?.sessionTimeoutSeconds || 0) || 4 * 60 * 60;
+    this.ctx.logger?.info?.("[rcp] onOffer entered", {
+      sid: sessionId.slice(-8),
+      capability,
+      sdpLen: sdp.length,
+      activeSessions: this.sessions.size
+    });
 
     if (!sessionId || !sdp || !capability) {
       this.ctx.logger?.warn?.("[rcp] offer missing required fields", {
@@ -96,6 +102,13 @@ export class SessionManager {
       return;
     }
 
+    // Construct the PeerSession. This instantiates the native node-datachannel
+    // RtcPeerConnection, which has historically been the silent-crash hotspot
+    // (missing prebuild for the host arch, deadlock during ICE init, etc.).
+    // Bracketing logs let us locate the exact step the next time it fails.
+    this.ctx.logger?.info?.("[rcp] constructing PeerSession", {
+      sid: sessionId.slice(-8)
+    });
     const peer = new PeerSession({
       sessionId,
       capability,
@@ -114,14 +127,24 @@ export class SessionManager {
       },
       sessionTimeoutSeconds: timeoutSeconds
     });
+    this.ctx.logger?.info?.("[rcp] PeerSession constructed", {
+      sid: sessionId.slice(-8)
+    });
     this.sessions.set(sessionId, peer);
 
     try {
+      this.ctx.logger?.info?.("[rcp] acceptOffer starting", {
+        sid: sessionId.slice(-8)
+      });
       await peer.acceptOffer(sdp);
+      this.ctx.logger?.info?.("[rcp] acceptOffer completed", {
+        sid: sessionId.slice(-8)
+      });
     } catch (err: any) {
       this.ctx.logger?.error?.("[rcp] acceptOffer failed", {
         sessionId,
-        err: err?.message || String(err)
+        err: err?.message || String(err),
+        stack: err?.stack
       });
       this.sessions.delete(sessionId);
       this.sendError(sessionId, "SDP_PARSE_ERROR", err?.message || String(err));
