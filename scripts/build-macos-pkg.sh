@@ -38,7 +38,11 @@ if [ -n "${TRACENIUM_NODE_VERSION:-}" ]; then
 elif [ -f "$ROOT_DIR/.nodeversion" ]; then
   NODE_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/.nodeversion")"
 else
-  NODE_VERSION="24.10.0"
+  # Hardcoded fallback — only used if .nodeversion is missing. MUST match
+  # the .nodeversion contents to avoid version drift. Currently 22.22.3
+  # (Jod LTS); see build-linux-binaries.sh for the rationale on why we
+  # downgraded from 24 LTS.
+  NODE_VERSION="22.22.3"
 fi
 
 BUILD_DIR="$ROOT_DIR/build/macos"

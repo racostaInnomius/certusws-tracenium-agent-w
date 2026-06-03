@@ -104,7 +104,14 @@ if [ -n "${TRACENIUM_NODE_VERSION:-}" ]; then
 elif [ -f "$ROOT_DIR/.nodeversion" ]; then
   NODE_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/.nodeversion")"
 else
-  NODE_VERSION="24.10.0"
+  # Hardcoded fallback — only used if .nodeversion is missing. MUST match
+  # the .nodeversion contents to avoid version drift if a developer somehow
+  # deletes the file. Currently 22.22.3 (Jod LTS) because the upstream
+  # `node-datachannel` package publishes prebuilds built against Node 18 —
+  # those prebuilds are stable on Node 22 but fastfail at PeerConnection
+  # construct on Node 24 (STATUS_STACK_BUFFER_OVERRUN, 0xC0000409) due to
+  # ABI drift in the Node 22→24 jump. Bump this in lockstep with .nodeversion.
+  NODE_VERSION="22.22.3"
 fi
 
 echo "==== build-linux-pkg ===="
