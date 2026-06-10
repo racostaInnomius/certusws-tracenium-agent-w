@@ -1210,6 +1210,17 @@ private const int MaxPendingPushEvents = 50;
                             sdp = msg.RemoteSessionOffer.Sdp ?? "",
                             capability = msg.RemoteSessionOffer.Capability ?? "",
                             sessionTimeoutSeconds = msg.RemoteSessionOffer.SessionTimeoutSeconds,
+                            // ICE servers forwarded from the backend (Cloudflare TURN
+                            // creds, minted per-session, same ones the operator's
+                            // browser got). AgentCore needs them so the WebRTC peer
+                            // emits relay candidates of its own; without them the
+                            // peer only emits host candidates from its local NIC and
+                            // ICE deterministically fails behind any NAT. This field
+                            // was added with proto bump (iceServersJson = 5) on
+                            // 2026-06-10 — before that we silently dropped it here
+                            // because the anonymous object literal didn't list it,
+                            // making the previous backend deploy a no-op end-to-end.
+                            iceServersJson = msg.RemoteSessionOffer.IceServersJson ?? "",
                             receivedAtUtc = DateTime.UtcNow.ToString("o")
                         }
                     });

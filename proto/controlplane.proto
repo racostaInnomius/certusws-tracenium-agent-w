@@ -116,6 +116,24 @@ message RemoteSessionOffer {
   string capability = 3;
   // Hard cap so the agent can pre-allocate / refuse to spawn.
   int32 sessionTimeoutSeconds = 4;
+  // ICE servers (STUN + TURN, Cloudflare-minted per session). Backend
+  // forwards the SAME creds it gave the operator's browser so the
+  // agent's PeerConnection emits relay candidates of its own — without
+  // this the agent is unreachable from any browser when it sits behind
+  // a NAT (every corporate desktop, every cloud VM, every VirtualBox
+  // guest). JSON-encoded for forward-compat; agent does JSON.parse and
+  // feeds the array to `new PeerConnection({ iceServers })`.
+  //
+  // ⚠️ This proto file MUST stay in sync with
+  // ../certusws-tracenium/proto/controlplane.proto. The PrivSvc C#
+  // service generates its classes from THIS copy at build time, AND
+  // the AgentCore loads its descriptor from THIS copy at runtime via
+  // @grpc/proto-loader. The backend gRPC server uses its OWN copy.
+  // Drift = silently-dropped fields at the C# boundary; exactly what
+  // happened 2026-06-10 before this commit landed (backend proto had
+  // the field, agent-w proto didn't, PrivSvc never knew the field
+  // existed, AgentCore got iceServersCount: 0 on every offer).
+  string iceServersJson = 5;
 }
 
 // Agent → Backend. The agent's SDP answer in response to a
