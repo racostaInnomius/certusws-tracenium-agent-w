@@ -275,26 +275,34 @@ export class PeerSession {
   }
 
   async acceptOffer(remoteSdp: string): Promise<void> {
-    // `setRemoteDescription(sdp, type)` — node-datachannel uses the
-    // raw SDP + type "offer". Once set, calling `setLocalDescription`
-    // with type "answer" triggers the onLocalDescription callback
-    // with the generated answer.
+    // `setRemoteDescription(sdp, type)` registers the browser's offer.
     //
-    // Granular logging here is intentional: both calls are SYNCHRONOUS
-    // C++ calls into libdatachannel. If one of them hangs (libdatachannel
-    // bug on an unrecognized SDP attribute like `a=extmap-allow-mixed`,
-    // an internal mutex deadlock, etc.) the event loop blocks and the
-    // agent goes zombie — but the WORKER that ran this never resumes,
-    // so no JS error fires. The only diagnostic is "we saw the BEFORE
-    // log but never the AFTER" — that pinpoints the line that hangs.
+    // libdatachannel auto-generates the answer the moment setRemoteDescription
+    // returns with type="offer" — it fires the onLocalDescription callback
+    // we registered in the constructor with the answer SDP. There is NO
+    // explicit `setLocalDescription("answer")` call needed; the README of
+    // node-datachannel actually shows this pattern (no setLocalDescription
+    // at all, just setRemoteDescription on the answerer side).
+    //
+    // The previous version of this function called
+    // `peer.setLocalDescription("answer")` explicitly. Empirically that
+    // call hangs forever inside the native code on Windows ARM64 (probably
+    // a DTLS init bug in the embedded libdatachannel for that platform) —
+    // the entire event loop blocks, no JS error fires, the operator just
+    // sees the agent go silent after "setRemoteDescription after". We
+    // captured this in TraceniumAgentCore_20260610.out.log lines 414-416:
+    // every log up through `setRemoteDescription after` arrives, then
+    // nothing. Removing the redundant explicit call sidesteps the bug
+    // AND matches the upstream-documented API.
     const sid = this.args.sessionId.slice(-8);
     this.args.ctx.logger?.info?.("[rcp] setRemoteDescription before", {
       sid, sdpLen: remoteSdp.length
     });
     this.peer.setRemoteDescription(remoteSdp, "offer");
-    this.args.ctx.logger?.info?.("[rcp] setRemoteDescription after", { sid });
-    this.peer.setLocalDescription("answer");
-    this.args.ctx.logger?.info?.("[rcp] setLocalDescription after (answer queued)", { sid });
+    this.args.ctx.logger?.info?.("[rcp] setRemoteDescription after — answer will be emitted via onLocalDescription", { sid });
+    // No explicit setLocalDescription — the constructor's onLocalDescription
+    // callback fires asynchronously as soon as libdatachannel has the
+    // answer prepared. That callback ships the SDP via sendAnswer().
   }
 
   addRemoteIce(ice: {
