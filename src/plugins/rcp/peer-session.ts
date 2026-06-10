@@ -113,12 +113,74 @@ export class PeerSession {
     // VM, any corp desktop, any cloud workload), ICE gathering yields
     // unreachable addresses and connectivity check fails ~15s in.
     //
-    // node-datachannel accepts the same { urls, username, credential }
-    // shape we send to the browser — no transform needed.
-    const peerIceServers = Array.isArray(args.iceServers) ? args.iceServers : [];
+    // Format conversion — IMPORTANT:
+    // The backend hands us the standard WebRTC RTCIceServer shape:
+    //   { urls: ["turn:host:port?transport=udp", ...], username, credential }
+    // That's what the browser eats. But `node-datachannel` does NOT accept
+    // that shape — it throws "IceServer config error (hostname OR/AND port
+    // is not suitable)" the moment you pass it (confirmed empirically on
+    // W11-JPR-Lab01 2026-06-10 16:24). Its native API expects:
+    //   { hostname: string, port: number, username?, password?, relayType? }
+    // OR pre-flattened `turn:user:pass@host:port` URL strings. We go with
+    // the object form because Cloudflare's tokens contain characters that
+    // would need URL-encoding inside the userinfo portion and that's a
+    // footgun for the next reader.
+    //
+    // We flatten each WebRTC entry's urls[] into one libdatachannel object
+    // per URL — that's what libdatachannel expects (one record per network
+    // path it should consider). Unparseable URLs are dropped + logged so
+    // we never silently degrade to host-only candidates again.
+    const rawIceServers = Array.isArray(args.iceServers) ? args.iceServers : [];
+    const peerIceServers: any[] = [];
+    const droppedUrls: string[] = [];
+    for (const s of rawIceServers) {
+      const urls: string[] = Array.isArray(s?.urls)
+        ? s.urls.filter((u: any) => typeof u === "string")
+        : (typeof s?.urls === "string" ? [s.urls] : []);
+      const username: string | undefined = typeof s?.username === "string" ? s.username : undefined;
+      const credential: string | undefined = typeof s?.credential === "string" ? s.credential : undefined;
+      for (const url of urls) {
+        // Accept: stun:host:port, turn:host:port[?transport=udp|tcp],
+        //         turns:host:port[?transport=tcp]
+        const m = /^(stun|turn|turns):([^:?\s]+):(\d+)(?:\?(.*))?$/.exec(url);
+        if (!m) {
+          droppedUrls.push(url);
+          continue;
+        }
+        const scheme = m[1];
+        const hostname = m[2];
+        const port = Number(m[3]);
+        const query = m[4] || "";
+        const entry: any = { hostname, port };
+        if (scheme === "turn" || scheme === "turns") {
+          if (username) entry.username = username;
+          if (credential) entry.password = credential;
+          // relayType — node-datachannel enum 'TurnUdp' | 'TurnTcp' | 'TurnTls'
+          if (scheme === "turns") {
+            entry.relayType = "TurnTls";
+          } else {
+            const transport = /transport=tcp/i.test(query) ? "TurnTcp" : "TurnUdp";
+            entry.relayType = transport;
+          }
+        }
+        peerIceServers.push(entry);
+      }
+    }
     ctx.logger?.info?.("[rcp] PeerConnection ice config", {
       sid: sessionId.slice(-8),
-      iceServersCount: peerIceServers.length
+      rawCount: rawIceServers.length,
+      flattenedCount: peerIceServers.length,
+      droppedCount: droppedUrls.length,
+      // Don't log creds or hostnames in prod logs once stabilised; ok for now
+      // because we're still validating the path end-to-end.
+      sample: peerIceServers.slice(0, 3).map((e: any) => ({
+        hostname: e.hostname,
+        port: e.port,
+        relayType: e.relayType,
+        hasUser: Boolean(e.username),
+        hasPass: Boolean(e.password)
+      })),
+      droppedSample: droppedUrls.slice(0, 3)
     });
     this.peer = new nodeDatachannel.PeerConnection(`rcp-${sessionId}`, {
       iceServers: peerIceServers
