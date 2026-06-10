@@ -279,8 +279,22 @@ export class PeerSession {
     // raw SDP + type "offer". Once set, calling `setLocalDescription`
     // with type "answer" triggers the onLocalDescription callback
     // with the generated answer.
+    //
+    // Granular logging here is intentional: both calls are SYNCHRONOUS
+    // C++ calls into libdatachannel. If one of them hangs (libdatachannel
+    // bug on an unrecognized SDP attribute like `a=extmap-allow-mixed`,
+    // an internal mutex deadlock, etc.) the event loop blocks and the
+    // agent goes zombie — but the WORKER that ran this never resumes,
+    // so no JS error fires. The only diagnostic is "we saw the BEFORE
+    // log but never the AFTER" — that pinpoints the line that hangs.
+    const sid = this.args.sessionId.slice(-8);
+    this.args.ctx.logger?.info?.("[rcp] setRemoteDescription before", {
+      sid, sdpLen: remoteSdp.length
+    });
     this.peer.setRemoteDescription(remoteSdp, "offer");
+    this.args.ctx.logger?.info?.("[rcp] setRemoteDescription after", { sid });
     this.peer.setLocalDescription("answer");
+    this.args.ctx.logger?.info?.("[rcp] setLocalDescription after (answer queued)", { sid });
   }
 
   addRemoteIce(ice: {

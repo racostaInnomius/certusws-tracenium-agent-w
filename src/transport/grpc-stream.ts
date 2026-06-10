@@ -58,6 +58,21 @@ const RECONNECT_BASE_MS = 2_000;
 const RECONNECT_MAX_MS = 60_000;
 let reconnectAttempts = 0;
 
+// Circuit breaker: after this many consecutive reconnect attempts WITHOUT a
+// real READY signal, give up the loop and exit the process so WinSW restarts
+// the WHOLE service (Node + PrivSvc together). The lived-through-prod failure
+// mode this catches: PrivSvc gets into a state where it RST-rejects every
+// incoming gRPC connect, AgentCore Node retries infinitely, the liveness
+// watchdog sees the writer respond (it's not wedged, just stuck reconnecting)
+// and won't recycle. Without this breaker the agent goes zombie until an
+// operator manually restarts the service — exactly the W11-JPR-Lab01 pattern
+// captured 2026-06-10 (30+ "denied" cycles over 10 min, then SIGINT by hand).
+//
+// 30 attempts at the post-fix backoff (2,4,8,16,32,60,60,...) ≈ 25 minutes
+// real time. Generous enough that a flaky network blip recovers; strict enough
+// that a stuck PrivSvc gets the whole stack recycled within half an hour.
+const MAX_CONSECUTIVE_RECONNECT_ATTEMPTS = 30;
+
 function nextReconnectDelayMs(): number {
   // min(base * 2^attempt, max) + uniform jitter [0, base * 2^attempt)
   const exp = Math.min(
@@ -798,11 +813,26 @@ export function startGrpcStream(ctx: AgentContext) {
       ];
       for (const [field, method] of variants) {
         if (msg && msg[field]) {
+          // Log BEFORE the IPC dispatch so we always know an outbound was attempted.
+          // Otherwise an answer that was generated but failed to ship looks identical
+          // to an answer that was never generated at all — both leave the operator's
+          // browser waiting forever with no agent log to distinguish.
+          ctx.logger?.info?.(`[rcp] sendControl dispatching ${method}`, {
+            sid: String((msg as any)[field]?.sessionId || "").slice(-8)
+          });
           (ctx.priv as any)
             .call({ v: 1, id: `${field}-${Date.now()}`, method, params: msg[field] })
+            .then(() => {
+              ctx.logger?.info?.(`[rcp] sendControl OK ${method}`);
+            })
             .catch((err: any) => {
-              ctx.logger?.warn?.(`[rcp] ${method} failed`, {
-                err: err?.message || String(err)
+              // Elevate to ERROR — when this fires the operator gets a hung
+              // "Establishing connection" with no clue. The previous WARN with
+              // sparse fields hid this in the noise.
+              ctx.logger?.error?.(`[rcp] sendControl FAILED ${method}`, {
+                err: err?.message || String(err),
+                code: err?.code,
+                sid: String((msg as any)[field]?.sessionId || "").slice(-8)
               });
             });
           return;
@@ -1066,6 +1096,24 @@ stream = client.Connect();
 
     reconnectAttempts += 1;
     grpcMetrics.reconnectCount += 1;
+
+    // Circuit breaker: if we've burned through this many attempts without a
+    // single successful READY, the issue isn't transient. Exit so the service
+    // manager restarts the WHOLE process tree (Node + PrivSvc together).
+    // See MAX_CONSECUTIVE_RECONNECT_ATTEMPTS comment for prod rationale.
+    if (reconnectAttempts >= MAX_CONSECUTIVE_RECONNECT_ATTEMPTS) {
+      ctx.logger?.error?.(
+        "gRPC stream: circuit breaker tripped — exiting for full service recycle",
+        { consecutiveAttempts: reconnectAttempts, lastReason: reason }
+      );
+      try {
+        ctx.trayStatus.markGrpcDisconnected();
+      } catch {}
+      // Give the log a beat to flush, then exit non-zero so WinSW relaunches.
+      setTimeout(() => process.exit(1), 500).unref?.();
+      return;
+    }
+
     const delayMs = nextReconnectDelayMs();
 
     ctx.logger?.warn?.("gRPC stream: scheduling reconnect", {
@@ -1140,16 +1188,32 @@ stream = client.Connect();
   stream.on("data", (msg: any) => {
     //logger.info("gRPC raw message received", msg);
     //logger.info("gRPC stream: message received", Object.keys(msg || {}));
-    // First byte from the server = the bridge is really up (TCP + TLS +
-    // auth + stream init all passed). Reset the reconnect counter so the
-    // next transient blip starts its backoff fresh at 2s, not at minute 10.
-    if (reconnectAttempts !== 0) {
-      ctx.logger?.info?.("gRPC stream: connected, resetting reconnect backoff", {
-        priorAttempts: reconnectAttempts
-      });
-      reconnectAttempts = 0;
-    }
+    // Reset the reconnect counter ONLY on `connected: true` — the previous
+    // version reset on ANY message, which was wrong: the bridge emits
+    // `helloError` / `receiverError` / `disconnected` synthetic messages
+    // through this same data channel BEFORE the real READY. Resetting on
+    // those breaks the exponential backoff entirely: every reconnect
+    // attempt logs "attempt: 1" with the base 2s delay, and a hard-down
+    // PrivSvc (the W11 production scenario captured in
+    // TraceniumAgentCore_20260609.err.log: 30+ cycles of "denied" over 10
+    // minutes) hammers the bridge instead of backing off. The watchdog
+    // sees the writer respond and never recycles, so the agent stays
+    // zombie until the operator manually restarts the service.
+    //
+    // Now the reset only happens on the explicit `connected: true` READY
+    // signal (the SAME signal that triggers all other "we're back online"
+    // bookkeeping below). Until then, the backoff keeps growing toward
+    // the cap, and PrivSvc gets breathing room instead of TCP RST storm.
     if (msg?.connected === true) {
+      // Real READY signal — NOW we can safely reset the backoff. Anything
+      // before this (helloError, receiverError) was the bridge fighting to
+      // come up, not proof it succeeded.
+      if (reconnectAttempts !== 0) {
+        ctx.logger?.info?.("gRPC stream: bridge READY, resetting reconnect backoff", {
+          priorAttempts: reconnectAttempts
+        });
+        reconnectAttempts = 0;
+      }
       ctx.logger?.info?.("gRPC stream: bridge ready", msg);
       grpcMetrics.connectedSinceUtc = new Date().toISOString();
       rotationInProgress = false;

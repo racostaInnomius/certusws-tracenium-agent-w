@@ -199,6 +199,17 @@ export class SessionManager {
   // RCP-related additions in that file's data-handler.
 
   private sendAnswer(sessionId: string, sdp: string): void {
+    // Verbose by intent — when "acceptOffer starting" was the last line in the
+    // log and nothing else followed, we needed to know whether (a) libdatachannel
+    // hung in setLocal/setRemoteDescription (we'd never get here), (b) the
+    // answer was generated but the IPC to PrivSvc failed silently (we'd see
+    // THIS log but no remoteSessionAnswer in the bus). Without distinguishing
+    // the two, the diagnosis loops back to "node-datachannel broke" when the
+    // real issue might be the grpc-client↔PrivSvc reconnect storm.
+    this.ctx.logger?.info?.("[rcp] sendAnswer dispatching", {
+      sid: sessionId.slice(-8),
+      sdpLen: sdp.length
+    });
     this.ctx.sendControl?.({
       remoteSessionAnswer: { sessionId, sdp }
     });
