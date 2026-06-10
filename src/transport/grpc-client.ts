@@ -43,8 +43,36 @@ type GrpcBridgeClient = {
 function attachPrivPushHandler(ctx: AgentContext, onPush: (msg: any) => void) {
   const priv: any = ctx.priv as any;
 
+  // CRITICAL: always update the "current" callback target before any
+  // skip-if-attached short-circuit. This fixes a stale-closure bug that
+  // silently dropped every reconnect-after-bridge-recovery payload.
+  //
+  // The bug (W11-JPR-Lab01 logs 2026-06-10 13:31–14:02 captured it
+  // perfectly): every `createGrpcClient()` call builds a NEW
+  // `stream = new EventEmitter()` instance. The `onPush` callback passed
+  // in here captures that fresh stream via closure. The earlier version
+  // of this function — "if (priv.__pushHandlerAttached) skip" — never
+  // updated the registration on subsequent calls, so PrivSvc kept
+  // delivering pushes to the very first callback, which fired
+  // `stream.emit("data", ...)` on the very first (now orphan) stream.
+  // Meanwhile `startGrpcStream` had registered its `stream.on("data")`
+  // listener on the new stream → emit and listen on different objects
+  // → every remoteSessionOffer / policyUpdate / runJob / agentUpdate
+  // arrived at PrivSvc, was logged as "[grpc-client] push message", and
+  // then evaporated. From the operator's perspective: "the agent is
+  // online but RCP / job push / policy push silently does nothing."
+  //
+  // Fix: route every push through `priv.__currentPushCallback`. The first
+  // attach installs a tiny dispatcher into PrivSvc that just calls
+  // whatever is in `__currentPushCallback` at the moment of the push.
+  // Subsequent reconnects just rewrite that slot — no double-subscribe,
+  // no stale stream.
+  priv.__currentPushCallback = onPush;
+
   if (priv.__pushHandlerAttached) {
-    ctx.logger?.warn?.("[grpc-client] push handler already attached, skipping re-registration");
+    // Dispatcher is already wired to PrivSvc; the slot rewrite above is
+    // all we need. Quiet log so we don't spam noisy reconnect WARNs.
+    ctx.logger?.debug?.("[grpc-client] push handler dispatcher already wired — slot updated");
     return;
   }
   priv.__pushHandlerAttached = true;
@@ -54,15 +82,30 @@ function attachPrivPushHandler(ctx: AgentContext, onPush: (msg: any) => void) {
     hasOn: typeof priv.on === "function"
   });
 
-  let attached = false;
+  // The tiny dispatcher — installed ONCE into PrivSvc, lives forever, and
+  // forwards to whatever `__currentPushCallback` points at right now. The
+  // `try/catch` is paranoid: a downstream bug in `onPush` (the consumer)
+  // must NOT break the chain for everyone else. We log and continue.
+  const dispatcher = (msg: any) => {
+    const cb = priv.__currentPushCallback;
+    if (!cb) return;
+    try {
+      cb(msg);
+    } catch (err: any) {
+      ctx.logger?.error?.("[grpc-client] push dispatcher: callback threw", {
+        err: err?.message || String(err)
+      });
+    }
+  };
 
+  let attached = false;
   if (typeof priv.onPush === "function") {
     ctx.logger?.info?.("[grpc-client] subscribing via priv.onPush()");
-    priv.onPush(onPush);
+    priv.onPush(dispatcher);
     attached = true;
   } else if (typeof priv.on === "function") {
     ctx.logger?.info?.("[grpc-client] subscribing via priv.on('push')");
-    priv.on("push", onPush);
+    priv.on("push", dispatcher);
     attached = true;
   }
 

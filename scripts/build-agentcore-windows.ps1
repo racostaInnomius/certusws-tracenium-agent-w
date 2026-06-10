@@ -190,55 +190,50 @@ $nativePkg | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $OutApp "pac
 
 Push-Location $OutApp
 try {
-  # Two modes depending on host vs. target arch:
+  # Unified prebuild-only path for BOTH native (x64-on-x64) and cross
+  # (x64-on-arm64) builds.
   #
-  # Native arch (host == target):
-  #   Step 1: `npm install` WITHOUT --build-from-source. Every native
-  #   dep grabs its own prebuild if available — node-datachannel pulls
-  #   its napi-v8 win32-$Arch prebuild, node-pty pulls its win32-$Arch
-  #   prebuild, better-sqlite3 also tries to grab a prebuild.
-  #   Step 2: `npm rebuild better-sqlite3 --build-from-source` forces
-  #   ONLY sqlite3 to rebuild fresh against the host's headers, so its
-  #   ABI matches the bundled node we ship in the MSI. We don't rebuild
-  #   the other two because:
-  #     - node-datachannel's --build-from-source path is broken
-  #       (prebuild@13.0.1 throws "expected first argument to be an
-  #       array"). Its napi-v8 prebuild is forward-compatible with
-  #       Node 24, so the prebuild path Just Works.
-  #     - node-pty's prebuilds are also forward-compatible and there's
-  #       no ABI mismatch concern (it doesn't load against the bundled
-  #       sqlite linkage like better-sqlite3 does).
+  # History — why we changed to prebuild-only for x64 too:
   #
-  # Cross arch (host != target, e.g. x64 host building arm64 MSI):
-  #   We can't compile a foreign-arch binary from this host without
-  #   cross-compilers. Install in PREBUILD-ONLY mode: npm_config_arch
-  #   + target_platform tell each package's prebuild-install which
-  #   target binary to fetch. better-sqlite3 has shipped win-arm64
-  #   prebuilds since v11.x; node-datachannel ships win32-arm64;
-  #   node-pty ships win32-arm64. If any drops the arm64 prebuild in
-  #   a future version, this script fails with a clear "no prebuild
-  #   found" error.
-  $hostArch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
+  #   The previous "native arch → rebuild better-sqlite3 from source" step
+  #   broke when GitHub's `windows-latest` runner image rolled forward to
+  #   Visual Studio version 18 (Dev17.next / VS 2026 preview). node-gyp
+  #   11.5.0 doesn't recognise that VS version yet — its detection table
+  #   hardcodes 2017/2019/2022 only — so the rebuild fails with:
+  #     find VS unknown version "undefined" found at
+  #       "C:\Program Files\Microsoft Visual Studio\18\Enterprise"
+  #     could not find a version of Visual Studio 2017 or newer to use
+  #   2026-06-10 build failure: see scripts/build-agentcore-windows logs
+  #   for run 27254297502.
+  #
+  #   The arm64 cross-compile path was already prebuild-only and worked
+  #   fine in the same broken runner — proof that the prebuild path is
+  #   robust against runner image drift. We just need to USE it for x64
+  #   too.
+  #
+  # Why the prebuild is good enough on x64 (the rebuild's original goal):
+  #
+  #   The original rebuild-from-source step existed to guarantee the
+  #   better-sqlite3 .node ABI matched the bundled Node we ship in the
+  #   MSI. better-sqlite3 publishes per-NODE-ABI prebuilds (node-v127 =
+  #   Node 22, node-v141 = Node 24, etc.) — `prebuild-install` picks the
+  #   correct one based on the active Node binary's `process.versions.modules`
+  #   field. Since the bundled Node is set explicitly by .nodeversion (today
+  #   22.22.3 → ABI v127) and matches the host Node used during the build,
+  #   `prebuild-install` always lands the right binding. The from-source
+  #   build added no ABI guarantee the prebuild didn't already provide; it
+  #   just added a hard dependency on a working VS C++ toolchain.
+  #
+  # If a future better-sqlite3 release drops the win32-$Arch prebuild for
+  # our ABI, this script fails clearly at `npm install` with the
+  # `prebuild-install` "no prebuild found" error rather than silently
+  # falling back to a broken VS rebuild.
   $env:npm_config_arch = $Arch
   $env:npm_config_target_platform = "win32"
 
-  # Step 1 — install all native deps using their prebuilds. Applies
-  # to both native and cross-compile modes; --build-from-source is
-  # intentionally absent so node-datachannel and node-pty don't fall
-  # into their broken / unnecessary build paths.
   Write-Host "  step 1: npm install (prebuilds for all native deps)" -ForegroundColor DarkGray
   npm install --omit=dev --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { throw "npm install (native deps) failed" }
-
-  # Step 2 — only on native-arch builds, rebuild better-sqlite3 from
-  # source. Cross-arch builds skip this and trust the win-$Arch prebuild.
-  if ($hostArch -eq $Arch) {
-    Write-Host "  step 2: rebuild better-sqlite3 from source (native build)" -ForegroundColor DarkGray
-    npm rebuild better-sqlite3 --build-from-source --no-audit --no-fund
-    if ($LASTEXITCODE -ne 0) { throw "npm rebuild better-sqlite3 failed" }
-  } else {
-    Write-Host "  step 2 skipped: cross-compile uses better-sqlite3 prebuild" -ForegroundColor DarkGray
-  }
 } finally {
   Pop-Location
   Remove-Item env:npm_config_arch -ErrorAction SilentlyContinue
