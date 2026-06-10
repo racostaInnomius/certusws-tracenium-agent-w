@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "y6JvAdz0g7k=",
+  "dgSpecHash": "/AOGhP48SJY=",
   "success": true,
   "projectFilePath": "/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj",
   "expectedPackageFiles": [
@@ -37,16 +37,20 @@
     "/Users/javierpacheco/.nuget/packages/microsoft.extensions.options/8.0.0/microsoft.extensions.options.8.0.0.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/microsoft.extensions.options.configurationextensions/8.0.0/microsoft.extensions.options.configurationextensions.8.0.0.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/microsoft.extensions.primitives/8.0.0/microsoft.extensions.primitives.8.0.0.nupkg.sha512",
-    "/Users/javierpacheco/.nuget/packages/microsoft.net.illink.tasks/8.0.24/microsoft.net.illink.tasks.8.0.24.nupkg.sha512",
+    "/Users/javierpacheco/.nuget/packages/microsoft.net.illink.tasks/8.0.27/microsoft.net.illink.tasks.8.0.27.nupkg.sha512",
+    "/Users/javierpacheco/.nuget/packages/microsoft.win32.systemevents/8.0.0/microsoft.win32.systemevents.8.0.0.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/system.diagnostics.diagnosticsource/8.0.0/system.diagnostics.diagnosticsource.8.0.0.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/system.diagnostics.eventlog/8.0.0/system.diagnostics.eventlog.8.0.0.nupkg.sha512",
+    "/Users/javierpacheco/.nuget/packages/system.drawing.common/8.0.0/system.drawing.common.8.0.0.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/system.serviceprocess.servicecontroller/8.0.0/system.serviceprocess.servicecontroller.8.0.0.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/system.text.encodings.web/8.0.0/system.text.encodings.web.8.0.0.nupkg.sha512",
     "/Users/javierpacheco/.nuget/packages/system.text.json/8.0.0/system.text.json.8.0.0.nupkg.sha512",
-    "/Users/javierpacheco/.nuget/packages/microsoft.netcore.app.ref/8.0.24/microsoft.netcore.app.ref.8.0.24.nupkg.sha512",
-    "/Users/javierpacheco/.nuget/packages/microsoft.windowsdesktop.app.ref/8.0.24/microsoft.windowsdesktop.app.ref.8.0.24.nupkg.sha512",
-    "/Users/javierpacheco/.nuget/packages/microsoft.aspnetcore.app.ref/8.0.24/microsoft.aspnetcore.app.ref.8.0.24.nupkg.sha512",
-    "/Users/javierpacheco/.nuget/packages/microsoft.netcore.app.host.osx-arm64/8.0.24/microsoft.netcore.app.host.osx-arm64.8.0.24.nupkg.sha512"
+    "/Users/javierpacheco/.nuget/packages/microsoft.netcore.app.ref/8.0.27/microsoft.netcore.app.ref.8.0.27.nupkg.sha512",
+    "/Users/javierpacheco/.nuget/packages/microsoft.netcore.app.runtime.osx-arm64/8.0.27/microsoft.netcore.app.runtime.osx-arm64.8.0.27.nupkg.sha512",
+    "/Users/javierpacheco/.nuget/packages/microsoft.windowsdesktop.app.ref/8.0.27/microsoft.windowsdesktop.app.ref.8.0.27.nupkg.sha512",
+    "/Users/javierpacheco/.nuget/packages/microsoft.aspnetcore.app.ref/8.0.27/microsoft.aspnetcore.app.ref.8.0.27.nupkg.sha512",
+    "/Users/javierpacheco/.nuget/packages/microsoft.aspnetcore.app.runtime.osx-arm64/8.0.27/microsoft.aspnetcore.app.runtime.osx-arm64.8.0.27.nupkg.sha512",
+    "/Users/javierpacheco/.nuget/packages/microsoft.netcore.app.host.osx-arm64/8.0.27/microsoft.netcore.app.host.osx-arm64.8.0.27.nupkg.sha512"
   ],
   "logs": []
 }

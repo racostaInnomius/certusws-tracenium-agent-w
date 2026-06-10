@@ -23,7 +23,8 @@
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
-          "net8.0-windows7.0": {
+          "net8.0-windows": {
+            "framework": "net8.0-windows7.0",
             "targetAlias": "net8.0-windows",
             "projectReferences": {}
           }
@@ -38,10 +39,11 @@
           "auditLevel": "low",
           "auditMode": "direct"
         },
-        "SdkAnalysisLevel": "10.0.100"
+        "SdkAnalysisLevel": "10.0.300"
       },
       "frameworks": {
-        "net8.0-windows7.0": {
+        "net8.0-windows": {
+          "framework": "net8.0-windows7.0",
           "targetAlias": "net8.0-windows",
           "dependencies": {
             "Google.Protobuf": {
@@ -64,8 +66,12 @@
             "Microsoft.NET.ILLink.Tasks": {
               "suppressParent": "All",
               "target": "Package",
-              "version": "[8.0.24, )",
+              "version": "[8.0.27, )",
               "autoReferenced": true
+            },
+            "System.Drawing.Common": {
+              "target": "Package",
+              "version": "[8.0.0, )"
             }
           },
           "imports": [
@@ -82,19 +88,27 @@
           "downloadDependencies": [
             {
               "name": "Microsoft.AspNetCore.App.Ref",
-              "version": "[8.0.24, 8.0.24]"
+              "version": "[8.0.27, 8.0.27]"
+            },
+            {
+              "name": "Microsoft.AspNetCore.App.Runtime.osx-arm64",
+              "version": "[8.0.27, 8.0.27]"
             },
             {
               "name": "Microsoft.NETCore.App.Host.osx-arm64",
-              "version": "[8.0.24, 8.0.24]"
+              "version": "[8.0.27, 8.0.27]"
             },
             {
               "name": "Microsoft.NETCore.App.Ref",
-              "version": "[8.0.24, 8.0.24]"
+              "version": "[8.0.27, 8.0.27]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Runtime.osx-arm64",
+              "version": "[8.0.27, 8.0.27]"
             },
             {
               "name": "Microsoft.WindowsDesktop.App.Ref",
-              "version": "[8.0.24, 8.0.24]"
+              "version": "[8.0.27, 8.0.27]"
             }
           ],
           "frameworkReferences": {
@@ -102,7 +116,12 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/10.0.103/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/10.0.300/PortableRuntimeIdentifierGraph.json"
+        }
+      },
+      "runtimes": {
+        "osx-arm64": {
+          "#import": []
         }
       }
     }

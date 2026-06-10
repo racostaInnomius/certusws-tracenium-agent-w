@@ -860,7 +860,10 @@ public static class IpcGrpcHandlers
                 int quality = 80;
                 if (!string.IsNullOrWhiteSpace(qualStr)) int.TryParse(qualStr, out quality);
                 quality = Math.Max(1, Math.Min(100, quality));
-                return ScreenCapture.Capture(req.Id, quality);
+                // M3.S1+ — DXGI Desktop Duplication (replaces GDI BitBlt
+                // that failed on every Session 0 service-side capture).
+                // See ScreenCaptureDxgi.cs for the full rationale.
+                return ScreenCaptureDxgi.Capture(req.Id, quality);
             }
             catch (Exception ex)
             {
