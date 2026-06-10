@@ -5,7 +5,7 @@
 # hard-clean uninstall + reinstall from a locally-supplied .msi.
 #
 # Usage (open PowerShell as ADMIN):
-#   .\tracenium-rescue-windows.ps1 -MsiPath C:\path\to\Tracenium-Agent-1.1.20-x64.msi
+#   .\tracenium-rescue-windows.ps1 -MsiPath C:\path\to\Tracenium-Agent-1.1.21-x64.msi
 #
 # What it does:
 #   1. Stops Tracenium services + kills any lingering node.exe under
@@ -183,5 +183,5 @@ if ($running) {
 }
 
 Write-Host ""
-Write-Host "✓ Rescue complete. Device should report 1.1.20 to backend within 1-2 min." -ForegroundColor Green
-Write-Host "  Verify in the portal that this device now shows agent_version 1.1.20."
+Write-Host "✓ Rescue complete. Device should report 1.1.21 to backend within 1-2 min." -ForegroundColor Green
+Write-Host "  Verify in the portal that this device now shows agent_version 1.1.21."

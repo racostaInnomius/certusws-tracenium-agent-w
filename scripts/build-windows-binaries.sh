@@ -65,16 +65,16 @@ AGENTTRAY_PROJECT="$AGENT_REPO_DIR/windows/Tracenium.AgentTray/Tracenium.AgentTr
 # packagers — same pattern as build-linux-binaries.sh + build-macos-pkg.sh).
 # Passed into `dotnet publish` as Version + AssemblyVersion + FileVersion
 # so the emitted PE binaries' VersionInfo block carries the actual
-# release version (1.1.20 etc.) instead of the SDK's default 1.0.0.0.
+# release version (1.1.21 etc.) instead of the SDK's default 1.0.0.0.
 #
 # This shows up in Explorer Properties → Details and in `signtool verify`
 # output. Previously this was missing — the .exes shipped with
-# FileVersion=1.0.0.0 while the surrounding MSI said 1.1.20, which
+# FileVersion=1.0.0.0 while the surrounding MSI said 1.1.21, which
 # looks sloppy and complicates triage when someone reports "my agent
 # is on version X but the .exe says Y".
 #
 # AssemblyVersion / FileVersion require a 4-part numeric (a.b.c.d), so
-# we strip any semver pre-release suffix (e.g. "1.1.20-rc1" → "1.1.20")
+# we strip any semver pre-release suffix (e.g. "1.1.21-rc1" → "1.1.21")
 # before adding the trailing ".0". The full semver-friendly string still
 # rides on `-p:Version=` which accepts any SemVer 2.0 value.
 if [ -n "${TRACENIUM_AGENT_VERSION:-}" ]; then

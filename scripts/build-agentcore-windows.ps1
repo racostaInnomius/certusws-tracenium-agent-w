@@ -277,7 +277,7 @@ if (Test-Path $testExtension) {
 # under the staging tree (it doesn't filter by extension). Mach-O / ELF
 # .node files are not Windows PE format, so signtool rejects them with:
 #   "This file format cannot be signed because it is not recognized."
-# Observed in the 1.1.20 first attempt — workflow failed signing
+# Observed in the 1.1.21 first attempt — workflow failed signing
 # darwin-arm64/pty.node and darwin-x64/pty.node from node-pty.
 #
 # We prune to win32-$Arch only (not all win32 dirs) because shipping
@@ -372,7 +372,7 @@ Write-Host "→ copied WinSW wrapper from repo ($Arch)" -ForegroundColor Yellow
 #      Trusted Signing step rejects with 0x800700C1
 #      (ERROR_BAD_EXE_FORMAT).
 #   2. Failures observed on BOTH x64 and arm64 builds in CI runs
-#      26041422393 (1.1.17 first attempt) and again after the 1.1.20
+#      26041422393 (1.1.17 first attempt) and again after the 1.1.21
 #      bump — same exit code, same binary corruption pattern.
 #   3. Root cause appears to be WinSW v3's .NET single-file packed
 #      layout: rcedit's resource-section rewriter assumes a flatter
