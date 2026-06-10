@@ -43,11 +43,32 @@ export class SessionManager {
     const sdp = String(params?.sdp || "");
     const capability = String(params?.capability || "");
     const timeoutSeconds = Number(params?.sessionTimeoutSeconds || 0) || 4 * 60 * 60;
+    // iceServersJson — added 2026-06-10. Backend forwards the same
+    // Cloudflare-minted TURN creds it gave the browser, so the agent
+    // can emit relay candidates too. JSON-stringified RTCIceServer[].
+    // Empty/absent on legacy backends (before the proto field existed),
+    // in which case we fall back to no iceServers and behave like
+    // before (host-only candidates, ICE works only on the same LAN).
+    const iceServersJson = String(params?.iceServersJson || "").trim();
+    let iceServers: any[] = [];
+    if (iceServersJson) {
+      try {
+        const parsed = JSON.parse(iceServersJson);
+        if (Array.isArray(parsed)) iceServers = parsed;
+      } catch (err: any) {
+        this.ctx.logger?.warn?.("[rcp] failed to parse iceServersJson; falling back to empty", {
+          sid: sessionId.slice(-8),
+          err: err?.message || String(err),
+          firstChars: iceServersJson.slice(0, 80)
+        });
+      }
+    }
     this.ctx.logger?.info?.("[rcp] onOffer entered", {
       sid: sessionId.slice(-8),
       capability,
       sdpLen: sdp.length,
-      activeSessions: this.sessions.size
+      activeSessions: this.sessions.size,
+      iceServersCount: iceServers.length
     });
 
     if (!sessionId || !sdp || !capability) {
@@ -113,6 +134,7 @@ export class SessionManager {
       sessionId,
       capability,
       ctx: this.ctx,
+      iceServers,
       sendAnswer: (s) => this.sendAnswer(sessionId, s),
       sendIce: (cand, mid, mline) =>
         this.sendIce(sessionId, cand, mid, mline),

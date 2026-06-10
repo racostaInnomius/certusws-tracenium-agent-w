@@ -61,6 +61,13 @@ type PeerSessionArgs = {
   sessionId: string;
   capability: string;
   ctx: AgentContext;
+  // ICE servers (STUN + TURN) for the agent's own peer connection,
+  // extracted from the offer's iceServersJson field. Without them
+  // the agent only emits `host` candidates from its NIC, which is
+  // unreachable from the operator's browser whenever the agent is
+  // behind any NAT. Defaults to [] for backward compat (the legacy
+  // STUN-public-only behaviour).
+  iceServers: any[];
   sendAnswer: (sdp: string) => void;
   sendIce: (candidate: string, sdpMid: string, sdpMLineIndex: number) => void;
   // M1.S3 — transcript chunk uploader (rcp.shell only).
@@ -96,13 +103,25 @@ export class PeerSession {
   constructor(private readonly args: PeerSessionArgs) {
     const { ctx, sessionId } = args;
 
-    // M1.S1 — empty iceServers. The browser's offer contains the
-    // TURN candidates negotiated client-side; the agent only needs
-    // host + reflexive candidates of its own. If a corporate
-    // network forces relay-only paths from the agent side, M3 adds
-    // an agent-side TURN config.
+    // ICE servers are the SAME Cloudflare-minted creds the browser got
+    // back from POST /sessions — backend embeds them in the offer via
+    // iceServersJson, session-manager parses them, we receive them here.
+    // Both peers MUST have iceServers: each discovers its own candidates
+    // independently (the offer's `a=candidate` lines are the BROWSER's
+    // candidates, not the agent's). Without these the agent only emits
+    // host candidates from its local NIC; if that NIC is on a NAT (any
+    // VM, any corp desktop, any cloud workload), ICE gathering yields
+    // unreachable addresses and connectivity check fails ~15s in.
+    //
+    // node-datachannel accepts the same { urls, username, credential }
+    // shape we send to the browser — no transform needed.
+    const peerIceServers = Array.isArray(args.iceServers) ? args.iceServers : [];
+    ctx.logger?.info?.("[rcp] PeerConnection ice config", {
+      sid: sessionId.slice(-8),
+      iceServersCount: peerIceServers.length
+    });
     this.peer = new nodeDatachannel.PeerConnection(`rcp-${sessionId}`, {
-      iceServers: []
+      iceServers: peerIceServers
     });
 
     this.peer.onLocalDescription((sdp: string, type: string) => {
