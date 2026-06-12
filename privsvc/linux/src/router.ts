@@ -26,8 +26,16 @@ import {
   handleFactsSend,
   handleGrpcConnect,
   handleHeartbeat,
+  handleRemoteSessionAnswer,
+  handleRemoteSessionIce,
+  handleRemoteSessionClose,
+  handleRemoteSessionError,
+  handleRemoteSessionTranscript,
+  handleRemoteFileTransferAudit,
+  handleRemoteScreenAudit,
 } from "./grpc-bridge";
 import { handleSecurityPosture } from "./security-posture";
+import { handleScreenCapture } from "./screen-capture";
 import { handlePatchScan, handlePatchInstall } from "./patch-management";
 import { handlePmpReadCheckState, handlePmpRemediate } from "./pmp-remediation";
 import { handleSdpDetect, handleSdpDownload, handleSdpInstall } from "./sdp";
@@ -47,7 +55,10 @@ function requiresRoot(method: string) {
     method.startsWith("sdp.") ||
     method.startsWith("pmp.") ||
     method === "patch.install" ||
-    method === "agent.install"
+    method === "agent.install" ||
+    // RCP M3.S1 — screen.capture spawns the capture helper as the
+    // session user (runuser/su), which requires root.
+    method === "screen.capture"
   );
 }
 
@@ -113,6 +124,41 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "grpc.close":
       return handleClose(req);
+
+    // RCP M1.S1 — agent-side outbound signaling. The Node.js RCP
+    // plugin sends these when the WebRTC peer generates an answer /
+    // discovers a candidate / closes / errors. Mirror of Windows
+    // Router.cs:109-118.
+    case "grpc.send.remoteSessionAnswer":
+      return handleRemoteSessionAnswer(req);
+
+    case "grpc.send.remoteSessionIce":
+      return handleRemoteSessionIce(req);
+
+    case "grpc.send.remoteSessionClose":
+      return handleRemoteSessionClose(req);
+
+    case "grpc.send.remoteSessionError":
+      return handleRemoteSessionError(req);
+
+    // RCP M1.S3 — shell transcript chunks (agent → server).
+    case "grpc.send.remoteSessionTranscript":
+      return handleRemoteSessionTranscript(req);
+
+    // RCP M2.S1 — file transfer audit (agent → server).
+    case "grpc.send.remoteFileTransferAudit":
+      return handleRemoteFileTransferAudit(req);
+
+    // RCP M3.S1 — screen share audit (agent → server).
+    case "grpc.send.remoteScreenAudit":
+      return handleRemoteScreenAudit(req);
+
+    // RCP M3.S1 — screen capture (Node.js → PrivSvc → C helper).
+    // PrivSvc owns spawning the capture helper as the session user
+    // with DISPLAY/XAUTHORITY; result is a base64 JPEG. Mirror of
+    // Windows Router.cs:121.
+    case "screen.capture":
+      return handleScreenCapture(req);
 
     // ── SCP — security posture (Phase 5) ──────────────────────────
     // Both method names route to the same handler. Schema 2.0 uses

@@ -8,11 +8,19 @@ import {
   handleFactsChunk,
   handleFactsSend,
   handleGrpcConnect,
-  handleHeartbeat
+  handleHeartbeat,
+  handleRemoteSessionAnswer,
+  handleRemoteSessionIce,
+  handleRemoteSessionClose,
+  handleRemoteSessionError,
+  handleRemoteSessionTranscript,
+  handleRemoteFileTransferAudit,
+  handleRemoteScreenAudit
 } from "./grpc-bridge";
 import { handlePatchInstall, handlePatchScan } from "./patch-management";
 import { handlePmpReadCheckState, handlePmpRemediate } from "./pmp-remediation";
 import { handleSecurityPosture } from "./security-posture";
+import { handleScreenCapture } from "./screen-capture";
 import { handleSdpDetect, handleSdpDownload, handleSdpInstall } from "./sdp";
 import { logger } from "./logger";
 
@@ -35,7 +43,11 @@ function requiresRoot(method: string) {
       || method.startsWith("grpc.")
       || method.startsWith("sdp.")
       || method.startsWith("pmp.")
-      || method === "patch.install";
+      || method === "patch.install"
+      // RCP M3.S1 — screen.capture spawns the capture helper into the
+      // console user's GUI session via `launchctl asuser` + `sudo`,
+      // both of which require root.
+      || method === "screen.capture";
 }
 
 export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise<PrivSvcResponse> {
@@ -98,6 +110,40 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "grpc.close":
       return handleClose(req);
+
+    // RCP M1.S1 — agent-side outbound signaling. The Node.js RCP
+    // plugin sends these when the WebRTC peer generates an answer /
+    // discovers a candidate / closes / errors. Mirror of Windows
+    // Router.cs:109-118.
+    case "grpc.send.remoteSessionAnswer":
+      return handleRemoteSessionAnswer(req);
+
+    case "grpc.send.remoteSessionIce":
+      return handleRemoteSessionIce(req);
+
+    case "grpc.send.remoteSessionClose":
+      return handleRemoteSessionClose(req);
+
+    case "grpc.send.remoteSessionError":
+      return handleRemoteSessionError(req);
+
+    // RCP M1.S3 — shell transcript chunks (agent → server).
+    case "grpc.send.remoteSessionTranscript":
+      return handleRemoteSessionTranscript(req);
+
+    // RCP M2.S1 — file transfer audit (agent → server).
+    case "grpc.send.remoteFileTransferAudit":
+      return handleRemoteFileTransferAudit(req);
+
+    // RCP M3.S1 — screen share audit (agent → server).
+    case "grpc.send.remoteScreenAudit":
+      return handleRemoteScreenAudit(req);
+
+    // RCP M3.S1 — screen capture (Node.js → PrivSvc → Swift helper).
+    // PrivSvc owns spawning the capture helper into the user's GUI
+    // session; result is a base64 JPEG. Mirror of Windows Router.cs:121.
+    case "screen.capture":
+      return handleScreenCapture(req);
 
     case "software.inventory":
       return fail(req.id, "not_supported", "software.inventory is collected by Agent Core on macOS");

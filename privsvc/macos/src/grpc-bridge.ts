@@ -697,6 +697,61 @@ function handleControlMessage(msg: any) {
     return;
   }
 
+  // ── RCP M1.S1 signaling: server → agent ───────────────────────────
+  // Four message types from the RCP oneof variants (proto fields
+  // 20-24). PrivSvc just forwards the shape to AgentCore; the RCP
+  // SessionManager (src/plugins/rcp/*) owns the WebRTC peer state.
+  // Mirror of Windows GrpcBridge.cs:1201-1275.
+  if (msg.remoteSessionOffer) {
+    push("grpc.control.remoteSessionOffer", {
+      sessionId: String(msg.remoteSessionOffer.sessionId || ""),
+      sdp: String(msg.remoteSessionOffer.sdp || ""),
+      capability: String(msg.remoteSessionOffer.capability || ""),
+      sessionTimeoutSeconds: Number(msg.remoteSessionOffer.sessionTimeoutSeconds ?? 0),
+      // ICE servers forwarded from the backend (Cloudflare TURN creds,
+      // minted per-session, same ones the operator's browser got).
+      // AgentCore needs them so the WebRTC peer emits relay candidates
+      // of its own; without them the peer only emits host candidates
+      // from its local NIC and ICE deterministically fails behind any
+      // NAT. Dropping this field here makes the whole offer a no-op
+      // end-to-end (see the proto field-5 comment + the 2026-06-10
+      // Windows incident).
+      iceServersJson: String(msg.remoteSessionOffer.iceServersJson || ""),
+      receivedAtUtc: new Date().toISOString()
+    });
+    return;
+  }
+
+  if (msg.remoteSessionIce) {
+    push("grpc.control.remoteSessionIce", {
+      sessionId: String(msg.remoteSessionIce.sessionId || ""),
+      candidate: String(msg.remoteSessionIce.candidate || ""),
+      sdpMid: String(msg.remoteSessionIce.sdpMid || ""),
+      sdpMLineIndex: Number(msg.remoteSessionIce.sdpMLineIndex ?? 0),
+      receivedAtUtc: new Date().toISOString()
+    });
+    return;
+  }
+
+  if (msg.remoteSessionClose) {
+    push("grpc.control.remoteSessionClose", {
+      sessionId: String(msg.remoteSessionClose.sessionId || ""),
+      reason: String(msg.remoteSessionClose.reason || ""),
+      receivedAtUtc: new Date().toISOString()
+    });
+    return;
+  }
+
+  if (msg.remoteSessionError) {
+    push("grpc.control.remoteSessionError", {
+      sessionId: String(msg.remoteSessionError.sessionId || ""),
+      code: String(msg.remoteSessionError.code || ""),
+      message: String(msg.remoteSessionError.message || ""),
+      receivedAtUtc: new Date().toISOString()
+    });
+    return;
+  }
+
   if (msg.rotateCert) {
     push("grpc.control.rotateCert", {
       reason: msg.rotateCert.reason || "server_request",
@@ -1140,4 +1195,169 @@ export async function handleClose(req: PrivSvcRequest): Promise<PrivSvcResponse>
   } catch (err: any) {
     return fail(req.id, "grpc_close_failed", err?.message || String(err));
   }
+}
+
+// ── RCP outbound signaling / audit (agent → server) ──────────────────
+//
+// Each handler unpacks the params dict agent-core sends over IPC
+// (src/transport/grpc-stream.ts sendControl + screen/file session
+// audit fires) and writes the matching ControlMessage oneof variant
+// to the live gRPC stream. Mirror of Windows IpcGrpcHandlers.cs +
+// GrpcBridge.Send* (Router.cs:109-118).
+//
+// Contract parity with Windows: a missing sessionId is a hard
+// bad_request; a write that fails because the bridge is mid-reconnect
+// is swallowed (logged, returns ok:true) — the RCP SessionManager
+// already treats a hung answer as a teardown signal and the operator's
+// browser surfaces the stall, so we don't tear the IPC response down
+// over a transient. The signaling only ever fires while the stream
+// that delivered the offer is up, so the skip path is an edge case.
+
+function remoteSessionTraceId(): string {
+  return crypto.randomUUID().replace(/-/g, "");
+}
+
+export async function handleRemoteSessionAnswer(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const sessionId = String(req.params?.sessionId || "");
+  if (!sessionId) return fail(req.id, "bad_request", "sessionId required");
+  try {
+    await write({
+      traceId: remoteSessionTraceId(),
+      remoteSessionAnswer: {
+        sessionId,
+        sdp: String(req.params?.sdp || "")
+      }
+    });
+  } catch (err: any) {
+    logger.warn("remote_session_answer_skipped", { sessionId, error: err?.message || String(err) });
+  }
+  return success(req.id, { ok: true });
+}
+
+export async function handleRemoteSessionIce(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const sessionId = String(req.params?.sessionId || "");
+  if (!sessionId) return fail(req.id, "bad_request", "sessionId required");
+  try {
+    await write({
+      traceId: remoteSessionTraceId(),
+      remoteSessionIce: {
+        sessionId,
+        candidate: String(req.params?.candidate || ""),
+        sdpMid: String(req.params?.sdpMid || ""),
+        sdpMLineIndex: Number(req.params?.sdpMLineIndex ?? 0)
+      }
+    });
+  } catch (err: any) {
+    logger.warn("remote_session_ice_skipped", { sessionId, error: err?.message || String(err) });
+  }
+  return success(req.id, { ok: true });
+}
+
+export async function handleRemoteSessionClose(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const sessionId = String(req.params?.sessionId || "");
+  if (!sessionId) return fail(req.id, "bad_request", "sessionId required");
+  try {
+    await write({
+      traceId: remoteSessionTraceId(),
+      remoteSessionClose: {
+        sessionId,
+        reason: String(req.params?.reason || "")
+      }
+    });
+  } catch (err: any) {
+    logger.warn("remote_session_close_skipped", { sessionId, error: err?.message || String(err) });
+  }
+  return success(req.id, { ok: true });
+}
+
+export async function handleRemoteSessionError(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const sessionId = String(req.params?.sessionId || "");
+  if (!sessionId) return fail(req.id, "bad_request", "sessionId required");
+  try {
+    await write({
+      traceId: remoteSessionTraceId(),
+      remoteSessionError: {
+        sessionId,
+        code: String(req.params?.code || ""),
+        message: String(req.params?.message || "")
+      }
+    });
+  } catch (err: any) {
+    logger.warn("remote_session_error_skipped", { sessionId, error: err?.message || String(err) });
+  }
+  return success(req.id, { ok: true });
+}
+
+// RCP M1.S3 — agent → backend transcript chunks. Latency-tolerant
+// (buffered every ~5s by the session) so the same swallow-on-skip
+// rule applies. `data` can be many KB; we don't log it.
+export async function handleRemoteSessionTranscript(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const sessionId = String(req.params?.sessionId || "");
+  if (!sessionId) return fail(req.id, "bad_request", "sessionId required");
+  try {
+    await write({
+      traceId: remoteSessionTraceId(),
+      remoteSessionTranscript: {
+        sessionId,
+        stream: String(req.params?.stream || "stdout"),
+        tsDeltaSeconds: Number(req.params?.tsDeltaSeconds ?? 0),
+        data: String(req.params?.data || ""),
+        bytesCount: Number(req.params?.bytesCount ?? 0)
+      }
+    });
+  } catch (err: any) {
+    logger.warn("remote_session_transcript_skipped", { sessionId, error: err?.message || String(err) });
+  }
+  return success(req.id, { ok: true });
+}
+
+// M2.S1 — file transfer audit (agent → server). sizeBytes /
+// transferredBytes are proto int64; @grpc/grpc-js accepts a JS number
+// for any realistic file size (< 2^53 bytes).
+export async function handleRemoteFileTransferAudit(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const sessionId = String(req.params?.sessionId || "");
+  if (!sessionId) return fail(req.id, "bad_request", "sessionId required");
+  try {
+    await write({
+      traceId: remoteSessionTraceId(),
+      remoteFileTransferAudit: {
+        sessionId,
+        transferId: String(req.params?.transferId || ""),
+        direction: String(req.params?.direction || ""),
+        remotePath: String(req.params?.remotePath || ""),
+        filename: String(req.params?.filename || ""),
+        sizeBytes: Number(req.params?.sizeBytes ?? 0),
+        transferredBytes: Number(req.params?.transferredBytes ?? 0),
+        status: String(req.params?.status || ""),
+        errorMessage: String(req.params?.errorMessage || "")
+      }
+    });
+  } catch (err: any) {
+    logger.warn("remote_file_transfer_audit_skipped", { sessionId, error: err?.message || String(err) });
+  }
+  return success(req.id, { ok: true });
+}
+
+// M3.S1 — screen share audit (agent → server). Lifecycle metadata
+// only (started/stopped/error); frame bytes flow P2P over the
+// DataChannel and never reach the backend.
+export async function handleRemoteScreenAudit(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const sessionId = String(req.params?.sessionId || "");
+  if (!sessionId) return fail(req.id, "bad_request", "sessionId required");
+  try {
+    await write({
+      traceId: remoteSessionTraceId(),
+      remoteScreenAudit: {
+        sessionId,
+        event: String(req.params?.event || ""),
+        width: Number(req.params?.width ?? 0),
+        height: Number(req.params?.height ?? 0),
+        fps: Number(req.params?.fps ?? 0),
+        errorMessage: String(req.params?.errorMessage || "")
+      }
+    });
+  } catch (err: any) {
+    logger.warn("remote_screen_audit_skipped", { sessionId, error: err?.message || String(err) });
+  }
+  return success(req.id, { ok: true });
 }

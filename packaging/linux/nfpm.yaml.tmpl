@@ -110,6 +110,17 @@ contents:
       owner: root
       group: root
 
+  # RCP M3.S1 — X11 screen capture helper (compiled C, libX11 + libjpeg).
+  # PrivSvc spawns it as the session user for rcp.screen. MUST sit next to
+  # privsvc/index.js — the orchestrator resolves it via
+  # path.resolve(__dirname, "tracenium-screencap").
+  - src: __BUILD_DIR__/privsvc/tracenium-screencap
+    dst: /usr/lib/tracenium/privsvc/tracenium-screencap
+    file_info:
+      mode: 0755
+      owner: root
+      group: root
+
   # Agent bundle — same.
   - src: __BUILD_DIR__/agent/index.js
     dst: /usr/lib/tracenium/agent/index.js

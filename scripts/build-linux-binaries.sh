@@ -313,6 +313,37 @@ echo "→ esbuild privsvc"
   --target=node24 \
   --outfile="$PKG_ROOT/privsvc/index.js"
 
+# ── RCP M3.S1 — screen capture helper (X11) ───────────────────────
+# Compiles the X11 capture helper that PrivSvc spawns as the session
+# user (runuser). It MUST sit next to privsvc/index.js — the orchestrator
+# resolves it via path.resolve(__dirname, "tracenium-screencap"), the
+# same __dirname the proto path uses. Links libX11 + libjpeg. Build host
+# needs: libx11-dev + libjpeg-dev (Debian) / libX11-devel +
+# libjpeg-turbo-devel (RHEL). Native arch only — to cross-compile, point
+# CC at a cross toolchain. See privsvc/linux/helpers/README.md.
+SCREENCAP_SRC="$ROOT_DIR/privsvc/linux/helpers/screencap.c"
+SCREENCAP_OUT="$PKG_ROOT/privsvc/tracenium-screencap"
+if [ ! -f "$SCREENCAP_SRC" ]; then
+  echo "ERROR: missing screencap helper source: $SCREENCAP_SRC" >&2
+  exit 1
+fi
+echo "→ cc screencap helper (X11 + libjpeg)"
+if ! "${CC:-cc}" -O2 -Wall "$SCREENCAP_SRC" -o "$SCREENCAP_OUT" -lX11 -ljpeg; then
+  if [ "${TRACENIUM_SKIP_SCREENCAP:-}" = "1" ]; then
+    echo "WARNING: screencap helper failed to build and TRACENIUM_SKIP_SCREENCAP=1 — installing a stub that reports the capability is unavailable so rcp.screen degrades cleanly." >&2
+    # Stub keeps the nfpm contents entry satisfied AND makes the runtime
+    # return a clean screen_capture_helper_missing instead of a black
+    # frame on a package built without X11/libjpeg dev headers.
+    printf '#!/bin/sh\nprintf "{\\"ok\\":false,\\"code\\":\\"screen_capture_helper_missing\\",\\"message\\":\\"screen capture not built into this package\\"}\\n"\n' > "$SCREENCAP_OUT"
+  else
+    echo "ERROR: failed to compile screencap helper. Install libx11-dev + libjpeg-dev" >&2
+    echo "       (Debian) or libX11-devel + libjpeg-turbo-devel (RHEL), or set" >&2
+    echo "       TRACENIUM_SKIP_SCREENCAP=1 to build without screen capture." >&2
+    exit 1
+  fi
+fi
+[ -f "$SCREENCAP_OUT" ] && chmod 0755 "$SCREENCAP_OUT"
+
 # ── Rebuild + copy better-sqlite3 native binding ──────────────────
 # The agent uses better-sqlite3 (outbox.db). Native binding must be
 # ABI-compatible with the bundled node we ship in the package. We:

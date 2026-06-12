@@ -149,6 +149,67 @@ build_privsvc_bundle() {
   fi
 }
 
+build_screencap_helper() {
+  # RCP M3.S1 — compile + sign the screen-capture helper that PrivSvc
+  # spawns into the console user's GUI session (via launchctl asuser).
+  # It MUST sit next to privsvc.js — the orchestrator resolves it with
+  # path.resolve(__dirname, "tracenium-screencap"), the same __dirname
+  # the proto path uses — and be signed with a STABLE Developer ID so the
+  # MDM PPPC profile's code requirement matches and pre-grants Screen
+  # Recording. See privsvc/macos/helpers/screencap/main.swift and
+  # privsvc/macos/helpers/README.md (PPPC payload).
+  local src="$ROOT_DIR/privsvc/macos/helpers/screencap/main.swift"
+  local out="$BUILD_DIR/PrivSvc/macos/tracenium-screencap"
+
+  if [ ! -f "$src" ]; then
+    echo "ERROR: missing screencap helper source: $src" >&2
+    exit 1
+  fi
+
+  if ! command -v swiftc >/dev/null 2>&1; then
+    if [ "${TRACENIUM_SKIP_SCREENCAP:-}" = "1" ]; then
+      echo "WARNING: swiftc not found and TRACENIUM_SKIP_SCREENCAP=1 — rcp.screen will be unavailable in this build." >&2
+      return 0
+    fi
+    echo "ERROR: swiftc not found (install Xcode Command Line Tools) — required to build the rcp.screen helper." >&2
+    echo "       Set TRACENIUM_SKIP_SCREENCAP=1 to build without screen capture." >&2
+    exit 1
+  fi
+
+  mkdir -p "$BUILD_DIR/PrivSvc/macos"
+  local tmp; tmp="$(mktemp -d)"
+  echo "→ building tracenium-screencap (arm64 + x86_64, target macos12.3)"
+  swiftc -O -target arm64-apple-macos12.3  "$src" -o "$tmp/screencap.arm64"
+  swiftc -O -target x86_64-apple-macos12.3 "$src" -o "$tmp/screencap.x86_64"
+  lipo -create "$tmp/screencap.arm64" "$tmp/screencap.x86_64" -output "$out"
+  rm -rf "$tmp"
+  chmod 0755 "$out"
+
+  # Sign with hardened runtime + Developer ID. No entitlements: the
+  # helper is not a JIT/V8 process, and TCC keys on the (stable)
+  # signature, so defaults are correct here (same rationale as the
+  # internal-binary signing block below). This signature must NOT be
+  # re-applied by the *.node loop later — it isn't, that loop only
+  # touches node + *.node files.
+  if [ "$(printf "%s" "${TRACENIUM_CODESIGN_IDENTITY:-}" | tr '[:upper:]' '[:lower:]')" = "skip" ]; then
+    echo "Skipping screencap helper codesign (TRACENIUM_CODESIGN_IDENTITY=skip)."
+  else
+    local CODESIGN_ID="${TRACENIUM_CODESIGN_IDENTITY:-Developer ID Application: CERTUS ITM LLC (3CN673MCWH)}"
+    /usr/bin/xattr -c "$out" || true
+    echo "→ codesign $out"
+    # -i pins a STABLE signing identifier so the MDM PPPC profile's
+    # CodeRequirement (identifier "com.certusws.tracenium.screencap" and
+    # anchor apple generic and certificate leaf[subject.OU]="3CN673MCWH")
+    # matches deterministically. Without -i the identifier defaults to the
+    # binary filename, which is fine today but brittle. See
+    # privsvc/macos/helpers/README.md.
+    codesign --force --options runtime --timestamp \
+      -i com.certusws.tracenium.screencap \
+      --sign "$CODESIGN_ID" "$out"
+    codesign --verify --strict --verbose=2 "$out"
+  fi
+}
+
 build_status_app_bundle() {
   if [ ! -d "$STATUS_APP_DIR" ]; then
     echo "Missing status app source directory: $STATUS_APP_DIR" >&2
@@ -420,6 +481,7 @@ fi
 
 build_agent_bundle
 build_privsvc_bundle
+build_screencap_helper
 build_status_app_bundle
 
 # Stage native deps into the Agent payload.
