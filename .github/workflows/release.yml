@@ -267,6 +267,20 @@ jobs:
           sudo dpkg -i /tmp/nfpm.deb
           nfpm --version
 
+      # Build-time deps for the rcp.screen X11 capture helper
+      # (privsvc/linux/helpers/screencap.c). The helper is a small C
+      # program that calls XGetImage and encodes JPEG via libjpeg. It
+      # needs the development headers at build time on the GH runner;
+      # the runtime libs (libX11.so.6 + libjpeg.so) are listed as deb/rpm
+      # dependencies in packaging/linux/nfpm.yaml.tmpl so the .deb/.rpm
+      # pulls them in on the target host. Without this step the script
+      # fails with `fatal error: X11/Xlib.h: No such file or directory`
+      # — see scripts/build-linux-binaries.sh build_screencap_helper().
+      - name: Install screen-capture build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libx11-dev libjpeg-dev
+
       - name: Install repo dependencies (host)
         run: npm ci
 
