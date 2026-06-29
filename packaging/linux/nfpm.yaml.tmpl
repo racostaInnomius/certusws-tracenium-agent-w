@@ -67,12 +67,31 @@ provides:
 # binary in /usr/lib/tracenium/node so the customer's distro can
 # carry whatever node version it prefers without ABI mismatch
 # against the better-sqlite3 native module.
+#
+# Root-level depends apply to BOTH formats. Per-format overrides go in
+# the `deb:` and `rpm:` blocks below — needed for libX11 / libjpeg
+# whose package names differ between Debian-family and RHEL-family
+# distros.
 depends:
   - openssl
 
 deb:
   fields:
     Bugs: https://tracenium.com/support
+  # ── Runtime libs for the rcp.screen helper ─────────────────────────
+  # The screencap helper (privsvc/linux/helpers/screencap.c → installed
+  # at /usr/lib/tracenium/privsvc/tracenium-screencap) is dynamically
+  # linked against libX11.so.6 and libjpeg.so. On Debian/Ubuntu these
+  # live in:
+  #   libx11-6        → /usr/lib/x86_64-linux-gnu/libX11.so.6
+  #   libjpeg-turbo8  → /usr/lib/x86_64-linux-gnu/libjpeg.so.8
+  # Declared here so `apt install ./tracenium-agent_*.deb` pulls them
+  # in. Wayland-only systems install these libs anyway (Xwayland uses
+  # libX11), so listing them does not unnecessarily disqualify any
+  # target host.
+  depends:
+    - libx11-6
+    - libjpeg-turbo8
   triggers:
     interest_noawait:
       - /lib/systemd/systemd
@@ -84,6 +103,12 @@ rpm:
   # description. Keep it short — RHEL's `dnf info` truncates after
   # ~80 chars.
   summary: Tracenium agent — inventory, compliance, patch management
+  # Runtime libs for screencap, RHEL/Fedora/Rocky names:
+  #   libX11         → ships /usr/lib64/libX11.so.6
+  #   libjpeg-turbo  → ships /usr/lib64/libjpeg.so.62
+  depends:
+    - libX11
+    - libjpeg-turbo
 
 # ── Contents — the file/dir layout this package produces ──────────
 # nfpm copies these into the .deb/.rpm tree. We use absolute paths
