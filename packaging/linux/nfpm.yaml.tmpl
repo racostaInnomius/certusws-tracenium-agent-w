@@ -68,30 +68,19 @@ provides:
 # carry whatever node version it prefers without ABI mismatch
 # against the better-sqlite3 native module.
 #
-# Root-level depends apply to BOTH formats. Per-format overrides go in
-# the `deb:` and `rpm:` blocks below — needed for libX11 / libjpeg
-# whose package names differ between Debian-family and RHEL-family
-# distros.
+# Top-level `depends:` applies to both .deb and .rpm. Package names that
+# differ between formats (libX11 vs libx11-6, libjpeg-turbo vs
+# libjpeg-turbo8) go in the `overrides:` block below — nfpm's schema
+# does NOT allow a `depends:` field inside the `deb:` or `rpm:` format
+# blocks themselves (those blocks only hold format-specific metadata
+# like fields/triggers/group/compression/summary). The build fails with
+# `field depends not found in type nfpm.Deb` if you try.
 depends:
   - openssl
 
 deb:
   fields:
     Bugs: https://tracenium.com/support
-  # ── Runtime libs for the rcp.screen helper ─────────────────────────
-  # The screencap helper (privsvc/linux/helpers/screencap.c → installed
-  # at /usr/lib/tracenium/privsvc/tracenium-screencap) is dynamically
-  # linked against libX11.so.6 and libjpeg.so. On Debian/Ubuntu these
-  # live in:
-  #   libx11-6        → /usr/lib/x86_64-linux-gnu/libX11.so.6
-  #   libjpeg-turbo8  → /usr/lib/x86_64-linux-gnu/libjpeg.so.8
-  # Declared here so `apt install ./tracenium-agent_*.deb` pulls them
-  # in. Wayland-only systems install these libs anyway (Xwayland uses
-  # libX11), so listing them does not unnecessarily disqualify any
-  # target host.
-  depends:
-    - libx11-6
-    - libjpeg-turbo8
   triggers:
     interest_noawait:
       - /lib/systemd/systemd
@@ -103,12 +92,39 @@ rpm:
   # description. Keep it short — RHEL's `dnf info` truncates after
   # ~80 chars.
   summary: Tracenium agent — inventory, compliance, patch management
-  # Runtime libs for screencap, RHEL/Fedora/Rocky names:
-  #   libX11         → ships /usr/lib64/libX11.so.6
-  #   libjpeg-turbo  → ships /usr/lib64/libjpeg.so.62
-  depends:
-    - libX11
-    - libjpeg-turbo
+
+# ── Per-format dependency overrides ────────────────────────────────
+#
+# IMPORTANT — `overrides.<fmt>.depends` REPLACES the top-level
+# `depends:` list entirely for that format (it does NOT merge / append).
+# That's why `openssl` is repeated in both branches: dropping it from
+# either list would silently remove the dependency for that package
+# format.
+#
+# Runtime libs for the rcp.screen helper:
+# The screencap binary (privsvc/linux/helpers/screencap.c, installed at
+# /usr/lib/tracenium/privsvc/tracenium-screencap) is dynamically linked
+# against libX11.so.6 and libjpeg.so. Without these declared as
+# dependencies the .deb/.rpm install fine but the helper crashes at
+# runtime with `cannot open shared object file` the first time an
+# operator clicks Screen on this device.
+#
+# Naming map per distro family:
+#   Debian/Ubuntu : libx11-6 + libjpeg-turbo8
+#   RHEL/Fedora   : libX11   + libjpeg-turbo
+# Wayland-only desktops install both libs anyway (Xwayland uses libX11),
+# so the dependency does not unfairly exclude any target host.
+overrides:
+  deb:
+    depends:
+      - openssl
+      - libx11-6
+      - libjpeg-turbo8
+  rpm:
+    depends:
+      - openssl
+      - libX11
+      - libjpeg-turbo
 
 # ── Contents — the file/dir layout this package produces ──────────
 # nfpm copies these into the .deb/.rpm tree. We use absolute paths
