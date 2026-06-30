@@ -1001,7 +1001,7 @@ async function startConnection(params: Record<string, any>, pushSink: PushSink) 
         agentVersion: String(params.agentVersion || ""),
         protocolVersion: "1",
         policyVersion: String(params.policyVersion || ""),
-        capabilities: ["amp"],
+        capabilities: Array.isArray(params.capabilities) ? params.capabilities : ["amp"],
       },
     });
 
