@@ -788,21 +788,45 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       ensureConnected().catch(() => {});
       return stream;
     },
-    // Reports "live" only if (a) the local connect handshake
-    // completed AND (b) we've heard from the server within the
-    // silence threshold. The local `connected` flag alone is
-    // insufficient: when the PrivSvc bridge goes zombie (post
-    // sleep/wake half-open TCP) it stops emitting `grpc.disconnected`
-    // at all, so `connected` stays `true` until something else
-    // resets it — meanwhile heartbeats `stream.write(...)` succeed
-    // into kernel buffer that never reaches the server, the dashboard
-    // shows the device offline, but the tray icon stays green and
-    // any caller that gates on `isConnected()` keeps trying. This
-    // staleness gate makes `isConnected()` track REAL liveness, not
-    // wishful thinking.
+    // Reports "live" only if (a) the local connect handshake completed
+    // AND (b) the stream has shown liveness in EITHER direction within
+    // the silence threshold — a server push (`lastServerActivityMs`) OR
+    // a heartbeat/facts write the PrivSvc bridge accepted onto the live
+    // gRPC stream (`lastClientSendOkMs`).
+    //
+    // WHY EITHER-DIRECTION (the idle-churn fix, 2026-06-30):
+    //   The server does NOT push anything to the agent during idle (no
+    //   facts to ACK, no jobs, no policy changes) and does NOT ping by
+    //   design. So on a healthy-but-idle device `lastServerActivityMs`
+    //   legitimately freezes at HELLO time. A receive-only check then
+    //   crosses SILENCE_THRESHOLD_MS at ~270s, the heartbeat tick in
+    //   grpc-stream sees isConnected()===false and force-reconnects — a
+    //   pure false positive that recycled the stream every ~5 min,
+    //   dropping live RCP sessions and (under any reconnect hiccup)
+    //   marching toward the circuit-breaker process.exit. Confirmed in
+    //   W11-JPR-LAB01 logs 2026-06-30: a clean HELLO→idle→close→reconnect
+    //   loop at exactly the 270s mark, every heartbeat and ACK healthy.
+    //   This mirrors the bidirectional logic the silence watchdog in
+    //   grpc-stream already uses; isConnected() was simply left behind.
+    //
+    // ZOMBIE SAFETY — why a successful send is now trusted as liveness:
+    //   The half-open-TCP case the old receive-only gate guarded against
+    //   is already caught FASTER and more reliably one layer down. The
+    //   PrivSvc bridge runs HTTP/2 keepalive (KeepAlivePingDelay=20s,
+    //   KeepAlivePingTimeout=10s — see GrpcBridge.cs) and pushes
+    //   `grpc.disconnected` within ~30s of a dead socket → the
+    //   remote_disconnect path here. And a heartbeat the bridge cannot
+    //   write throws → `stream.emit("error", …)` → reconnect (see the
+    //   heartbeat IPC handler below). So a successful heartbeat write is
+    //   valid end-to-end liveness proof, and the receive-only gate was
+    //   redundant with the bridge keepalive while being the SOLE cause
+    //   of the idle churn.
     isConnected: () => {
       if (!connected) return false;
-      return Date.now() - lastServerActivityMs <= SILENCE_THRESHOLD_MS;
+      const now = Date.now();
+      const recvFresh = now - lastServerActivityMs <= SILENCE_THRESHOLD_MS;
+      const sendFresh = now - lastClientSendOkMs <= SILENCE_THRESHOLD_MS;
+      return recvFresh || sendFresh;
     },
     // Explicit teardown. Callers (grpc-stream's reconnect loop) use
     // this when they've decided the current client is unrecoverable
