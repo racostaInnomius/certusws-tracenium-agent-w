@@ -592,6 +592,18 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
           for (let i = 0; i < chunks.length; i++) {
             const chunk = chunks[i];
 
+            // Per-chunk trace (always-on). If the IPC pipe dies mid-send,
+            // this is the last line before the break — it pins down WHICH
+            // chunk was in flight and how big, which the aggregate
+            // "sending in chunks" line above cannot. Pairs with the
+            // in-flight snapshot in privsvc-client-windows.onSocketError.
+            ctx.logger?.info("[grpc-client] FACTS chunk send", {
+              eventId,
+              chunkIndex: i,
+              totalChunks: chunks.length,
+              chunkBytes: Buffer.byteLength(chunk, "utf8")
+            });
+
             const resp = await (ctx.priv as any).call({
               v: 1,
               id: `facts-chunk-${eventId}-${i}`,
@@ -609,8 +621,14 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
             if (!resp?.ok) {
               const errorMessage = String(resp?.error?.message || resp?.error || "facts.chunk failed");
-              throw new Error(`FACTS_CHUNK_FAILED:${errorMessage}`);
+              throw new Error(`FACTS_CHUNK_FAILED:${errorMessage} (chunkIndex=${i}/${chunks.length})`);
             }
+
+            ctx.logger?.info("[grpc-client] FACTS chunk accepted", {
+              eventId,
+              chunkIndex: i,
+              totalChunks: chunks.length
+            });
           }
 
           ctx.logger?.info("[grpc-client] FACTS chunked send completed", { eventId });

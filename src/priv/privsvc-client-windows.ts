@@ -91,7 +91,10 @@ export class PrivSvcClient extends EventEmitter {
           });
           this.emit("push", msg);
         } catch (e) {
-          this.emit("error", e);
+          // Guarded: a bare emit("error") with no listener re-throws as an
+          // uncaughtException (see onSocketError for the full rationale).
+          if (this.listenerCount("error") > 0) this.emit("error", e);
+          else this.emit("debug", { stage: "push_flush_error", err: String((e as any)?.message || e) });
         }
       }
       this.earlyPushQueue = [];
@@ -185,7 +188,13 @@ export class PrivSvcClient extends EventEmitter {
 
       if (isResponse) {
         if (!id) {
-          this.emit("error", new Error("PrivSvc response without id"));
+          // Guarded: see onSocketError. A malformed response must not be
+          // able to crash the process via an unlistened "error" emit.
+          if (this.listenerCount("error") > 0) {
+            this.emit("error", new Error("PrivSvc response without id"));
+          } else {
+            this.emit("debug", { stage: "response_without_id", msg });
+          }
           continue;
         }
 
@@ -244,6 +253,23 @@ export class PrivSvcClient extends EventEmitter {
     const errCode = String(err?.code || "");
     const errMessage = String(err?.message || err || "");
 
+    // Always-on diagnostic (stderr → err.log, NOT gated behind
+    // DEBUG_PRIVSVC): when the IPC named pipe breaks we must know WHAT was
+    // in flight to find root cause. The rich `debug` events below are
+    // gated (off in prod), which left prior EPIPE incidents with only a
+    // bare `read EPIPE` stack and zero context — e.g. we couldn't tell it
+    // died on `grpc.facts.chunk` for the stale event 266. console.error
+    // mirrors index.ts's crash handler and is guaranteed to land in the
+    // err.log regardless of logger/verbosity config. Snapshot BEFORE the
+    // pending map is cleared below.
+    const inFlight = Array.from(this.pending.entries()).map(([id, p]) => `${p.method}#${id}`);
+    console.error("[PrivSvc IPC] socket error", {
+      errCode,
+      errMessage,
+      pendingCount: this.pending.size,
+      inFlight
+    });
+
     if (errCode === "EPIPE" || /EPIPE/i.test(errMessage)) {
       this.emit("debug", { stage: "epipe_detected", errCode, errMessage });
     }
@@ -260,7 +286,21 @@ export class PrivSvcClient extends EventEmitter {
 
     try { sock?.destroy(); } catch {}
 
-    this.emit("error", err);
+    // Only emit if someone is listening. On an EventEmitter, emitting
+    // "error" with NO registered listener makes Node RE-THROW the error,
+    // which surfaces as an uncaughtException. Nothing in the agent
+    // subscribes to `priv.on("error")` (only "push" and "debug"), so an
+    // unguarded emit here turned every transient named-pipe EPIPE /
+    // ECONNRESET into `[FATAL] uncaughtException: read EPIPE` — the exact
+    // W11 crash that outlived the idle-churn fix (logs 2026-07-01, event
+    // 266 chunked send at the 1h mark). Recovery does NOT depend on this
+    // emit: `sock.destroy()` above triggers the socket "close" event →
+    // `onSocketClose()` → `grpc.disconnected` push → reconnect. This
+    // guard matches privsvc-client-macos.ts / -linux.ts, which already
+    // had it — Windows was simply missed when that fix landed.
+    if (this.listenerCount("error") > 0) {
+      this.emit("error", err);
+    }
   }
 
   private onSocketClose() {
