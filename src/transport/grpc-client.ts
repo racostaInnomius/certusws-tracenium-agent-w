@@ -8,9 +8,30 @@ function normalizeTarget(url: string): string {
   return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 }
 
-const MAX_FACTS_IPC_BYTES = 64 * 1024;
+// IPC sizing vs the PrivSvc named-pipe limit.
+//
+// PrivSvc rejects any IPC *line* longer than 64 KB (NamedPipeServer.cs:
+// `if (line.Length > 64 * 1024)`) and — critically — historically CLOSED
+// the pipe on that path. The line it measures is the FULL serialized
+// request: `{v,id,method,params:{...,payloadJson:"<escaped>"},meta}`, i.e.
+// JSON wrapper + the payload AFTER JSON-escaping. JSON-escaping inflates a
+// JSON payload (every `"` and `\` doubles, non-ASCII expands), so a RAW
+// 62 KB payload serializes to a >64 KB line.
+//
+// The old values compared the RAW payload size (62 KB) against a 64 KB
+// threshold → "fits" → whole-send → PrivSvc saw a >64 KB line → rejected
+// + closed the pipe → the next chunk write hit `read EPIPE`. This was the
+// deterministic W11 poison-pill (outbox event 266, ~62 KB) that flapped
+// the connection ~10× on 2026-07-01. Events already ABOVE 64 KB were fine
+// because they went straight to chunks and never attempted the whole-send.
+//
+// Fix: size BOTH thresholds so that raw + escaping + wrapper stays safely
+// under 64 KB even in the worst realistic escaping case (~1.4×). 32 KB raw
+// → ~45 KB on the wire, comfortable margin. Events >32 KB now chunk (the
+// proven-good path); each 32 KB chunk also stays well under the limit.
+const MAX_FACTS_IPC_BYTES = 32 * 1024;
 
-const FACTS_CHUNK_SIZE = 48 * 1024; // 48KB safe chunk size
+const FACTS_CHUNK_SIZE = 32 * 1024; // 32KB: raw+escaping+wrapper stays < 64KB pipe limit
 
 function chunkString(str: string, size: number): string[] {
   const chunks: string[] = [];

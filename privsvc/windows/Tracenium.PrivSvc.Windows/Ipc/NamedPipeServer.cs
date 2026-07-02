@@ -207,7 +207,7 @@ public sealed class NamedPipeServer
 
                 if (line.Length > 64 * 1024) // 64KB limit
                 {
-                    _logger.LogWarning("IPC request too large, rejecting. reqId={ReqId}", reqId);
+                    _logger.LogWarning("IPC request too large, rejecting. reqId={ReqId} lineLength={LineLength}", reqId, line.Length);
                     var err = PrivSvcResponse.Fail(reqId ?? "", "request_too_large", "IPC request exceeds allowed size.");
                     try
                     {
@@ -215,7 +215,18 @@ public sealed class NamedPipeServer
                     }
                     catch { }
 
-                    break;
+                    // `continue`, NOT `break`. The oversized line was already
+                    // fully read by ReadLineAsync, so the stream is NOT desynced
+                    // — there is no reason to tear down the whole IPC connection.
+                    // The old `break` closed the pipe here, which made the
+                    // AgentCore's very next write (e.g. the chunked-send retry
+                    // after this rejection) fail with `read EPIPE` — the W11
+                    // poison-pill flap (event 266, 2026-07-01). Rejecting one
+                    // oversized message must not kill the connection; the client
+                    // recovers by switching to a chunked send. Node-side
+                    // thresholds were also lowered so this path is not hit in
+                    // normal operation (see grpc-client.ts MAX_FACTS_IPC_BYTES).
+                    continue;
                 }
 
                 PrivSvcResponse resp;
