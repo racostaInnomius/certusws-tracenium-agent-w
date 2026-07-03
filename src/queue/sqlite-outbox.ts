@@ -27,6 +27,30 @@ interface OutboxAttemptsRow {
 const MAX_ATTEMPTS = 20;
 const COMPRESS_THRESHOLD_BYTES = 50 * 1024; // 50KB
 
+/** Error interno para señalar que `integrity_check` reportó corrupción. */
+class OutboxCorruptionError extends Error {
+  readonly code = "SQLITE_CORRUPT_INTEGRITY";
+  constructor(message: string) {
+    super(message);
+    this.name = "OutboxCorruptionError";
+  }
+}
+
+/**
+ * ¿El error de abrir/verificar la DB indica corrupción del archivo?
+ * Cubre el caso reportado (SQLITE_NOTADB con header basura) más los
+ * códigos de SqliteError que denotan un archivo dañado, y nuestra propia
+ * señal de `integrity_check != 'ok'`.
+ */
+function isCorruptionError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return (
+    code === "SQLITE_NOTADB" || // "file is not a database" — header basura
+    code === "SQLITE_CORRUPT" || // malformed database disk image
+    code === "SQLITE_CORRUPT_INTEGRITY" // integrity_check != 'ok' (nuestro)
+  );
+}
+
 function utcNow(): string {
   return new Date().toISOString();
 }
@@ -93,13 +117,114 @@ export class SqliteOutbox {
     const dir = path.dirname(dbPath);
     fs.mkdirSync(dir, { recursive: true });
 
-    this.db = new Database(dbPath);
+    this.db = this.openWithSelfHealing(dbPath);
     // Structured logger instead of console.log — in production the
     // daemon's stdout is captured by launchd into a plain text file,
     // but any ops tooling that later tails these logs expects the
     // structured shape the rest of the agent uses (logger.info).
     logger.info("[outbox] initialized", { dbPath: this.dbPath });
     this.initialize();
+  }
+
+  /**
+   * Abre la DB tolerando corrupción del archivo (BUG A2).
+   *
+   * Motivación: el singleton `outbox` se construye al IMPORTAR el módulo.
+   * Un `outbox.db` corrupto (p.ej. corte de energía → WAL/header roto)
+   * hacía que el primer PRAGMA lanzara SQLITE_NOTADB en la cadena de
+   * imports → crash en boot → el service manager reinicia → boot-loop
+   * infinito, sin auto-recuperación.
+   *
+   * Estrategia: al abrir, forzamos una operación que toca el header
+   * (`PRAGMA integrity_check`). Si la apertura o esa verificación fallan
+   * por corrupción, O si integrity_check devuelve algo != 'ok', ponemos
+   * el archivo (y sus sidecars WAL/SHM) en CUARENTENA renombrándolos —
+   * se preservan para forensics, NO se borran — y creamos una DB nueva
+   * y vacía en su lugar. Perder la telemetría de un archivo ya ilegible
+   * es aceptable frente a un agente que no bootea.
+   */
+  private openWithSelfHealing(dbPath: string): Database.Database {
+    let db: Database.Database | null = null;
+    try {
+      db = new Database(dbPath);
+      // better-sqlite3 abre de forma perezosa (no valida el header en el
+      // open). integrity_check es la primera operación que lee la estructura
+      // real: dispara SQLITE_NOTADB con un header basura y detecta también
+      // corrupción de páginas en un header por lo demás válido.
+      const rows = db.pragma("integrity_check") as Array<{ integrity_check?: string }>;
+      const ok =
+        Array.isArray(rows) &&
+        rows.length === 1 &&
+        rows[0]?.integrity_check === "ok";
+
+      if (!ok) {
+        const detail = Array.isArray(rows)
+          ? rows.map((r) => r?.integrity_check).filter(Boolean).slice(0, 5)
+          : rows;
+        throw new OutboxCorruptionError(
+          `integrity_check reported corruption: ${JSON.stringify(detail)}`
+        );
+      }
+
+      return db;
+    } catch (err) {
+      // Solo auto-sanamos por corrupción del archivo. Otros errores
+      // (permisos, disco lleno, etc.) deben propagarse: recrear la DB no
+      // los resolvería y ocultarlos sería peor.
+      if (!isCorruptionError(err)) {
+        throw err;
+      }
+
+      try {
+        db?.close();
+      } catch {
+        // ignore: la conexión sobre un archivo corrupto puede fallar al cerrar
+      }
+
+      this.quarantineCorruptDb(dbPath, err);
+
+      // Archivo nuevo y vacío en la ruta original → outbox operativo.
+      return new Database(dbPath);
+    }
+  }
+
+  /**
+   * Renombra el archivo corrupto y sus sidecars (-wal, -shm) a
+   * `<name>.corrupt-<timestamp>` para conservarlos y dejar la ruta
+   * limpia. Se mueven los sidecars junto al archivo principal para no
+   * arrastrar estado WAL inconsistente hacia la DB recreada.
+   */
+  private quarantineCorruptDb(dbPath: string, err: unknown): void {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const suffix = `.corrupt-${stamp}`;
+
+    const targets = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
+    const quarantined: string[] = [];
+
+    for (const src of targets) {
+      try {
+        if (fs.existsSync(src)) {
+          const dest = src + suffix;
+          fs.renameSync(src, dest);
+          quarantined.push(dest);
+        }
+      } catch (renameErr) {
+        // Si no se puede renombrar el sidecar, al menos intentamos borrarlo
+        // para no arrastrar estado inconsistente hacia la DB nueva.
+        try {
+          fs.rmSync(src, { force: true });
+        } catch {
+          // último recurso: seguimos; una DB nueva sobre un -wal viejo es
+          // improbable de abrir, pero preferimos intentar arrancar.
+        }
+      }
+    }
+
+    logger.warn("[outbox] corrupt database detected — quarantined and rebuilt", {
+      dbPath,
+      quarantined,
+      error: err instanceof Error ? err.message : String(err)
+    });
   }
 
   private initialize() {

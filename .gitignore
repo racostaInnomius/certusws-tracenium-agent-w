@@ -39,3 +39,6 @@ build.log
 .DS_Store
 Thumbs.db
 Thumbs.db:encryptable
+
+# ── Test outputs (Vitest coverage) ──────────────────────────────────
+coverage/

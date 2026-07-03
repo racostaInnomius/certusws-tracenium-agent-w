@@ -71,6 +71,26 @@ function readClientCertNotAfter(state: EnrollmentState): Date | null {
   }
 }
 
+/**
+ * Read the SHA-256 thumbprint of the client cert currently on disk. Returns
+ * null if the file is missing or unreadable. Reuses the same guarded-read +
+ * X509Certificate parse as readClientCertNotAfter so both derive from the
+ * exact bytes on disk. Used to detect a TOCTOU race: another process (e.g.
+ * the gRPC rotateCert path) may replace the cert during the privsvc await.
+ */
+function readClientCertThumbprintOnDisk(clientCertPath?: string): string | null {
+  try {
+    if (!clientCertPath || !fs.existsSync(clientCertPath)) {
+      return null;
+    }
+
+    const pem = fs.readFileSync(clientCertPath, "utf8");
+    return new crypto.X509Certificate(pem).fingerprint256.replace(/:/g, "");
+  } catch {
+    return null;
+  }
+}
+
 function shouldRenew(notAfter: Date | null): boolean {
   if (!notAfter) return false;
   const thresholdMs = getRenewalThresholdDays() * 24 * 60 * 60 * 1000;
@@ -100,6 +120,13 @@ export async function maybeRenewClientCertificate(input: {
     logger?.warn?.("[cert-renewal] skipping renewal: missing client cert thumbprint");
     return enrollment;
   }
+
+  // Snapshot the thumbprint of the cert on disk BEFORE the privsvc round-trip.
+  // We re-read it after the await to detect if another process rotated the
+  // cert during the window (TOCTOU). We ask the CA to renew against this same
+  // thumbprint, so if disk changes underneath us the response is stale.
+  const clientCertPath = enrollment.mtls?.clientCertPath;
+  const preRenewalDiskThumbprint = readClientCertThumbprintOnDisk(clientCertPath);
 
   logger?.info?.("[cert-renewal] starting certificate renewal", {
     deviceId: enrollment.deviceId,
@@ -146,9 +173,45 @@ export async function maybeRenewClientCertificate(input: {
     }
   };
 
-  if (typeof result.clientCertPem === "string" && result.clientCertPem.includes("BEGIN CERTIFICATE")) {
-    atomicWriteFileSync(enrollment.mtls.clientCertPath, result.clientCertPem, 0o600);
+  // BUG A4: the response must carry a structurally valid client cert PEM
+  // before we persist ANY state. Previously the BEGIN-CERTIFICATE gate only
+  // guarded the file write, but store.save() ran regardless — leaving the
+  // store pointing at a new thumbprint while the disk kept the old cert.
+  // Abort the whole renewal (no file write, no store.save) if the PEM is
+  // absent, lacks the BEGIN CERTIFICATE marker, or fails to parse as X.509.
+  const clientCertPem = result.clientCertPem;
+  if (typeof clientCertPem !== "string" || !clientCertPem.includes("BEGIN CERTIFICATE")) {
+    throw new Error("Certificate renewal response missing or malformed clientCertPem");
   }
+  try {
+    // eslint-disable-next-line no-new
+    new crypto.X509Certificate(clientCertPem);
+  } catch (err: any) {
+    throw new Error(
+      `Certificate renewal response clientCertPem failed to parse as X.509: ${err?.message || err}`
+    );
+  }
+
+  // BUG A1 (TOCTOU): re-verify the cert on disk is still the one we renewed
+  // against. If another process (e.g. gRPC rotateCert) replaced it during the
+  // await, that cert is newer than what the CA just issued for our stale
+  // thumbprint — abort without overwriting so we don't clobber it. The
+  // caller's in-memory guard (service.ts armCertRenewal) only protects the
+  // enrollment reference; the disk overwrite has to be prevented here.
+  const postRenewalDiskThumbprint = readClientCertThumbprintOnDisk(clientCertPath);
+  if (postRenewalDiskThumbprint !== preRenewalDiskThumbprint) {
+    logger?.warn?.(
+      "[cert-renewal] client cert on disk changed during renewal, aborting to avoid clobbering newer cert",
+      {
+        deviceId: enrollment.deviceId,
+        preRenewalDiskThumbprint,
+        postRenewalDiskThumbprint
+      }
+    );
+    return enrollment;
+  }
+
+  atomicWriteFileSync(enrollment.mtls.clientCertPath, clientCertPem, 0o600);
 
   if (typeof result.caBundlePem === "string" && result.caBundlePem.includes("BEGIN CERTIFICATE")) {
     // CA bundle is public trust material, but keep it 0600 anyway — only

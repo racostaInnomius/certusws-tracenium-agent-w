@@ -93,15 +93,58 @@ function sanitize(v: unknown, max = 200): string {
     .slice(0, max);
 }
 
+// B3 forensics — max length of a single base64url-encoded state
+// snapshot we'll put on the wire. Mirrors the backend PMP ack parser
+// (remediation-result-reducer.ts:decodeJsonB64), which rejects any
+// value with `value.length > 24_000` (its ~16KB-decoded ceiling) and
+// leaves the JSONB column empty. 20_000 stays strictly under that gate
+// with headroom for the rest of the ack message, so a snapshot that
+// WOULD be accepted always is; anything larger is dropped agent-side
+// (with a warn) rather than shipped to be silently discarded.
+export const FORENSICS_B64_MAX_LEN = 20_000;
+
+// Encode a JSON-serializable state snapshot to base64url. The ack
+// message is split on `;`/`=` and sanitized server-side, so a raw JSON
+// blob can't survive — but base64url ([A-Za-z0-9_-], no '+' '/' '=')
+// does. The backend decodes with the same alphabet
+// (Buffer.from(value, "base64url")), so this is contract-exact.
+// Returns undefined when the snapshot is absent or the encoded value
+// exceeds FORENSICS_B64_MAX_LEN (oversized → omit key, warn). Never throws.
+function encodeForensicsB64(
+  snapshot: unknown,
+  onOversize?: (len: number) => void
+): string | undefined {
+  if (snapshot === undefined || snapshot === null) return undefined;
+  try {
+    const b64 = Buffer.from(JSON.stringify(snapshot), "utf8").toString("base64url");
+    if (b64.length > FORENSICS_B64_MAX_LEN) {
+      onOversize?.(b64.length);
+      return undefined;
+    }
+    return b64;
+  } catch {
+    return undefined;
+  }
+}
+
 function encodeAckMessage(
   outcome: RemediationOutcome,
   remediationId: number,
-  extras: Record<string, string | number | undefined> = {}
+  extras: Record<string, string | number | undefined> = {},
+  forensics: Record<string, string | undefined> = {}
 ): string {
   const parts = [`patch_remediate:${outcome}`, `remediationId=${remediationId}`];
   for (const [k, v] of Object.entries(extras)) {
     if (v === undefined || v === null || v === "") continue;
     parts.push(`${k}=${sanitize(v)}`);
+  }
+  // Forensics blobs (`stateBefore` / `stateAfter`) are already base64url
+  // ([A-Za-z0-9_-]) — append verbatim, NOT through sanitize() which
+  // would corrupt them. Absent keys omitted so the backend's COALESCE
+  // preserves existing column data instead of nulling it.
+  for (const [k, v] of Object.entries(forensics)) {
+    if (v === undefined) continue;
+    parts.push(`${k}=${v}`);
   }
   return parts.join(";");
 }
@@ -171,6 +214,41 @@ export async function runRemediation(
   let durationMs: number | undefined;
   let extraReason: string | undefined;
 
+  // B3 forensics: retain the pre/post compliance-state snapshots so
+  // terminal ACKs can carry them. `preState` from the first
+  // read_check_state, `postState` from the post-apply re-read.
+  let preState: unknown;
+  let postState: unknown;
+
+  // Build the base64url forensics bag: `stateBefore` / `stateAfter`,
+  // each emitted ONLY when its snapshot exists and fits under the size
+  // ceiling. Absent/oversized → key omitted so the backend's COALESCE
+  // keeps any existing column value.
+  const buildForensics = (): Record<string, string | undefined> => {
+    const bag: Record<string, string | undefined> = {};
+    const before = encodeForensicsB64(preState, (len) =>
+      ctx.logger?.warn?.("[pmp.remediate] stateBefore snapshot oversized, omitting", {
+        jobId,
+        remediationId,
+        checkId,
+        encodedLen: len,
+        limit: FORENSICS_B64_MAX_LEN,
+      })
+    );
+    if (before !== undefined) bag.stateBefore = before;
+    const after = encodeForensicsB64(postState, (len) =>
+      ctx.logger?.warn?.("[pmp.remediate] stateAfter snapshot oversized, omitting", {
+        jobId,
+        remediationId,
+        checkId,
+        encodedLen: len,
+        limit: FORENSICS_B64_MAX_LEN,
+      })
+    );
+    if (after !== undefined) bag.stateAfter = after;
+    return bag;
+  };
+
   try {
     // ── Read pre-state ─────────────────────────────────────────
     const preStart = Date.now();
@@ -198,15 +276,22 @@ export async function runRemediation(
 
     const preResult = preResp.result || {};
     const preCompliant = preResult.isCompliant === true;
+    // B3: snapshot the full pre-remediation compliance state.
+    preState = (preResult as any).snapshot ?? preResult;
 
     // ── Dry-run branch ────────────────────────────────────────
     if (mode === "dry_run") {
       outcome = preCompliant ? "dryrun_already_compliant" : "dryrun_would_apply";
       durationMs = Date.now() - preStart;
-      return ackFor(outcome, remediationId, {
-        checkId,
-        duration: durationMs,
-      });
+      return ackFor(
+        outcome,
+        remediationId,
+        {
+          checkId,
+          duration: durationMs,
+        },
+        buildForensics()
+      );
     }
 
     // ── Apply branch ──────────────────────────────────────────
@@ -215,11 +300,16 @@ export async function runRemediation(
       // edit round-trip + any reboot flag noise.
       outcome = "already_compliant";
       durationMs = Date.now() - preStart;
-      return ackFor(outcome, remediationId, {
-        checkId,
-        duration: durationMs,
-        reason: "pre_state_compliant",
-      });
+      return ackFor(
+        outcome,
+        remediationId,
+        {
+          checkId,
+          duration: durationMs,
+          reason: "pre_state_compliant",
+        },
+        buildForensics()
+      );
     }
 
     const applyStart = Date.now();
@@ -274,7 +364,10 @@ export async function runRemediation(
 
     let postCompliant = false;
     if (postResp?.ok) {
-      postCompliant = (postResp.result || {}).isCompliant === true;
+      const postResult = postResp.result || {};
+      postCompliant = postResult.isCompliant === true;
+      // B3: snapshot the full post-remediation compliance state.
+      postState = (postResult as any).snapshot ?? postResult;
     }
 
     if (!postCompliant && !requiresReboot) {
@@ -284,20 +377,30 @@ export async function runRemediation(
       // another process. Operator-visible failure.
       outcome = "failed";
       extraReason = "post_state_mismatch";
-      return ackFor(outcome, remediationId, {
-        checkId,
-        exit: exitCode,
-        duration: durationMs,
-        reason: extraReason,
-      });
+      return ackFor(
+        outcome,
+        remediationId,
+        {
+          checkId,
+          exit: exitCode,
+          duration: durationMs,
+          reason: extraReason,
+        },
+        buildForensics()
+      );
     }
 
     outcome = requiresReboot ? "applied_reboot_required" : "applied";
-    return ackFor(outcome, remediationId, {
-      checkId,
-      exit: exitCode,
-      duration: durationMs,
-    });
+    return ackFor(
+      outcome,
+      remediationId,
+      {
+        checkId,
+        exit: exitCode,
+        duration: durationMs,
+      },
+      buildForensics()
+    );
   } catch (err: any) {
     outcome = "failed";
     extraReason = `exception:${(err?.message || "unknown").slice(0, 120)}`;
@@ -348,7 +451,8 @@ function reject(
 function ackFor(
   outcome: RemediationOutcome,
   remediationId: number,
-  extras: Record<string, string | number | undefined>
+  extras: Record<string, string | number | undefined>,
+  forensics: Record<string, string | undefined> = {}
 ): RemediationAck {
   // ackStatus mapping mirrors SDP:
   //   0 → success-shaped outcomes (applied / already_compliant /
@@ -371,7 +475,7 @@ function ackFor(
   }
   return {
     ackStatus,
-    ackMessage: encodeAckMessage(outcome, remediationId, extras),
+    ackMessage: encodeAckMessage(outcome, remediationId, extras, forensics),
     outcome,
   };
 }

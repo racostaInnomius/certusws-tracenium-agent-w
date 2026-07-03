@@ -28,12 +28,17 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.0",
+    "@vitest/coverage-v8": "^4.1.9",
     "copyfiles": "^2.4.1",
     "esbuild": "^0.28.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
   },
   "scripts": {
     "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "build:privsvc:linux": "tsc -p privsvc/linux/tsconfig.json",
     "build:privsvc:macos": "tsc -p privsvc/macos/tsconfig.json",
     "pkg:linux": "./scripts/build-linux-binaries.sh",
