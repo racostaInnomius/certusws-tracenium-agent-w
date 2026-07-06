@@ -163,6 +163,10 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
   let connectPromise: Promise<void> | null = null;
   let ended = false;
   let localClose = false;
+  // Fires if PrivSvc accepts a `grpc.connect` but never sends the
+  // `grpc.connected` READY push (e.g. it restarts mid-handshake). See
+  // armConnectReadyTimeout for the full rationale.
+  let connectReadyTimer: NodeJS.Timeout | null = null;
 
   // serialize IPC writes to PrivSvc to avoid concurrent pipe writes
   let writeChain: Promise<void> = Promise.resolve();
@@ -232,10 +236,42 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
   // and we don't want to clobber that. Idempotent — safe to call from
   // multiple disconnect paths.
   const invalidateCachedClient = (reason: string) => {
+    if (connectReadyTimer) { clearTimeout(connectReadyTimer); connectReadyTimer = null; }
     if ((ctx as any).__grpcClientInstance === client) {
       delete (ctx as any).__grpcClientInstance;
       ctx.logger?.info?.("[grpc-client] cached instance invalidated", { reason });
     }
+  };
+
+  const clearConnectReadyTimeout = () => {
+    if (connectReadyTimer) { clearTimeout(connectReadyTimer); connectReadyTimer = null; }
+  };
+
+  // After PrivSvc ACCEPTS a `grpc.connect` but before it confirms READY,
+  // the client waits for the async `grpc.connected` push. If that push
+  // never arrives — the exact macOS incident 2026-07-01: the backend went
+  // DB/DNS-silent → PrivSvc's own circuit breaker restarted it mid-
+  // reconnect → the pending connect was lost — the client used to wait
+  // FOREVER. No heartbeat/watchdog is armed until READY, and grpc-stream's
+  // reconnect loop already thinks the connect "succeeded", so nothing ever
+  // recovers: the process stays alive but `connected:false` and OFFLINE
+  // (that host sat zombie for 5 days). This timeout closes the gap: if
+  // READY doesn't land in time, tear the client down and surface an error
+  // so grpc-stream builds a fresh client and retries with backoff.
+  const CONNECT_READY_TIMEOUT_MS = 30_000;
+  const armConnectReadyTimeout = () => {
+    clearConnectReadyTimeout();
+    connectReadyTimer = setTimeout(() => {
+      connectReadyTimer = null;
+      if (connected || ended) return; // READY arrived, or already torn down
+      ctx.logger?.warn?.("[grpc-client] connect READY not confirmed within timeout — forcing reconnect", {
+        timeoutMs: CONNECT_READY_TIMEOUT_MS
+      });
+      try { ctx.trayStatus.markGrpcDisconnected(); } catch {}
+      invalidateCachedClient("connect_ready_timeout");
+      try { stream.emit("error", new Error("connect_ready_timeout")); } catch {}
+    }, CONNECT_READY_TIMEOUT_MS);
+    (connectReadyTimer as any)?.unref?.();
   };
 
   // Push from PrivSvc → re-emit as "data"
@@ -313,6 +349,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       }
 
       if (method === "grpc.connected") {
+        clearConnectReadyTimeout();
         if (connectedEmitted) return;
         connectedEmitted = true;
 
@@ -484,6 +521,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         const result = resp?.result ?? {};
 
         if (result.connected === true && result.ready === true) {
+        clearConnectReadyTimeout();
         connected = true;
         ctx.logger?.info("[grpc-client] PrivSvc bridge READY (from connect response)");
         try {
@@ -496,17 +534,21 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         });
 
         return;
-      }  
+      }
 
       if (result.connected === true) {
         connected = false;
         ctx.logger?.info("[grpc-client] bridge accepted connect request, waiting for grpc.connected");
+        // Guard the READY handshake: if the push never lands (PrivSvc
+        // restarted mid-connect), recover instead of waiting forever.
+        armConnectReadyTimeout();
         return;
       }
 
         // Otherwise wait for the push notification from the bridge.
         connected = false;
         ctx.logger?.info("[grpc-client] connect request accepted, waiting for grpc.connected confirmation");
+        armConnectReadyTimeout();
       } catch (e: any) {
         connected = false;
         ctx.logger?.error("[grpc-client] connect failed", e?.message || e);
