@@ -28,6 +28,22 @@ export interface SignatureGateDecision {
 }
 
 /**
+ * Normalize a privsvc `sdp.verifySignature` response into a SignatureVerifyResult.
+ * A failed call (or a missing/garbled response) → ok:false/trusted:false so the
+ * gate fails closed. Shared by the SDP install path and the self-update path.
+ */
+export function normalizeVerifyResponse(resp: any): SignatureVerifyResult {
+  if (resp && resp.ok) {
+    return {
+      ok: true,
+      trusted: resp.result?.trusted === true,
+      reason: resp.result?.reason ?? null,
+    };
+  }
+  return { ok: false, trusted: false, reason: resp?.error?.code ?? "verify_failed" };
+}
+
+/**
  * Decide whether to proceed to install.
  *   - signingRequired false → gate off, always proceed.
  *   - signingRequired true  → proceed ONLY on an explicit trusted verdict;

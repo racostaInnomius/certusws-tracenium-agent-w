@@ -16,6 +16,7 @@ import type {
 } from "./update-types";
 import { updateUpdateState } from "./update-state";
 import { runMacosPkgUpdate, runWindowsMsiUpdate } from "./updater-runner";
+import { evaluateSignatureGate, normalizeVerifyResponse } from "../plugins/sdp/signature-gate";
 import { detectFamily } from "../platform/linux/distro";
 import { compareSemver, looksLikeSemver } from "./semver";
 
@@ -660,6 +661,47 @@ export async function downloadMacosPkg(
   };
 }
 
+/**
+ * Verify a downloaded Windows update MSI's Authenticode signature via the OS
+ * (WinVerifyTrust, in the privsvc). Throws `update_signature_invalid:<reason>` —
+ * and deletes the file + records the failure — when the signature isn't trusted.
+ * Self-update always requires a signature, so the gate is unconditional.
+ */
+async function verifyWindowsUpdateSignatureOrThrow(
+  ctx: AgentContext,
+  filePath: string,
+  latestVersion: string
+): Promise<void> {
+  const resp = await ctx.priv.call({
+    v: 1,
+    id: `update-verify-${Date.now()}`,
+    method: "sdp.verifySignature",
+    params: { stagingPath: filePath, format: "msi" },
+    meta: {
+      tenantId: ctx.enrollment?.tenantId,
+      deviceId: ctx.enrollment?.deviceId,
+    },
+  });
+  const gate = evaluateSignatureGate(true, normalizeVerifyResponse(resp));
+  if (!gate.proceed) {
+    try { fs.rmSync(filePath, { force: true }); } catch { /* best-effort cleanup */ }
+    updateUpdateState({
+      updateInProgress: false,
+      status: "failed",
+      lastError: `update_signature_invalid:${gate.reason}`,
+      lastAttemptedAtUtc: new Date().toISOString(),
+      lastAttemptedVersion: latestVersion,
+      arch: getArch(),
+    });
+    console.error("[update] signature gate blocked update", {
+      version: latestVersion,
+      reason: gate.reason,
+    });
+    throw new Error(`update_signature_invalid:${gate.reason}`);
+  }
+  console.log("[update] update signature verified (OS trust)", { path: filePath, version: latestVersion });
+}
+
 export async function performWindowsMsiUpdate(
   ctx: AgentContext,
   latestVersion: string,
@@ -706,6 +748,14 @@ export async function performWindowsMsiUpdate(
   } else {
     downloaded = await downloadWindowsMsi(ctx, latestVersion, expectedHash);
   }
+
+  // ── Signature gate ──────────────────────────────────────────────
+  // The agent's OWN update MSI must be Authenticode-signed and trusted by the
+  // OS — SHA-256 alone only proves the bytes match what the backend served, not
+  // that they're a genuine signed Tracenium build. Verify the downloaded MSI via
+  // WinVerifyTrust (privsvc, LocalSystem) BEFORE applying. Fail-closed: an
+  // unsigned / tampered / untrusted-chain update is refused and deleted.
+  await verifyWindowsUpdateSignatureOrThrow(ctx, downloaded.filePath, latestVersion);
 
   updateUpdateState({
     updateInProgress: true,

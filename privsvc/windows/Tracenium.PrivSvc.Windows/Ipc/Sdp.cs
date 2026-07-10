@@ -256,19 +256,26 @@ public static class Sdp
             var p = req.Params ?? new Dictionary<string, object>();
             var stagingPath = GetString(p, "stagingPath") ?? "";
 
-            var absStaging = Path.GetFullPath(stagingPath);
-            var absStagingRoot = Path.GetFullPath(StagingDir) + Path.DirectorySeparatorChar;
-            if (!absStaging.StartsWith(absStagingRoot, StringComparison.OrdinalIgnoreCase))
+            // Verification is READ-ONLY (WinVerifyTrust never executes the file),
+            // so — unlike sdp.install — we allow any file under the agent's own
+            // ProgramData root, which covers both the SDP staging dir and the
+            // self-update download dir (...\Tracenium\updates). Still bounded so a
+            // caller can't probe arbitrary paths on disk.
+            var absTarget = Path.GetFullPath(stagingPath);
+            var traceniumRoot = Path.GetFullPath(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "Tracenium")) + Path.DirectorySeparatorChar;
+            if (!absTarget.StartsWith(traceniumRoot, StringComparison.OrdinalIgnoreCase))
             {
                 return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request",
-                    "stagingPath outside privsvc staging dir"));
+                    "path outside the Tracenium data root"));
             }
-            if (!File.Exists(absStaging))
+            if (!File.Exists(absTarget))
             {
-                return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request", "stagingPath not found"));
+                return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request", "file not found"));
             }
 
-            var (trusted, reason) = WinVerifyTrustFile(absStaging);
+            var (trusted, reason) = WinVerifyTrustFile(absTarget);
             return Task.FromResult(PrivSvcResponse.Success(req.Id, new { trusted, reason }));
         }
         catch (Exception ex)

@@ -1,7 +1,7 @@
 // test/plugins/sdp-signature-gate.test.ts
 
 import { describe, expect, it } from "vitest";
-import { evaluateSignatureGate } from "../../src/plugins/sdp/signature-gate";
+import { evaluateSignatureGate, normalizeVerifyResponse } from "../../src/plugins/sdp/signature-gate";
 
 describe("evaluateSignatureGate", () => {
   it("proceeds when signing is not required (gate off), whatever the verify result", () => {
@@ -35,5 +35,37 @@ describe("evaluateSignatureGate", () => {
       outcome: "signature_invalid",
       reason: "signature_untrusted",
     });
+  });
+});
+
+describe("normalizeVerifyResponse", () => {
+  it("maps a successful privsvc response with a trusted verdict", () => {
+    expect(normalizeVerifyResponse({ ok: true, result: { trusted: true, reason: "trusted" } })).toEqual({
+      ok: true,
+      trusted: true,
+      reason: "trusted",
+    });
+  });
+
+  it("maps a successful response reporting NOT trusted (fails closed downstream)", () => {
+    expect(normalizeVerifyResponse({ ok: true, result: { trusted: false, reason: "untrusted_root" } })).toEqual({
+      ok: true,
+      trusted: false,
+      reason: "untrusted_root",
+    });
+  });
+
+  it("maps a failed privsvc call to ok:false with the error code", () => {
+    expect(normalizeVerifyResponse({ ok: false, error: { code: "verify_error" } })).toEqual({
+      ok: false,
+      trusted: false,
+      reason: "verify_error",
+    });
+  });
+
+  it("treats a missing/garbled response as not-ok, not-trusted", () => {
+    expect(normalizeVerifyResponse(undefined)).toEqual({ ok: false, trusted: false, reason: "verify_failed" });
+    expect(normalizeVerifyResponse(null)).toEqual({ ok: false, trusted: false, reason: "verify_failed" });
+    expect(normalizeVerifyResponse({ ok: true })).toEqual({ ok: true, trusted: false, reason: null });
   });
 });
