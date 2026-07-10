@@ -127,6 +127,7 @@ public sealed class Router
             "sdp.detect" => Sdp.HandleDetect(req),
             "sdp.download" => Sdp.HandleDownload(req),
             "sdp.install" => Sdp.HandleInstall(req),
+            "sdp.verifySignature" => Sdp.HandleVerifySignature(req),
 
             // PMv2 — Phase 1-E remediation primitives. See Ipc/PmpRemediation.cs.
             // Phase 1 dispatch table covers 4 Windows checkIds:

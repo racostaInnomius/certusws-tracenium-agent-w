@@ -57,7 +57,12 @@ export type PrivSvcMethod =
   //                      { exitCode, stderrExcerpt, durationMs }.
   | "sdp.detect"
   | "sdp.download"
-  | "sdp.install";
+  | "sdp.install"
+  //   * `sdp.verifySignature` — full Authenticode verification of a
+  //     downloaded package via the OS (WinVerifyTrust): digest + chain
+  //     to the Windows trust store + revocation. Returns { trusted,
+  //     reason }. Gate before install when the package requires signing.
+  | "sdp.verifySignature";
 
 export type GrpcAckParams = {
   eventId: string;

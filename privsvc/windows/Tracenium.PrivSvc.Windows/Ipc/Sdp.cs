@@ -25,6 +25,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -233,6 +234,146 @@ public static class Sdp
         {
             return PrivSvcResponse.Fail(req.Id, "download_failed", ex.Message);
         }
+    }
+
+    // ── sdp.verifySignature — full Authenticode verification (WinVerifyTrust) ──
+    //
+    // The authoritative code-signing check the cloud can't do: WinVerifyTrust
+    // recomputes the file's Authenticode digest, builds + validates the cert
+    // chain against the WINDOWS trust store, and (optionally) honours revocation.
+    // Registered SIPs mean the SAME call verifies PE (.exe) AND MSI. Gate before
+    // install when the package requires a signature. Returns { trusted, reason }.
+    //
+    // NOTE: revocation is set to WTD_REVOKE_NONE so the check is deterministic +
+    // offline-capable (digest + chain-to-trusted-root is the core trust we need);
+    // enabling whole-chain revocation is a hardening option but can false-fail on
+    // an endpoint with no CRL/OCSP reachability. A verify EXCEPTION resolves to
+    // trusted=false — the caller (plugins/sdp/index.ts) fails closed.
+    public static Task<PrivSvcResponse> HandleVerifySignature(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var stagingPath = GetString(p, "stagingPath") ?? "";
+
+            var absStaging = Path.GetFullPath(stagingPath);
+            var absStagingRoot = Path.GetFullPath(StagingDir) + Path.DirectorySeparatorChar;
+            if (!absStaging.StartsWith(absStagingRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request",
+                    "stagingPath outside privsvc staging dir"));
+            }
+            if (!File.Exists(absStaging))
+            {
+                return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request", "stagingPath not found"));
+            }
+
+            var (trusted, reason) = WinVerifyTrustFile(absStaging);
+            return Task.FromResult(PrivSvcResponse.Success(req.Id, new { trusted, reason }));
+        }
+        catch (Exception ex)
+        {
+            // Fail closed: an inability to verify is reported as not-trusted.
+            return Task.FromResult(PrivSvcResponse.Success(req.Id,
+                new { trusted = false, reason = "verify_error:" + ex.Message }));
+        }
+    }
+
+    private static readonly Guid WINTRUST_ACTION_GENERIC_VERIFY_V2 =
+        new("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+
+    private const uint WTD_UI_NONE = 2;
+    private const uint WTD_REVOKE_NONE = 0;
+    private const uint WTD_CHOICE_FILE = 1;
+    private const uint WTD_STATEACTION_VERIFY = 1;
+    private const uint WTD_STATEACTION_CLOSE = 2;
+    private const uint WTD_SAFER_FLAG = 0x100;
+
+    // Common WinVerifyTrust HRESULTs → short, stable reason tags for the ACK.
+    private static string MapTrustStatus(uint status) => status switch
+    {
+        0x00000000 => "trusted",
+        0x800B0100 => "no_signature",       // TRUST_E_NOSIGNATURE
+        0x800B0101 => "cert_expired",       // CERT_E_EXPIRED
+        0x800B010C => "cert_revoked",       // CERT_E_REVOKED
+        0x800B0109 => "untrusted_root",     // CERT_E_UNTRUSTEDROOT
+        0x800B0111 => "explicit_distrust",  // TRUST_E_EXPLICIT_DISTRUST
+        0x800B010A => "no_chain_to_trusted",// CERT_E_CHAINING
+        0x80092010 => "cert_revoked",       // CRYPT_E_REVOKED
+        _ => "untrusted:0x" + status.ToString("X8"),
+    };
+
+    private static (bool trusted, string reason) WinVerifyTrustFile(string path)
+    {
+        var fileInfo = new WINTRUST_FILE_INFO
+        {
+            cbStruct = (uint)Marshal.SizeOf<WINTRUST_FILE_INFO>(),
+            pcwszFilePath = path,
+            hFile = IntPtr.Zero,
+            pgKnownSubject = IntPtr.Zero,
+        };
+        IntPtr pFile = Marshal.AllocHGlobal(Marshal.SizeOf<WINTRUST_FILE_INFO>());
+        IntPtr pAction = Marshal.AllocHGlobal(Marshal.SizeOf<Guid>());
+        try
+        {
+            Marshal.StructureToPtr(fileInfo, pFile, false);
+            var action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+            Marshal.StructureToPtr(action, pAction, false);
+
+            var data = new WINTRUST_DATA
+            {
+                cbStruct = (uint)Marshal.SizeOf<WINTRUST_DATA>(),
+                dwUIChoice = WTD_UI_NONE,
+                fdwRevocationChecks = WTD_REVOKE_NONE,
+                dwUnionChoice = WTD_CHOICE_FILE,
+                pFile = pFile,
+                dwStateAction = WTD_STATEACTION_VERIFY,
+                dwProvFlags = WTD_SAFER_FLAG,
+            };
+
+            uint status = WinVerifyTrust(IntPtr.Zero, pAction, ref data);
+
+            // Always release the chain/state WinVerifyTrust allocated.
+            data.dwStateAction = WTD_STATEACTION_CLOSE;
+            WinVerifyTrust(IntPtr.Zero, pAction, ref data);
+
+            return (status == 0, MapTrustStatus(status));
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(pFile);
+            Marshal.FreeHGlobal(pAction);
+        }
+    }
+
+    [DllImport("wintrust.dll", CharSet = CharSet.Unicode, SetLastError = false)]
+    private static extern uint WinVerifyTrust(IntPtr hwnd, IntPtr pgActionID, ref WINTRUST_DATA pWVTData);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct WINTRUST_FILE_INFO
+    {
+        public uint cbStruct;
+        [MarshalAs(UnmanagedType.LPWStr)] public string pcwszFilePath;
+        public IntPtr hFile;
+        public IntPtr pgKnownSubject;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WINTRUST_DATA
+    {
+        public uint cbStruct;
+        public IntPtr pPolicyCallbackData;
+        public IntPtr pSIPClientData;
+        public uint dwUIChoice;
+        public uint fdwRevocationChecks;
+        public uint dwUnionChoice;
+        public IntPtr pFile; // union member for WTD_CHOICE_FILE
+        public uint dwStateAction;
+        public IntPtr hWVTStateData;
+        public IntPtr pwszURLReference;
+        public uint dwProvFlags;
+        public uint dwUIContext;
+        public IntPtr pSignatureSettings;
     }
 
     public static async Task<PrivSvcResponse> HandleInstall(PrivSvcRequest req)
