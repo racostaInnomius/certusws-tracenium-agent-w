@@ -464,13 +464,16 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         ];
         try {
           // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const { rcpShellAdvertised, rcpFileAdvertised, rcpScreenAdvertised } = require("../plugins/rcp");
+          const { rcpShellAdvertised, rcpFileAdvertised, rcpScreenAdvertised, rcpConsentAdvertised } = require("../plugins/rcp");
           // M1 — rcp.shell: policy.features.remoteShell
           if (rcpShellAdvertised(ctx))  baseCaps.push("rcp.shell");
           // M2.S1 — rcp.file: policy.features.remoteFile
           if (rcpFileAdvertised(ctx))   baseCaps.push("rcp.file");
           // M3.S1 — rcp.screen: policy.features.remoteScreen
           if (rcpScreenAdvertised(ctx)) baseCaps.push("rcp.screen");
+          // User-attended approval — advertise rcp.consent only when the agent
+          // can actually prompt the user (a functional consentPrompter is wired).
+          if (rcpConsentAdvertised(ctx)) baseCaps.push("rcp.consent");
         } catch {
           // Plugin module missing or threw — leave RCP caps off
           // rather than crash bootstrap.

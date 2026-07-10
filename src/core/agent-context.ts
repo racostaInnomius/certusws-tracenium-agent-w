@@ -34,4 +34,9 @@ export type AgentContext = {
   // tests / unit modules that don't bring up the gRPC bridge don't
   // need to provide it.
   sendControl?: (msg: any) => void;
+  // RCP user-attended approval — endpoint-side consent prompter. Optional:
+  // when absent, the RCP session manager falls back to the fail-closed default
+  // (see plugins/rcp/consent-prompt.ts), which denies until a platform-native
+  // prompt is wired here.
+  consentPrompter?: import("../plugins/rcp/consent-prompt").ConsentPrompter;
 };

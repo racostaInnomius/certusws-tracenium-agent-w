@@ -71,7 +71,12 @@ const peers = H.instances;
 function makeCtx(featureEnabled = true) {
   const sent: any[] = [];
   const ctx: any = {
-    policyRuntime: { isFeatureEnabled: () => featureEnabled },
+    policyRuntime: {
+      // Capability flags follow `featureEnabled`; remoteRequireConsent stays
+      // OFF (its real default) so the user-attended consent gate doesn't fire
+      // in these pre-consent state-machine tests.
+      isFeatureEnabled: (f: string) => (f === "remoteRequireConsent" ? false : featureEnabled)
+    },
     sendControl: (m: any) => sent.push(m),
     logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} }
   };

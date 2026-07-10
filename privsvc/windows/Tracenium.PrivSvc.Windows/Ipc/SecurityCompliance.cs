@@ -46,6 +46,10 @@ public static class SecurityCompliance
                 shares = GetRiskyShares(),
                 antivirus = GetAntivirusStatus(),
                 domain = GetDomainAndGpoStatus(),
+                // Platform integrity — TPM + UEFI Secure Boot. Consumed by the
+                // backend catalog checks windows.tpm.* / windows.secureboot.*.
+                tpm = GetTpmStatus(),
+                secureBoot = GetSecureBootStatus(),
                 ciphers = GetEnabledCiphers(),
                 protocols = GetTlsProtocols(),
                 patches = GetInstalledSecurityPatches(),
@@ -139,6 +143,84 @@ public static class SecurityCompliance
         catch
         {
             return new { status = "unknown" };
+        }
+    }
+
+    // Platform integrity — TPM. Emits { present, ready, version } for the
+    // backend catalog checks windows.tpm.present (tpm.ready) and
+    // windows.tpm.version_2 (tpm.version === "2.0"). `ready` = present AND
+    // enabled AND activated. `version` is the spec major.minor ("2.0" | "1.2").
+    private static object GetTpmStatus()
+    {
+        try
+        {
+            var output = RunPs(
+                "$t = Get-Tpm -ErrorAction SilentlyContinue; " +
+                "$v = (Get-CimInstance -Namespace 'root/cimv2/security/microsofttpm' -ClassName Win32_Tpm -ErrorAction SilentlyContinue).SpecVersion; " +
+                "[pscustomobject]@{ Present = [bool]$t.TpmPresent; Ready = [bool]$t.TpmReady; Enabled = [bool]$t.TpmEnabled; Activated = [bool]$t.TpmActivated; SpecVersion = $v } | ConvertTo-Json -Depth 3"
+            );
+
+            if (string.IsNullOrWhiteSpace(output))
+                return new { present = false, ready = false, version = "" };
+
+            var obj = JsonSerializer.Deserialize<Dictionary<string, object>>(output);
+            if (obj == null)
+                return new { present = false, ready = false, version = "" };
+
+            bool present = false, ready = false, enabled = false, activated = false;
+            if (obj.TryGetValue("Present", out var p)) bool.TryParse(p?.ToString(), out present);
+            if (obj.TryGetValue("Ready", out var r)) bool.TryParse(r?.ToString(), out ready);
+            if (obj.TryGetValue("Enabled", out var e)) bool.TryParse(e?.ToString(), out enabled);
+            if (obj.TryGetValue("Activated", out var a)) bool.TryParse(a?.ToString(), out activated);
+
+            // Win32_Tpm.SpecVersion is like "2.0, 0, 1.38" — take the leading
+            // "major.minor" so the catalog can equals-match "2.0".
+            string version = "";
+            if (obj.TryGetValue("SpecVersion", out var sv) && sv != null)
+                version = (sv.ToString() ?? "").Split(',')[0].Trim();
+
+            return new
+            {
+                present,
+                ready = ready || (present && enabled && activated),
+                version
+            };
+        }
+        catch
+        {
+            // Non-fatal: TPM absent / query blocked → report "not present" and
+            // let the backend mark the checks accordingly. Don't fail the whole
+            // compliance collection over one section.
+            RecordSectionError("tpm", "collect_failed", "Get-Tpm / Win32_Tpm query failed");
+            return new { present = false, ready = false, version = "" };
+        }
+    }
+
+    // Platform integrity — UEFI Secure Boot. Emits { enabled } for the backend
+    // catalog check windows.secureboot.enabled. Confirm-SecureBootUEFI throws on
+    // legacy/non-UEFI systems, so we swallow that and report enabled=false.
+    private static object GetSecureBootStatus()
+    {
+        try
+        {
+            var output = RunPs(
+                "$e = $false; try { $e = [bool](Confirm-SecureBootUEFI -ErrorAction Stop) } catch { $e = $false }; " +
+                "[pscustomobject]@{ Enabled = $e } | ConvertTo-Json"
+            );
+
+            if (string.IsNullOrWhiteSpace(output))
+                return new { enabled = false };
+
+            var obj = JsonSerializer.Deserialize<Dictionary<string, object>>(output);
+            bool enabled = false;
+            if (obj != null && obj.TryGetValue("Enabled", out var en) && en != null)
+                bool.TryParse(en.ToString(), out enabled);
+
+            return new { enabled };
+        }
+        catch
+        {
+            return new { enabled = false };
         }
     }
 

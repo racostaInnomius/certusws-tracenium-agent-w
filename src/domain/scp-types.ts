@@ -74,6 +74,15 @@ export type ScpNamespace = {
   shares?: unknown;
   antivirus?: unknown;
   domain?: unknown;
+  // Platform integrity (Windows). Passed through verbatim from the privsvc;
+  // the backend catalog decides pass/fail. Expected shapes (see
+  // certusws-tracenium migration 20260708_compliance_tpm_secureboot.sql):
+  //   tpm        { present: bool, ready: bool, version: "2.0"|"1.2"|... }
+  //   secureBoot { enabled: bool }
+  // Absent on pre-1.2.0 agents / non-UEFI hosts → catalog marks the checks
+  // not_applicable.
+  tpm?: unknown;
+  secureBoot?: unknown;
   crypto?: ScpCryptoEvidence;
   patches?: ScpPatchesEvidence;
 

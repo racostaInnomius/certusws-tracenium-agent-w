@@ -16,6 +16,11 @@
 
 import type { AgentContext } from "../../core/agent-context";
 import { PeerSession } from "./peer-session";
+import {
+  failClosedConsentPrompter,
+  consentCloseReason,
+  type ConsentDecision,
+} from "./consent-prompt";
 
 // M1.S1: hardcoded ceiling. The backend already caps sessions per
 // device at 3 + per operator at 10. This 8 is a "if the backend
@@ -121,6 +126,49 @@ export class SessionManager {
       });
       this.sendError(sessionId, "POLICY_DISABLED", `${capability} policy is off`);
       return;
+    }
+
+    // User-attended approval gate. When policy requires end-user consent, prompt
+    // the interactive user BEFORE allocating the peer / opening the capability.
+    // A deny or timeout tears the session down with the conventional close
+    // reason the backend audits (consent_denied / consent_timeout). The prompter
+    // is injected on ctx; absent one, the fail-closed default denies — the
+    // backend should have already blocked this via the rcp.consent capability
+    // gate, but we enforce here too (defense in depth).
+    const requireConsent = Boolean(
+      this.ctx.policyRuntime?.isFeatureEnabled?.("remoteRequireConsent")
+    );
+    if (requireConsent) {
+      const prompter = this.ctx.consentPrompter ?? failClosedConsentPrompter;
+      let decision: ConsentDecision;
+      try {
+        decision = await prompter.request({
+          sessionId,
+          capability,
+          operator: params?.operatorUserId ? String(params.operatorUserId) : null,
+          timeoutSeconds,
+        });
+      } catch (err: any) {
+        // A prompter that throws must not fail OPEN — treat as denied.
+        this.ctx.logger?.error?.("[rcp] consent prompt threw; denying", {
+          sid: sessionId.slice(-8),
+          err: err?.message || String(err),
+        });
+        decision = "denied";
+      }
+      if (decision !== "approved") {
+        this.ctx.logger?.info?.("[rcp] session declined by consent gate", {
+          sid: sessionId.slice(-8),
+          capability,
+          decision,
+        });
+        this.sendClose(sessionId, consentCloseReason(decision) ?? "consent_denied");
+        return;
+      }
+      this.ctx.logger?.info?.("[rcp] consent granted", {
+        sid: sessionId.slice(-8),
+        capability,
+      });
     }
 
     // Construct the PeerSession. This instantiates the native node-datachannel

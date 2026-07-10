@@ -159,6 +159,11 @@ export async function collectWindowsScp(ctx: AgentContext): Promise<ScpNamespace
     shares: posture?.shares,
     antivirus: posture?.antivirus ?? posture?.defender,
     domain: posture?.domain,
+    // Platform integrity — TPM + UEFI Secure Boot. Forwarded verbatim; absent
+    // until the privsvc collector (SecurityCompliance.cs) emits them, in which
+    // case the backend catalog checks activate automatically (schema 2.0).
+    tpm: posture?.tpm,
+    secureBoot: posture?.secureBoot,
 
     // Derived crypto + patches blocks (see helpers above).
     crypto: buildCryptoEvidence(posture),

@@ -143,6 +143,22 @@ export function rcpScreenAdvertised(ctx: AgentContext): boolean {
 }
 
 /**
+ * Returns true if the agent should advertise `rcp.consent` on Hello — i.e. it
+ * can actually prompt the interactive user for approval. Gated on a functional
+ * consent prompter being registered on the context: if none is wired, we must
+ * NOT advertise, so the backend fail-closes any consent-required session rather
+ * than opening one the user never approved. See consent-prompt.ts.
+ */
+export function rcpConsentAdvertised(ctx: AgentContext): boolean {
+  if (nativeBroken) return false;
+  try {
+    return Boolean(ctx.consentPrompter?.available?.());
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Inbound message dispatch. The gRPC stream handler calls this for
  * each remoteSession* control message; we route to the manager.
  *

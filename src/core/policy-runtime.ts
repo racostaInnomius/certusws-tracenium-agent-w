@@ -56,6 +56,11 @@ export type RuntimePolicy = {
     remoteShell?: boolean;    // rcp.shell  (M1)
     remoteFile?: boolean;     // rcp.file   (M2.S1)
     remoteScreen?: boolean;   // rcp.screen (M3.S1)
+    // User-attended approval: when true, the agent must obtain end-user consent
+    // at the endpoint before opening any RCP session (SessionManager.onOffer
+    // prompt). The backend fail-closes if the agent can't prompt (doesn't
+    // advertise rcp.consent).
+    remoteRequireConsent?: boolean;
     selfUpdate?: boolean;
   };
 
@@ -83,6 +88,7 @@ export type RuntimePolicy = {
       remoteShell?: boolean;
       remoteFile?: boolean;
       remoteScreen?: boolean;
+      remoteRequireConsent?: boolean;
       selfUpdate?: boolean;
     };
   };
@@ -337,6 +343,7 @@ const DEFAULT_POLICY: RuntimePolicy = {
     remoteShell: false,
     remoteFile:  false,
     remoteScreen: false,
+    remoteRequireConsent: false,
     selfUpdate: true
   }
 };
