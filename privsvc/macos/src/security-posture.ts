@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { success } from "./protocol";
+import { parseSshdConfig } from "./ssh-parse";
 
 const execFileAsync = promisify(execFile);
 
@@ -556,6 +557,19 @@ async function collectDomain() {
   };
 }
 
+// ── SSH (crypto parity with Linux) ────────────────────────────────
+//
+// macOS ships OpenSSH; `sshd -T` dumps the effective config (needs root, which
+// PrivSvc has). We parse the same shape as the Linux ssh collector so the shared
+// SSH crypto catalog rules (ssh.ciphers / ssh.macs / ssh.kexAlgorithms) evaluate
+// on macOS too — this REPLACES the old `crypto: phase_2_pending_model_definition`
+// stub. `sshd -T` reports the config even when Remote Login is off (latent
+// posture); the `services.remoteLogin` block separately reports exposure.
+async function collectSsh() {
+  const r = await run("/usr/sbin/sshd", ["-T"], 8000);
+  return parseSshdConfig(r.output);
+}
+
 export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSvcResponse> {
   // Kick off every independent collector in parallel. They each own a
   // single shell call (or a small fixed set), so running them serially
@@ -589,6 +603,7 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
   ]);
 
   const smb = await collectSmb(shares);
+  const ssh = await collectSsh();
 
   return success(req.id, {
     filevault,
@@ -608,10 +623,10 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
     services,
     softwareUpdate,
     accounts,
-    crypto: {
-      status: "unknown",
-      source: "phase_2_pending_model_definition"
-    },
+    // SSH crypto/hardening posture — the real replacement for the former
+    // `crypto` stub. Same shape as the Linux ssh block, so the shared SSH
+    // catalog rules (ssh.ciphers / ssh.macs / ssh.kexAlgorithms) evaluate here.
+    ssh,
     collectedAtUtc: new Date().toISOString()
   });
 }

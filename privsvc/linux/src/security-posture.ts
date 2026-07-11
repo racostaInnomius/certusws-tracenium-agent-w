@@ -51,6 +51,7 @@ import {
   type NfsExportSummary,
 } from "./fileshares";
 import { buildMountsEvidence } from "./mounts-parse";
+import { parsePwquality, shapePwqualityEvidence, type PwqualitySettings } from "./pwquality";
 
 const execFileAsync = promisify(execFile);
 
@@ -650,6 +651,39 @@ function collectMounts(): Record<string, unknown> {
   return buildMountsEvidence(text);
 }
 
+// ── pwquality (PAM password quality) ──────────────────────────────
+//
+// Reads /etc/security/pwquality.conf (+ pwquality.conf.d/*.conf drop-ins) — the
+// modern complement to the legacy /etc/login.defs passwordPolicy block. Only
+// explicitly-set knobs are reported (see pwquality.ts). No config file at all →
+// applicable:false → all pwquality checks not_applicable.
+function collectPwquality(): Record<string, unknown> {
+  const files: string[] = [];
+  try {
+    if (fs.existsSync("/etc/security/pwquality.conf")) files.push("/etc/security/pwquality.conf");
+  } catch {}
+  try {
+    for (const f of fs.readdirSync("/etc/security/pwquality.conf.d")) {
+      if (f.endsWith(".conf")) files.push(`/etc/security/pwquality.conf.d/${f}`);
+    }
+  } catch {
+    // no drop-in dir — fine
+  }
+
+  if (files.length === 0) return shapePwqualityEvidence(false, {});
+
+  // Later files (drop-ins, read after the base) override earlier keys.
+  const settings: PwqualitySettings = {};
+  for (const f of files.sort()) {
+    try {
+      Object.assign(settings, parsePwquality(fs.readFileSync(f, "utf8")));
+    } catch {
+      // unreadable file — skip
+    }
+  }
+  return shapePwqualityEvidence(true, settings);
+}
+
 // ── Aggregate handler ─────────────────────────────────────────────
 export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSvcResponse> {
   try {
@@ -678,6 +712,7 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
     const sysctl = collectSysctl();
     const shares = collectShares();
     const mounts = collectMounts();
+    const pwquality = collectPwquality();
 
     return success(req.id, {
       collectedAtUtc: new Date().toISOString(),
@@ -698,6 +733,7 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
       smb,
       shares,
       mounts,
+      pwquality,
     });
   } catch (err: any) {
     logger.error("security_posture_failed", { error: err?.message || String(err) });

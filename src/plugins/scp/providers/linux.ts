@@ -78,6 +78,7 @@ export async function collectLinuxScp(ctx: AgentContext): Promise<ScpNamespace> 
     smb: posture?.smb,
     shares: posture?.shares,
     mounts: posture?.mounts,
+    pwquality: posture?.pwquality,
 
     ...(collectorError ? { collectorError } : {}),
   };

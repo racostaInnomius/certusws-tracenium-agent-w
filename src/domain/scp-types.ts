@@ -139,10 +139,15 @@ export type ScpNamespace = {
   //                   (tmp / var_tmp / dev_shm): separate + nodev /
   //                   nosuid / noexec. Non-separate targets omit their
   //                   option flags → not_applicable.
+  //   pwquality       PAM password quality (/etc/security/pwquality.conf):
+  //                   minlen, dictcheck, maxrepeat, etc. Modern complement
+  //                   to the legacy passwordPolicy (/etc/login.defs). Only
+  //                   explicitly-set knobs reported → unset → not_applicable.
   auditd?: unknown;
   updates?: unknown;
   sysctl?: unknown;
   mounts?: unknown;
+  pwquality?: unknown;
 
   collectorError?: ScpCollectorError;
 };

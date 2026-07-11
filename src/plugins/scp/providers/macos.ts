@@ -78,6 +78,9 @@ export async function collectMacosScp(ctx: AgentContext): Promise<ScpNamespace> 
     softwareUpdate: posture?.softwareUpdate,
     accounts: posture?.accounts,
     domain: posture?.domain,
+    // SSH crypto/hardening posture — same shape as Linux, so the shared SSH
+    // crypto catalog rules evaluate on macOS (replaces the former crypto stub).
+    ssh: posture?.ssh,
 
     patches: buildPatchesEvidence(posture),
 
