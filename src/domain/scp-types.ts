@@ -135,9 +135,14 @@ export type ScpNamespace = {
   selinux?: unknown;
   apparmor?: unknown;
   passwordPolicy?: unknown;
+  //   mounts          filesystem hardening for tmp-style mounts
+  //                   (tmp / var_tmp / dev_shm): separate + nodev /
+  //                   nosuid / noexec. Non-separate targets omit their
+  //                   option flags → not_applicable.
   auditd?: unknown;
   updates?: unknown;
   sysctl?: unknown;
+  mounts?: unknown;
 
   collectorError?: ScpCollectorError;
 };

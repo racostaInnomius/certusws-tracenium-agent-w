@@ -42,6 +42,15 @@ import {
   shapeUpdatesEvidence,
 } from "./updates-parse";
 import { SYSCTL_KEYS, coerceSysctlValue, buildSysctlTree } from "./sysctl";
+import {
+  parseTestparmMinProtocol,
+  deriveSmb1Enabled,
+  parseExports,
+  shapeSmbEvidence,
+  shapeSharesEvidence,
+  type NfsExportSummary,
+} from "./fileshares";
+import { buildMountsEvidence } from "./mounts-parse";
 
 const execFileAsync = promisify(execFile);
 
@@ -574,6 +583,73 @@ function collectSysctl(): Record<string, unknown> {
   return buildSysctlTree(entries);
 }
 
+// ── Samba (smb) ───────────────────────────────────────────────────
+//
+// Optional on Linux. If Samba isn't installed we report applicable:false and
+// omit the detail (→ not_applicable). When it is, we read the EFFECTIVE config
+// via `testparm -s` and derive whether SMB1 (NT1) is still allowed — the one
+// high-value, cross-platform-consistent check (shared path `smb.smb1.enabled`).
+async function collectSmb(): Promise<Record<string, unknown>> {
+  const installed =
+    fs.existsSync("/usr/sbin/smbd") || fs.existsSync("/usr/bin/smbd") || fs.existsSync("/etc/samba/smb.conf");
+  if (!installed) return shapeSmbEvidence(false);
+
+  // testparm dumps the effective config to stdout; the "Loaded services" noise
+  // goes to stderr. -s suppresses the interactive prompt.
+  const tp = await runCheck("/usr/bin/testparm", ["-s"]);
+  if (tp.code == null && !tp.stdout) {
+    // Samba present but testparm unavailable → can't determine → omit detail.
+    return shapeSmbEvidence(true);
+  }
+  const minProtocol = parseTestparmMinProtocol(tp.stdout);
+  return shapeSmbEvidence(true, deriveSmb1Enabled(minProtocol), truncate(tp.stdout));
+}
+
+// ── NFS exports (shares) ──────────────────────────────────────────
+//
+// Reads /etc/exports + /etc/exports.d/*.exports (fs, no exec). No exports at all
+// → applicable:false. Flags world-reachable exports and no_root_squash grants.
+function collectShares(): Record<string, unknown> {
+  const files: string[] = [];
+  try {
+    if (fs.existsSync("/etc/exports")) files.push("/etc/exports");
+  } catch {}
+  try {
+    for (const f of fs.readdirSync("/etc/exports.d")) {
+      if (f.endsWith(".exports")) files.push(`/etc/exports.d/${f}`);
+    }
+  } catch {
+    // no /etc/exports.d — fine
+  }
+
+  let combined = "";
+  for (const f of files) {
+    try {
+      combined += fs.readFileSync(f, "utf8") + "\n";
+    } catch {
+      // unreadable file — skip
+    }
+  }
+
+  const summary: NfsExportSummary = parseExports(combined);
+  return shapeSharesEvidence(summary);
+}
+
+// ── Mounts (filesystem hardening) ─────────────────────────────────
+//
+// Reads /proc/mounts (fs, no exec) and reports whether tmp-style filesystems are
+// separate mounts carrying nodev/nosuid/noexec. Non-separate targets omit their
+// option flags → not_applicable (see mounts-parse.ts).
+function collectMounts(): Record<string, unknown> {
+  let text = "";
+  try {
+    text = fs.readFileSync("/proc/mounts", "utf8");
+  } catch {
+    return {}; // no /proc/mounts (unlikely) → whole block empty → all NA
+  }
+  return buildMountsEvidence(text);
+}
+
 // ── Aggregate handler ─────────────────────────────────────────────
 export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSvcResponse> {
   try {
@@ -589,7 +665,7 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
     // (errors → "unknown" status), so we shouldn't ever lose the
     // whole snapshot to one bad check. Belt-and-braces with the
     // outer try/catch.
-    const [firewall, ssh, selinux, apparmor, passwordPolicy, auditd, updates] = await Promise.all([
+    const [firewall, ssh, selinux, apparmor, passwordPolicy, auditd, updates, smb] = await Promise.all([
       collectFirewall(),
       collectSsh(),
       collectSelinux(distro.family),
@@ -597,8 +673,11 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
       Promise.resolve(collectPasswordPolicy()),
       collectAuditd(),
       collectUpdates(distro.family),
+      collectSmb(),
     ]);
     const sysctl = collectSysctl();
+    const shares = collectShares();
+    const mounts = collectMounts();
 
     return success(req.id, {
       collectedAtUtc: new Date().toISOString(),
@@ -616,6 +695,9 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
       auditd,
       updates,
       sysctl,
+      smb,
+      shares,
+      mounts,
     });
   } catch (err: any) {
     logger.error("security_posture_failed", { error: err?.message || String(err) });
