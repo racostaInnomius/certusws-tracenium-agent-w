@@ -119,11 +119,25 @@ export type ScpNamespace = {
   //                   subsystem. Optional — many minimal images don't
   //                   ship auditd at all and the catalog handles that
   //                   via not_applicable.
+  //   updates         pending patch posture per package manager
+  //                   (apt/dnf/yum/zypper): updatesAvailable,
+  //                   securityUpdatesAvailable, rebootRequired. Counts
+  //                   are null (not 0) when a tool is missing/unparseable
+  //                   so the catalog marks not_applicable rather than a
+  //                   false "fully patched". Distinct from the shared
+  //                   `patches` block, which is installed history (Win/mac).
+  //   sysctl          curated kernel/network hardening knobs read from
+  //                   /proc/sys, as a NESTED tree (dotted sysctl keys →
+  //                   nested objects) so catalog rules address e.g.
+  //                   `sysctl.net.ipv4.conf.all.rp_filter`. Absent knobs
+  //                   are omitted → not_applicable.
   ssh?: unknown;
   selinux?: unknown;
   apparmor?: unknown;
   passwordPolicy?: unknown;
   auditd?: unknown;
+  updates?: unknown;
+  sysctl?: unknown;
 
   collectorError?: ScpCollectorError;
 };

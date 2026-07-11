@@ -28,10 +28,20 @@
 import { execFile } from "child_process";
 import fs from "fs";
 import { promisify } from "util";
-import { detectFamily } from "./distro";
+import { detectFamily, type LinuxFamily } from "./distro";
 import { logger } from "./logger";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
+import {
+  parseAptCheck,
+  parseAptSimulate,
+  parseDnfCheckUpdate,
+  parseDnfSecurityCount,
+  parseZypperTableCount,
+  parseNeedsRestarting,
+  shapeUpdatesEvidence,
+} from "./updates-parse";
+import { SYSCTL_KEYS, coerceSysctlValue, buildSysctlTree } from "./sysctl";
 
 const execFileAsync = promisify(execFile);
 
@@ -395,6 +405,175 @@ async function collectAuditd() {
   };
 }
 
+// ── Updates (patch compliance) ────────────────────────────────────
+//
+// Patch compliance = how many updates are still PENDING (and how many are
+// security-flagged), plus whether a reboot is queued. Unlike the Windows/macOS
+// `patches` block (installed history), Linux reports the pending side per
+// package manager. All commands run against the LOCAL METADATA CACHE (apt-check
+// / `apt-get -s` / `dnf -C` / zypper without refresh) so we never block on a
+// network fetch inside the privileged collector.
+//
+// Family maps to manager: debian→apt, rhel→dnf|yum, suse→zypper. A count is left
+// null (not 0) whenever a tool is missing or its output can't be parsed, so the
+// backend catalog can mark the check not_applicable instead of asserting a
+// clean "0 pending" that we didn't actually verify.
+const UPDATES_TIMEOUT_MS = 20_000; // package managers are slower than sshd -T
+
+async function collectAptUpdates() {
+  // Prefer apt-check — it emits an exact "total;security" pair on stderr.
+  const chk = await runCheck("/usr/lib/update-notifier/apt-check", [], UPDATES_TIMEOUT_MS);
+  let counts = parseAptCheck(chk.stderr) || parseAptCheck(chk.stdout);
+  let raw = truncate(chk.stderr || chk.stdout);
+  let source = "apt-check";
+
+  if (!counts) {
+    // Fallback: simulate an upgrade against the local cache (no network).
+    const sim = await runCheck(
+      "/usr/bin/apt-get",
+      ["-s", "-o", "Debug::NoLocking=true", "upgrade"],
+      UPDATES_TIMEOUT_MS
+    );
+    if (sim.code == null && !sim.stdout) {
+      return {
+        applicable: true,
+        manager: "apt" as const,
+        source: "apt-get -s",
+        updatesAvailable: null,
+        securityUpdatesAvailable: null,
+        rebootRequired: fs.existsSync("/var/run/reboot-required"),
+        raw: "",
+        error: "apt tooling unavailable",
+      };
+    }
+    counts = parseAptSimulate(sim.stdout);
+    raw = truncate(sim.stdout);
+    source = "apt-get -s";
+  }
+
+  return {
+    applicable: true,
+    manager: "apt" as const,
+    source,
+    updatesAvailable: counts.total,
+    securityUpdatesAvailable: counts.security,
+    rebootRequired: fs.existsSync("/var/run/reboot-required"),
+    raw,
+  };
+}
+
+async function collectDnfUpdates() {
+  const useDnf = fs.existsSync("/usr/bin/dnf");
+  const bin = useDnf ? "/usr/bin/dnf" : fs.existsSync("/usr/bin/yum") ? "/usr/bin/yum" : null;
+  if (!bin) {
+    return {
+      applicable: false as const,
+      manager: null,
+      updatesAvailable: null,
+      securityUpdatesAvailable: null,
+      rebootRequired: null,
+    };
+  }
+  const manager = useDnf ? ("dnf" as const) : ("yum" as const);
+
+  // `-C` = cache-only: never triggers a network metadata refresh.
+  const chk = await runCheck(bin, ["-q", "-C", "check-update"], UPDATES_TIMEOUT_MS);
+  const updatesAvailable = parseDnfCheckUpdate(chk.stdout, chk.code);
+
+  const sec = await runCheck(
+    bin,
+    ["-q", "-C", "updateinfo", "list", "--updates", "--security"],
+    UPDATES_TIMEOUT_MS
+  );
+  const securityUpdatesAvailable = sec.stdout ? parseDnfSecurityCount(sec.stdout) : null;
+
+  // needs-restarting -r (dnf-utils) → exit 1 = reboot required; ENOENT → null.
+  const nr = await runCheck("/usr/bin/needs-restarting", ["-r"], UPDATES_TIMEOUT_MS);
+
+  return {
+    applicable: true as const,
+    manager,
+    source: `${manager} -C`,
+    updatesAvailable,
+    securityUpdatesAvailable,
+    rebootRequired: parseNeedsRestarting(nr.code),
+    raw: truncate(chk.stdout),
+  };
+}
+
+async function collectZypperUpdates() {
+  if (!fs.existsSync("/usr/bin/zypper")) {
+    return {
+      applicable: false as const,
+      manager: null,
+      updatesAvailable: null,
+      securityUpdatesAvailable: null,
+      rebootRequired: null,
+    };
+  }
+  const lu = await runCheck(
+    "/usr/bin/zypper",
+    ["-q", "--non-interactive", "list-updates"],
+    UPDATES_TIMEOUT_MS
+  );
+  const lp = await runCheck(
+    "/usr/bin/zypper",
+    ["-q", "--non-interactive", "list-patches", "--category", "security"],
+    UPDATES_TIMEOUT_MS
+  );
+  return {
+    applicable: true as const,
+    manager: "zypper" as const,
+    source: "zypper",
+    updatesAvailable: lu.stdout ? parseZypperTableCount(lu.stdout) : null,
+    securityUpdatesAvailable: lp.stdout ? parseZypperTableCount(lp.stdout) : null,
+    // zypper reboot-required needs `zypper ps -s` heuristics — deferred; null is
+    // honest ("couldn't determine") rather than a guessed false.
+    rebootRequired: null,
+    raw: truncate(lu.stdout),
+  };
+}
+
+// Non-throwing: any unexpected failure degrades to an unparsed evidence block so
+// the whole SCP snapshot survives (same discipline as every other collector).
+// shapeUpdatesEvidence OMITS every field we couldn't determine so the backend
+// evaluator marks those checks not_applicable (absent path) rather than scoring
+// a present `null` as a real value — see the shaper's comment.
+async function collectUpdates(family: LinuxFamily): Promise<Record<string, unknown>> {
+  try {
+    if (family === "debian") return shapeUpdatesEvidence(await collectAptUpdates());
+    if (family === "rhel") return shapeUpdatesEvidence(await collectDnfUpdates());
+    if (family === "suse") return shapeUpdatesEvidence(await collectZypperUpdates());
+    return shapeUpdatesEvidence({ applicable: false, manager: null });
+  } catch (err: any) {
+    return shapeUpdatesEvidence({
+      applicable: true,
+      manager: null,
+      error: err?.message || String(err),
+    });
+  }
+}
+
+// ── sysctl (kernel / network hardening) ───────────────────────────
+//
+// Reads a curated set of hardening knobs straight from /proc/sys (no exec, no
+// root needed to read). A dotted sysctl key maps to a file path by swapping '.'
+// → '/': net.ipv4.conf.all.rp_filter → /proc/sys/net/ipv4/conf/all/rp_filter.
+// Absent files are omitted so the backend marks that check not_applicable rather
+// than scoring a missing knob. Returns a NESTED tree (see sysctl.ts) so catalog
+// rules can address `sysctl.net.ipv4.conf.all.rp_filter`.
+function collectSysctl(): Record<string, unknown> {
+  const entries = SYSCTL_KEYS.map((key) => {
+    try {
+      const raw = fs.readFileSync(`/proc/sys/${key.replace(/\./g, "/")}`, "utf8");
+      return { key, value: coerceSysctlValue(raw) };
+    } catch {
+      return { key, value: null }; // knob absent → omitted → not_applicable
+    }
+  });
+  return buildSysctlTree(entries);
+}
+
 // ── Aggregate handler ─────────────────────────────────────────────
 export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSvcResponse> {
   try {
@@ -410,14 +589,16 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
     // (errors → "unknown" status), so we shouldn't ever lose the
     // whole snapshot to one bad check. Belt-and-braces with the
     // outer try/catch.
-    const [firewall, ssh, selinux, apparmor, passwordPolicy, auditd] = await Promise.all([
+    const [firewall, ssh, selinux, apparmor, passwordPolicy, auditd, updates] = await Promise.all([
       collectFirewall(),
       collectSsh(),
       collectSelinux(distro.family),
       collectApparmor(distro.family),
       Promise.resolve(collectPasswordPolicy()),
       collectAuditd(),
+      collectUpdates(distro.family),
     ]);
+    const sysctl = collectSysctl();
 
     return success(req.id, {
       collectedAtUtc: new Date().toISOString(),
@@ -433,6 +614,8 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
       apparmor,
       passwordPolicy,
       auditd,
+      updates,
+      sysctl,
     });
   } catch (err: any) {
     logger.error("security_posture_failed", { error: err?.message || String(err) });
