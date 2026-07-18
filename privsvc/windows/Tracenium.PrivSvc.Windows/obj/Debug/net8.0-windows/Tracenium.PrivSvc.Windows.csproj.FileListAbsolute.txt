@@ -53,3 +53,6 @@
 /Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/obj/Debug/net8.0-windows/Tracenium.PrivSvc.Windows.pdb
 /Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/obj/Debug/net8.0-windows/Tracenium.PrivSvc.Windows.genruntimeconfig.cache
 /Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/obj/Debug/net8.0-windows/ref/Tracenium.PrivSvc.Windows.dll
+/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/bin/Debug/net8.0-windows/Microsoft.Win32.SystemEvents.dll
+/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/bin/Debug/net8.0-windows/System.Drawing.Common.dll
+/Users/javierpacheco/DevProjects/Tracenium/certusws-tracenium-agent-w/privsvc/windows/Tracenium.PrivSvc.Windows/bin/Debug/net8.0-windows/runtimes/win/lib/net8.0/Microsoft.Win32.SystemEvents.dll

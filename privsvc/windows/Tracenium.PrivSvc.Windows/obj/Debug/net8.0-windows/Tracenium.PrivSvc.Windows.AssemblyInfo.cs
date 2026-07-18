@@ -10,12 +10,14 @@
 using System;
 using System.Reflection;
 
-[assembly: System.Reflection.AssemblyCompanyAttribute("Tracenium.PrivSvc.Windows")]
+[assembly: System.Reflection.AssemblyCompanyAttribute("CERTUS ITM LLC")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
+[assembly: System.Reflection.AssemblyCopyrightAttribute("Copyright © CERTUS ITM LLC")]
+[assembly: System.Reflection.AssemblyDescriptionAttribute("Tracenium Agent — privileged cryptographic + gRPC bridge service")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0655a70eb52ae0fdc7bb83545bade77df9a1b33a")]
-[assembly: System.Reflection.AssemblyProductAttribute("Tracenium.PrivSvc.Windows")]
-[assembly: System.Reflection.AssemblyTitleAttribute("Tracenium.PrivSvc.Windows")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+b04c265b53c0eacee82edde8042ba69ab812ab22")]
+[assembly: System.Reflection.AssemblyProductAttribute("Tracenium Agent")]
+[assembly: System.Reflection.AssemblyTitleAttribute("Tracenium Privilege Service")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
 [assembly: System.Runtime.Versioning.TargetPlatformAttribute("Windows7.0")]
 [assembly: System.Runtime.Versioning.SupportedOSPlatformAttribute("Windows7.0")]

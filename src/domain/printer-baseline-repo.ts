@@ -123,6 +123,17 @@ export function loadPrinterBaseline(): Printer[] {
 }
 
 /**
+ * Wipe the entire printer baseline. Mirror of clearSoftwareBaseline:
+ * after this the next collection tick re-sends the FULL printers items[]
+ * (first-run path), which is what the control plane's `reset_baseline`
+ * self-heal needs to repopulate an emptied device_printers projection.
+ */
+export function clearPrinterBaseline() {
+  const db = getDb();
+  db.exec(`DELETE FROM printer_baseline`);
+}
+
+/**
  * Upsert printers incrementally — same semantics as
  * upsertSoftwareBaseline. Used after delta computation, with the
  * union of added + updated rows.

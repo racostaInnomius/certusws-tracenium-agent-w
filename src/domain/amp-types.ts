@@ -21,15 +21,33 @@ export type HardwareStatic = {
   uuid?: string;
 
   cpu?: {
+    manufacturer?: string;
+    brand?: string;
     vendor?: string;
     model?: string;
     cores?: number;
-    threads?: number;
+    physicalCores?: number;
+    speed?: number;
   };
 
-  graphics?: any;
-  memLayout?: any[];
-  diskLayout?: any[];
+  graphics?: {
+    controllers?: Array<{ vendor?: string; model?: string; vramMb?: number }>;
+  };
+
+  memLayout?: Array<{
+    sizeBytes?: number;
+    type?: string;
+    clockSpeed?: number;
+    manufacturer?: string;
+  }>;
+
+  diskLayout?: Array<{
+    name?: string;
+    type?: string;
+    vendor?: string;
+    sizeBytes?: number;
+    interfaceType?: string;
+  }>;
 
   users?: Array<{
     user: string;

@@ -77,3 +77,53 @@ export function postDetectIsFailure(mode: DeploymentMode, matched: boolean): boo
 export function postDetectFailureReason(mode: DeploymentMode): string {
   return mode === "uninstall" ? "post_detect_still_present" : "post_detect_mismatch";
 }
+
+// ── Uninstall identity ────────────────────────────────────────────
+//
+// Uninstall is NOT a binary operation — you don't run the installer bytes in
+// reverse. Each OS removes software by IDENTITY: Windows by MSI ProductCode or
+// the registered UninstallString; macOS by bundle path / pkg receipt id; Linux
+// by package name. That identity is exactly what the detection rule already
+// encodes, so we derive it from the rule (falling back to snapshot fields).
+//
+// Returns null when the rule carries no removable identity (file_exists /
+// command_exit — a presence probe with nothing to uninstall). The orchestrator
+// treats null as a permanent `rejected` rather than guessing.
+
+export interface UninstallIdentity {
+  /** Windows MSI — `msiexec /x <productCode>`. */
+  productCode?: string;
+  /** Windows — ILIKE pattern to find the registered UninstallString. */
+  displayNameLike?: string;
+  /** macOS app bundle id — locate + remove /Applications/<App>.app. */
+  bundleId?: string;
+  /** macOS pkg receipt — `pkgutil --forget <pkgId>` (+ file cleanup). */
+  pkgId?: string;
+  /** Linux — `apt-get remove <name>` / `dnf remove <name>`. */
+  packageName?: string;
+}
+
+export function identityForUninstall(rule: unknown): UninstallIdentity | null {
+  if (!rule || typeof rule !== "object") return null;
+  const r = rule as Record<string, any>;
+  switch (r.type) {
+    case "registry_uninstall": {
+      const id: UninstallIdentity = {};
+      if (typeof r.productCode === "string" && r.productCode.trim()) id.productCode = r.productCode.trim();
+      if (typeof r.displayNameLike === "string" && r.displayNameLike.trim()) id.displayNameLike = r.displayNameLike.trim();
+      return id.productCode || id.displayNameLike ? id : null;
+    }
+    case "bundle_version":
+      return typeof r.bundleId === "string" && r.bundleId.trim() ? { bundleId: r.bundleId.trim() } : null;
+    case "pkg_receipt":
+      return typeof r.pkgId === "string" && r.pkgId.trim() ? { pkgId: r.pkgId.trim() } : null;
+    case "dpkg_installed":
+    case "rpm_installed":
+      return typeof r.packageName === "string" && r.packageName.trim()
+        ? { packageName: r.packageName.trim() }
+        : null;
+    // file_exists / command_exit: a presence probe with no removable identity.
+    default:
+      return null;
+  }
+}

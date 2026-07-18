@@ -211,9 +211,9 @@ export async function evaluate(
     });
 
     if (!resp?.ok) {
-      // Privsvc method-not-implemented yet (P1-E hasn't landed) or
-      // a runtime failure — treat as "cannot tell" so the install
-      // still proceeds. Logging surfaces the cause.
+      // Privsvc returned not-ok (runtime failure, or a rule type this
+      // OS's privsvc doesn't handle) — treat as "cannot tell" so the
+      // install still proceeds. Logging surfaces the cause.
       ctx.logger?.warn?.("[sdp.detect] privsvc returned not ok", {
         rule: rule.type,
         error: (resp as any)?.error,

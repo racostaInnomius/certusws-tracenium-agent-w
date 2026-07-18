@@ -485,7 +485,11 @@ class Scheduler {
       // Determine if ANY module has changes
       const hasAnyChanges = Object.values(namespaces).some((ns: any) => {
         if (!ns) return false;
-        return ns?.software?.hasChanges === true || ns?.hasChanges === true;
+        return (
+          ns?.software?.hasChanges === true ||
+          ns?.printers?.hasChanges === true ||
+          ns?.hasChanges === true
+        );
       });
 
       // Always ship the first snapshot after a daemon (re)start. The
@@ -546,6 +550,22 @@ class Scheduler {
           }
         } catch (err) {
           logger.warn("Failed to rehydrate AMP software baseline for initial snapshot", { err });
+        }
+      }
+
+      // Same rehydration for printers on a forced snapshot: the delta cycle
+      // elides items[] when unchanged, so a first-contact/version-change
+      // snapshot must carry the full printer list from the local baseline.
+      if (needsRehydrate && namespaces.amp?.printers && namespaces.amp.printers.items == null) {
+        try {
+          const { loadPrinterBaseline } = await import("../domain/printer-baseline-repo");
+          const baseline = loadPrinterBaseline() ?? [];
+          if (baseline.length > 0) {
+            namespaces.amp.printers.items = baseline as any;
+            namespaces.amp.printers.count = baseline.length;
+          }
+        } catch (err) {
+          logger.warn("Failed to rehydrate AMP printer baseline for initial snapshot", { err });
         }
       }
 

@@ -11,8 +11,16 @@ import type {
   HardwareStatic,
   HardwareRuntime,
   SecurityInfo,
-  SoftwareInventory
+  SoftwareInventory,
+  PrinterInventory
 } from "./amp-types";
+
+import {
+  normalizeCpu,
+  normalizeGraphics,
+  normalizeMemLayout,
+  normalizeDiskLayout
+} from "./normalize-hardware";
 
 const execFileAsync = promisify(execFile);
 
@@ -337,6 +345,10 @@ function buildDeviceIdentity(ctx: AgentContext) {
 }
 
 async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runtime: HardwareRuntime }> {
+  // Only the si.* calls whose results actually land in HardwareStatic/HardwareRuntime.
+  // Historically this fanned out to 24 calls (audio/bluetooth/usb/printer/battery/wifi/
+  // networkStats/time/cpuCurrentSpeed + an inetLatency ping to 8.8.8.8 every tick) whose
+  // results were collected and then discarded — pure waste on the endpoint. Trimmed.
   const [
     osInfo,
     system,
@@ -350,18 +362,8 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
     graphics,
     net,
     defaultNetworkInterface,
-    time,
-    cpuCurrentSpeed,
-    audio,
-    bluetooth,
-    usb,
-    printer,
     users,
-    battery,
-    fsSize,
-    wifiNetworks,
-    networkStats,
-    inetLatency
+    fsSize
   ] = await Promise.all([
     si.osInfo(),
     si.system(),
@@ -375,18 +377,8 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
     si.graphics(),
     si.networkInterfaces().catch(() => [] as any[]),
     si.networkInterfaceDefault().catch(() => null as any),
-    si.time(),
-    si.cpuCurrentSpeed(),
-    si.audio(),
-    si.bluetoothDevices(),
-    si.usb(),
-    si.printer(),
     si.users().catch(() => [] as any[]),
-    si.battery(),
-    si.fsSize(),
-    si.wifiNetworks(),
-    si.networkStats(),
-    si.inetLatency("8.8.8.8")
+    si.fsSize()
   ]);
 
   const isVirtual =
@@ -425,10 +417,15 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
       node: process.version,
       v8: process.versions.v8
     },
-    cpu,
-    graphics,
-    memLayout,
-    diskLayout,
+    // Normalized to stable, slim shapes (see normalize-hardware.ts). Preserves
+    // the cpu fields consumers read (brand/manufacturer/vendor/model/
+    // physicalCores); graphics/memLayout/diskLayout are slimmed to identifying
+    // fields (no serving path reads them). Runtime disks below still derive
+    // from the RAW si.diskLayout, so they are unaffected.
+    cpu: normalizeCpu(cpu),
+    graphics: normalizeGraphics(graphics),
+    memLayout: normalizeMemLayout(memLayout),
+    diskLayout: normalizeDiskLayout(diskLayout),
     users: normalizedUsers,
     networkInterfaces
   };
@@ -575,13 +572,28 @@ export async function buildDeviceFacts(
 
     const security: SecurityInfo = (ampIn.security ?? {}) as SecurityInfo;
 
+    // Preserve the printers inventory the provider collected. Same shape and
+    // slim-delta discipline as software (elided items[] on no-change cycles,
+    // full items[] on first-run/forced). Previously dropped here, which left
+    // the entire printers pipeline (providers + backend applyPrinterDelta +
+    // device_printers table + UI) collecting/expecting data that never shipped.
+    const printers: PrinterInventory | undefined = ampIn.printers
+      ? {
+          count: ampIn.printers.count ?? 0,
+          delta: ampIn.printers.delta ?? null,
+          items: Array.isArray(ampIn.printers.items) ? [...ampIn.printers.items] : undefined,
+          hasChanges: ampIn.printers.hasChanges ?? false
+        }
+      : undefined;
+
     outNamespaces.amp = {
       hardware: {
         static: hardware.static,
         runtime: hardware.runtime
       },
       security,
-      software
+      software,
+      ...(printers ? { printers } : {})
     };
   }
 

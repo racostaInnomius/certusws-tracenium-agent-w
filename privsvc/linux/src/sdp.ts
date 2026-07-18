@@ -4,10 +4,9 @@
 // Software Delivery Plugin. Same three IPC handlers as macOS:
 //
 //   sdp.detect    — evaluate a DetectionRule against the local system.
-//                   Phase 9 covers the cross-platform rule types
-//                   (file_exists, command_exit). dpkg_installed and
-//                   rpm_installed could land in Phase 9.5 once the
-//                   backend catalog ships seed entries that use them.
+//                   Covers the cross-platform rule types (file_exists,
+//                   command_exit) plus the native package-DB checks
+//                   dpkg_installed / rpm_installed.
 //   sdp.download  — fetch a URL into a privileged staging directory
 //                   (root-owned, mode 700) and verify sha256.
 //                   curl(1) does the actual fetch — universal on
@@ -112,11 +111,10 @@ function sha256OfFile(filePath: string): Promise<string> {
 
 // ── Detection rule evaluators ─────────────────────────────────────
 //
-// Linux Phase 9 covers the cross-platform rule types only. The
-// per-distro rule types (`dpkg_installed`, `rpm_installed`) need a
-// backend catalog migration before they're useful — defer to Phase
-// 9.5. Operators who want package-presence detection today can
-// express it with `command_exit`:
+// Both the cross-platform rule types (file_exists, command_exit) and
+// the native package-DB checks (`dpkg_installed`, `rpm_installed`) are
+// implemented below. Operators can also express package presence with a
+// raw `command_exit`, e.g.:
 //
 //   { type: "command_exit",
 //     cmd: "/usr/bin/dpkg-query",
@@ -777,6 +775,235 @@ export async function handleSdpInstall(req: PrivSvcRequest): Promise<PrivSvcResp
 
   logger.info("sdp_install_done", {
     packageId,
+    format,
+    family: distro.family,
+    exitCode: result.exitCode,
+    durationMs: result.durationMs,
+    stderrPreview: result.stderrExcerpt?.slice(0, 200),
+  });
+
+  return success(req.id, {
+    exitCode: result.exitCode,
+    stderrExcerpt: result.stderrExcerpt,
+    durationMs: result.durationMs,
+  });
+}
+
+// ── sdp.verifySignature ───────────────────────────────────────────
+//
+// Fail-closed signature gate for Linux packages. The agent's signature-gate
+// expects `{ trusted, reason }` and blocks on anything but an explicit trusted.
+//
+//   rpm → `rpm -K` (a.k.a. --checksig): verifies the embedded GPG signature.
+//         Requires the signer's public key imported into the RPM keyring —
+//         without it the output says NOKEY and we return untrusted.
+//   deb → `dpkg-sig --verify`: verifies debsigs-style signatures. dpkg-sig is
+//         not installed by default and .deb signing is rare (Debian trusts the
+//         REPO, not the file) — absent tool ⇒ untrusted (fail-closed), so
+//         `signingRequired` on a deb needs the operator to provision signing.
+//
+// The trust decision is a pure function of the tool output (unit-testable
+// without a real signed package — see interpretRpmVerify / interpretDpkgSig).
+
+/** Pure: decide trust from `rpm -K` exit code + combined output. */
+export function interpretRpmVerify(exitCode: number, output: string): { trusted: boolean; reason: string } {
+  const text = String(output || "").toLowerCase();
+  // "digests signatures OK" (green) vs "NOKEY" (signed but key not imported) vs
+  // "NOT OK" / missing signature. Require an actual pgp/gpg signature token so a
+  // digest-only "OK" (no signature) doesn't pass.
+  if (/nokey/.test(text)) return { trusted: false, reason: "rpm_nokey" };
+  const hasSig = /(pgp|gpg|signature)/.test(text);
+  if (exitCode === 0 && hasSig && /ok/.test(text) && !/not ok|bad/.test(text)) {
+    return { trusted: true, reason: "rpm_signed" };
+  }
+  if (!hasSig) return { trusted: false, reason: "rpm_unsigned" };
+  return { trusted: false, reason: "rpm_verify_failed" };
+}
+
+/** Pure: decide trust from `dpkg-sig --verify` exit code + output. */
+export function interpretDpkgSig(exitCode: number, output: string): { trusted: boolean; reason: string } {
+  const text = String(output || "");
+  if (/GOODSIG/.test(text)) return { trusted: true, reason: "deb_goodsig" };
+  if (/BADSIG/.test(text)) return { trusted: false, reason: "deb_badsig" };
+  if (/NOSIG|No signatures/i.test(text)) return { trusted: false, reason: "deb_unsigned" };
+  return { trusted: false, reason: exitCode === 0 ? "deb_no_goodsig" : "deb_verify_failed" };
+}
+
+async function verifyRpmSignature(stagingPath: string): Promise<{ trusted: boolean; reason: string }> {
+  try {
+    const { stdout, stderr } = await execFileAsync("/usr/bin/rpm", ["-K", stagingPath], {
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+      env: { ...process.env, LANG: "C", LC_ALL: "C" },
+    });
+    return interpretRpmVerify(0, `${stdout} ${stderr}`);
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return { trusted: false, reason: "rpm_binary_missing" };
+    return interpretRpmVerify(
+      Number.isFinite(Number(err?.code)) ? Number(err.code) : 1,
+      `${String(err?.stdout || "")} ${String(err?.stderr || "")}`
+    );
+  }
+}
+
+async function verifyDebSignature(stagingPath: string): Promise<{ trusted: boolean; reason: string }> {
+  if (!fs.existsSync("/usr/bin/dpkg-sig")) {
+    return { trusted: false, reason: "deb_sig_tool_missing" };
+  }
+  try {
+    const { stdout, stderr } = await execFileAsync("/usr/bin/dpkg-sig", ["--verify", stagingPath], {
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+      env: { ...process.env, LANG: "C", LC_ALL: "C" },
+    });
+    return interpretDpkgSig(0, `${stdout} ${stderr}`);
+  } catch (err: any) {
+    return interpretDpkgSig(
+      Number.isFinite(Number(err?.code)) ? Number(err.code) : 1,
+      `${String(err?.stdout || "")} ${String(err?.stderr || "")}`
+    );
+  }
+}
+
+export async function handleSdpVerifySignature(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const params = req.params || {};
+  const stagingPath = String(params.stagingPath || "");
+  const format = String(params.format || "");
+
+  const absStaging = path.resolve(stagingPath);
+  if (!absStaging.startsWith(path.resolve(STAGING_DIR) + path.sep)) {
+    return fail(req.id, "bad_request", "stagingPath outside privsvc staging dir");
+  }
+  try {
+    fs.accessSync(absStaging, fs.constants.R_OK);
+  } catch {
+    return fail(req.id, "bad_request", "stagingPath not readable");
+  }
+
+  let verdict: { trusted: boolean; reason: string };
+  if (format === "rpm") {
+    verdict = await verifyRpmSignature(absStaging);
+  } else if (format === "deb") {
+    verdict = await verifyDebSignature(absStaging);
+  } else {
+    verdict = { trusted: false, reason: `unsupported_format_${format}` };
+  }
+
+  logger.info("sdp_verify_signature", { format, trusted: verdict.trusted, reason: verdict.reason });
+  return success(req.id, { trusted: verdict.trusted, reason: verdict.reason });
+}
+
+// ── sdp.uninstall ─────────────────────────────────────────────────
+//
+// Uninstall is by PACKAGE NAME, not by the downloaded binary — the orchestrator
+// skips download+staging entirely and hands us the identity derived from the
+// detection rule (`dpkg_installed` / `rpm_installed` → packageName). We remove
+// via the system package manager so its own dependency bookkeeping stays sane:
+//   debian → apt-get remove -y <name>
+//   rhel   → dnf remove -y <name>   (yum fallback on RHEL 7)
+//
+// `packageName` comes from a validated catalog rule (dpkg-query / rpm -q name),
+// so it can't carry shell metacharacters — but we exec via execFile (no shell)
+// anyway. A name the package DB doesn't know makes apt/dnf exit non-zero, which
+// the agent's post-detect turns into a clear "still present"/failed outcome.
+
+async function runDebUninstaller(packageName: string, timeoutSeconds: number): Promise<InstallRunResult> {
+  const start = Date.now();
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      "/usr/bin/apt-get",
+      ["remove", "-y", packageName],
+      {
+        timeout: timeoutSeconds * 1000,
+        maxBuffer: 16 * 1024 * 1024,
+        env: { ...process.env, DEBIAN_FRONTEND: "noninteractive", LANG: "C", LC_ALL: "C" },
+      }
+    );
+    return { exitCode: 0, stderrExcerpt: combinedExcerpt(stdout, stderr), durationMs: Date.now() - start };
+  } catch (err: any) {
+    if (err?.killed && err?.signal === "SIGTERM") {
+      throw Object.assign(new Error("apt-get remove timeout"), { code: "uninstall_timeout" });
+    }
+    return {
+      exitCode: Number.isFinite(Number(err?.code)) ? Number(err.code) : 1,
+      stderrExcerpt: combinedExcerpt(err?.stdout, err?.stderr),
+      durationMs: Date.now() - start,
+    };
+  }
+}
+
+async function runRpmUninstaller(packageName: string, timeoutSeconds: number): Promise<InstallRunResult> {
+  const dnfBin = fs.existsSync("/usr/bin/dnf")
+    ? "/usr/bin/dnf"
+    : fs.existsSync("/usr/bin/yum")
+      ? "/usr/bin/yum"
+      : null;
+  if (!dnfBin) {
+    return { exitCode: 1, stderrExcerpt: "no dnf or yum binary found in /usr/bin", durationMs: 0 };
+  }
+  const start = Date.now();
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      dnfBin,
+      ["remove", "-y", packageName],
+      { timeout: timeoutSeconds * 1000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, LANG: "C", LC_ALL: "C" } }
+    );
+    return { exitCode: 0, stderrExcerpt: combinedExcerpt(stdout, stderr), durationMs: Date.now() - start };
+  } catch (err: any) {
+    if (err?.killed && err?.signal === "SIGTERM") {
+      throw Object.assign(new Error("dnf remove timeout"), { code: "uninstall_timeout" });
+    }
+    return {
+      exitCode: Number.isFinite(Number(err?.code)) ? Number(err.code) : 1,
+      stderrExcerpt: combinedExcerpt(err?.stdout, err?.stderr),
+      durationMs: Date.now() - start,
+    };
+  }
+}
+
+export async function handleSdpUninstall(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const params = req.params || {};
+  const format = String(params.format || "");
+  const identity = (params.identity || {}) as { packageName?: string };
+  const packageName = String(identity.packageName || "").trim();
+  const timeoutSeconds = Number.isFinite(Number(params.timeoutSeconds))
+    ? Math.max(60, Math.floor(Number(params.timeoutSeconds)))
+    : DEFAULT_INSTALL_TIMEOUT_S;
+  const packageId = Number(params.packageId) || 0;
+
+  if (!packageName) {
+    // No removable identity — the orchestrator normally catches this, but
+    // defend in depth. Permanent: retrying won't grow a package name.
+    return fail(req.id, "identity_not_found", "uninstall requires a packageName (dpkg_installed/rpm_installed rule)");
+  }
+
+  const distro = detectFamily();
+  if (format === "deb" && distro.family !== "debian") {
+    return fail(req.id, "format_unsupported", `deb uninstall on non-debian family (${distro.family})`);
+  }
+  if (format === "rpm" && distro.family !== "rhel" && distro.family !== "suse") {
+    return fail(req.id, "format_unsupported", `rpm uninstall on non-rpm family (${distro.family})`);
+  }
+
+  let result: InstallRunResult;
+  try {
+    if (format === "deb") {
+      result = await runDebUninstaller(packageName, timeoutSeconds);
+    } else if (format === "rpm") {
+      result = await runRpmUninstaller(packageName, timeoutSeconds);
+    } else {
+      return fail(req.id, "format_unsupported", `format ${format} not supported for uninstall on linux`);
+    }
+  } catch (err: any) {
+    if (err?.code === "uninstall_timeout") {
+      return fail(req.id, "install_timeout", err?.message || "uninstall timed out");
+    }
+    return fail(req.id, "install_failed", err?.message || String(err));
+  }
+
+  logger.info("sdp_uninstall_done", {
+    packageId,
+    packageName,
     format,
     family: distro.family,
     exitCode: result.exitCode,

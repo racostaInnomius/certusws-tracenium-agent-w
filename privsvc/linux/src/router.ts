@@ -38,7 +38,13 @@ import { handleSecurityPosture } from "./security-posture";
 import { handleScreenCapture } from "./screen-capture";
 import { handlePatchScan, handlePatchInstall } from "./patch-management";
 import { handlePmpReadCheckState, handlePmpRemediate } from "./pmp-remediation";
-import { handleSdpDetect, handleSdpDownload, handleSdpInstall } from "./sdp";
+import {
+  handleSdpDetect,
+  handleSdpDownload,
+  handleSdpInstall,
+  handleSdpUninstall,
+  handleSdpVerifySignature,
+} from "./sdp";
 import { handleAgentInstall } from "./agent-install";
 
 function isRoot() {
@@ -204,6 +210,13 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
       return handleSdpDownload(req);
     case "sdp.install":
       return handleSdpInstall(req);
+    // Uninstall by package name (apt-get/dnf remove) — no download, identity
+    // from the dpkg_installed/rpm_installed detection rule.
+    case "sdp.uninstall":
+      return handleSdpUninstall(req);
+    // Signature gate (fail-closed) — rpm -K / dpkg-sig --verify.
+    case "sdp.verifySignature":
+      return handleSdpVerifySignature(req);
 
     // ── Agent self-upgrade ────────────────────────────────────────
     // Installs the .deb/.rpm the agent has downloaded into

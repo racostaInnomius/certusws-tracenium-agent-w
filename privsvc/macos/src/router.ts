@@ -21,7 +21,13 @@ import { handlePatchInstall, handlePatchScan } from "./patch-management";
 import { handlePmpReadCheckState, handlePmpRemediate } from "./pmp-remediation";
 import { handleSecurityPosture } from "./security-posture";
 import { handleScreenCapture } from "./screen-capture";
-import { handleSdpDetect, handleSdpDownload, handleSdpInstall } from "./sdp";
+import {
+  handleSdpDetect,
+  handleSdpDownload,
+  handleSdpInstall,
+  handleSdpUninstall,
+  handleSdpVerifySignature,
+} from "./sdp";
 import { logger } from "./logger";
 
 function isRoot() {
@@ -167,6 +173,14 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "sdp.install":
       return handleSdpInstall(req);
+
+    // Uninstall by identity (app bundle rm / pkg receipt forget) — no download.
+    case "sdp.uninstall":
+      return handleSdpUninstall(req);
+
+    // Signature gate (fail-closed) — pkgutil --check-signature / codesign.
+    case "sdp.verifySignature":
+      return handleSdpVerifySignature(req);
 
     // PMv2 — non-patch security remediation. See privsvc/macos/src/
     // pmp-remediation.ts. Phase 1 covers Windows-only checkIds —

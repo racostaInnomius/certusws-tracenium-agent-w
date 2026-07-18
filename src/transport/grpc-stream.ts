@@ -280,6 +280,20 @@ async function collectFactsSnapshot(
     }
   }
 
+  // Same rehydration for printers — a control-forced snapshot must be complete.
+  if (namespaces.amp?.printers && namespaces.amp.printers.items == null) {
+    try {
+      const { loadPrinterBaseline } = await import("../domain/printer-baseline-repo");
+      const baseline = loadPrinterBaseline() ?? [];
+      if (baseline.length > 0) {
+        namespaces.amp.printers.items = baseline as any;
+        namespaces.amp.printers.count = baseline.length;
+      }
+    } catch (err) {
+      ctx.logger?.warn?.("Failed to rehydrate AMP printer baseline for control-forced snapshot", { err });
+    }
+  }
+
   const facts = await buildDeviceFacts(ctx, namespaces);
   const outboxId = outbox.enqueue({
     type: "FACTS_SNAPSHOT",
@@ -670,43 +684,46 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
     }
 
     case "reset_baseline": {
-      // M1 (cold-projection recovery): the backend asks us to drop
-      // the local namespace-hash cache so the next compliance tick
-      // re-sends a full baseline snapshot instead of another delta.
-      // The backend dispatches this when its projection table
-      // (software_current_app today; pmp/scp tables could follow
-      // the same pattern) is empty for this device but the agent is
-      // sending deltas — a divergence we want to self-heal rather
-      // than wait for manual operator intervention.
+      // Cold-projection recovery: the backend asks us to drop the local
+      // AMP baseline so the next collection tick re-sends a FULL snapshot
+      // (items[] populated) instead of another elided delta. The backend
+      // dispatches this when its projection tables (software_current_app /
+      // device_printers) have emptied/diverged for this device but the
+      // agent is only sending deltas — a divergence we self-heal instead
+      // of waiting for manual operator intervention.
+      //
+      // NOTE: AMP does not use a per-namespace hash (that model is only
+      // scp/pmp). Its send-decision is driven by the per-app/per-printer
+      // baselines in SQLite. Clearing those tables makes the provider's
+      // `previous.length === 0` first-run branch fire, which ships full
+      // items[]. The previous implementation cleared a `namespaceHash:amp`
+      // key that AMP never reads — a silent no-op that left the projection
+      // permanently empty.
       const namespace = String(payload?.namespace || "").trim().toLowerCase();
       if (namespace !== "amp") {
         // Only "amp" is wired today (it's the only namespace with a
-        // delta protocol). Others reject cleanly so a future
-        // backend that dispatches a different namespace gets a
-        // recognizable error in audit instead of silent acceptance.
+        // delta protocol). Others reject cleanly so a future backend that
+        // dispatches a different namespace gets a recognizable error in
+        // audit instead of silent acceptance.
         return {
           status: 2,
           message: `reset_baseline rejected: unsupported namespace "${namespace}"`,
         };
       }
-      const stateKey = `namespaceHash:${namespace}`;
       try {
-        // outbox.deleteState() with a falsy default. The actual
-        // behavior of "clear" we want is: forget the prior hash so
-        // the next collect pass sees `previousHash !== currentHash`
-        // and enqueues. setState("") is equivalent — empty string
-        // can't match any sha256 output.
-        outbox.setState(stateKey, "");
-        ctx.logger?.warn?.("[reset_baseline] cleared namespace hash, next compliance tick will re-send baseline", {
+        const { clearSoftwareBaseline } = await import("../domain/software-baseline-repo");
+        const { clearPrinterBaseline } = await import("../domain/printer-baseline-repo");
+        clearSoftwareBaseline();
+        clearPrinterBaseline();
+        ctx.logger?.warn?.("[reset_baseline] cleared AMP software + printer baselines; next collection tick will re-send a full snapshot", {
           namespace,
-          stateKey,
         });
         return {
           status: 0,
           message: `reset_baseline:cleared:${namespace}`,
         };
       } catch (err: any) {
-        ctx.logger?.error?.("[reset_baseline] failed to clear state", {
+        ctx.logger?.error?.("[reset_baseline] failed to clear baseline", {
           namespace,
           error: err?.message || String(err),
         });

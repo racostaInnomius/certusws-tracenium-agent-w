@@ -450,6 +450,219 @@ public static class Sdp
         }
     }
 
+    // ── sdp.uninstall ─────────────────────────────────────────────
+    //
+    // Uninstall is by IDENTITY, not by the downloaded binary — the orchestrator
+    // skips download+staging and hands us the identity from the detection rule:
+    //   MSI → productCode GUID → `msiexec /x {GUID} /qn /norestart` (the exact,
+    //         reliable removal; no name-pattern guessing).
+    //   MSI without a productCode → resolve the registered UninstallString via
+    //         displayNameLike and normalise its /I to /X.
+    //   EXE → resolve the QuietUninstallString (preferred) or UninstallString
+    //         via displayNameLike; run it, appending operator silentUninstallArgs
+    //         when only the non-quiet string exists.
+    public static async Task<PrivSvcResponse> HandleUninstall(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var format = GetString(p, "format") ?? "";
+            var args = GetString(p, "args");
+            var timeoutSeconds = Math.Max(60, GetInt(p, "timeoutSeconds") ?? DefaultInstallTimeoutSeconds);
+
+            // identity is a nested object: { productCode?, displayNameLike? }.
+            // JSON nested objects arrive as JsonElement (see ExtractRule), so
+            // flatten its string fields rather than casting to a dictionary.
+            var identity = ExtractIdentity(p);
+            identity.TryGetValue("productCode", out var productCode);
+            identity.TryGetValue("displayNameLike", out var displayNameLike);
+
+            InstallRunResult result;
+            try
+            {
+                if (format == "msi")
+                {
+                    result = await RunMsiUninstaller(productCode, displayNameLike, args, timeoutSeconds, req);
+                }
+                else if (format == "exe")
+                {
+                    result = await RunExeUninstaller(displayNameLike, args, timeoutSeconds, req);
+                }
+                else
+                {
+                    return PrivSvcResponse.Fail(req.Id, "format_unsupported",
+                        $"format {format} not supported for uninstall on windows");
+                }
+            }
+            catch (UninstallIdentityException idEx)
+            {
+                return PrivSvcResponse.Fail(req.Id, "identity_not_found", idEx.Message);
+            }
+            catch (TimeoutException timeoutEx)
+            {
+                return PrivSvcResponse.Fail(req.Id, "install_timeout", timeoutEx.Message);
+            }
+            catch (Exception ex)
+            {
+                return PrivSvcResponse.Fail(req.Id, "install_failed", ex.Message);
+            }
+
+            return PrivSvcResponse.Success(req.Id, new
+            {
+                exitCode = result.ExitCode,
+                stderrExcerpt = result.StderrExcerpt,
+                durationMs = result.DurationMs,
+            });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "install_failed", ex.Message);
+        }
+    }
+
+    private sealed class UninstallIdentityException : Exception
+    {
+        public UninstallIdentityException(string message) : base(message) { }
+    }
+
+    /// <summary>
+    /// Flatten the nested `identity` object (a JsonElement) into a
+    /// case-insensitive string→string dict. Mirrors ExtractRule's handling of
+    /// nested JSON objects.
+    /// </summary>
+    private static Dictionary<string, string> ExtractIdentity(Dictionary<string, object> p)
+    {
+        var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!p.TryGetValue("identity", out var raw) || raw == null) return dict;
+        if (raw is JsonElement el && el.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in el.EnumerateObject())
+            {
+                if (prop.Value.ValueKind == JsonValueKind.String)
+                {
+                    dict[prop.Name] = prop.Value.GetString() ?? "";
+                }
+            }
+        }
+        return dict;
+    }
+
+    private static async Task<InstallRunResult> RunMsiUninstaller(
+        string? productCode,
+        string? displayNameLike,
+        string? args,
+        int timeoutSeconds,
+        PrivSvcRequest req)
+    {
+        // Exact path: msiexec /x {ProductCode} /qn /norestart.
+        if (!string.IsNullOrWhiteSpace(productCode))
+        {
+            var argList = new List<string> { "/x", productCode!, "/qn", "/norestart" };
+            if (!string.IsNullOrWhiteSpace(args)) argList.AddRange(SplitArgs(args!));
+            return await RunInstallerProcess("msiexec.exe", argList, timeoutSeconds);
+        }
+
+        // Fallback: resolve the registered UninstallString and normalise /I → /X.
+        var (uninstallString, quiet) = FindUninstallEntry(displayNameLike);
+        var chosen = quiet ?? uninstallString;
+        if (string.IsNullOrWhiteSpace(chosen))
+        {
+            throw new UninstallIdentityException(
+                "msi uninstall needs a productCode or a resolvable UninstallString");
+        }
+        var (file, uninstArgs) = ParseUninstallCommand(chosen!);
+        // Force silent when we fell back to the non-quiet string.
+        if (quiet == null)
+        {
+            uninstArgs = uninstArgs.Select(a => a.Replace("/I", "/X", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (!uninstArgs.Any(a => a.Equals("/qn", StringComparison.OrdinalIgnoreCase))) uninstArgs.Add("/qn");
+            if (!uninstArgs.Any(a => a.Equals("/norestart", StringComparison.OrdinalIgnoreCase))) uninstArgs.Add("/norestart");
+        }
+        return await RunInstallerProcess(file, uninstArgs, timeoutSeconds);
+    }
+
+    private static async Task<InstallRunResult> RunExeUninstaller(
+        string? displayNameLike,
+        string? args,
+        int timeoutSeconds,
+        PrivSvcRequest req)
+    {
+        var (uninstallString, quiet) = FindUninstallEntry(displayNameLike);
+        // Prefer the vendor-provided silent uninstall string; else fall back to
+        // the plain string + operator-supplied silentUninstallArgs.
+        if (!string.IsNullOrWhiteSpace(quiet))
+        {
+            var (qfile, qargs) = ParseUninstallCommand(quiet!);
+            return await RunInstallerProcess(qfile, qargs, timeoutSeconds);
+        }
+        if (string.IsNullOrWhiteSpace(uninstallString))
+        {
+            throw new UninstallIdentityException(
+                "exe uninstall needs a resolvable UninstallString (registry_uninstall rule)");
+        }
+        var (file, uArgs) = ParseUninstallCommand(uninstallString!);
+        if (!string.IsNullOrWhiteSpace(args)) uArgs.AddRange(SplitArgs(args!));
+        return await RunInstallerProcess(file, uArgs, timeoutSeconds);
+    }
+
+    /// <summary>
+    /// Scan HKLM Uninstall keys (both views) for the entry whose DisplayName
+    /// matches `displayNameLike`, returning its UninstallString and
+    /// QuietUninstallString (either may be null).
+    /// </summary>
+    private static (string? uninstallString, string? quietUninstallString) FindUninstallEntry(string? displayNameLike)
+    {
+        if (string.IsNullOrWhiteSpace(displayNameLike)) return (null, null);
+        var regex = LikeToRegex(displayNameLike!);
+        var roots = new[]
+        {
+            (View: RegistryView.Registry64, Path: @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (View: RegistryView.Registry32, Path: @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        };
+        foreach (var (view, subPath) in roots)
+        {
+            using var hive = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+            using var uninstall = hive.OpenSubKey(subPath);
+            if (uninstall == null) continue;
+            foreach (var name in uninstall.GetSubKeyNames())
+            {
+                using var entry = uninstall.OpenSubKey(name);
+                if (entry == null) continue;
+                var displayName = entry.GetValue("DisplayName") as string;
+                if (string.IsNullOrWhiteSpace(displayName)) continue;
+                if (!regex.IsMatch(displayName)) continue;
+                var uninstallString = entry.GetValue("UninstallString") as string;
+                var quiet = entry.GetValue("QuietUninstallString") as string;
+                return (uninstallString, quiet);
+            }
+        }
+        return (null, null);
+    }
+
+    /// <summary>
+    /// Split an UninstallString like `"C:\App\uninst.exe" /S` or
+    /// `MsiExec.exe /X{GUID}` into an executable + argument list.
+    /// </summary>
+    private static (string file, List<string> args) ParseUninstallCommand(string command)
+    {
+        var trimmed = command.Trim();
+        string file;
+        string rest;
+        if (trimmed.StartsWith("\""))
+        {
+            var end = trimmed.IndexOf('"', 1);
+            if (end < 0) { file = trimmed.Trim('"'); rest = ""; }
+            else { file = trimmed.Substring(1, end - 1); rest = trimmed.Substring(end + 1).Trim(); }
+        }
+        else
+        {
+            var sp = trimmed.IndexOf(' ');
+            if (sp < 0) { file = trimmed; rest = ""; }
+            else { file = trimmed.Substring(0, sp); rest = trimmed.Substring(sp + 1).Trim(); }
+        }
+        return (file, rest.Length > 0 ? SplitArgs(rest) : new List<string>());
+    }
+
     // ── Detection runners ─────────────────────────────────────────
 
     private sealed class DetectionResult

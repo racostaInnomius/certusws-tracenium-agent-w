@@ -7,6 +7,7 @@ import {
   argsForMode,
   postDetectIsFailure,
   postDetectFailureReason,
+  identityForUninstall,
 } from "../../src/plugins/sdp/mode";
 
 describe("parseMode", () => {
@@ -81,5 +82,36 @@ describe("postDetectFailureReason", () => {
   it("distinguishes the two failure directions", () => {
     expect(postDetectFailureReason("install")).toBe("post_detect_mismatch");
     expect(postDetectFailureReason("uninstall")).toBe("post_detect_still_present");
+  });
+});
+
+describe("identityForUninstall", () => {
+  it("derives MSI productCode + displayNameLike from registry_uninstall", () => {
+    expect(
+      identityForUninstall({ type: "registry_uninstall", displayNameLike: "7-Zip%", productCode: "{GUID}" })
+    ).toEqual({ productCode: "{GUID}", displayNameLike: "7-Zip%" });
+  });
+  it("keeps displayNameLike alone when no productCode (EXE uninstall path)", () => {
+    expect(identityForUninstall({ type: "registry_uninstall", displayNameLike: "Foo%" })).toEqual({
+      displayNameLike: "Foo%",
+    });
+  });
+  it("derives bundleId (macOS) and pkgId (macOS)", () => {
+    expect(identityForUninstall({ type: "bundle_version", bundleId: "com.x.app" })).toEqual({
+      bundleId: "com.x.app",
+    });
+    expect(identityForUninstall({ type: "pkg_receipt", pkgId: "com.x.pkg" })).toEqual({ pkgId: "com.x.pkg" });
+  });
+  it("derives packageName from dpkg_installed / rpm_installed (Linux)", () => {
+    expect(identityForUninstall({ type: "dpkg_installed", packageName: "nginx" })).toEqual({ packageName: "nginx" });
+    expect(identityForUninstall({ type: "rpm_installed", packageName: "httpd" })).toEqual({ packageName: "httpd" });
+  });
+  it("returns null for rules with no removable identity", () => {
+    expect(identityForUninstall({ type: "file_exists", path: "/opt/x" })).toBeNull();
+    expect(identityForUninstall({ type: "command_exit", cmd: "/bin/x" })).toBeNull();
+    expect(identityForUninstall(null)).toBeNull();
+    expect(identityForUninstall(undefined)).toBeNull();
+    // registry_uninstall with neither productCode nor displayNameLike
+    expect(identityForUninstall({ type: "registry_uninstall" })).toBeNull();
   });
 });

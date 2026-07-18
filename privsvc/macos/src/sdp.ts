@@ -751,6 +751,289 @@ function combinedExcerpt(stdout: unknown, stderr: unknown): string | undefined {
   return combined.slice(0, 1024);
 }
 
+// ── sdp.verifySignature ───────────────────────────────────────────
+//
+// Fail-closed signature gate for macOS packages. The agent's signature-gate
+// (src/plugins/sdp/signature-gate.ts) expects `{ trusted: boolean, reason }`
+// and treats anything but an explicit trusted verdict as a block.
+//
+//   pkg → `pkgutil --check-signature` (the canonical macOS pkg trust check:
+//         chains to an Apple-issued Developer ID installer cert).
+//   dmg → `codesign --verify --strict` (DMGs, when signed, carry a codesign
+//         signature; the app inside is separately checked at install by
+//         Gatekeeper). Rare, but supported for completeness.
+//
+// The trust DECISION is a pure function of the tool output so it's unit-testable
+// without a real signed artifact (see interpretPkgutilSignature).
+
+/** Pure: decide trust from `pkgutil --check-signature` stdout + exit code. */
+export function interpretPkgutilSignature(exitCode: number, stdout: string): { trusted: boolean; reason: string } {
+  const text = String(stdout || "");
+  // pkgutil prints "Status: signed by a developer certificate issued by Apple
+  // (Development)" / "...for distribution" / "signed by a certificate trusted
+  // by macOS" when the chain is good; "no signature" / "signed Ad-hoc" otherwise.
+  const statusLine = text.split("\n").map((l) => l.trim()).find((l) => l.startsWith("Status:")) || "";
+  const status = statusLine.replace(/^Status:\s*/, "").toLowerCase();
+  if (exitCode === 0 && /signed by/.test(status) && !/ad-hoc/.test(status)) {
+    return { trusted: true, reason: "pkgutil_signed" };
+  }
+  if (/no signature|ad-hoc/.test(status)) return { trusted: false, reason: "unsigned" };
+  return { trusted: false, reason: statusLine ? `untrusted:${status.slice(0, 40)}` : "verify_failed" };
+}
+
+async function verifyPkgSignature(stagingPath: string): Promise<{ trusted: boolean; reason: string }> {
+  try {
+    const { stdout } = await execFileAsync("/usr/sbin/pkgutil", ["--check-signature", stagingPath], {
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return interpretPkgutilSignature(0, stdout);
+  } catch (err: any) {
+    // Non-zero exit (unsigned / broken chain) still gives useful stdout.
+    return interpretPkgutilSignature(
+      Number.isFinite(Number(err?.code)) ? Number(err.code) : 1,
+      String(err?.stdout || "")
+    );
+  }
+}
+
+async function verifyDmgSignature(stagingPath: string): Promise<{ trusted: boolean; reason: string }> {
+  try {
+    await execFileAsync("/usr/bin/codesign", ["--verify", "--strict", stagingPath], {
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return { trusted: true, reason: "codesign_ok" };
+  } catch (err: any) {
+    const stderr = String(err?.stderr || "").trim();
+    return { trusted: false, reason: stderr ? `codesign_fail:${stderr.slice(0, 40)}` : "codesign_fail" };
+  }
+}
+
+export async function handleSdpVerifySignature(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const params = req.params || {};
+  const stagingPath = String(params.stagingPath || "");
+  const format = String(params.format || "");
+
+  const absStaging = path.resolve(stagingPath);
+  if (!absStaging.startsWith(path.resolve(STAGING_DIR) + path.sep)) {
+    return fail(req.id, "bad_request", "stagingPath outside privsvc staging dir");
+  }
+  try {
+    fs.accessSync(absStaging, fs.constants.R_OK);
+  } catch {
+    return fail(req.id, "bad_request", "stagingPath not readable");
+  }
+
+  let verdict: { trusted: boolean; reason: string };
+  if (format === "pkg") {
+    verdict = await verifyPkgSignature(absStaging);
+  } else if (format === "dmg") {
+    verdict = await verifyDmgSignature(absStaging);
+  } else {
+    // Fail-closed: an unknown format can't be trusted.
+    verdict = { trusted: false, reason: `unsupported_format_${format}` };
+  }
+
+  logger.info("sdp_verify_signature", { format, trusted: verdict.trusted, reason: verdict.reason });
+  return success(req.id, { trusted: verdict.trusted, reason: verdict.reason });
+}
+
+// ── sdp.uninstall ─────────────────────────────────────────────────
+//
+// macOS has NO universal uninstaller — .pkg installs don't ship a reverse
+// script. Uninstall is by IDENTITY (from the detection rule), skipping download
+// entirely. Two supported shapes, honestly scoped:
+//
+//   bundleId (bundle_version rule) → locate /Applications/<App>.app and rm -rf
+//     it. The clean, common "drag-installed app" case.
+//   pkgId (pkg_receipt rule) → `pkgutil --files` under the receipt's install
+//     root, remove ONLY paths inside a safe-root allowlist, then
+//     `pkgutil --forget`. Arbitrary pkg removal isn't universally possible, so
+//     anything outside the allowlist is skipped (and logged), never deleted.
+//
+// A path guard is the crux: a malicious/misparsed receipt must never let us
+// rm -rf `/`, `/System`, `/usr/bin`, etc.
+
+const UNINSTALL_SAFE_ROOTS = [
+  "/Applications/",
+  "/Library/",
+  "/usr/local/",
+  "/opt/",
+  "/private/var/",
+];
+
+function isSafeUninstallPath(abs: string): boolean {
+  const resolved = path.resolve(abs);
+  // Never touch these even if nested under a safe root by symlink trickery.
+  if (resolved === "/" || resolved === "/Applications" || resolved === "/Library") return false;
+  return UNINSTALL_SAFE_ROOTS.some((root) => resolved.startsWith(root));
+}
+
+async function findAppByBundleId(bundleId: string): Promise<string | null> {
+  const clean = bundleId.replace(/'/g, "");
+  try {
+    const { stdout } = await execFileAsync(
+      "/usr/bin/mdfind",
+      [`kMDItemCFBundleIdentifier == '${clean}'`],
+      { timeout: 15_000, maxBuffer: 1024 * 1024 }
+    );
+    const hit = stdout.split("\n").map((s) => s.trim()).find((p) => p.endsWith(".app"));
+    if (hit) return hit;
+  } catch {
+    // Spotlight cold/off — fall through to a directory scan.
+  }
+  try {
+    const apps = fs.readdirSync("/Applications").filter((n) => n.endsWith(".app"));
+    for (const app of apps) {
+      const plistPath = `/Applications/${app}/Contents/Info.plist`;
+      try {
+        const { stdout } = await execFileAsync("/usr/bin/defaults", ["read", plistPath, "CFBundleIdentifier"], {
+          timeout: 5_000,
+        });
+        if (stdout.trim() === bundleId) return `/Applications/${app}`;
+      } catch {
+        // no readable plist — skip
+      }
+    }
+  } catch {
+    // /Applications unreadable
+  }
+  return null;
+}
+
+async function uninstallByBundle(bundleId: string, timeoutSeconds: number): Promise<InstallRunResult> {
+  const start = Date.now();
+  const appPath = await findAppByBundleId(bundleId);
+  if (!appPath) {
+    // Already gone — the agent's pre-detect usually catches this; if we get
+    // here, report success-shaped (exit 0) so post-detect (absent) confirms.
+    return { exitCode: 0, stderrExcerpt: `no app bundle found for ${bundleId}`, durationMs: Date.now() - start };
+  }
+  if (!isSafeUninstallPath(appPath)) {
+    return { exitCode: 1, stderrExcerpt: `refusing to remove unsafe path ${appPath}`, durationMs: Date.now() - start };
+  }
+  try {
+    await execFileAsync("/bin/rm", ["-rf", appPath], { timeout: timeoutSeconds * 1000, maxBuffer: 1024 * 1024 });
+    return { exitCode: 0, stderrExcerpt: `removed ${appPath}`, durationMs: Date.now() - start };
+  } catch (err: any) {
+    return {
+      exitCode: Number.isFinite(Number(err?.code)) ? Number(err.code) : 1,
+      stderrExcerpt: combinedExcerpt(err?.stdout, err?.stderr) || (err?.message || ""),
+      durationMs: Date.now() - start,
+    };
+  }
+}
+
+async function uninstallByPkgReceipt(pkgId: string, timeoutSeconds: number): Promise<InstallRunResult> {
+  const start = Date.now();
+  // Resolve the receipt's install root (volume + install-location).
+  let volume = "/";
+  let installLocation = "";
+  try {
+    const { stdout } = await execFileAsync("/usr/sbin/pkgutil", ["--pkg-info", pkgId], {
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+    });
+    for (const line of stdout.split("\n")) {
+      const t = line.trim();
+      if (t.startsWith("volume:")) volume = t.replace(/^volume:\s*/, "").trim() || "/";
+      if (t.startsWith("location:")) installLocation = t.replace(/^location:\s*/, "").trim();
+    }
+  } catch {
+    // Receipt already gone → nothing to remove; forget is a no-op below.
+    return { exitCode: 0, stderrExcerpt: `no receipt for ${pkgId}`, durationMs: Date.now() - start };
+  }
+
+  const root = path.join(volume, installLocation);
+  let removed = 0;
+  let skipped = 0;
+  try {
+    const { stdout } = await execFileAsync("/usr/sbin/pkgutil", ["--files", pkgId], {
+      timeout: 30_000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    // Longest paths first so files are removed before their parent dirs.
+    const rels = stdout.split("\n").map((s) => s.trim()).filter(Boolean).sort((a, b) => b.length - a.length);
+    for (const rel of rels) {
+      const abs = path.resolve(path.join(root, rel));
+      if (!isSafeUninstallPath(abs)) {
+        skipped += 1;
+        continue;
+      }
+      try {
+        const st = fs.lstatSync(abs);
+        if (st.isDirectory()) {
+          fs.rmdirSync(abs); // only removes if empty — leaves shared dirs intact
+        } else {
+          fs.unlinkSync(abs);
+        }
+        removed += 1;
+      } catch {
+        // file already gone / dir non-empty / permission — best-effort
+      }
+    }
+  } catch {
+    // couldn't list files — still forget below
+  }
+
+  // Drop the receipt so the OS no longer considers the package installed.
+  try {
+    await execFileAsync("/usr/sbin/pkgutil", ["--forget", pkgId], { timeout: 15_000, maxBuffer: 1024 * 1024 });
+  } catch {
+    // forget failed (already forgotten) — non-fatal
+  }
+
+  logger.info("sdp_pkg_uninstall", { pkgId, root, removed, skipped });
+  return {
+    exitCode: 0,
+    stderrExcerpt: `pkg ${pkgId}: removed ${removed} path(s), skipped ${skipped} outside safe roots`,
+    durationMs: Date.now() - start,
+  };
+}
+
+export async function handleSdpUninstall(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const params = req.params || {};
+  const identity = (params.identity || {}) as { bundleId?: string; pkgId?: string };
+  const bundleId = String(identity.bundleId || "").trim();
+  const pkgId = String(identity.pkgId || "").trim();
+  const timeoutSeconds = Number.isFinite(Number(params.timeoutSeconds))
+    ? Math.max(60, Math.floor(Number(params.timeoutSeconds)))
+    : DEFAULT_INSTALL_TIMEOUT_S;
+  const packageId = Number(params.packageId) || 0;
+
+  let result: InstallRunResult;
+  try {
+    if (bundleId) {
+      result = await uninstallByBundle(bundleId, timeoutSeconds);
+    } else if (pkgId) {
+      result = await uninstallByPkgReceipt(pkgId, timeoutSeconds);
+    } else {
+      return fail(
+        req.id,
+        "identity_not_found",
+        "uninstall requires a bundleId (bundle_version rule) or pkgId (pkg_receipt rule)"
+      );
+    }
+  } catch (err: any) {
+    return fail(req.id, "install_failed", err?.message || String(err));
+  }
+
+  logger.info("sdp_uninstall_done", {
+    packageId,
+    bundleId: bundleId || undefined,
+    pkgId: pkgId || undefined,
+    exitCode: result.exitCode,
+    durationMs: result.durationMs,
+  });
+
+  return success(req.id, {
+    exitCode: result.exitCode,
+    stderrExcerpt: result.stderrExcerpt,
+    durationMs: result.durationMs,
+  });
+}
+
 export async function handleSdpInstall(req: PrivSvcRequest): Promise<PrivSvcResponse> {
   const params = req.params || {};
   const stagingPath = String(params.stagingPath || "");

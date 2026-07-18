@@ -42,22 +42,54 @@ namespace Tracenium.Control {
             "GAEgASgJIkoKDFBvbGljeVVwZGF0ZRIPCgdldmVudElkGAEgASgJEhUKDXBv",
             "bGljeVZlcnNpb24YAiABKAkSEgoKcG9saWN5SnNvbhgDIAEoDCIcCgpEaXNj",
             "b25uZWN0Eg4KBnJlYXNvbhgBIAEoCSItCgtBZ2VudFVwZGF0ZRINCgVqb2JJ",
-            "ZBgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJIooECg5Db250cm9sTWVzc2FnZRIP",
-            "Cgd0cmFjZUlkGAogASgJEikKBWhlbGxvGAEgASgLMhgudHJhY2VuaXVtLmNv",
-            "bnRyb2wuSGVsbG9IABIpCgVmYWN0cxgCIAEoCzIYLnRyYWNlbml1bS5jb250",
-            "cm9sLkZhY3RzSAASMQoJaGVhcnRiZWF0GAMgASgLMhwudHJhY2VuaXVtLmNv",
-            "bnRyb2wuSGVhcnRiZWF0SAASKwoGcnVuSm9iGAQgASgLMhkudHJhY2VuaXVt",
-            "LmNvbnRyb2wuUnVuSm9iSAASMwoKcm90YXRlQ2VydBgFIAEoCzIdLnRyYWNl",
-            "bml1bS5jb250cm9sLlJvdGF0ZUNlcnRIABI3Cgxwb2xpY3lVcGRhdGUYBiAB",
-            "KAsyHy50cmFjZW5pdW0uY29udHJvbC5Qb2xpY3lVcGRhdGVIABIzCgpkaXNj",
-            "b25uZWN0GAcgASgLMh0udHJhY2VuaXVtLmNvbnRyb2wuRGlzY29ubmVjdEgA",
-            "EjUKC2FnZW50VXBkYXRlGAggASgLMh4udHJhY2VuaXVtLmNvbnRyb2wuQWdl",
-            "bnRVcGRhdGVIABIlCgNhY2sYCyABKAsyFi50cmFjZW5pdW0uY29udHJvbC5B",
-            "Y2tIABIpCgVlcnJvchgMIAEoCzIYLnRyYWNlbml1bS5jb250cm9sLkVycm9y",
-            "SABCBQoDbXNnKjgKCUFja1N0YXR1cxIKCgZBQ0tfT0sQABINCglBQ0tfUkVU",
-            "UlkQARIQCgxBQ0tfUkVKRUNURUQQAjJjCgxDb250cm9sUGxhbmUSUwoHQ29u",
-            "bmVjdBIhLnRyYWNlbml1bS5jb250cm9sLkNvbnRyb2xNZXNzYWdlGiEudHJh",
-            "Y2VuaXVtLmNvbnRyb2wuQ29udHJvbE1lc3NhZ2UoATABYgZwcm90bzM="));
+            "ZBgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJIn8KElJlbW90ZVNlc3Npb25PZmZl",
+            "chIRCglzZXNzaW9uSWQYASABKAkSCwoDc2RwGAIgASgJEhIKCmNhcGFiaWxp",
+            "dHkYAyABKAkSHQoVc2Vzc2lvblRpbWVvdXRTZWNvbmRzGAQgASgFEhYKDmlj",
+            "ZVNlcnZlcnNKc29uGAUgASgJIjUKE1JlbW90ZVNlc3Npb25BbnN3ZXISEQoJ",
+            "c2Vzc2lvbklkGAEgASgJEgsKA3NkcBgCIAEoCSJfChBSZW1vdGVTZXNzaW9u",
+            "SWNlEhEKCXNlc3Npb25JZBgBIAEoCRIRCgljYW5kaWRhdGUYAiABKAkSDgoG",
+            "c2RwTWlkGAMgASgJEhUKDXNkcE1MaW5lSW5kZXgYBCABKAUiNwoSUmVtb3Rl",
+            "U2Vzc2lvbkNsb3NlEhEKCXNlc3Npb25JZBgBIAEoCRIOCgZyZWFzb24YAiAB",
+            "KAkiRgoSUmVtb3RlU2Vzc2lvbkVycm9yEhEKCXNlc3Npb25JZBgBIAEoCRIM",
+            "CgRjb2RlGAIgASgJEg8KB21lc3NhZ2UYAyABKAkidgoXUmVtb3RlU2Vzc2lv",
+            "blRyYW5zY3JpcHQSEQoJc2Vzc2lvbklkGAEgASgJEg4KBnN0cmVhbRgCIAEo",
+            "CRIWCg50c0RlbHRhU2Vjb25kcxgDIAEoARIMCgRkYXRhGAQgASgJEhIKCmJ5",
+            "dGVzQ291bnQYBSABKAUizAEKF1JlbW90ZUZpbGVUcmFuc2ZlckF1ZGl0EhEK",
+            "CXNlc3Npb25JZBgBIAEoCRISCgp0cmFuc2ZlcklkGAIgASgJEhEKCWRpcmVj",
+            "dGlvbhgDIAEoCRISCgpyZW1vdGVQYXRoGAQgASgJEhAKCGZpbGVuYW1lGAUg",
+            "ASgJEhEKCXNpemVCeXRlcxgGIAEoAxIYChB0cmFuc2ZlcnJlZEJ5dGVzGAcg",
+            "ASgDEg4KBnN0YXR1cxgIIAEoCRIUCgxlcnJvck1lc3NhZ2UYCSABKAkidwoR",
+            "UmVtb3RlU2NyZWVuQXVkaXQSEQoJc2Vzc2lvbklkGAEgASgJEg0KBWV2ZW50",
+            "GAIgASgJEg0KBXdpZHRoGAMgASgFEg4KBmhlaWdodBgEIAEoBRILCgNmcHMY",
+            "BSABKAUSFAoMZXJyb3JNZXNzYWdlGAYgASgJIsIICg5Db250cm9sTWVzc2Fn",
+            "ZRIPCgd0cmFjZUlkGAogASgJEikKBWhlbGxvGAEgASgLMhgudHJhY2VuaXVt",
+            "LmNvbnRyb2wuSGVsbG9IABIpCgVmYWN0cxgCIAEoCzIYLnRyYWNlbml1bS5j",
+            "b250cm9sLkZhY3RzSAASMQoJaGVhcnRiZWF0GAMgASgLMhwudHJhY2VuaXVt",
+            "LmNvbnRyb2wuSGVhcnRiZWF0SAASKwoGcnVuSm9iGAQgASgLMhkudHJhY2Vu",
+            "aXVtLmNvbnRyb2wuUnVuSm9iSAASMwoKcm90YXRlQ2VydBgFIAEoCzIdLnRy",
+            "YWNlbml1bS5jb250cm9sLlJvdGF0ZUNlcnRIABI3Cgxwb2xpY3lVcGRhdGUY",
+            "BiABKAsyHy50cmFjZW5pdW0uY29udHJvbC5Qb2xpY3lVcGRhdGVIABIzCgpk",
+            "aXNjb25uZWN0GAcgASgLMh0udHJhY2VuaXVtLmNvbnRyb2wuRGlzY29ubmVj",
+            "dEgAEjUKC2FnZW50VXBkYXRlGAggASgLMh4udHJhY2VuaXVtLmNvbnRyb2wu",
+            "QWdlbnRVcGRhdGVIABIlCgNhY2sYCyABKAsyFi50cmFjZW5pdW0uY29udHJv",
+            "bC5BY2tIABIpCgVlcnJvchgMIAEoCzIYLnRyYWNlbml1bS5jb250cm9sLkVy",
+            "cm9ySAASQwoScmVtb3RlU2Vzc2lvbk9mZmVyGBQgASgLMiUudHJhY2VuaXVt",
+            "LmNvbnRyb2wuUmVtb3RlU2Vzc2lvbk9mZmVySAASRQoTcmVtb3RlU2Vzc2lv",
+            "bkFuc3dlchgVIAEoCzImLnRyYWNlbml1bS5jb250cm9sLlJlbW90ZVNlc3Np",
+            "b25BbnN3ZXJIABI/ChByZW1vdGVTZXNzaW9uSWNlGBYgASgLMiMudHJhY2Vu",
+            "aXVtLmNvbnRyb2wuUmVtb3RlU2Vzc2lvbkljZUgAEkMKEnJlbW90ZVNlc3Np",
+            "b25DbG9zZRgXIAEoCzIlLnRyYWNlbml1bS5jb250cm9sLlJlbW90ZVNlc3Np",
+            "b25DbG9zZUgAEkMKEnJlbW90ZVNlc3Npb25FcnJvchgYIAEoCzIlLnRyYWNl",
+            "bml1bS5jb250cm9sLlJlbW90ZVNlc3Npb25FcnJvckgAEk0KF3JlbW90ZVNl",
+            "c3Npb25UcmFuc2NyaXB0GBkgASgLMioudHJhY2VuaXVtLmNvbnRyb2wuUmVt",
+            "b3RlU2Vzc2lvblRyYW5zY3JpcHRIABJNChdyZW1vdGVGaWxlVHJhbnNmZXJB",
+            "dWRpdBgaIAEoCzIqLnRyYWNlbml1bS5jb250cm9sLlJlbW90ZUZpbGVUcmFu",
+            "c2ZlckF1ZGl0SAASQQoRcmVtb3RlU2NyZWVuQXVkaXQYGyABKAsyJC50cmFj",
+            "ZW5pdW0uY29udHJvbC5SZW1vdGVTY3JlZW5BdWRpdEgAQgUKA21zZyo4CglB",
+            "Y2tTdGF0dXMSCgoGQUNLX09LEAASDQoJQUNLX1JFVFJZEAESEAoMQUNLX1JF",
+            "SkVDVEVEEAIyYwoMQ29udHJvbFBsYW5lElMKB0Nvbm5lY3QSIS50cmFjZW5p",
+            "dW0uY29udHJvbC5Db250cm9sTWVzc2FnZRohLnRyYWNlbml1bS5jb250cm9s",
+            "LkNvbnRyb2xNZXNzYWdlKAEwAWIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::Tracenium.Control.AckStatus), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -71,7 +103,15 @@ namespace Tracenium.Control {
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.PolicyUpdate), global::Tracenium.Control.PolicyUpdate.Parser, new[]{ "EventId", "PolicyVersion", "PolicyJson" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.Disconnect), global::Tracenium.Control.Disconnect.Parser, new[]{ "Reason" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.AgentUpdate), global::Tracenium.Control.AgentUpdate.Parser, new[]{ "JobId", "Version" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.ControlMessage), global::Tracenium.Control.ControlMessage.Parser, new[]{ "TraceId", "Hello", "Facts", "Heartbeat", "RunJob", "RotateCert", "PolicyUpdate", "Disconnect", "AgentUpdate", "Ack", "Error" }, new[]{ "Msg" }, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RemoteSessionOffer), global::Tracenium.Control.RemoteSessionOffer.Parser, new[]{ "SessionId", "Sdp", "Capability", "SessionTimeoutSeconds", "IceServersJson" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RemoteSessionAnswer), global::Tracenium.Control.RemoteSessionAnswer.Parser, new[]{ "SessionId", "Sdp" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RemoteSessionIce), global::Tracenium.Control.RemoteSessionIce.Parser, new[]{ "SessionId", "Candidate", "SdpMid", "SdpMLineIndex" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RemoteSessionClose), global::Tracenium.Control.RemoteSessionClose.Parser, new[]{ "SessionId", "Reason" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RemoteSessionError), global::Tracenium.Control.RemoteSessionError.Parser, new[]{ "SessionId", "Code", "Message" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RemoteSessionTranscript), global::Tracenium.Control.RemoteSessionTranscript.Parser, new[]{ "SessionId", "Stream", "TsDeltaSeconds", "Data", "BytesCount" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RemoteFileTransferAudit), global::Tracenium.Control.RemoteFileTransferAudit.Parser, new[]{ "SessionId", "TransferId", "Direction", "RemotePath", "Filename", "SizeBytes", "TransferredBytes", "Status", "ErrorMessage" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.RemoteScreenAudit), global::Tracenium.Control.RemoteScreenAudit.Parser, new[]{ "SessionId", "Event", "Width", "Height", "Fps", "ErrorMessage" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Tracenium.Control.ControlMessage), global::Tracenium.Control.ControlMessage.Parser, new[]{ "TraceId", "Hello", "Facts", "Heartbeat", "RunJob", "RotateCert", "PolicyUpdate", "Disconnect", "AgentUpdate", "Ack", "Error", "RemoteSessionOffer", "RemoteSessionAnswer", "RemoteSessionIce", "RemoteSessionClose", "RemoteSessionError", "RemoteSessionTranscript", "RemoteFileTransferAudit", "RemoteScreenAudit" }, new[]{ "Msg" }, null, null, null)
           }));
     }
     #endregion
@@ -2936,6 +2976,2774 @@ namespace Tracenium.Control {
 
   }
 
+  /// <summary>
+  /// Backend → Agent. The browser created an SDP offer (acting as
+  /// offerer); the backend forwards it after verifying the operator's
+  /// admin_master role and that this device belongs to the operator's
+  /// tenant. Agent's job: create a PeerConnection, set remote
+  /// description, generate an answer, reply with RemoteSessionAnswer.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class RemoteSessionOffer : pb::IMessage<RemoteSessionOffer>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<RemoteSessionOffer> _parser = new pb::MessageParser<RemoteSessionOffer>(() => new RemoteSessionOffer());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<RemoteSessionOffer> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::Tracenium.Control.ControlplaneReflection.Descriptor.MessageTypes[10]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionOffer() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionOffer(RemoteSessionOffer other) : this() {
+      sessionId_ = other.sessionId_;
+      sdp_ = other.sdp_;
+      capability_ = other.capability_;
+      sessionTimeoutSeconds_ = other.sessionTimeoutSeconds_;
+      iceServersJson_ = other.iceServersJson_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionOffer Clone() {
+      return new RemoteSessionOffer(this);
+    }
+
+    /// <summary>Field number for the "sessionId" field.</summary>
+    public const int SessionIdFieldNumber = 1;
+    private string sessionId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string SessionId {
+      get { return sessionId_; }
+      set {
+        sessionId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "sdp" field.</summary>
+    public const int SdpFieldNumber = 2;
+    private string sdp_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Sdp {
+      get { return sdp_; }
+      set {
+        sdp_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "capability" field.</summary>
+    public const int CapabilityFieldNumber = 3;
+    private string capability_ = "";
+    /// <summary>
+    /// Capability the session is requesting. Agent rejects via
+    /// RemoteSessionError if it doesn't advertise this capability
+    /// (e.g. rcp.shell when policy.features.remoteShell is false).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Capability {
+      get { return capability_; }
+      set {
+        capability_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "sessionTimeoutSeconds" field.</summary>
+    public const int SessionTimeoutSecondsFieldNumber = 4;
+    private int sessionTimeoutSeconds_;
+    /// <summary>
+    /// Hard cap so the agent can pre-allocate / refuse to spawn.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int SessionTimeoutSeconds {
+      get { return sessionTimeoutSeconds_; }
+      set {
+        sessionTimeoutSeconds_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "iceServersJson" field.</summary>
+    public const int IceServersJsonFieldNumber = 5;
+    private string iceServersJson_ = "";
+    /// <summary>
+    /// ICE servers (STUN + TURN, Cloudflare-minted per session). Backend
+    /// forwards the SAME creds it gave the operator's browser so the
+    /// agent's PeerConnection emits relay candidates of its own — without
+    /// this the agent is unreachable from any browser when it sits behind
+    /// a NAT (every corporate desktop, every cloud VM, every VirtualBox
+    /// guest). JSON-encoded for forward-compat; agent does JSON.parse and
+    /// feeds the array to `new PeerConnection({ iceServers })`.
+    ///
+    /// ⚠️ This proto file MUST stay in sync with
+    /// ../certusws-tracenium/proto/controlplane.proto. The PrivSvc C#
+    /// service generates its classes from THIS copy at build time, AND
+    /// the AgentCore loads its descriptor from THIS copy at runtime via
+    /// @grpc/proto-loader. The backend gRPC server uses its OWN copy.
+    /// Drift = silently-dropped fields at the C# boundary; exactly what
+    /// happened 2026-06-10 before this commit landed (backend proto had
+    /// the field, agent-w proto didn't, PrivSvc never knew the field
+    /// existed, AgentCore got iceServersCount: 0 on every offer).
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string IceServersJson {
+      get { return iceServersJson_; }
+      set {
+        iceServersJson_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as RemoteSessionOffer);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(RemoteSessionOffer other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (SessionId != other.SessionId) return false;
+      if (Sdp != other.Sdp) return false;
+      if (Capability != other.Capability) return false;
+      if (SessionTimeoutSeconds != other.SessionTimeoutSeconds) return false;
+      if (IceServersJson != other.IceServersJson) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (SessionId.Length != 0) hash ^= SessionId.GetHashCode();
+      if (Sdp.Length != 0) hash ^= Sdp.GetHashCode();
+      if (Capability.Length != 0) hash ^= Capability.GetHashCode();
+      if (SessionTimeoutSeconds != 0) hash ^= SessionTimeoutSeconds.GetHashCode();
+      if (IceServersJson.Length != 0) hash ^= IceServersJson.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Sdp.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Sdp);
+      }
+      if (Capability.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(Capability);
+      }
+      if (SessionTimeoutSeconds != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(SessionTimeoutSeconds);
+      }
+      if (IceServersJson.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteString(IceServersJson);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Sdp.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Sdp);
+      }
+      if (Capability.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(Capability);
+      }
+      if (SessionTimeoutSeconds != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(SessionTimeoutSeconds);
+      }
+      if (IceServersJson.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteString(IceServersJson);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (SessionId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(SessionId);
+      }
+      if (Sdp.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Sdp);
+      }
+      if (Capability.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Capability);
+      }
+      if (SessionTimeoutSeconds != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(SessionTimeoutSeconds);
+      }
+      if (IceServersJson.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(IceServersJson);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(RemoteSessionOffer other) {
+      if (other == null) {
+        return;
+      }
+      if (other.SessionId.Length != 0) {
+        SessionId = other.SessionId;
+      }
+      if (other.Sdp.Length != 0) {
+        Sdp = other.Sdp;
+      }
+      if (other.Capability.Length != 0) {
+        Capability = other.Capability;
+      }
+      if (other.SessionTimeoutSeconds != 0) {
+        SessionTimeoutSeconds = other.SessionTimeoutSeconds;
+      }
+      if (other.IceServersJson.Length != 0) {
+        IceServersJson = other.IceServersJson;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Sdp = input.ReadString();
+            break;
+          }
+          case 26: {
+            Capability = input.ReadString();
+            break;
+          }
+          case 32: {
+            SessionTimeoutSeconds = input.ReadInt32();
+            break;
+          }
+          case 42: {
+            IceServersJson = input.ReadString();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Sdp = input.ReadString();
+            break;
+          }
+          case 26: {
+            Capability = input.ReadString();
+            break;
+          }
+          case 32: {
+            SessionTimeoutSeconds = input.ReadInt32();
+            break;
+          }
+          case 42: {
+            IceServersJson = input.ReadString();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Agent → Backend. The agent's SDP answer in response to a
+  /// RemoteSessionOffer. Backend forwards to the operator's browser
+  /// over the WebSocket signaling channel.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class RemoteSessionAnswer : pb::IMessage<RemoteSessionAnswer>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<RemoteSessionAnswer> _parser = new pb::MessageParser<RemoteSessionAnswer>(() => new RemoteSessionAnswer());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<RemoteSessionAnswer> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::Tracenium.Control.ControlplaneReflection.Descriptor.MessageTypes[11]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionAnswer() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionAnswer(RemoteSessionAnswer other) : this() {
+      sessionId_ = other.sessionId_;
+      sdp_ = other.sdp_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionAnswer Clone() {
+      return new RemoteSessionAnswer(this);
+    }
+
+    /// <summary>Field number for the "sessionId" field.</summary>
+    public const int SessionIdFieldNumber = 1;
+    private string sessionId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string SessionId {
+      get { return sessionId_; }
+      set {
+        sessionId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "sdp" field.</summary>
+    public const int SdpFieldNumber = 2;
+    private string sdp_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Sdp {
+      get { return sdp_; }
+      set {
+        sdp_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as RemoteSessionAnswer);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(RemoteSessionAnswer other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (SessionId != other.SessionId) return false;
+      if (Sdp != other.Sdp) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (SessionId.Length != 0) hash ^= SessionId.GetHashCode();
+      if (Sdp.Length != 0) hash ^= Sdp.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Sdp.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Sdp);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Sdp.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Sdp);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (SessionId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(SessionId);
+      }
+      if (Sdp.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Sdp);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(RemoteSessionAnswer other) {
+      if (other == null) {
+        return;
+      }
+      if (other.SessionId.Length != 0) {
+        SessionId = other.SessionId;
+      }
+      if (other.Sdp.Length != 0) {
+        Sdp = other.Sdp;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Sdp = input.ReadString();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Sdp = input.ReadString();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Bidirectional. ICE candidates discovered by either side after the
+  /// initial offer/answer. The candidate string is the standard SDP
+  /// "candidate:" line; sdpMid and sdpMLineIndex identify which media
+  /// section it belongs to (matters once we add video tracks in M3).
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class RemoteSessionIce : pb::IMessage<RemoteSessionIce>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<RemoteSessionIce> _parser = new pb::MessageParser<RemoteSessionIce>(() => new RemoteSessionIce());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<RemoteSessionIce> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::Tracenium.Control.ControlplaneReflection.Descriptor.MessageTypes[12]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionIce() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionIce(RemoteSessionIce other) : this() {
+      sessionId_ = other.sessionId_;
+      candidate_ = other.candidate_;
+      sdpMid_ = other.sdpMid_;
+      sdpMLineIndex_ = other.sdpMLineIndex_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionIce Clone() {
+      return new RemoteSessionIce(this);
+    }
+
+    /// <summary>Field number for the "sessionId" field.</summary>
+    public const int SessionIdFieldNumber = 1;
+    private string sessionId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string SessionId {
+      get { return sessionId_; }
+      set {
+        sessionId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "candidate" field.</summary>
+    public const int CandidateFieldNumber = 2;
+    private string candidate_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Candidate {
+      get { return candidate_; }
+      set {
+        candidate_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "sdpMid" field.</summary>
+    public const int SdpMidFieldNumber = 3;
+    private string sdpMid_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string SdpMid {
+      get { return sdpMid_; }
+      set {
+        sdpMid_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "sdpMLineIndex" field.</summary>
+    public const int SdpMLineIndexFieldNumber = 4;
+    private int sdpMLineIndex_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int SdpMLineIndex {
+      get { return sdpMLineIndex_; }
+      set {
+        sdpMLineIndex_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as RemoteSessionIce);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(RemoteSessionIce other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (SessionId != other.SessionId) return false;
+      if (Candidate != other.Candidate) return false;
+      if (SdpMid != other.SdpMid) return false;
+      if (SdpMLineIndex != other.SdpMLineIndex) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (SessionId.Length != 0) hash ^= SessionId.GetHashCode();
+      if (Candidate.Length != 0) hash ^= Candidate.GetHashCode();
+      if (SdpMid.Length != 0) hash ^= SdpMid.GetHashCode();
+      if (SdpMLineIndex != 0) hash ^= SdpMLineIndex.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Candidate.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Candidate);
+      }
+      if (SdpMid.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(SdpMid);
+      }
+      if (SdpMLineIndex != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(SdpMLineIndex);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Candidate.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Candidate);
+      }
+      if (SdpMid.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(SdpMid);
+      }
+      if (SdpMLineIndex != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(SdpMLineIndex);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (SessionId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(SessionId);
+      }
+      if (Candidate.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Candidate);
+      }
+      if (SdpMid.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(SdpMid);
+      }
+      if (SdpMLineIndex != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(SdpMLineIndex);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(RemoteSessionIce other) {
+      if (other == null) {
+        return;
+      }
+      if (other.SessionId.Length != 0) {
+        SessionId = other.SessionId;
+      }
+      if (other.Candidate.Length != 0) {
+        Candidate = other.Candidate;
+      }
+      if (other.SdpMid.Length != 0) {
+        SdpMid = other.SdpMid;
+      }
+      if (other.SdpMLineIndex != 0) {
+        SdpMLineIndex = other.SdpMLineIndex;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Candidate = input.ReadString();
+            break;
+          }
+          case 26: {
+            SdpMid = input.ReadString();
+            break;
+          }
+          case 32: {
+            SdpMLineIndex = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Candidate = input.ReadString();
+            break;
+          }
+          case 26: {
+            SdpMid = input.ReadString();
+            break;
+          }
+          case 32: {
+            SdpMLineIndex = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Bidirectional. Tear-down marker. The agent sends it when the
+  /// shell exits or an idle timeout fires; the backend sends it when
+  /// the operator's browser disconnects past the grace window. After
+  /// either side sends close, the receiver should release the
+  /// PeerConnection and audit the session as ended.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class RemoteSessionClose : pb::IMessage<RemoteSessionClose>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<RemoteSessionClose> _parser = new pb::MessageParser<RemoteSessionClose>(() => new RemoteSessionClose());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<RemoteSessionClose> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::Tracenium.Control.ControlplaneReflection.Descriptor.MessageTypes[13]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionClose() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionClose(RemoteSessionClose other) : this() {
+      sessionId_ = other.sessionId_;
+      reason_ = other.reason_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionClose Clone() {
+      return new RemoteSessionClose(this);
+    }
+
+    /// <summary>Field number for the "sessionId" field.</summary>
+    public const int SessionIdFieldNumber = 1;
+    private string sessionId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string SessionId {
+      get { return sessionId_; }
+      set {
+        sessionId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "reason" field.</summary>
+    public const int ReasonFieldNumber = 2;
+    private string reason_ = "";
+    /// <summary>
+    /// Free-form. Audit log shows this on the closed session row.
+    /// Conventional values: "user_closed", "operator_disconnected",
+    /// "idle_timeout", "hard_cap_timeout", "agent_error",
+    /// "policy_denied", "capability_unavailable".
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Reason {
+      get { return reason_; }
+      set {
+        reason_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as RemoteSessionClose);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(RemoteSessionClose other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (SessionId != other.SessionId) return false;
+      if (Reason != other.Reason) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (SessionId.Length != 0) hash ^= SessionId.GetHashCode();
+      if (Reason.Length != 0) hash ^= Reason.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Reason.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Reason);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Reason.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Reason);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (SessionId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(SessionId);
+      }
+      if (Reason.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Reason);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(RemoteSessionClose other) {
+      if (other == null) {
+        return;
+      }
+      if (other.SessionId.Length != 0) {
+        SessionId = other.SessionId;
+      }
+      if (other.Reason.Length != 0) {
+        Reason = other.Reason;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Reason = input.ReadString();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Reason = input.ReadString();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Bidirectional. Surfaces a structured error before close. Use cases:
+  ///   - agent rejects capability (policy off, no PTY available)
+  ///   - SDP parse failure
+  ///   - ICE failed to establish within window
+  /// Backend persists into remote_session_events for audit.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class RemoteSessionError : pb::IMessage<RemoteSessionError>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<RemoteSessionError> _parser = new pb::MessageParser<RemoteSessionError>(() => new RemoteSessionError());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<RemoteSessionError> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::Tracenium.Control.ControlplaneReflection.Descriptor.MessageTypes[14]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionError() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionError(RemoteSessionError other) : this() {
+      sessionId_ = other.sessionId_;
+      code_ = other.code_;
+      message_ = other.message_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionError Clone() {
+      return new RemoteSessionError(this);
+    }
+
+    /// <summary>Field number for the "sessionId" field.</summary>
+    public const int SessionIdFieldNumber = 1;
+    private string sessionId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string SessionId {
+      get { return sessionId_; }
+      set {
+        sessionId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "code" field.</summary>
+    public const int CodeFieldNumber = 2;
+    private string code_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Code {
+      get { return code_; }
+      set {
+        code_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "message" field.</summary>
+    public const int MessageFieldNumber = 3;
+    private string message_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Message {
+      get { return message_; }
+      set {
+        message_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as RemoteSessionError);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(RemoteSessionError other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (SessionId != other.SessionId) return false;
+      if (Code != other.Code) return false;
+      if (Message != other.Message) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (SessionId.Length != 0) hash ^= SessionId.GetHashCode();
+      if (Code.Length != 0) hash ^= Code.GetHashCode();
+      if (Message.Length != 0) hash ^= Message.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Code.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Code);
+      }
+      if (Message.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(Message);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Code.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Code);
+      }
+      if (Message.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(Message);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (SessionId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(SessionId);
+      }
+      if (Code.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Code);
+      }
+      if (Message.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Message);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(RemoteSessionError other) {
+      if (other == null) {
+        return;
+      }
+      if (other.SessionId.Length != 0) {
+        SessionId = other.SessionId;
+      }
+      if (other.Code.Length != 0) {
+        Code = other.Code;
+      }
+      if (other.Message.Length != 0) {
+        Message = other.Message;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Code = input.ReadString();
+            break;
+          }
+          case 26: {
+            Message = input.ReadString();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Code = input.ReadString();
+            break;
+          }
+          case 26: {
+            Message = input.ReadString();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Agent → Backend (M1.S3). Append-only chunk of session output.
+  /// Flushed every ~5s or when the buffer reaches ~8KB, whichever
+  /// triggers first. Backend persists into remote_session_io and uses
+  /// it as a liveness signal (idle-timeout sweep treats sessions with
+  /// recent transcript activity as alive).
+  ///
+  /// Stream is a string instead of an enum so a future opt-in stdin
+  /// recording lands without a proto bump; values are 'stdout' or
+  /// 'stdin'. M1 ships stdout only.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class RemoteSessionTranscript : pb::IMessage<RemoteSessionTranscript>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<RemoteSessionTranscript> _parser = new pb::MessageParser<RemoteSessionTranscript>(() => new RemoteSessionTranscript());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<RemoteSessionTranscript> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::Tracenium.Control.ControlplaneReflection.Descriptor.MessageTypes[15]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionTranscript() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionTranscript(RemoteSessionTranscript other) : this() {
+      sessionId_ = other.sessionId_;
+      stream_ = other.stream_;
+      tsDeltaSeconds_ = other.tsDeltaSeconds_;
+      data_ = other.data_;
+      bytesCount_ = other.bytesCount_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteSessionTranscript Clone() {
+      return new RemoteSessionTranscript(this);
+    }
+
+    /// <summary>Field number for the "sessionId" field.</summary>
+    public const int SessionIdFieldNumber = 1;
+    private string sessionId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string SessionId {
+      get { return sessionId_; }
+      set {
+        sessionId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "stream" field.</summary>
+    public const int StreamFieldNumber = 2;
+    private string stream_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Stream {
+      get { return stream_; }
+      set {
+        stream_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "tsDeltaSeconds" field.</summary>
+    public const int TsDeltaSecondsFieldNumber = 3;
+    private double tsDeltaSeconds_;
+    /// <summary>
+    /// Offset from the session's started_at, in seconds (fractional).
+    /// Matches asciinema v2's "time" field exactly so replay can
+    /// serialize the chunks back to the standard format with no
+    /// recomputation.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public double TsDeltaSeconds {
+      get { return tsDeltaSeconds_; }
+      set {
+        tsDeltaSeconds_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "data" field.</summary>
+    public const int DataFieldNumber = 4;
+    private string data_ = "";
+    /// <summary>
+    /// UTF-8. May contain ANSI escapes; replay renders them via
+    /// xterm.js. Capped at 64 KB per chunk by the agent.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Data {
+      get { return data_; }
+      set {
+        data_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "bytesCount" field.</summary>
+    public const int BytesCountFieldNumber = 5;
+    private int bytesCount_;
+    /// <summary>
+    /// Convenience for backend aggregates without measuring UTF-8
+    /// bytes on every chunk. Set by the agent at flush time.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int BytesCount {
+      get { return bytesCount_; }
+      set {
+        bytesCount_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as RemoteSessionTranscript);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(RemoteSessionTranscript other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (SessionId != other.SessionId) return false;
+      if (Stream != other.Stream) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseDoubleEqualityComparer.Equals(TsDeltaSeconds, other.TsDeltaSeconds)) return false;
+      if (Data != other.Data) return false;
+      if (BytesCount != other.BytesCount) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (SessionId.Length != 0) hash ^= SessionId.GetHashCode();
+      if (Stream.Length != 0) hash ^= Stream.GetHashCode();
+      if (TsDeltaSeconds != 0D) hash ^= pbc::ProtobufEqualityComparers.BitwiseDoubleEqualityComparer.GetHashCode(TsDeltaSeconds);
+      if (Data.Length != 0) hash ^= Data.GetHashCode();
+      if (BytesCount != 0) hash ^= BytesCount.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Stream.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Stream);
+      }
+      if (TsDeltaSeconds != 0D) {
+        output.WriteRawTag(25);
+        output.WriteDouble(TsDeltaSeconds);
+      }
+      if (Data.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(Data);
+      }
+      if (BytesCount != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(BytesCount);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Stream.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Stream);
+      }
+      if (TsDeltaSeconds != 0D) {
+        output.WriteRawTag(25);
+        output.WriteDouble(TsDeltaSeconds);
+      }
+      if (Data.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(Data);
+      }
+      if (BytesCount != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(BytesCount);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (SessionId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(SessionId);
+      }
+      if (Stream.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Stream);
+      }
+      if (TsDeltaSeconds != 0D) {
+        size += 1 + 8;
+      }
+      if (Data.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Data);
+      }
+      if (BytesCount != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(BytesCount);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(RemoteSessionTranscript other) {
+      if (other == null) {
+        return;
+      }
+      if (other.SessionId.Length != 0) {
+        SessionId = other.SessionId;
+      }
+      if (other.Stream.Length != 0) {
+        Stream = other.Stream;
+      }
+      if (other.TsDeltaSeconds != 0D) {
+        TsDeltaSeconds = other.TsDeltaSeconds;
+      }
+      if (other.Data.Length != 0) {
+        Data = other.Data;
+      }
+      if (other.BytesCount != 0) {
+        BytesCount = other.BytesCount;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Stream = input.ReadString();
+            break;
+          }
+          case 25: {
+            TsDeltaSeconds = input.ReadDouble();
+            break;
+          }
+          case 34: {
+            Data = input.ReadString();
+            break;
+          }
+          case 40: {
+            BytesCount = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Stream = input.ReadString();
+            break;
+          }
+          case 25: {
+            TsDeltaSeconds = input.ReadDouble();
+            break;
+          }
+          case 34: {
+            Data = input.ReadString();
+            break;
+          }
+          case 40: {
+            BytesCount = input.ReadInt32();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Agent → Backend (M2.S1). Audit event for a file transfer over
+  /// WebRTC DataChannel (rcp.file sessions). The actual file bytes
+  /// flow P2P over the DataChannel; the backend never touches them —
+  /// this message is purely an audit hook so the backend can persist
+  /// who transferred what and whether it succeeded.
+  ///
+  /// The agent fires one event at 'started' and one at the terminal
+  /// status ('completed' | 'failed' | 'cancelled'). The backend
+  /// UPSERTs on transfer_id so both events land in the same audit row.
+  ///
+  /// direction: "download" = agent→browser; "upload" = browser→agent.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class RemoteFileTransferAudit : pb::IMessage<RemoteFileTransferAudit>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<RemoteFileTransferAudit> _parser = new pb::MessageParser<RemoteFileTransferAudit>(() => new RemoteFileTransferAudit());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<RemoteFileTransferAudit> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::Tracenium.Control.ControlplaneReflection.Descriptor.MessageTypes[16]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteFileTransferAudit() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteFileTransferAudit(RemoteFileTransferAudit other) : this() {
+      sessionId_ = other.sessionId_;
+      transferId_ = other.transferId_;
+      direction_ = other.direction_;
+      remotePath_ = other.remotePath_;
+      filename_ = other.filename_;
+      sizeBytes_ = other.sizeBytes_;
+      transferredBytes_ = other.transferredBytes_;
+      status_ = other.status_;
+      errorMessage_ = other.errorMessage_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteFileTransferAudit Clone() {
+      return new RemoteFileTransferAudit(this);
+    }
+
+    /// <summary>Field number for the "sessionId" field.</summary>
+    public const int SessionIdFieldNumber = 1;
+    private string sessionId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string SessionId {
+      get { return sessionId_; }
+      set {
+        sessionId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "transferId" field.</summary>
+    public const int TransferIdFieldNumber = 2;
+    private string transferId_ = "";
+    /// <summary>
+    /// Agent-minted UUID, stable across the transfer lifecycle.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string TransferId {
+      get { return transferId_; }
+      set {
+        transferId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "direction" field.</summary>
+    public const int DirectionFieldNumber = 3;
+    private string direction_ = "";
+    /// <summary>
+    /// "download" | "upload"
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Direction {
+      get { return direction_; }
+      set {
+        direction_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "remotePath" field.</summary>
+    public const int RemotePathFieldNumber = 4;
+    private string remotePath_ = "";
+    /// <summary>
+    /// Full POSIX/Win32 path on the device.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string RemotePath {
+      get { return remotePath_; }
+      set {
+        remotePath_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "filename" field.</summary>
+    public const int FilenameFieldNumber = 5;
+    private string filename_ = "";
+    /// <summary>
+    /// basename(remotePath). Convenience field.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Filename {
+      get { return filename_; }
+      set {
+        filename_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "sizeBytes" field.</summary>
+    public const int SizeBytesFieldNumber = 6;
+    private long sizeBytes_;
+    /// <summary>
+    /// Total bytes of the file. 0 if not yet known at 'started'.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long SizeBytes {
+      get { return sizeBytes_; }
+      set {
+        sizeBytes_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "transferredBytes" field.</summary>
+    public const int TransferredBytesFieldNumber = 7;
+    private long transferredBytes_;
+    /// <summary>
+    /// Bytes actually transferred at the time of this event.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public long TransferredBytes {
+      get { return transferredBytes_; }
+      set {
+        transferredBytes_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "status" field.</summary>
+    public const int StatusFieldNumber = 8;
+    private string status_ = "";
+    /// <summary>
+    /// "started" | "completed" | "failed" | "cancelled"
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Status {
+      get { return status_; }
+      set {
+        status_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "errorMessage" field.</summary>
+    public const int ErrorMessageFieldNumber = 9;
+    private string errorMessage_ = "";
+    /// <summary>
+    /// Set on 'failed'. Empty otherwise.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string ErrorMessage {
+      get { return errorMessage_; }
+      set {
+        errorMessage_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as RemoteFileTransferAudit);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(RemoteFileTransferAudit other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (SessionId != other.SessionId) return false;
+      if (TransferId != other.TransferId) return false;
+      if (Direction != other.Direction) return false;
+      if (RemotePath != other.RemotePath) return false;
+      if (Filename != other.Filename) return false;
+      if (SizeBytes != other.SizeBytes) return false;
+      if (TransferredBytes != other.TransferredBytes) return false;
+      if (Status != other.Status) return false;
+      if (ErrorMessage != other.ErrorMessage) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (SessionId.Length != 0) hash ^= SessionId.GetHashCode();
+      if (TransferId.Length != 0) hash ^= TransferId.GetHashCode();
+      if (Direction.Length != 0) hash ^= Direction.GetHashCode();
+      if (RemotePath.Length != 0) hash ^= RemotePath.GetHashCode();
+      if (Filename.Length != 0) hash ^= Filename.GetHashCode();
+      if (SizeBytes != 0L) hash ^= SizeBytes.GetHashCode();
+      if (TransferredBytes != 0L) hash ^= TransferredBytes.GetHashCode();
+      if (Status.Length != 0) hash ^= Status.GetHashCode();
+      if (ErrorMessage.Length != 0) hash ^= ErrorMessage.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (TransferId.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(TransferId);
+      }
+      if (Direction.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(Direction);
+      }
+      if (RemotePath.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(RemotePath);
+      }
+      if (Filename.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteString(Filename);
+      }
+      if (SizeBytes != 0L) {
+        output.WriteRawTag(48);
+        output.WriteInt64(SizeBytes);
+      }
+      if (TransferredBytes != 0L) {
+        output.WriteRawTag(56);
+        output.WriteInt64(TransferredBytes);
+      }
+      if (Status.Length != 0) {
+        output.WriteRawTag(66);
+        output.WriteString(Status);
+      }
+      if (ErrorMessage.Length != 0) {
+        output.WriteRawTag(74);
+        output.WriteString(ErrorMessage);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (TransferId.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(TransferId);
+      }
+      if (Direction.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(Direction);
+      }
+      if (RemotePath.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(RemotePath);
+      }
+      if (Filename.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteString(Filename);
+      }
+      if (SizeBytes != 0L) {
+        output.WriteRawTag(48);
+        output.WriteInt64(SizeBytes);
+      }
+      if (TransferredBytes != 0L) {
+        output.WriteRawTag(56);
+        output.WriteInt64(TransferredBytes);
+      }
+      if (Status.Length != 0) {
+        output.WriteRawTag(66);
+        output.WriteString(Status);
+      }
+      if (ErrorMessage.Length != 0) {
+        output.WriteRawTag(74);
+        output.WriteString(ErrorMessage);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (SessionId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(SessionId);
+      }
+      if (TransferId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(TransferId);
+      }
+      if (Direction.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Direction);
+      }
+      if (RemotePath.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(RemotePath);
+      }
+      if (Filename.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Filename);
+      }
+      if (SizeBytes != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(SizeBytes);
+      }
+      if (TransferredBytes != 0L) {
+        size += 1 + pb::CodedOutputStream.ComputeInt64Size(TransferredBytes);
+      }
+      if (Status.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Status);
+      }
+      if (ErrorMessage.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(ErrorMessage);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(RemoteFileTransferAudit other) {
+      if (other == null) {
+        return;
+      }
+      if (other.SessionId.Length != 0) {
+        SessionId = other.SessionId;
+      }
+      if (other.TransferId.Length != 0) {
+        TransferId = other.TransferId;
+      }
+      if (other.Direction.Length != 0) {
+        Direction = other.Direction;
+      }
+      if (other.RemotePath.Length != 0) {
+        RemotePath = other.RemotePath;
+      }
+      if (other.Filename.Length != 0) {
+        Filename = other.Filename;
+      }
+      if (other.SizeBytes != 0L) {
+        SizeBytes = other.SizeBytes;
+      }
+      if (other.TransferredBytes != 0L) {
+        TransferredBytes = other.TransferredBytes;
+      }
+      if (other.Status.Length != 0) {
+        Status = other.Status;
+      }
+      if (other.ErrorMessage.Length != 0) {
+        ErrorMessage = other.ErrorMessage;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            TransferId = input.ReadString();
+            break;
+          }
+          case 26: {
+            Direction = input.ReadString();
+            break;
+          }
+          case 34: {
+            RemotePath = input.ReadString();
+            break;
+          }
+          case 42: {
+            Filename = input.ReadString();
+            break;
+          }
+          case 48: {
+            SizeBytes = input.ReadInt64();
+            break;
+          }
+          case 56: {
+            TransferredBytes = input.ReadInt64();
+            break;
+          }
+          case 66: {
+            Status = input.ReadString();
+            break;
+          }
+          case 74: {
+            ErrorMessage = input.ReadString();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            TransferId = input.ReadString();
+            break;
+          }
+          case 26: {
+            Direction = input.ReadString();
+            break;
+          }
+          case 34: {
+            RemotePath = input.ReadString();
+            break;
+          }
+          case 42: {
+            Filename = input.ReadString();
+            break;
+          }
+          case 48: {
+            SizeBytes = input.ReadInt64();
+            break;
+          }
+          case 56: {
+            TransferredBytes = input.ReadInt64();
+            break;
+          }
+          case 66: {
+            Status = input.ReadString();
+            break;
+          }
+          case 74: {
+            ErrorMessage = input.ReadString();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// Agent → Backend (M3.S1). Lifecycle audit for a screen share
+  /// session over WebRTC DataChannel (rcp.screen sessions). The
+  /// actual frame bytes flow P2P over the DataChannel; the backend
+  /// only records session-level events.
+  ///
+  /// The agent fires "started" when the DataChannel opens and
+  /// "stopped" or "error" when it closes.
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class RemoteScreenAudit : pb::IMessage<RemoteScreenAudit>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<RemoteScreenAudit> _parser = new pb::MessageParser<RemoteScreenAudit>(() => new RemoteScreenAudit());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<RemoteScreenAudit> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::Tracenium.Control.ControlplaneReflection.Descriptor.MessageTypes[17]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteScreenAudit() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteScreenAudit(RemoteScreenAudit other) : this() {
+      sessionId_ = other.sessionId_;
+      event_ = other.event_;
+      width_ = other.width_;
+      height_ = other.height_;
+      fps_ = other.fps_;
+      errorMessage_ = other.errorMessage_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public RemoteScreenAudit Clone() {
+      return new RemoteScreenAudit(this);
+    }
+
+    /// <summary>Field number for the "sessionId" field.</summary>
+    public const int SessionIdFieldNumber = 1;
+    private string sessionId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string SessionId {
+      get { return sessionId_; }
+      set {
+        sessionId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "event" field.</summary>
+    public const int EventFieldNumber = 2;
+    private string event_ = "";
+    /// <summary>
+    /// "started" | "stopped" | "error"
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Event {
+      get { return event_; }
+      set {
+        event_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "width" field.</summary>
+    public const int WidthFieldNumber = 3;
+    private int width_;
+    /// <summary>
+    /// Screen resolution the agent is streaming at.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Width {
+      get { return width_; }
+      set {
+        width_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "height" field.</summary>
+    public const int HeightFieldNumber = 4;
+    private int height_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Height {
+      get { return height_; }
+      set {
+        height_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "fps" field.</summary>
+    public const int FpsFieldNumber = 5;
+    private int fps_;
+    /// <summary>
+    /// Target frames per second agreed at negotiation time.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int Fps {
+      get { return fps_; }
+      set {
+        fps_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "errorMessage" field.</summary>
+    public const int ErrorMessageFieldNumber = 6;
+    private string errorMessage_ = "";
+    /// <summary>
+    /// Set on "error". Empty otherwise.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string ErrorMessage {
+      get { return errorMessage_; }
+      set {
+        errorMessage_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as RemoteScreenAudit);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(RemoteScreenAudit other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (SessionId != other.SessionId) return false;
+      if (Event != other.Event) return false;
+      if (Width != other.Width) return false;
+      if (Height != other.Height) return false;
+      if (Fps != other.Fps) return false;
+      if (ErrorMessage != other.ErrorMessage) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (SessionId.Length != 0) hash ^= SessionId.GetHashCode();
+      if (Event.Length != 0) hash ^= Event.GetHashCode();
+      if (Width != 0) hash ^= Width.GetHashCode();
+      if (Height != 0) hash ^= Height.GetHashCode();
+      if (Fps != 0) hash ^= Fps.GetHashCode();
+      if (ErrorMessage.Length != 0) hash ^= ErrorMessage.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Event.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Event);
+      }
+      if (Width != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(Width);
+      }
+      if (Height != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(Height);
+      }
+      if (Fps != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(Fps);
+      }
+      if (ErrorMessage.Length != 0) {
+        output.WriteRawTag(50);
+        output.WriteString(ErrorMessage);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (SessionId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(SessionId);
+      }
+      if (Event.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Event);
+      }
+      if (Width != 0) {
+        output.WriteRawTag(24);
+        output.WriteInt32(Width);
+      }
+      if (Height != 0) {
+        output.WriteRawTag(32);
+        output.WriteInt32(Height);
+      }
+      if (Fps != 0) {
+        output.WriteRawTag(40);
+        output.WriteInt32(Fps);
+      }
+      if (ErrorMessage.Length != 0) {
+        output.WriteRawTag(50);
+        output.WriteString(ErrorMessage);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (SessionId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(SessionId);
+      }
+      if (Event.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Event);
+      }
+      if (Width != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Width);
+      }
+      if (Height != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Height);
+      }
+      if (Fps != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeInt32Size(Fps);
+      }
+      if (ErrorMessage.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(ErrorMessage);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(RemoteScreenAudit other) {
+      if (other == null) {
+        return;
+      }
+      if (other.SessionId.Length != 0) {
+        SessionId = other.SessionId;
+      }
+      if (other.Event.Length != 0) {
+        Event = other.Event;
+      }
+      if (other.Width != 0) {
+        Width = other.Width;
+      }
+      if (other.Height != 0) {
+        Height = other.Height;
+      }
+      if (other.Fps != 0) {
+        Fps = other.Fps;
+      }
+      if (other.ErrorMessage.Length != 0) {
+        ErrorMessage = other.ErrorMessage;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Event = input.ReadString();
+            break;
+          }
+          case 24: {
+            Width = input.ReadInt32();
+            break;
+          }
+          case 32: {
+            Height = input.ReadInt32();
+            break;
+          }
+          case 40: {
+            Fps = input.ReadInt32();
+            break;
+          }
+          case 50: {
+            ErrorMessage = input.ReadString();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+      if ((tag & 7) == 4) {
+        // Abort on any end group tag.
+        return;
+      }
+      switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            SessionId = input.ReadString();
+            break;
+          }
+          case 18: {
+            Event = input.ReadString();
+            break;
+          }
+          case 24: {
+            Width = input.ReadInt32();
+            break;
+          }
+          case 32: {
+            Height = input.ReadInt32();
+            break;
+          }
+          case 40: {
+            Fps = input.ReadInt32();
+            break;
+          }
+          case 50: {
+            ErrorMessage = input.ReadString();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
   public sealed partial class ControlMessage : pb::IMessage<ControlMessage>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
@@ -2951,7 +5759,7 @@ namespace Tracenium.Control {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::Tracenium.Control.ControlplaneReflection.Descriptor.MessageTypes[10]; }
+      get { return global::Tracenium.Control.ControlplaneReflection.Descriptor.MessageTypes[18]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3002,6 +5810,30 @@ namespace Tracenium.Control {
           break;
         case MsgOneofCase.Error:
           Error = other.Error.Clone();
+          break;
+        case MsgOneofCase.RemoteSessionOffer:
+          RemoteSessionOffer = other.RemoteSessionOffer.Clone();
+          break;
+        case MsgOneofCase.RemoteSessionAnswer:
+          RemoteSessionAnswer = other.RemoteSessionAnswer.Clone();
+          break;
+        case MsgOneofCase.RemoteSessionIce:
+          RemoteSessionIce = other.RemoteSessionIce.Clone();
+          break;
+        case MsgOneofCase.RemoteSessionClose:
+          RemoteSessionClose = other.RemoteSessionClose.Clone();
+          break;
+        case MsgOneofCase.RemoteSessionError:
+          RemoteSessionError = other.RemoteSessionError.Clone();
+          break;
+        case MsgOneofCase.RemoteSessionTranscript:
+          RemoteSessionTranscript = other.RemoteSessionTranscript.Clone();
+          break;
+        case MsgOneofCase.RemoteFileTransferAudit:
+          RemoteFileTransferAudit = other.RemoteFileTransferAudit.Clone();
+          break;
+        case MsgOneofCase.RemoteScreenAudit:
+          RemoteScreenAudit = other.RemoteScreenAudit.Clone();
           break;
       }
 
@@ -3155,6 +5987,129 @@ namespace Tracenium.Control {
       }
     }
 
+    /// <summary>Field number for the "remoteSessionOffer" field.</summary>
+    public const int RemoteSessionOfferFieldNumber = 20;
+    /// <summary>
+    /// RCP signaling (Sprint 1 of M1). See RemoteSession* message
+    /// docs above. Field numbers 20-29 reserved for the RCP family
+    /// to leave room for future signaling variants without
+    /// colliding with existing oneof tags.
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Tracenium.Control.RemoteSessionOffer RemoteSessionOffer {
+      get { return msgCase_ == MsgOneofCase.RemoteSessionOffer ? (global::Tracenium.Control.RemoteSessionOffer) msg_ : null; }
+      set {
+        msg_ = value;
+        msgCase_ = value == null ? MsgOneofCase.None : MsgOneofCase.RemoteSessionOffer;
+      }
+    }
+
+    /// <summary>Field number for the "remoteSessionAnswer" field.</summary>
+    public const int RemoteSessionAnswerFieldNumber = 21;
+    /// <summary>
+    /// agent -> server
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Tracenium.Control.RemoteSessionAnswer RemoteSessionAnswer {
+      get { return msgCase_ == MsgOneofCase.RemoteSessionAnswer ? (global::Tracenium.Control.RemoteSessionAnswer) msg_ : null; }
+      set {
+        msg_ = value;
+        msgCase_ = value == null ? MsgOneofCase.None : MsgOneofCase.RemoteSessionAnswer;
+      }
+    }
+
+    /// <summary>Field number for the "remoteSessionIce" field.</summary>
+    public const int RemoteSessionIceFieldNumber = 22;
+    /// <summary>
+    /// bidirectional
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Tracenium.Control.RemoteSessionIce RemoteSessionIce {
+      get { return msgCase_ == MsgOneofCase.RemoteSessionIce ? (global::Tracenium.Control.RemoteSessionIce) msg_ : null; }
+      set {
+        msg_ = value;
+        msgCase_ = value == null ? MsgOneofCase.None : MsgOneofCase.RemoteSessionIce;
+      }
+    }
+
+    /// <summary>Field number for the "remoteSessionClose" field.</summary>
+    public const int RemoteSessionCloseFieldNumber = 23;
+    /// <summary>
+    /// bidirectional
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Tracenium.Control.RemoteSessionClose RemoteSessionClose {
+      get { return msgCase_ == MsgOneofCase.RemoteSessionClose ? (global::Tracenium.Control.RemoteSessionClose) msg_ : null; }
+      set {
+        msg_ = value;
+        msgCase_ = value == null ? MsgOneofCase.None : MsgOneofCase.RemoteSessionClose;
+      }
+    }
+
+    /// <summary>Field number for the "remoteSessionError" field.</summary>
+    public const int RemoteSessionErrorFieldNumber = 24;
+    /// <summary>
+    /// bidirectional
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Tracenium.Control.RemoteSessionError RemoteSessionError {
+      get { return msgCase_ == MsgOneofCase.RemoteSessionError ? (global::Tracenium.Control.RemoteSessionError) msg_ : null; }
+      set {
+        msg_ = value;
+        msgCase_ = value == null ? MsgOneofCase.None : MsgOneofCase.RemoteSessionError;
+      }
+    }
+
+    /// <summary>Field number for the "remoteSessionTranscript" field.</summary>
+    public const int RemoteSessionTranscriptFieldNumber = 25;
+    /// <summary>
+    /// agent -> server (M1.S3)
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Tracenium.Control.RemoteSessionTranscript RemoteSessionTranscript {
+      get { return msgCase_ == MsgOneofCase.RemoteSessionTranscript ? (global::Tracenium.Control.RemoteSessionTranscript) msg_ : null; }
+      set {
+        msg_ = value;
+        msgCase_ = value == null ? MsgOneofCase.None : MsgOneofCase.RemoteSessionTranscript;
+      }
+    }
+
+    /// <summary>Field number for the "remoteFileTransferAudit" field.</summary>
+    public const int RemoteFileTransferAuditFieldNumber = 26;
+    /// <summary>
+    /// agent -> server (M2.S1)
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Tracenium.Control.RemoteFileTransferAudit RemoteFileTransferAudit {
+      get { return msgCase_ == MsgOneofCase.RemoteFileTransferAudit ? (global::Tracenium.Control.RemoteFileTransferAudit) msg_ : null; }
+      set {
+        msg_ = value;
+        msgCase_ = value == null ? MsgOneofCase.None : MsgOneofCase.RemoteFileTransferAudit;
+      }
+    }
+
+    /// <summary>Field number for the "remoteScreenAudit" field.</summary>
+    public const int RemoteScreenAuditFieldNumber = 27;
+    /// <summary>
+    /// agent -> server (M3.S1)
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::Tracenium.Control.RemoteScreenAudit RemoteScreenAudit {
+      get { return msgCase_ == MsgOneofCase.RemoteScreenAudit ? (global::Tracenium.Control.RemoteScreenAudit) msg_ : null; }
+      set {
+        msg_ = value;
+        msgCase_ = value == null ? MsgOneofCase.None : MsgOneofCase.RemoteScreenAudit;
+      }
+    }
+
     private object msg_;
     /// <summary>Enum of possible cases for the "msg" oneof.</summary>
     public enum MsgOneofCase {
@@ -3169,6 +6124,14 @@ namespace Tracenium.Control {
       AgentUpdate = 8,
       Ack = 11,
       Error = 12,
+      RemoteSessionOffer = 20,
+      RemoteSessionAnswer = 21,
+      RemoteSessionIce = 22,
+      RemoteSessionClose = 23,
+      RemoteSessionError = 24,
+      RemoteSessionTranscript = 25,
+      RemoteFileTransferAudit = 26,
+      RemoteScreenAudit = 27,
     }
     private MsgOneofCase msgCase_ = MsgOneofCase.None;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -3210,6 +6173,14 @@ namespace Tracenium.Control {
       if (!object.Equals(AgentUpdate, other.AgentUpdate)) return false;
       if (!object.Equals(Ack, other.Ack)) return false;
       if (!object.Equals(Error, other.Error)) return false;
+      if (!object.Equals(RemoteSessionOffer, other.RemoteSessionOffer)) return false;
+      if (!object.Equals(RemoteSessionAnswer, other.RemoteSessionAnswer)) return false;
+      if (!object.Equals(RemoteSessionIce, other.RemoteSessionIce)) return false;
+      if (!object.Equals(RemoteSessionClose, other.RemoteSessionClose)) return false;
+      if (!object.Equals(RemoteSessionError, other.RemoteSessionError)) return false;
+      if (!object.Equals(RemoteSessionTranscript, other.RemoteSessionTranscript)) return false;
+      if (!object.Equals(RemoteFileTransferAudit, other.RemoteFileTransferAudit)) return false;
+      if (!object.Equals(RemoteScreenAudit, other.RemoteScreenAudit)) return false;
       if (MsgCase != other.MsgCase) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
@@ -3229,6 +6200,14 @@ namespace Tracenium.Control {
       if (msgCase_ == MsgOneofCase.AgentUpdate) hash ^= AgentUpdate.GetHashCode();
       if (msgCase_ == MsgOneofCase.Ack) hash ^= Ack.GetHashCode();
       if (msgCase_ == MsgOneofCase.Error) hash ^= Error.GetHashCode();
+      if (msgCase_ == MsgOneofCase.RemoteSessionOffer) hash ^= RemoteSessionOffer.GetHashCode();
+      if (msgCase_ == MsgOneofCase.RemoteSessionAnswer) hash ^= RemoteSessionAnswer.GetHashCode();
+      if (msgCase_ == MsgOneofCase.RemoteSessionIce) hash ^= RemoteSessionIce.GetHashCode();
+      if (msgCase_ == MsgOneofCase.RemoteSessionClose) hash ^= RemoteSessionClose.GetHashCode();
+      if (msgCase_ == MsgOneofCase.RemoteSessionError) hash ^= RemoteSessionError.GetHashCode();
+      if (msgCase_ == MsgOneofCase.RemoteSessionTranscript) hash ^= RemoteSessionTranscript.GetHashCode();
+      if (msgCase_ == MsgOneofCase.RemoteFileTransferAudit) hash ^= RemoteFileTransferAudit.GetHashCode();
+      if (msgCase_ == MsgOneofCase.RemoteScreenAudit) hash ^= RemoteScreenAudit.GetHashCode();
       hash ^= (int) msgCase_;
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
@@ -3292,6 +6271,38 @@ namespace Tracenium.Control {
         output.WriteRawTag(98);
         output.WriteMessage(Error);
       }
+      if (msgCase_ == MsgOneofCase.RemoteSessionOffer) {
+        output.WriteRawTag(162, 1);
+        output.WriteMessage(RemoteSessionOffer);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionAnswer) {
+        output.WriteRawTag(170, 1);
+        output.WriteMessage(RemoteSessionAnswer);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionIce) {
+        output.WriteRawTag(178, 1);
+        output.WriteMessage(RemoteSessionIce);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionClose) {
+        output.WriteRawTag(186, 1);
+        output.WriteMessage(RemoteSessionClose);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionError) {
+        output.WriteRawTag(194, 1);
+        output.WriteMessage(RemoteSessionError);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionTranscript) {
+        output.WriteRawTag(202, 1);
+        output.WriteMessage(RemoteSessionTranscript);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteFileTransferAudit) {
+        output.WriteRawTag(210, 1);
+        output.WriteMessage(RemoteFileTransferAudit);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteScreenAudit) {
+        output.WriteRawTag(218, 1);
+        output.WriteMessage(RemoteScreenAudit);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -3346,6 +6357,38 @@ namespace Tracenium.Control {
         output.WriteRawTag(98);
         output.WriteMessage(Error);
       }
+      if (msgCase_ == MsgOneofCase.RemoteSessionOffer) {
+        output.WriteRawTag(162, 1);
+        output.WriteMessage(RemoteSessionOffer);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionAnswer) {
+        output.WriteRawTag(170, 1);
+        output.WriteMessage(RemoteSessionAnswer);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionIce) {
+        output.WriteRawTag(178, 1);
+        output.WriteMessage(RemoteSessionIce);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionClose) {
+        output.WriteRawTag(186, 1);
+        output.WriteMessage(RemoteSessionClose);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionError) {
+        output.WriteRawTag(194, 1);
+        output.WriteMessage(RemoteSessionError);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionTranscript) {
+        output.WriteRawTag(202, 1);
+        output.WriteMessage(RemoteSessionTranscript);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteFileTransferAudit) {
+        output.WriteRawTag(210, 1);
+        output.WriteMessage(RemoteFileTransferAudit);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteScreenAudit) {
+        output.WriteRawTag(218, 1);
+        output.WriteMessage(RemoteScreenAudit);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -3388,6 +6431,30 @@ namespace Tracenium.Control {
       }
       if (msgCase_ == MsgOneofCase.Error) {
         size += 1 + pb::CodedOutputStream.ComputeMessageSize(Error);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionOffer) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(RemoteSessionOffer);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionAnswer) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(RemoteSessionAnswer);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionIce) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(RemoteSessionIce);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionClose) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(RemoteSessionClose);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionError) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(RemoteSessionError);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteSessionTranscript) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(RemoteSessionTranscript);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteFileTransferAudit) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(RemoteFileTransferAudit);
+      }
+      if (msgCase_ == MsgOneofCase.RemoteScreenAudit) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(RemoteScreenAudit);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -3464,6 +6531,54 @@ namespace Tracenium.Control {
             Error = new global::Tracenium.Control.Error();
           }
           Error.MergeFrom(other.Error);
+          break;
+        case MsgOneofCase.RemoteSessionOffer:
+          if (RemoteSessionOffer == null) {
+            RemoteSessionOffer = new global::Tracenium.Control.RemoteSessionOffer();
+          }
+          RemoteSessionOffer.MergeFrom(other.RemoteSessionOffer);
+          break;
+        case MsgOneofCase.RemoteSessionAnswer:
+          if (RemoteSessionAnswer == null) {
+            RemoteSessionAnswer = new global::Tracenium.Control.RemoteSessionAnswer();
+          }
+          RemoteSessionAnswer.MergeFrom(other.RemoteSessionAnswer);
+          break;
+        case MsgOneofCase.RemoteSessionIce:
+          if (RemoteSessionIce == null) {
+            RemoteSessionIce = new global::Tracenium.Control.RemoteSessionIce();
+          }
+          RemoteSessionIce.MergeFrom(other.RemoteSessionIce);
+          break;
+        case MsgOneofCase.RemoteSessionClose:
+          if (RemoteSessionClose == null) {
+            RemoteSessionClose = new global::Tracenium.Control.RemoteSessionClose();
+          }
+          RemoteSessionClose.MergeFrom(other.RemoteSessionClose);
+          break;
+        case MsgOneofCase.RemoteSessionError:
+          if (RemoteSessionError == null) {
+            RemoteSessionError = new global::Tracenium.Control.RemoteSessionError();
+          }
+          RemoteSessionError.MergeFrom(other.RemoteSessionError);
+          break;
+        case MsgOneofCase.RemoteSessionTranscript:
+          if (RemoteSessionTranscript == null) {
+            RemoteSessionTranscript = new global::Tracenium.Control.RemoteSessionTranscript();
+          }
+          RemoteSessionTranscript.MergeFrom(other.RemoteSessionTranscript);
+          break;
+        case MsgOneofCase.RemoteFileTransferAudit:
+          if (RemoteFileTransferAudit == null) {
+            RemoteFileTransferAudit = new global::Tracenium.Control.RemoteFileTransferAudit();
+          }
+          RemoteFileTransferAudit.MergeFrom(other.RemoteFileTransferAudit);
+          break;
+        case MsgOneofCase.RemoteScreenAudit:
+          if (RemoteScreenAudit == null) {
+            RemoteScreenAudit = new global::Tracenium.Control.RemoteScreenAudit();
+          }
+          RemoteScreenAudit.MergeFrom(other.RemoteScreenAudit);
           break;
       }
 
@@ -3580,6 +6695,78 @@ namespace Tracenium.Control {
             Error = subBuilder;
             break;
           }
+          case 162: {
+            global::Tracenium.Control.RemoteSessionOffer subBuilder = new global::Tracenium.Control.RemoteSessionOffer();
+            if (msgCase_ == MsgOneofCase.RemoteSessionOffer) {
+              subBuilder.MergeFrom(RemoteSessionOffer);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteSessionOffer = subBuilder;
+            break;
+          }
+          case 170: {
+            global::Tracenium.Control.RemoteSessionAnswer subBuilder = new global::Tracenium.Control.RemoteSessionAnswer();
+            if (msgCase_ == MsgOneofCase.RemoteSessionAnswer) {
+              subBuilder.MergeFrom(RemoteSessionAnswer);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteSessionAnswer = subBuilder;
+            break;
+          }
+          case 178: {
+            global::Tracenium.Control.RemoteSessionIce subBuilder = new global::Tracenium.Control.RemoteSessionIce();
+            if (msgCase_ == MsgOneofCase.RemoteSessionIce) {
+              subBuilder.MergeFrom(RemoteSessionIce);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteSessionIce = subBuilder;
+            break;
+          }
+          case 186: {
+            global::Tracenium.Control.RemoteSessionClose subBuilder = new global::Tracenium.Control.RemoteSessionClose();
+            if (msgCase_ == MsgOneofCase.RemoteSessionClose) {
+              subBuilder.MergeFrom(RemoteSessionClose);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteSessionClose = subBuilder;
+            break;
+          }
+          case 194: {
+            global::Tracenium.Control.RemoteSessionError subBuilder = new global::Tracenium.Control.RemoteSessionError();
+            if (msgCase_ == MsgOneofCase.RemoteSessionError) {
+              subBuilder.MergeFrom(RemoteSessionError);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteSessionError = subBuilder;
+            break;
+          }
+          case 202: {
+            global::Tracenium.Control.RemoteSessionTranscript subBuilder = new global::Tracenium.Control.RemoteSessionTranscript();
+            if (msgCase_ == MsgOneofCase.RemoteSessionTranscript) {
+              subBuilder.MergeFrom(RemoteSessionTranscript);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteSessionTranscript = subBuilder;
+            break;
+          }
+          case 210: {
+            global::Tracenium.Control.RemoteFileTransferAudit subBuilder = new global::Tracenium.Control.RemoteFileTransferAudit();
+            if (msgCase_ == MsgOneofCase.RemoteFileTransferAudit) {
+              subBuilder.MergeFrom(RemoteFileTransferAudit);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteFileTransferAudit = subBuilder;
+            break;
+          }
+          case 218: {
+            global::Tracenium.Control.RemoteScreenAudit subBuilder = new global::Tracenium.Control.RemoteScreenAudit();
+            if (msgCase_ == MsgOneofCase.RemoteScreenAudit) {
+              subBuilder.MergeFrom(RemoteScreenAudit);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteScreenAudit = subBuilder;
+            break;
+          }
         }
       }
     #endif
@@ -3691,6 +6878,78 @@ namespace Tracenium.Control {
             }
             input.ReadMessage(subBuilder);
             Error = subBuilder;
+            break;
+          }
+          case 162: {
+            global::Tracenium.Control.RemoteSessionOffer subBuilder = new global::Tracenium.Control.RemoteSessionOffer();
+            if (msgCase_ == MsgOneofCase.RemoteSessionOffer) {
+              subBuilder.MergeFrom(RemoteSessionOffer);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteSessionOffer = subBuilder;
+            break;
+          }
+          case 170: {
+            global::Tracenium.Control.RemoteSessionAnswer subBuilder = new global::Tracenium.Control.RemoteSessionAnswer();
+            if (msgCase_ == MsgOneofCase.RemoteSessionAnswer) {
+              subBuilder.MergeFrom(RemoteSessionAnswer);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteSessionAnswer = subBuilder;
+            break;
+          }
+          case 178: {
+            global::Tracenium.Control.RemoteSessionIce subBuilder = new global::Tracenium.Control.RemoteSessionIce();
+            if (msgCase_ == MsgOneofCase.RemoteSessionIce) {
+              subBuilder.MergeFrom(RemoteSessionIce);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteSessionIce = subBuilder;
+            break;
+          }
+          case 186: {
+            global::Tracenium.Control.RemoteSessionClose subBuilder = new global::Tracenium.Control.RemoteSessionClose();
+            if (msgCase_ == MsgOneofCase.RemoteSessionClose) {
+              subBuilder.MergeFrom(RemoteSessionClose);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteSessionClose = subBuilder;
+            break;
+          }
+          case 194: {
+            global::Tracenium.Control.RemoteSessionError subBuilder = new global::Tracenium.Control.RemoteSessionError();
+            if (msgCase_ == MsgOneofCase.RemoteSessionError) {
+              subBuilder.MergeFrom(RemoteSessionError);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteSessionError = subBuilder;
+            break;
+          }
+          case 202: {
+            global::Tracenium.Control.RemoteSessionTranscript subBuilder = new global::Tracenium.Control.RemoteSessionTranscript();
+            if (msgCase_ == MsgOneofCase.RemoteSessionTranscript) {
+              subBuilder.MergeFrom(RemoteSessionTranscript);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteSessionTranscript = subBuilder;
+            break;
+          }
+          case 210: {
+            global::Tracenium.Control.RemoteFileTransferAudit subBuilder = new global::Tracenium.Control.RemoteFileTransferAudit();
+            if (msgCase_ == MsgOneofCase.RemoteFileTransferAudit) {
+              subBuilder.MergeFrom(RemoteFileTransferAudit);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteFileTransferAudit = subBuilder;
+            break;
+          }
+          case 218: {
+            global::Tracenium.Control.RemoteScreenAudit subBuilder = new global::Tracenium.Control.RemoteScreenAudit();
+            if (msgCase_ == MsgOneofCase.RemoteScreenAudit) {
+              subBuilder.MergeFrom(RemoteScreenAudit);
+            }
+            input.ReadMessage(subBuilder);
+            RemoteScreenAudit = subBuilder;
             break;
           }
         }

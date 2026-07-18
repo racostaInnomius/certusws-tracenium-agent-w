@@ -106,57 +106,15 @@ export function loadSoftwareBaseline(): SoftwareApplication[] {
 }
 
 /**
- * Replace baseline atomically (full snapshot overwrite)
+ * Wipe the entire software baseline. After this, the next collection tick
+ * sees `previous.length === 0` → the provider treats it as a first-run and
+ * re-sends the FULL software items[] (not an elided delta). This is the
+ * mechanism the control plane's `reset_baseline` self-heal relies on when
+ * its projection table (software_current_app) has diverged/emptied.
  */
-// @deprecated Use incremental baseline (upsertSoftwareBaseline + deleteSoftwareByIds)
-export function saveSoftwareBaseline(apps: SoftwareApplication[]) {
+export function clearSoftwareBaseline() {
   const db = getDb();
-
-  const insertStmt = db.prepare(`
-    INSERT INTO software_baseline (
-      install_id,
-      name,
-      version,
-      publisher,
-      source,
-      install_location,
-      package_family_name,
-      detected_at_utc
-    ) VALUES (
-      @installId,
-      @name,
-      @version,
-      @publisher,
-      @source,
-      @installLocation,
-      @packageFamilyName,
-      @detectedAtUtc
-    )
-  `);
-
-  const tx = db.transaction((apps: SoftwareApplication[]) => {
-    // Full replace strategy
-    db.exec(`DELETE FROM software_baseline`);
-
-    for (const app of apps) {
-      if (!app?.installId || !app?.name || !app?.source) {
-        console.warn("[BASELINE] Skipping invalid software row", app);
-        continue;
-      }
-      insertStmt.run({
-        installId: app.installId,
-        name: app.name,
-        version: app.version ?? null,
-        publisher: app.publisher ?? null,
-        source: app.source,
-        installLocation: app.installLocation ?? null,
-        packageFamilyName: app.packageFamilyName ?? null,
-        detectedAtUtc: app.detectedAtUtc
-      });
-    }
-  });
-
-  tx(apps);
+  db.exec(`DELETE FROM software_baseline`);
 }
 
 /**
