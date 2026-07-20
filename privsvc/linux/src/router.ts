@@ -45,6 +45,7 @@ import {
   handleSdpUninstall,
   handleSdpVerifySignature,
 } from "./sdp";
+import { handleDpPrefetch, handleDpStatus } from "./dp";
 import { handleAgentInstall } from "./agent-install";
 
 function isRoot() {
@@ -217,6 +218,12 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     // Signature gate (fail-closed) — rpm -K / dpkg-sig --verify.
     case "sdp.verifySignature":
       return handleSdpVerifySignature(req);
+
+    // Distribution Phase B — DP role: warm the LAN cache + serve peers.
+    case "sdp.dp.prefetch":
+      return handleDpPrefetch(req);
+    case "sdp.dp.status":
+      return handleDpStatus(req);
 
     // ── Agent self-upgrade ────────────────────────────────────────
     // Installs the .deb/.rpm the agent has downloaded into

@@ -683,6 +683,32 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       }
     }
 
+    case "software_dp_prefetch": {
+      // Distribution Phase B — this agent is a site's distribution point:
+      // warm the LAN cache before the backend releases the site's held
+      // install jobs. Routed through PluginManager (sdp.dpPrefetch) so the
+      // pluginEnabled("sdp") policy gate applies uniformly.
+      try {
+        const ack = await ctx.plugins.run("sdp.dpPrefetch", { jobId, payload });
+        if (!ack) {
+          return {
+            status: 2,
+            message: `software_dp_prefetch:failed;deploymentId=${Number(payload?.deploymentId) || 0};reason=plugin_disabled`,
+          };
+        }
+        return { status: ack.ackStatus, message: ack.ackMessage };
+      } catch (err: any) {
+        ctx.logger?.error?.("software_dp_prefetch handler threw unexpectedly", {
+          jobId,
+          error: err?.message || String(err),
+        });
+        return {
+          status: 1,
+          message: `software_dp_prefetch:failed;deploymentId=${Number(payload?.deploymentId) || 0};reason=handler_threw`,
+        };
+      }
+    }
+
     case "reset_baseline": {
       // Cold-projection recovery: the backend asks us to drop the local
       // AMP baseline so the next collection tick re-sends a FULL snapshot

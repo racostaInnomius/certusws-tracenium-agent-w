@@ -131,12 +131,10 @@ public static class Sdp
             var declaredSizeBytes = GetLong(p, "sizeBytes");
             var timeoutSeconds = GetInt(p, "timeoutSeconds") ?? DefaultDownloadTimeoutSeconds;
             timeoutSeconds = Math.Max(60, timeoutSeconds);
+            // Phase D — per-tenant bandwidth cap (Kbps). 0 = full speed.
+            var rateLimitKbps = Math.Max(0, GetInt(p, "rateLimitKbps") ?? 0);
 
             // Pre-flight validation
-            if (!url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            {
-                return PrivSvcResponse.Fail(req.Id, "url_invalid", "downloadPath must be an https URL");
-            }
             if (!Regex.IsMatch(expectedSha256, "^[0-9a-f]{64}$"))
             {
                 return PrivSvcResponse.Fail(req.Id, "url_invalid", "sha256 must be a 64-char hex string");
@@ -158,82 +156,208 @@ public static class Sdp
                     $"format {format} not supported on windows");
             }
 
+            // Candidate sources (Distribution Phase A): ordered [{tier,url}]
+            // list (dp → cdn → origin). The sha256 gate is the arbiter per
+            // source — a failing/corrupt source means "try the next one",
+            // never "install its bytes". Absent sources → legacy single `url`.
+            var candidates = ExtractSources(p);
+            if (candidates.Count == 0)
+            {
+                if (!url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    return PrivSvcResponse.Fail(req.Id, "url_invalid", "downloadPath must be an https URL");
+                }
+                candidates.Add(("origin", url));
+            }
+
             EnsureStagingDir();
             SweepOldStagingFiles();
 
-            // pkg-<packageId>-<random>.<format>; random suffix avoids
-            // collisions across concurrent downloads.
-            var nonce = Convert.ToHexString(RandomBytes(8)).ToLowerInvariant();
-            var stagingPath = Path.Combine(StagingDir, $"pkg-{packageId}-{nonce}.{format}");
+            var sawNetworkFailure = false;
+            var sawShaMismatch = false;
+            var lastError = "";
 
-            var downloadStart = Stopwatch.GetTimestamp();
-            using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds)))
+            foreach (var (tier, candidateUrl) in candidates)
             {
-                using var resp = await HttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
-                if (!resp.IsSuccessStatusCode)
-                {
-                    return PrivSvcResponse.Fail(req.Id, "download_failed",
-                        $"http {(int)resp.StatusCode}: {resp.ReasonPhrase}");
-                }
+                // pkg-<packageId>-<random>.<format>; random suffix avoids
+                // collisions across concurrent downloads and attempts.
+                var nonce = Convert.ToHexString(RandomBytes(8)).ToLowerInvariant();
+                var stagingPath = Path.Combine(StagingDir, $"pkg-{packageId}-{nonce}.{format}");
 
-                // Streaming copy with sha256 incremental + size cap.
-                using var src = await resp.Content.ReadAsStreamAsync(cts.Token);
-                using var dst = new FileStream(stagingPath, FileMode.Create, FileAccess.Write, FileShare.None);
-                using var sha = SHA256.Create();
-
-                var buffer = new byte[64 * 1024];
-                long total = 0;
-                int read;
-                while ((read = await src.ReadAsync(buffer.AsMemory(0, buffer.Length), cts.Token)) > 0)
+                var attempt = await DownloadOneAsync(candidateUrl, stagingPath, expectedSha256, timeoutSeconds, rateLimitKbps);
+                if (attempt.Ok)
                 {
-                    total += read;
-                    if (total > MaxDownloadBytes)
+                    return PrivSvcResponse.Success(req.Id, new
                     {
-                        // Wipe the partial file so a malicious large
-                        // download can't sit on disk forever.
-                        TryDeleteFile(stagingPath);
-                        return PrivSvcResponse.Fail(req.Id, "download_failed",
-                            $"download exceeded MaxDownloadBytes={MaxDownloadBytes}");
-                    }
-                    sha.TransformBlock(buffer, 0, read, null, 0);
-                    await dst.WriteAsync(buffer.AsMemory(0, read), cts.Token);
-                }
-                sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
-
-                var actualSha256 = Convert.ToHexString(sha.Hash!).ToLowerInvariant();
-
-                if (!string.Equals(actualSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
-                {
-                    // Permanent failure — wipe the file so it can't be
-                    // executed accidentally.
-                    dst.Close();
-                    TryDeleteFile(stagingPath);
-                    return PrivSvcResponse.Fail(req.Id, "sha256_mismatch",
-                        $"expected sha256 {expectedSha256}, got {actualSha256}");
+                        stagingPath,
+                        sha256 = expectedSha256,
+                        sizeBytes = attempt.SizeBytes,
+                        durationMs = attempt.DurationMs,
+                        servedBy = tier,
+                    });
                 }
 
-                var elapsedMs = (Stopwatch.GetTimestamp() - downloadStart) * 1000.0 / Stopwatch.Frequency;
-                return PrivSvcResponse.Success(req.Id, new
-                {
-                    stagingPath,
-                    sha256 = actualSha256,
-                    sizeBytes = total,
-                    durationMs = (long)elapsedMs,
-                });
+                if (attempt.ShaMismatch) sawShaMismatch = true;
+                else sawNetworkFailure = true;
+                lastError = attempt.Error ?? "download failed";
             }
-        }
-        catch (TaskCanceledException)
-        {
-            return PrivSvcResponse.Fail(req.Id, "download_failed", "download timed out");
-        }
-        catch (HttpRequestException ex)
-        {
-            return PrivSvcResponse.Fail(req.Id, "download_failed", ex.Message);
+
+            // All candidates exhausted. Any network-ish failure → transient
+            // (retry may find the source back up); all-sources sha mismatch →
+            // permanent (the catalog hash is wrong, retrying cannot help).
+            if (sawNetworkFailure)
+            {
+                return PrivSvcResponse.Fail(req.Id, "download_failed", lastError);
+            }
+            if (sawShaMismatch)
+            {
+                return PrivSvcResponse.Fail(req.Id, "sha256_mismatch", lastError);
+            }
+            return PrivSvcResponse.Fail(req.Id, "download_failed", "no usable source");
         }
         catch (Exception ex)
         {
             return PrivSvcResponse.Fail(req.Id, "download_failed", ex.Message);
         }
+    }
+
+    private sealed class DownloadAttempt
+    {
+        public bool Ok { get; init; }
+        public bool ShaMismatch { get; init; }
+        public long SizeBytes { get; init; }
+        public long DurationMs { get; init; }
+        public string? Error { get; init; }
+    }
+
+    /// <summary>
+    /// One download attempt: stream the URL into stagingPath with incremental
+    /// sha256 + size cap, then verify the hash. Never throws — every failure
+    /// (network, timeout, oversize, sha mismatch) comes back as a result so the
+    /// caller's candidate loop can move on to the next source.
+    /// </summary>
+    private static async Task<DownloadAttempt> DownloadOneAsync(
+        string url, string stagingPath, string expectedSha256, int timeoutSeconds, int rateLimitKbps = 0)
+    {
+        var downloadStart = Stopwatch.GetTimestamp();
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+            using var resp = await HttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return new DownloadAttempt { Error = $"http {(int)resp.StatusCode}: {resp.ReasonPhrase}" };
+            }
+
+            // Streaming copy with sha256 incremental + size cap.
+            using var src = await resp.Content.ReadAsStreamAsync(cts.Token);
+            using var dst = new FileStream(stagingPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            using var sha = SHA256.Create();
+
+            var buffer = new byte[64 * 1024];
+            long total = 0;
+            int read;
+            var throttleStart = Stopwatch.GetTimestamp();
+            while ((read = await src.ReadAsync(buffer.AsMemory(0, buffer.Length), cts.Token)) > 0)
+            {
+                total += read;
+                if (total > MaxDownloadBytes)
+                {
+                    // Wipe the partial file so a malicious large download
+                    // can't sit on disk forever.
+                    dst.Close();
+                    TryDeleteFile(stagingPath);
+                    return new DownloadAttempt { Error = $"download exceeded MaxDownloadBytes={MaxDownloadBytes}" };
+                }
+                sha.TransformBlock(buffer, 0, read, null, 0);
+                await dst.WriteAsync(buffer.AsMemory(0, read), cts.Token);
+
+                // Phase D — pacing throttle (curl --limit-rate equivalent):
+                // if we're ahead of the byte budget for the elapsed time,
+                // sleep the difference. Kbps = KB/s (matches curl's k-suffix).
+                if (rateLimitKbps > 0)
+                {
+                    var elapsedSec = (Stopwatch.GetTimestamp() - throttleStart) / (double)Stopwatch.Frequency;
+                    var budgetBytes = rateLimitKbps * 1024.0 * elapsedSec;
+                    if (total > budgetBytes)
+                    {
+                        var aheadBytes = total - budgetBytes;
+                        var delayMs = (int)Math.Min(2000, aheadBytes / (rateLimitKbps * 1024.0) * 1000.0);
+                        if (delayMs > 10) await Task.Delay(delayMs, cts.Token);
+                    }
+                }
+            }
+            sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+
+            var actualSha256 = Convert.ToHexString(sha.Hash!).ToLowerInvariant();
+            if (!string.Equals(actualSha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
+            {
+                // Corrupt/tampered bytes from THIS source — wipe; the caller
+                // decides whether another source can still serve good bytes.
+                dst.Close();
+                TryDeleteFile(stagingPath);
+                return new DownloadAttempt
+                {
+                    ShaMismatch = true,
+                    Error = $"expected sha256 {expectedSha256}, got {actualSha256}",
+                };
+            }
+
+            var elapsedMs = (Stopwatch.GetTimestamp() - downloadStart) * 1000.0 / Stopwatch.Frequency;
+            return new DownloadAttempt { Ok = true, SizeBytes = total, DurationMs = (long)elapsedMs };
+        }
+        catch (TaskCanceledException)
+        {
+            TryDeleteFile(stagingPath);
+            return new DownloadAttempt { Error = "download timed out" };
+        }
+        catch (HttpRequestException ex)
+        {
+            TryDeleteFile(stagingPath);
+            return new DownloadAttempt { Error = ex.Message };
+        }
+        catch (Exception ex)
+        {
+            TryDeleteFile(stagingPath);
+            return new DownloadAttempt { Error = ex.Message };
+        }
+    }
+
+    /// <summary>
+    /// Flatten the `sources` array (JsonElement) into an ordered (tier, url)
+    /// list, dropping malformed / non-https entries. Mirrors ExtractIdentity's
+    /// handling of nested JSON.
+    /// </summary>
+    private static List<(string tier, string url)> ExtractSources(Dictionary<string, object> p)
+    {
+        var list = new List<(string, string)>();
+        if (!p.TryGetValue("sources", out var raw) || raw is not JsonElement el || el.ValueKind != JsonValueKind.Array)
+        {
+            return list;
+        }
+        foreach (var item in el.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            var u = item.TryGetProperty("url", out var uEl) && uEl.ValueKind == JsonValueKind.String
+                ? uEl.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(u) || !u!.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            var tier = item.TryGetProperty("tier", out var tEl) && tEl.ValueKind == JsonValueKind.String
+                ? (tEl.GetString() ?? "origin")
+                : "origin";
+            if (string.IsNullOrWhiteSpace(tier)) tier = "origin";
+            // Distribution Phase B scoping: Windows peers skip the LAN DP tier
+            // for now — the DP requires an mTLS client cert and this HttpClient
+            // has no enrollment-cert plumbing yet. Skipping (instead of trying
+            // and failing the TLS handshake) saves a wasted timeout; cdn/origin
+            // fallbacks follow. Windows DP participation is a follow-up.
+            if (string.Equals(tier, "dp", StringComparison.OrdinalIgnoreCase)) continue;
+            list.Add((tier, u!));
+        }
+        return list;
     }
 
     // ── sdp.verifySignature — full Authenticode verification (WinVerifyTrust) ──

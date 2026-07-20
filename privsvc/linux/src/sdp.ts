@@ -41,7 +41,7 @@ import fs from "fs";
 import path from "path";
 import { detectFamily } from "./distro";
 import { logger } from "./logger";
-import { DATA_DIR } from "./paths";
+import { DATA_DIR, certPaths } from "./paths";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
 
@@ -457,9 +457,6 @@ export async function handleSdpDownload(req: PrivSvcRequest): Promise<PrivSvcRes
     : DEFAULT_DOWNLOAD_TIMEOUT_S;
 
   // ── Pre-flight validation ──────────────────────────────────────
-  if (!/^https:\/\//i.test(url)) {
-    return fail(req.id, "url_invalid", "downloadPath must be an https URL");
-  }
   if (!/^[0-9a-f]{64}$/i.test(expectedSha256)) {
     return fail(req.id, "url_invalid", "sha256 must be a 64-char hex string");
   }
@@ -479,99 +476,158 @@ export async function handleSdpDownload(req: PrivSvcRequest): Promise<PrivSvcRes
     return fail(req.id, "format_unsupported", `format ${format} not supported on linux`);
   }
 
+  // ── Candidate sources (Distribution Phase A) ───────────────────
+  // `sources` is an ordered [{tier, url}] list (dp → cdn → origin). The sha256
+  // gate below is the arbiter per-source: a failing or corrupt source means
+  // "try the next one", never "install its bytes". Absent/invalid sources →
+  // single-candidate legacy behavior off `url`.
+  type Candidate = { tier: string; url: string };
+  const rawSources = Array.isArray((params as any).sources) ? (params as any).sources : null;
+  const candidates: Candidate[] = [];
+  if (rawSources) {
+    for (const s of rawSources) {
+      if (s && typeof s.url === "string" && /^https:\/\//i.test(s.url)) {
+        candidates.push({ tier: typeof s.tier === "string" && s.tier ? String(s.tier) : "origin", url: String(s.url) });
+      }
+    }
+  }
+  if (candidates.length === 0) {
+    if (!/^https:\/\//i.test(url)) {
+      return fail(req.id, "url_invalid", "downloadPath must be an https URL");
+    }
+    candidates.push({ tier: "origin", url });
+  }
+
   ensureStagingDir();
   sweepOldStagingFiles();
 
-  // Filename: pkg-<packageId>-<random>.<format>. We DON'T derive the
-  // name from the URL because URLs can carry attacker-controlled
-  // chars; our random suffix prevents collisions across concurrent
-  // downloads.
-  const nonce = crypto.randomBytes(8).toString("hex");
-  const stagingPath = path.join(STAGING_DIR, `pkg-${packageId}-${nonce}.${format}`);
+  let sawNetworkFailure = false;
+  let sawShaMismatch = false;
+  let lastError = "";
 
-  // ── Download with curl ─────────────────────────────────────────
-  // -fSL : fail on HTTP errors, follow redirects, silent unless error
-  // --max-time / --max-filesize : transfer caps so a malicious server
-  //   can't stream forever or fill the disk
-  // We DON'T pin TLS or set --tlsv1.3: customer infra varies (some
-  // CDNs still do 1.2 only); the sha256 verification below is the
-  // actual integrity gate. URL trust comes from the catalog —
-  // operators chose what to deliver from where.
-  const curlArgs = [
-    "-fSL",
-    "--max-time", String(timeoutSeconds),
-    "--max-filesize", String(MAX_DOWNLOAD_BYTES),
-    "-o", stagingPath,
-    url,
-  ];
+  for (const candidate of candidates) {
+    // Filename: pkg-<packageId>-<random>.<format>. We DON'T derive the
+    // name from the URL because URLs can carry attacker-controlled
+    // chars; our random suffix prevents collisions across concurrent
+    // downloads and across candidate attempts.
+    const nonce = crypto.randomBytes(8).toString("hex");
+    const stagingPath = path.join(STAGING_DIR, `pkg-${packageId}-${nonce}.${format}`);
 
-  const downloadStart = Date.now();
-  try {
-    await execFileAsync("/usr/bin/curl", curlArgs, {
-      // Outer Node timeout is +30s of curl's --max-time, so curl's
-      // own timeout fires first and we get its useful stderr instead
-      // of a generic "killed" error from Node.
-      timeout: (timeoutSeconds + 30) * 1000,
-      maxBuffer: 1024 * 1024,
-    });
-  } catch (err: any) {
-    try { fs.unlinkSync(stagingPath); } catch {}
-    const stderr = String(err?.stderr || "");
-    logger.warn("sdp_download_failed", {
+    // ── Download with curl ───────────────────────────────────────
+    // -fSL : fail on HTTP errors, follow redirects, silent unless error
+    // --max-time / --max-filesize : transfer caps so a malicious server
+    //   can't stream forever or fill the disk
+    // We DON'T pin TLS: the sha256 verification below is the actual
+    // integrity gate. URL trust comes from the catalog/backend.
+    const curlArgs = [
+      "-fSL",
+      "--max-time", String(timeoutSeconds),
+      "--max-filesize", String(MAX_DOWNLOAD_BYTES),
+      "-o", stagingPath,
+    ];
+    // Phase D — per-tenant bandwidth cap (Kbps → curl's k-suffix).
+    const rateLimitKbps = Number((params as any).rateLimitKbps);
+    if (Number.isInteger(rateLimitKbps) && rateLimitKbps > 0) {
+      curlArgs.push("--limit-rate", `${rateLimitKbps}k`);
+    }
+    if (candidate.tier === "dp") {
+      // LAN distribution point: present the enrollment cert (the DP requires
+      // a client cert chained to the tenant CA — that's the auth gate) and
+      // skip TLS *server* verification: the DP cert's CN is its deviceId, not
+      // the LAN IP we dial, so hostname checks can't pass. Safe because the
+      // sha256 gate below verifies the BYTES regardless of transport — a
+      // spoofed DP can only make us fall through to cdn/origin.
+      const idPaths = certPaths();
+      curlArgs.push("--cert", idPaths.clientCert, "--key", idPaths.clientKey, "-k");
+    }
+    curlArgs.push(candidate.url);
+
+    const downloadStart = Date.now();
+    try {
+      await execFileAsync("/usr/bin/curl", curlArgs, {
+        // Outer Node timeout is +30s of curl's --max-time, so curl's
+        // own timeout fires first and we get its useful stderr instead
+        // of a generic "killed" error from Node.
+        timeout: (timeoutSeconds + 30) * 1000,
+        maxBuffer: 1024 * 1024,
+      });
+    } catch (err: any) {
+      try { fs.unlinkSync(stagingPath); } catch {}
+      const stderr = String(err?.stderr || "");
+      sawNetworkFailure = true;
+      lastError = stderr.slice(0, 200) || (err?.message || "curl failed");
+      logger.warn("sdp_download_source_failed", {
+        packageId,
+        tier: candidate.tier,
+        stderrPreview: stderr.slice(0, 300),
+        code: err?.code,
+      });
+      continue;
+    }
+
+    // ── sha256 verify ────────────────────────────────────────────
+    let actualSha256: string;
+    try {
+      actualSha256 = (await sha256OfFile(stagingPath)).toLowerCase();
+    } catch (err: any) {
+      try { fs.unlinkSync(stagingPath); } catch {}
+      sawNetworkFailure = true;
+      lastError = `sha256 read failed: ${err?.message || err}`;
+      continue;
+    }
+
+    if (actualSha256 !== expectedSha256) {
+      // Corrupt/tampered bytes from THIS source — wipe and try the next.
+      // Only permanent when every source disagrees with the catalog.
+      try { fs.unlinkSync(stagingPath); } catch {}
+      sawShaMismatch = true;
+      lastError = `expected sha256 ${expectedSha256}, got ${actualSha256}`;
+      logger.error("sdp_download_sha256_mismatch", {
+        packageId,
+        tier: candidate.tier,
+        expected: expectedSha256,
+        actual: actualSha256,
+      });
+      continue;
+    }
+
+    // Lock down the file so an unprivileged user can't replace it
+    // between download and install. Already root-owned (we run as
+    // root) and parent dir is 0700, but be explicit.
+    try {
+      fs.chmodSync(stagingPath, 0o600);
+    } catch {
+      // best-effort
+    }
+
+    const stat = fs.statSync(stagingPath);
+    logger.info("sdp_download_ok", {
       packageId,
-      url,
-      stderrPreview: stderr.slice(0, 300),
-      code: err?.code,
+      sizeBytes: stat.size,
+      sha256: actualSha256,
+      servedBy: candidate.tier,
+      durationMs: Date.now() - downloadStart,
     });
-    return fail(req.id, "download_failed", stderr.slice(0, 200) || (err?.message || "curl failed"));
-  }
 
-  // ── sha256 verify ──────────────────────────────────────────────
-  let actualSha256: string;
-  try {
-    actualSha256 = (await sha256OfFile(stagingPath)).toLowerCase();
-  } catch (err: any) {
-    try { fs.unlinkSync(stagingPath); } catch {}
-    return fail(req.id, "download_failed", `sha256 read failed: ${err?.message || err}`);
-  }
-
-  if (actualSha256 !== expectedSha256) {
-    // Hash mismatch is permanent — the catalog is wrong, or we got
-    // tampered bytes. Either way, retrying won't help. Wipe the file
-    // so a malicious install can't be triggered later by a caller
-    // that knows the staging path.
-    try { fs.unlinkSync(stagingPath); } catch {}
-    logger.error("sdp_download_sha256_mismatch", {
-      packageId,
-      expected: expectedSha256,
-      actual: actualSha256,
+    return success(req.id, {
+      stagingPath,
+      sha256: actualSha256,
+      sizeBytes: stat.size,
+      durationMs: Date.now() - downloadStart,
+      servedBy: candidate.tier,
     });
-    return fail(req.id, "sha256_mismatch", `expected sha256 ${expectedSha256}, got ${actualSha256}`);
   }
 
-  // Lock down the file so an unprivileged user can't replace it
-  // between download and install. Already root-owned (we run as
-  // root) and parent dir is 0700, but be explicit.
-  try {
-    fs.chmodSync(stagingPath, 0o600);
-  } catch {
-    // best-effort
+  // All candidates exhausted. Any network-ish failure → transient (a retry may
+  // find the source back up); all-sources sha mismatch → permanent (catalog
+  // hash is wrong, retrying cannot help).
+  if (sawNetworkFailure) {
+    return fail(req.id, "download_failed", lastError || "all sources failed");
   }
-
-  const stat = fs.statSync(stagingPath);
-  logger.info("sdp_download_ok", {
-    packageId,
-    sizeBytes: stat.size,
-    sha256: actualSha256,
-    durationMs: Date.now() - downloadStart,
-  });
-
-  return success(req.id, {
-    stagingPath,
-    sha256: actualSha256,
-    sizeBytes: stat.size,
-    durationMs: Date.now() - downloadStart,
-  });
+  if (sawShaMismatch) {
+    return fail(req.id, "sha256_mismatch", lastError || "sha256 mismatch on all sources");
+  }
+  return fail(req.id, "download_failed", lastError || "no usable source");
 }
 
 // ── Install runners ───────────────────────────────────────────────

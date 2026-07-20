@@ -97,6 +97,7 @@ export class PluginManager {
       // dispatched by a hardcoded `case "software_install"` in
       // grpc-stream.ts that bypassed the policy check entirely.
       const { runSoftwareInstall } = await import("../plugins/sdp");
+      const { runDpPrefetch } = await import("../plugins/sdp/dp");
 
       this.register({
         name: "sdp",
@@ -105,6 +106,14 @@ export class PluginManager {
             const jobId = String(params?.jobId ?? "");
             const payload = params?.payload ?? {};
             return runSoftwareInstall(ctx, jobId, payload);
+          },
+          // Distribution Phase B — warm this agent's DP cache for its site.
+          // Same policy gate as install: a tenant that disables sdp also
+          // disables the DP role.
+          dpPrefetch: async (ctx: AgentContext, params?: any) => {
+            const jobId = String(params?.jobId ?? "");
+            const payload = params?.payload ?? {};
+            return runDpPrefetch(ctx, jobId, payload);
           }
         }
       });

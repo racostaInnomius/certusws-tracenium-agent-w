@@ -28,6 +28,7 @@ import {
   handleSdpUninstall,
   handleSdpVerifySignature,
 } from "./sdp";
+import { handleDpPrefetch, handleDpStatus } from "./dp";
 import { logger } from "./logger";
 
 function isRoot() {
@@ -181,6 +182,12 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     // Signature gate (fail-closed) — pkgutil --check-signature / codesign.
     case "sdp.verifySignature":
       return handleSdpVerifySignature(req);
+
+    // Distribution Phase B — DP role: warm the LAN cache + serve peers.
+    case "sdp.dp.prefetch":
+      return handleDpPrefetch(req);
+    case "sdp.dp.status":
+      return handleDpStatus(req);
 
     // PMv2 — non-patch security remediation. See privsvc/macos/src/
     // pmp-remediation.ts. Phase 1 covers Windows-only checkIds —

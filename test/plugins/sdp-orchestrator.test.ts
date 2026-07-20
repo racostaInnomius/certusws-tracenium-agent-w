@@ -12,7 +12,7 @@
 
 import os from "os";
 import { describe, expect, it, vi } from "vitest";
-import { runSoftwareInstall } from "../../src/plugins/sdp/index";
+import { runSoftwareInstall, normalizeSources } from "../../src/plugins/sdp/index";
 
 // ── Host platform helpers ─────────────────────────────────────────
 function hostPlatform(): "windows" | "macos" | "linux" {
@@ -243,6 +243,72 @@ describe("runSoftwareInstall — install pipeline", () => {
     expect(ack.ackStatus).toBe(0);
     expect(ack.outcome).toBe("reboot_required");
     expect(parseAck(ack.ackMessage).fields.exit).toBe("3010");
+  });
+});
+
+describe("runSoftwareInstall — distribution sources (Phase A)", () => {
+  it("passes sources[] to sdp.download and reports servedBy as src= in the ack", async () => {
+    const { ctx, calls } = makeCtx({
+      "sdp.detect": [DETECT(false), DETECT(true)],
+      "sdp.download": {
+        ok: true,
+        result: { stagingPath: "/staging/pkg-10", sha256: "a".repeat(64), sizeBytes: 5, durationMs: 3, servedBy: "cdn" },
+      },
+      "sdp.install": OK_INSTALL,
+    });
+    const sources = [
+      { tier: "cdn", url: "https://cdn.example.net/pkgs/x.msi?sig=1" },
+      { tier: "origin", url: "https://acct.blob.core.windows.net/pkgs/x.msi?sig=1" },
+    ];
+    const ack = await runSoftwareInstall(ctx, "job-s1", {
+      deploymentId: 9,
+      packageSnapshot: snap(),
+      sources,
+    });
+    expect(ack.outcome).toBe("success");
+    const dl = calls.find((c) => c.method === "sdp.download");
+    expect(dl?.params?.sources).toEqual(sources);
+    expect(parseAck(ack.ackMessage).fields.src).toBe("cdn");
+  });
+
+  it("omits sources from the privsvc call when the payload has none (legacy)", async () => {
+    const { ctx, calls } = makeCtx({
+      "sdp.detect": [DETECT(false), DETECT(true)],
+      "sdp.download": OK_DOWNLOAD,
+      "sdp.install": OK_INSTALL,
+    });
+    const ack = await runSoftwareInstall(ctx, "job-s2", { deploymentId: 9, packageSnapshot: snap() });
+    expect(ack.outcome).toBe("success");
+    const dl = calls.find((c) => c.method === "sdp.download");
+    expect(dl?.params?.sources).toBeUndefined();
+    // No servedBy in the legacy download result → no src= in the ack.
+    expect(parseAck(ack.ackMessage).fields.src).toBeUndefined();
+  });
+});
+
+describe("normalizeSources", () => {
+  it("keeps valid https entries in order and defaults tier to origin", () => {
+    expect(
+      normalizeSources([
+        { tier: "dp", url: "https://10.1.2.3:8443/sdp/blob/abc" },
+        { url: "https://cdn.example.net/x" },
+      ])
+    ).toEqual([
+      { tier: "dp", url: "https://10.1.2.3:8443/sdp/blob/abc" },
+      { tier: "origin", url: "https://cdn.example.net/x" },
+    ]);
+  });
+  it("drops malformed / non-https entries and tolerates junk input", () => {
+    expect(
+      normalizeSources([
+        { tier: "cdn", url: "http://insecure.example.com/x" },
+        { tier: "cdn" },
+        "nope",
+        null,
+      ])
+    ).toEqual([]);
+    expect(normalizeSources(undefined)).toEqual([]);
+    expect(normalizeSources("x")).toEqual([]);
   });
 });
 
