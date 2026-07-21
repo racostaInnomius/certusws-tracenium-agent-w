@@ -80,28 +80,45 @@ export class PrivSvcClient extends EventEmitter {
     this.connecting = new Promise<void>((resolve, reject) => {
       const s = new net.Socket();
 
-      s.on("data", (data) => this.onData(data));
-      s.on("error", (err) => this.onSocketError(err));
-      s.on("close", () => this.onSocketClose());
+      // `settle` guarantees the connecting promise ALWAYS resolves or
+      // rejects exactly once AND always clears `this.connecting`. The prior
+      // version cleared the connect-timeout on 'error'/'close' but never
+      // rejected the promise nor nulled `this.connecting`, so a connect that
+      // FAILED (ECONNREFUSED while PrivSvc was mid-restart) left
+      // `this.connecting` pending forever. Every later call() then hit
+      // `if (this.connecting) return this.connecting` and awaited that dead
+      // promise with NO timeout — wedging grpc.connect + heartbeat +
+      // inventory + compliance for days (the macOS/W11 zombie 2026-07-19).
+      let settled = false;
+      const settle = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(t);
+        this.connecting = null;
+        if (err) reject(err); else resolve();
+      };
 
+      s.on("data", (data) => this.onData(data));
+      s.on("error", (err) => {
+        this.onSocketError(err);
+        settle(err instanceof Error ? err : new Error(String(err)));
+      });
+      s.on("close", () => {
+        this.onSocketClose();
+        settle(new Error("PrivSvc socket closed during connect"));
+      });
       s.on("connect", () => {
         this.socket = s;
         this.closedByClient = false;
-        this.connecting = null;
-        resolve();
+        settle();
       });
 
       const t = setTimeout(() => {
         try {
           s.destroy();
         } catch {}
-        this.connecting = null;
-        reject(new Error("PrivSvc connect timeout"));
+        settle(new Error("PrivSvc connect timeout"));
       }, CONNECT_TIMEOUT_MS);
-
-      s.once("connect", () => clearTimeout(t));
-      s.once("error", () => clearTimeout(t));
-      s.once("close", () => clearTimeout(t));
 
       s.connect(SOCKET_PATH);
     });

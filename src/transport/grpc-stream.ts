@@ -136,6 +136,73 @@ function armMetricsFlush(ctx: AgentContext) {
   (metricsFlushTimer as any)?.unref?.();
 }
 
+// ── Control-plane connectivity supervisor ───────────────────────────────────
+//
+// The last line of defence against a WEDGED reconnect. The two existing
+// self-heals both have blind spots that let the agent sit OFFLINE for days
+// (observed on 1.1.22, W11 + macOS, 2026-07-19):
+//
+//   • The reconnect-attempt circuit breaker (MAX_CONSECUTIVE_RECONNECT_ATTEMPTS
+//     → exit) only fires when the reconnect loop is actively LOOPING. If a
+//     `priv.call("grpc.connect")` hangs inside privsvc-client.ensureConnected()
+//     — no per-call timeout covers ensureConnected — the loop never re-fires,
+//     `reconnectCount` freezes, and the breaker never trips.
+//
+//   • The liveness watchdog (service.ts) exits only when the tray-status writer
+//     is wedged. But writing a JSON file doesn't touch the stuck PrivSvc IPC,
+//     so the probe always succeeds and it never exits — even with gRPC dead for
+//     a day and the inventory/compliance collectors (which share the wedged
+//     ctx.priv) stuck for hours.
+//
+// This supervisor watches the ONE signal that actually matters — "are we
+// talking to the control plane?" — independently of the reconnect loop's
+// internal state. It's a plain unref'd interval, so it keeps ticking even
+// when the reconnect machinery is hung. If we've been continuously
+// disconnected longer than the threshold, we exit(1) and let the service
+// manager (launchd/systemd/WinSW) rebuild everything from scratch — a fresh
+// PrivSvc IPC socket and a fresh gRPC stream. This automates the manual
+// "restart the services" recovery the operator was doing by hand.
+const CONNECTIVITY_EXIT_THRESHOLD_MS = 10 * 60 * 1000;
+const CONNECTIVITY_CHECK_INTERVAL_MS = 60 * 1000;
+// Wall-clock of the last time we were confirmed connected. Seeded to "now"
+// at module load so process startup gets a full grace window before the
+// supervisor can fire.
+let lastConnectedAtMs = Date.now();
+let connectivitySupervisorTimer: NodeJS.Timeout | null = null;
+
+function armConnectivitySupervisor(ctx: AgentContext) {
+  if (connectivitySupervisorTimer) return; // already armed (first stream only)
+  connectivitySupervisorTimer = setInterval(() => {
+    try {
+      if (shutdownRequested) return;
+      // connectedSinceUtc is non-null exactly while a gRPC stream is READY
+      // (set on READY, cleared to null on every teardown). While connected,
+      // keep the clock fresh so a later disconnect measures from "now".
+      if (grpcMetrics.connectedSinceUtc != null) {
+        lastConnectedAtMs = Date.now();
+        return;
+      }
+      const offlineMs = Date.now() - lastConnectedAtMs;
+      if (offlineMs >= CONNECTIVITY_EXIT_THRESHOLD_MS) {
+        const recycler =
+          process.platform === "win32" ? "WinSW" :
+          process.platform === "darwin" ? "launchd" : "systemd";
+        ctx.logger?.error?.(
+          "gRPC stream: control plane unreachable for " +
+            `${Math.round(offlineMs / 1000)}s (reconnect wedged) — exiting so ` +
+            `${recycler} can recycle the process`,
+          { offlineMs, thresholdMs: CONNECTIVITY_EXIT_THRESHOLD_MS, reconnectCount: grpcMetrics.reconnectCount }
+        );
+        try { ctx.trayStatus.markGrpcDisconnected(); } catch {}
+        setTimeout(() => process.exit(1), 500).unref?.();
+      }
+    } catch {
+      // The supervisor must never throw — it's the last safety net.
+    }
+  }, CONNECTIVITY_CHECK_INTERVAL_MS);
+  (connectivitySupervisorTimer as any)?.unref?.();
+}
+
 function buildEventId(deviceId: string, outboxId: number) {
   return `${deviceId}:${outboxId}`;
 }
@@ -1259,6 +1326,7 @@ stream = client.Connect();
       }
       ctx.logger?.info?.("gRPC stream: bridge ready", msg);
       grpcMetrics.connectedSinceUtc = new Date().toISOString();
+      lastConnectedAtMs = Date.now(); // feed the connectivity supervisor
       rotationInProgress = false;
       requestDrain("bridge_connected");
       // Restart the heartbeat cadence from T=0 on READY. This way the
@@ -1278,6 +1346,9 @@ stream = client.Connect();
       // we didn't want to arm it in startGrpcStream() because every
       // reconnect would re-enter and we'd end up with N timers.
       armMetricsFlush(ctx);
+      // Same one-shot arming: watches for a wedged reconnect and recycles
+      // the process if we stay disconnected past the threshold.
+      armConnectivitySupervisor(ctx);
       return;
     }
     // ACK
