@@ -36,6 +36,13 @@ export type RuntimePolicy = {
   update?: {
     intervalSeconds?: number;
   };
+  cdp?: {
+    intervalSeconds?: number;
+    /** Operator-configured Java keystore files (JKS/PKCS12) to
+     *  inventory in addition to the auto-discovered JVM cacerts.
+     *  Absolute paths; validated + capped in validatePolicy. */
+    javaKeystorePaths?: string[];
+  };
   plugins?: {
     enabled?: string[];
   };
@@ -76,6 +83,7 @@ export type RuntimePolicy = {
       compliance?: { intervalSeconds?: number };
       patch?: { intervalSeconds?: number };
       update?: { intervalSeconds?: number };
+      cdp?: { intervalSeconds?: number };
     };
     plugins?: { enabled?: string[] };
     modules?: {
@@ -313,6 +321,42 @@ function sanitizeSecurityPolicy(input: any, logger: any): SecurityPolicy {
   return out;
 }
 
+// Bounds for cdp.javaKeystorePaths — a policy is operator-authored but
+// still crosses a trust boundary before reaching a SYSTEM/root process,
+// so paths are validated hard: absolute, bounded length, bounded count.
+const CDP_KEYSTORE_PATHS_MAX = 50;
+const CDP_KEYSTORE_PATH_MAXLEN = 512;
+
+function sanitizeJavaKeystorePaths(input: unknown, logger: any): string[] {
+  if (!Array.isArray(input)) return [];
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of input) {
+    if (out.length >= CDP_KEYSTORE_PATHS_MAX) {
+      logger?.warn?.("cdp.javaKeystorePaths: cap reached, dropping remainder", {
+        cap: CDP_KEYSTORE_PATHS_MAX
+      });
+      break;
+    }
+    if (typeof raw !== "string") continue;
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.length > CDP_KEYSTORE_PATH_MAXLEN) continue;
+    // Absolute paths only: POSIX "/..." or Windows drive "C:\...".
+    const isAbsolute = trimmed.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(trimmed);
+    if (!isAbsolute) {
+      logger?.debug?.("cdp.javaKeystorePaths: dropping non-absolute path", { path: trimmed });
+      continue;
+    }
+    if (seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+
+  return out;
+}
+
 const DEFAULT_POLICY: RuntimePolicy = {
   inventory: {
     intervalSeconds: 21600 // 6h
@@ -329,6 +373,13 @@ const DEFAULT_POLICY: RuntimePolicy = {
     // the agent's self-update probe runs (the actual install is still
     // gated by `modules.update` / `features.selfUpdate`).
     intervalSeconds: 21600 // 6h
+  },
+  cdp: {
+    // Cert stores are near-static: 12h keeps expiry data fresh enough
+    // for the default 30-day warn window while staying cheap. The
+    // pipeline only runs at all when the tenant policy enables the
+    // "cdp" plugin — the interval alone does not opt a device in.
+    intervalSeconds: 43200 // 12h
   },
   plugins: {
     enabled: ["amp"]
@@ -397,6 +448,14 @@ export class PolicyRuntime extends EventEmitter {
 
   getUpdateInterval(): number {
     return this.policy.update?.intervalSeconds || DEFAULT_POLICY.update!.intervalSeconds!;
+  }
+
+  getCdpInterval(): number {
+    return this.policy.cdp?.intervalSeconds || DEFAULT_POLICY.cdp!.intervalSeconds!;
+  }
+
+  getCdpJavaKeystorePaths(): string[] {
+    return this.policy.cdp?.javaKeystorePaths ?? [];
   }
 
   // Returns the security policy block, or null if the operator hasn't
@@ -472,6 +531,7 @@ export class PolicyRuntime extends EventEmitter {
     this.emit("patchIntervalChanged", this.getPatchInterval());
     this.emit("complianceIntervalChanged", this.getComplianceInterval());
     this.emit("updateIntervalChanged", this.getUpdateInterval());
+    this.emit("cdpIntervalChanged", this.getCdpInterval());
     this.emit("pluginsChanged", this.getEnabledPlugins());
     this.emit("modulesChanged", this.listEnabledModules());
     this.emit("featuresChanged", this.policy.features);
@@ -526,6 +586,16 @@ export class PolicyRuntime extends EventEmitter {
         policy.update?.intervalSeconds ??
         DEFAULT_POLICY.update!.intervalSeconds
     };
+    const mergedCdp = {
+      intervalSeconds:
+        fromSchedules.cdp?.intervalSeconds ??
+        policy.cdp?.intervalSeconds ??
+        DEFAULT_POLICY.cdp!.intervalSeconds,
+      javaKeystorePaths: sanitizeJavaKeystorePaths(
+        policy.cdp?.javaKeystorePaths,
+        this.logger
+      )
+    };
     const mergedPlugins = {
       enabled:
         fromAgent.plugins?.enabled ??
@@ -561,6 +631,7 @@ export class PolicyRuntime extends EventEmitter {
       compliance: mergedCompliance,
       patch: mergedPatch,
       update: mergedUpdate,
+      cdp: mergedCdp,
       plugins: mergedPlugins,
       modules: mergedModules,
       features: mergedFeatures,
@@ -605,6 +676,17 @@ export class PolicyRuntime extends EventEmitter {
       validated.update!.intervalSeconds = DEFAULT_POLICY.update!.intervalSeconds;
     }
 
+    // validate cdp — cert stores are near-static, so anything under
+    // 5 min is abuse and anything over 7 days defeats the expiry-warn
+    // window the alert rules assume.
+    if (
+      validated.cdp?.intervalSeconds &&
+      (validated.cdp.intervalSeconds < 300 || validated.cdp.intervalSeconds > 604800)
+    ) {
+      this.logger?.warn?.("Invalid cdp interval in policy, reverting to default");
+      validated.cdp!.intervalSeconds = DEFAULT_POLICY.cdp!.intervalSeconds;
+    }
+
     // validate plugins
     if (!Array.isArray(validated.plugins?.enabled)) {
       validated.plugins = { enabled: DEFAULT_POLICY.plugins!.enabled };
@@ -637,6 +719,7 @@ export class PolicyRuntime extends EventEmitter {
       complianceInterval: this.getComplianceInterval(),
       patchInterval: this.getPatchInterval(),
       updateInterval: this.getUpdateInterval(),
+      cdpInterval: this.getCdpInterval(),
       plugins: this.getEnabledPlugins(),
       modules: this.listEnabledModules(),
       features: this.policy.features

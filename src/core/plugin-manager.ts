@@ -89,6 +89,20 @@ export class PluginManager {
     }
 
     try {
+      const { collectCDP } = await import("../plugins/cdp");
+
+      this.register({
+        name: "cdp",
+        tasks: {
+          collect: async (ctx: AgentContext) => collectCDP(ctx)
+        }
+      });
+
+    } catch (err: any) {
+      this.ctx?.logger?.error?.("Failed to register CDP plugin", err?.message || err);
+    }
+
+    try {
       // SDP — event-driven (no periodic `collect`). The `install`
       // task is invoked from the gRPC dispatcher when a
       // `software_install` job arrives. We register it here so that

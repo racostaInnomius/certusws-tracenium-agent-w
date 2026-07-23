@@ -33,6 +33,12 @@ export type PrivSvcMethod =
   //                                changesApplied[] }.
   | "pmp.read_check_state"
   | "pmp.remediate"
+  // CDP — Crypto Discovery Plugin. Read-only enumeration of the
+  // LocalMachine certificate stores via C# X509Store. Returns
+  // { certificates: [{ store, rawDerBase64, hasPrivateKey }] }.
+  // NEVER exports private key material — hasPrivateKey is the store
+  // attribute only. Same read-only class as security.compliance.
+  | "cdp.certs.read"
   | "crypto.csr.generate" // enrollment CSR generation
   | "crypto.cert.install" // install client cert (bind to existing key)
   // gRPC bridge (PrivSvc owns mTLS private key + channel)

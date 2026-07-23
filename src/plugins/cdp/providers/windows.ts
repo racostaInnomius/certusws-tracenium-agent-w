@@ -1,0 +1,81 @@
+// src/plugins/cdp/providers/windows.ts
+//
+// Windows CDP collector. Certificate stores are enumerated by PrivSvc
+// (C# X509Store — native, no PowerShell spawn) via the `cdp.certs.read`
+// IPC method. PrivSvc returns raw DER (base64) + store context +
+// hasPrivateKey flag per cert; parsing happens here with the shared
+// parse-cert helper so all three platforms produce identical items.
+//
+// PrivSvc NEVER exports key material — hasPrivateKey is the
+// X509Certificate2.HasPrivateKey attribute, nothing more.
+
+import type { AgentContext } from "../../../core/agent-context";
+import type { CdpCertItem, CdpStoreInfo } from "../../../domain/cdp-types";
+import { parseCertToItem } from "../parse-cert";
+
+// LocalMachine stores scanned in Phase A. CurrentUser stores need
+// per-session enumeration and are deferred to Phase C.
+const MACHINE_STORES = ["My", "WebHosting", "CA", "TrustedPeople", "TrustedPublisher"];
+const ROOT_STORES = ["Root", "AuthRoot"];
+
+export type WindowsCdpResult = {
+  items: CdpCertItem[];
+  stores: CdpStoreInfo[];
+  parseFailures: number;
+};
+
+export async function collectWindowsCdp(ctx: AgentContext): Promise<WindowsCdpResult> {
+  const resp = await ctx.priv.call({
+    v: 1,
+    id: `cdp_${Date.now()}`,
+    method: "cdp.certs.read",
+    params: {
+      stores: [...MACHINE_STORES, ...ROOT_STORES]
+    },
+    meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+  });
+
+  if (!resp?.ok) {
+    throw new Error(resp?.error?.message || "cdp.certs.read failed");
+  }
+
+  const rawCerts: Array<{
+    store?: string;
+    rawDerBase64?: string;
+    hasPrivateKey?: boolean;
+  }> = Array.isArray(resp.result?.certificates) ? resp.result.certificates : [];
+
+  const items: CdpCertItem[] = [];
+  const storesSeen = new Map<string, CdpStoreInfo>();
+  let parseFailures = 0;
+
+  for (const raw of rawCerts) {
+    const storeName = String(raw?.store || "Unknown");
+    const isRootStore = ROOT_STORES.includes(storeName);
+
+    const store: CdpStoreInfo = {
+      id: `lm/${storeName.toLowerCase()}`,
+      name: `LocalMachine\\${storeName}`,
+      scope: isRootStore ? "system-roots" : "machine"
+    };
+    storesSeen.set(store.id, store);
+
+    if (!raw?.rawDerBase64) {
+      parseFailures += 1;
+      continue;
+    }
+
+    const item = parseCertToItem(Buffer.from(raw.rawDerBase64, "base64"), {
+      store,
+      hasPrivateKey: raw.hasPrivateKey === true
+    });
+
+    if (item) {
+      items.push(item);
+    } else {
+      parseFailures += 1;
+    }
+  }
+
+  return { items, stores: [...storesSeen.values()], parseFailures };
+}

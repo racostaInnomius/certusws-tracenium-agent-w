@@ -6,6 +6,7 @@ import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { AgentContext } from "./agent-context";
 import type { Namespaces } from "../domain/device-facts";
 import type { AmpNamespace } from "../domain/amp-types";
+import type { CdpNamespace } from "../domain/cdp-types";
 import type { PmpNamespace } from "../domain/pmp-types";
 import type { ScpNamespace } from "../domain/scp-types";
 import { runUpdateTask } from "../update/update-task";
@@ -98,6 +99,7 @@ class Scheduler {
   private complianceRunning: boolean = false;
   private updateRunning: boolean = false;
   private patchRunning: boolean = false;
+  private cdpRunning: boolean = false;
 
   // Wall-clock start timestamps for the *Running guards above. 0 when
   // not running. Used by `checkStuckWorker()` so the overlap-detection
@@ -109,6 +111,7 @@ class Scheduler {
   private complianceStartedAt: number = 0;
   private updateStartedAt: number = 0;
   private patchStartedAt: number = 0;
+  private cdpStartedAt: number = 0;
 
   /**
    * Returns true if the caller should proceed with a fresh run.
@@ -223,6 +226,11 @@ class Scheduler {
 
     this.addPolicyListener(ctx, "patchIntervalChanged", (interval: number) => {
       logger.info("[scheduler] patch interval updated", { interval });
+      this.startPipelines(ctx);
+    });
+
+    this.addPolicyListener(ctx, "cdpIntervalChanged", (interval: number) => {
+      logger.info("[scheduler] cdp interval updated", { interval });
       this.startPipelines(ctx);
     });
 
@@ -378,6 +386,28 @@ class Scheduler {
         logger.info("[scheduler] compliance tick");
         this.runCompliance(ctx).catch(err =>
           logger.error("Compliance pipeline error", { err })
+        );
+      });
+    }
+
+    // cdp pipeline — certificate discovery. Gated on the plugin flag
+    // alone (no module toggle): a tenant opts in by adding "cdp" to
+    // plugins.enabled, which is also the kill-switch.
+    if (ctx.policyRuntime.pluginEnabled("cdp")) {
+
+      const intervalSeconds = ctx.policyRuntime.getCdpInterval();
+
+      logger.info("CDP pipeline enabled", { intervalSeconds });
+
+      this.runCdp(ctx).catch(err =>
+        logger.error("CDP pipeline initial run error", { err })
+      );
+
+      this.pipelineActive.add("cdp");
+      this.armJitteredPipeline("cdp", intervalSeconds * 1000, 30000, () => {
+        logger.info("[scheduler] cdp tick");
+        this.runCdp(ctx).catch(err =>
+          logger.error("CDP pipeline error", { err })
         );
       });
     }
@@ -747,6 +777,90 @@ class Scheduler {
 
       this.complianceRunning = false;
       this.complianceStartedAt = 0;
+
+    }
+  }
+
+  private async runCdp(ctx: AgentContext) {
+
+    if (!ctx.policyRuntime.pluginEnabled("cdp")) {
+      logger.info("CDP plugin disabled by policy, skipping certificate discovery");
+      return;
+    }
+
+    {
+      const { proceed, clearStuck } = this.checkStuckWorker(
+        "CDP",
+        this.cdpRunning,
+        this.cdpStartedAt
+      );
+      if (!proceed) return;
+      if (clearStuck) {
+        this.cdpRunning = false;
+        this.cdpStartedAt = 0;
+      }
+    }
+
+    this.cdpRunning = true;
+    this.cdpStartedAt = Date.now();
+
+    try {
+      logger.info("Collecting CDP certificate inventory...");
+
+      const namespaces = {} as Namespaces;
+
+      try {
+        namespaces.cdp = await ctx.plugins.run("cdp.collect") as CdpNamespace;
+      } catch (err) {
+        logger.error("CDP plugin execution failed", { err });
+      }
+
+      if (!namespaces.cdp) {
+        logger.warn("No CDP namespace returned, skipping certificate snapshot");
+        return;
+      }
+
+      // Unlike SCP, hasChanges is computed by the plugin itself against
+      // its SQLite baseline (AMP-style delta) — no hash gate needed here.
+      if (!namespaces.cdp.hasChanges) {
+        logger.info("Skipping CDP FACTS enqueue — no certificate changes detected", {
+          deviceId: ctx.enrollment.deviceId,
+          namespace: "cdp",
+          certCount: namespaces.cdp.certificates?.count ?? 0
+        });
+        return;
+      }
+
+      const facts = await buildDeviceFacts(ctx, namespaces);
+
+      outbox.enqueue({
+        type: "FACTS_SNAPSHOT",
+        payload: facts
+      });
+      try {
+        outbox.setState("lastSentFactsAt:cdp", String(Date.now()));
+      } catch (err) {
+        logger.warn("Failed to persist lastSentFactsAt:cdp", { err });
+      }
+
+      logger.info("FACTS_SNAPSHOT enqueued", {
+        deviceId: ctx.enrollment.deviceId,
+        modules: Object.keys(namespaces),
+        cdpSchemaVersion: namespaces.cdp.schemaVersion,
+        cdpCertCount: namespaces.cdp.certificates?.count ?? 0,
+        cdpMode: namespaces.cdp.certificates?.items ? "baseline" : "delta",
+        cdpTruncated: namespaces.cdp.truncated,
+        cdpCollectorError: namespaces.cdp.collectorError?.phase ?? null
+      });
+
+    } catch (err) {
+
+      logger.error("CDP pipeline failed", { err });
+
+    } finally {
+
+      this.cdpRunning = false;
+      this.cdpStartedAt = 0;
 
     }
   }

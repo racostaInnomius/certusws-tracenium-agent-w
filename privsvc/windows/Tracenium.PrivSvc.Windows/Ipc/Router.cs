@@ -86,6 +86,9 @@ public sealed class Router
             "software.inventory" => SoftwareInventory.Handle(req),
             "printer.inventory" => PrinterInventory.Handle(req),
             "security.compliance" => SecurityCompliance.Handle(req),
+            // CDP — read-only LocalMachine cert store enumeration
+            // (metadata + public DER only; never key material).
+            "cdp.certs.read" => CdpCertificates.Handle(req),
             "patch.scan" => PatchManagement.HandleScan(req),
             "patch.install" => PatchManagement.HandleInstall(req),
 

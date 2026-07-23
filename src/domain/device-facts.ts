@@ -1,6 +1,7 @@
 // src/domain/device-facts.ts
 
 import type { AmpNamespace } from "./amp-types";
+import type { CdpNamespace } from "./cdp-types";
 import type { PmpNamespace } from "./pmp-types";
 import type { ScpNamespace } from "./scp-types";
 
@@ -63,5 +64,6 @@ export interface Namespaces {
   amp?: AmpNamespace;
   scp?: ScpNamespace;
   pmp?: PmpNamespace;
+  cdp?: CdpNamespace;
   rcm?: unknown;
 }
