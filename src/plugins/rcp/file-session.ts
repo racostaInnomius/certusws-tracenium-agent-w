@@ -9,6 +9,7 @@
 // Protocol (see FileBrowserPanel.jsx for the browser side):
 //
 //   Browser → Agent:
+//     { op: "roots" }                                 // where may I start?
 //     { op: "list",       path }
 //     { op: "download",   transferId, path }
 //     { op: "upload",     transferId, path, name, size }
@@ -17,6 +18,7 @@
 //     { op: "cancel",     transferId }
 //
 //   Agent → Browser:
+//     { op: "roots",    roots: ["C:\\Users", ...] }
 //     { op: "listing",  path, entries: [{name, isDir, size, modifiedAt}] }
 //     { op: "chunk",    transferId, seq, data, done? }  // base64
 //     { op: "ready",    transferId }   // agent is ready to receive upload
@@ -25,11 +27,26 @@
 // The agent also fires RemoteFileTransferAudit gRPC events at transfer
 // start and completion via the sendFileTransferAudit callback; the
 // backend persists those to remote_file_transfers for audit.
+//
+// ── CONFINEMENT ─────────────────────────────────────────────────────────────
+//
+// This session runs as LocalSystem (Windows) / root (macOS, Linux). Every
+// path arriving from the browser is therefore untrusted input to a fully
+// privileged process, and goes through `PathJail.check()` before it reaches
+// the filesystem — see path-jail.ts for the model. Two rules that matter for
+// anyone editing this file:
+//
+//   1. NEVER pass the browser-supplied path to an fs call. Use the
+//      `realPath` the jail hands back; it is symlink-resolved, and the
+//      difference between the two IS the vulnerability.
+//   2. Any NEW op that touches the filesystem needs its own check. The jail
+//      is not a middleware — it cannot cover a call site that forgot it.
 
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import type { AgentContext } from "../../core/agent-context";
+import { PathJail, type JailDecision } from "./path-jail";
 
 export type FileTransferAuditPayload = {
   transferId: string;
@@ -67,6 +84,12 @@ export class FileSession {
   private readonly args: FileSessionArgs;
   private disposed = false;
 
+  // Built once per session from the policy in force at session start. Not
+  // re-read mid-session on purpose: a policy push that narrows the jail
+  // shouldn't yank the ground out from under an in-flight transfer, and one
+  // that widens it shouldn't take effect without a fresh operator action.
+  private readonly jail: PathJail;
+
   // In-progress uploads keyed by transferId.
   private readonly uploads = new Map<string, UploadState>();
   // Transfer IDs of downloads the browser has cancelled.
@@ -75,6 +98,24 @@ export class FileSession {
   constructor(dc: any, args: FileSessionArgs) {
     this.dc = dc;
     this.args = args;
+
+    // An unreadable policy must not mean an unconfined session: on any
+    // failure we fall back to `{}`, which the jail reads as "platform
+    // defaults" — the secure posture, not an open one.
+    let jailConfig = {};
+    try {
+      jailConfig = args.ctx.policyRuntime?.getRcpFileJailConfig?.() ?? {};
+    } catch (err: any) {
+      args.ctx.logger?.warn?.("[rcp.file] could not read jail policy; using defaults", {
+        sessionId: args.sessionId,
+        err: err?.message
+      });
+    }
+    this.jail = new PathJail(jailConfig);
+    args.ctx.logger?.info?.("[rcp.file] session confined", {
+      sessionId: args.sessionId,
+      roots: this.jail.listRoots()
+    });
 
     dc.onMessage((raw: any) => {
       if (this.disposed) return;
@@ -119,6 +160,13 @@ export class FileSession {
   private handleMessage(msg: any): void {
     const op = String(msg?.op ?? "");
     switch (op) {
+      case "roots":
+        // Tells the browser where it is allowed to begin. Before the jail
+        // existed the panel opened on "/" and walked anywhere; now "/" is
+        // almost always outside the roots, so it has to ask.
+        this.send({ op: "roots", roots: this.jail.listRoots() });
+        break;
+
       case "list":
         this.handleList(String(msg.path ?? "/")).catch((err: any) => {
           this.send({
@@ -178,8 +226,37 @@ export class FileSession {
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
+  /**
+   * Gate a browser-supplied path. On refusal it reports to the browser and
+   * returns null, so every call site reads as:
+   *   `const resolved = this.gate(p, ...); if (!resolved) return;`
+   */
+  private gate(
+    input: unknown,
+    context: { transferId?: string }
+  ): string | null {
+    const decision: JailDecision = this.jail.check(input);
+    if (decision.allowed) return decision.realPath;
+
+    // Log the path the operator ASKED for — that's the audit-relevant fact,
+    // and it's what makes a misconfigured root list diagnosable.
+    this.args.ctx.logger?.warn?.("[rcp.file] path refused by jail", {
+      sessionId: this.args.sessionId,
+      code: decision.code,
+      requested: typeof input === "string" ? input.slice(0, 256) : typeof input
+    });
+    this.send({
+      op: "error",
+      code: decision.code,
+      message: decision.message,
+      ...(context.transferId ? { transferId: context.transferId } : {})
+    });
+    return null;
+  }
+
   private async handleList(dirPath: string): Promise<void> {
-    const resolved = path.resolve(path.normalize(dirPath));
+    const resolved = this.gate(dirPath, {});
+    if (!resolved) return;
     const names = await fs.promises.readdir(resolved);
 
     const entries: Array<{
@@ -222,7 +299,26 @@ export class FileSession {
     if (!transferId) return;
     this.cancelledDownloads.delete(transferId);
 
-    const resolved = path.resolve(path.normalize(filePath));
+    // A refused download is an audit-worthy event in its own right — an
+    // operator reaching for /etc/shadow should leave a row behind, not just
+    // a line in the endpoint's log. Recorded against the path they asked
+    // for, since there is no real path to speak of.
+    const resolved = this.gate(filePath, { transferId });
+    if (!resolved) {
+      const asked = typeof filePath === "string" ? filePath : "";
+      this.args.sendFileTransferAudit({
+        transferId,
+        direction: "download",
+        remotePath: asked.slice(0, 512),
+        filename: asked ? path.basename(asked) : "",
+        sizeBytes: 0,
+        transferredBytes: 0,
+        status: "failed",
+        errorMessage: "blocked by remote access path policy"
+      });
+      return;
+    }
+
     let stat: fs.Stats;
     try {
       stat = await fs.promises.stat(resolved);
@@ -323,6 +419,25 @@ export class FileSession {
   ): void {
     if (!transferId) return;
 
+    // Gate the DESTINATION before opening anything. The old order created
+    // the temp file first and only then resolved the destination, so a
+    // refused upload still left a file on disk.
+    const resolved = this.gate(destPath, { transferId });
+    if (!resolved) {
+      const asked = typeof destPath === "string" ? destPath : "";
+      this.args.sendFileTransferAudit({
+        transferId,
+        direction: "upload",
+        remotePath: asked.slice(0, 512),
+        filename: asked ? path.basename(asked) : "",
+        sizeBytes: Number(size) || 0,
+        transferredBytes: 0,
+        status: "failed",
+        errorMessage: "blocked by remote access path policy"
+      });
+      return;
+    }
+
     const tmpPath = path.join(os.tmpdir(), `rcp-upload-${transferId}`);
     let fd: number;
     try {
@@ -337,7 +452,6 @@ export class FileSession {
       return;
     }
 
-    const resolved = path.resolve(path.normalize(destPath));
     this.uploads.set(transferId, {
       path: resolved,
       tmpPath,
@@ -403,9 +517,42 @@ export class FileSession {
       return;
     }
 
+    // Re-gate before the rename. The destination was checked when the upload
+    // started, but an upload takes as long as it takes, and on a
+    // world-writable tree a local user can plant a symlink at the target in
+    // between. Checking again immediately before the write shrinks that
+    // window to the syscall itself.
+    const finalPath = this.jail.check(upload.path);
+    if (!finalPath.allowed) {
+      this.cleanupTmp(upload.tmpPath);
+      this.uploads.delete(transferId);
+      this.args.ctx.logger?.warn?.("[rcp.file] upload destination refused at finalize", {
+        sessionId: this.args.sessionId,
+        transferId,
+        code: finalPath.code
+      });
+      this.send({
+        op: "error",
+        code: finalPath.code,
+        message: finalPath.message,
+        transferId
+      });
+      this.args.sendFileTransferAudit({
+        transferId,
+        direction: "upload",
+        remotePath: upload.path,
+        filename: path.basename(upload.path),
+        sizeBytes: upload.size,
+        transferredBytes: upload.received,
+        status: "failed",
+        errorMessage: "blocked by remote access path policy"
+      });
+      return;
+    }
+
     try {
-      await fs.promises.mkdir(path.dirname(upload.path), { recursive: true });
-      await fs.promises.rename(upload.tmpPath, upload.path);
+      await fs.promises.mkdir(path.dirname(finalPath.realPath), { recursive: true });
+      await fs.promises.rename(upload.tmpPath, finalPath.realPath);
       this.uploads.delete(transferId);
       this.args.sendFileTransferAudit({
         transferId,

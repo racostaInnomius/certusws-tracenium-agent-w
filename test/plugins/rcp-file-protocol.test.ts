@@ -315,3 +315,136 @@ describe("RCP file protocol — mensajes malformados", () => {
     expect(teardowns).toContain("data_channel_closed");
   });
 });
+
+// ── Confinement wiring ─────────────────────────────────────────────────
+//
+// path-jail.ts is unit-tested exhaustively in rcp-path-jail.test.ts. What
+// these cover is the thing that test cannot: that FileSession actually
+// CALLS the jail at every filesystem call site, and keeps calling it as the
+// protocol grows. A new op that forgets the gate is the regression this
+// guards against.
+describe("RCP file protocol — path confinement", () => {
+  // A jail rooted at tmpDir only. Nothing else on the host is reachable,
+  // which lets us use a real absolute path (/etc) as the escape target.
+  function makeConfinedSession(roots: string[]) {
+    const dc = new FakeDataChannel();
+    const audits: FileTransferAuditPayload[] = [];
+    const ctx: any = {
+      logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+      policyRuntime: { getRcpFileJailConfig: () => ({ roots }) }
+    };
+    const session = new FileSession(dc as any, {
+      sessionId: "sess-jail-abcdef",
+      ctx,
+      sendFileTransferAudit: (a) => audits.push(a),
+      onTeardown: () => {}
+    });
+    return { dc, audits, session };
+  }
+
+  it("announces its roots so the browser knows where it may start", async () => {
+    const { dc } = makeConfinedSession([tmpDir]);
+    dc.emit({ op: "roots" });
+    await settle();
+    const reply = dc.sentOfOp("roots")[0];
+    expect(reply).toBeDefined();
+    expect(reply.roots.length).toBe(1);
+    // Real path — on macOS tmpDir resolves through /private.
+    expect(reply.roots[0].endsWith(path.basename(tmpDir))).toBe(true);
+  });
+
+  it("refuses to list outside the roots", async () => {
+    const { dc } = makeConfinedSession([tmpDir]);
+    dc.emit({ op: "list", path: "/etc" });
+    await settle();
+    const err = dc.sentOfOp("error")[0];
+    expect(err).toBeDefined();
+    expect(err.code).toBe("PATH_OUTSIDE_ROOTS");
+    expect(dc.sentOfOp("listing")).toHaveLength(0);
+  });
+
+  it("refuses a traversal that climbs out of a root", async () => {
+    const { dc } = makeConfinedSession([tmpDir]);
+    dc.emit({ op: "list", path: path.join(tmpDir, "..", "..", "..", "etc") });
+    await settle();
+    expect(dc.sentOfOp("error")[0]?.code).toBe("PATH_OUTSIDE_ROOTS");
+  });
+
+  it("refuses a download outside the roots AND records it as a failed transfer", async () => {
+    const { dc, audits } = makeConfinedSession([tmpDir]);
+    dc.emit({ op: "download", transferId: "t-esc", path: "/etc/hosts" });
+    await waitFor(() => audits.length > 0);
+    expect(dc.sentOfOp("error")[0]?.code).toBe("PATH_OUTSIDE_ROOTS");
+    expect(dc.sentOfOp("chunk")).toHaveLength(0);
+    // The attempt has to leave an audit trail, not just a log line.
+    expect(audits).toHaveLength(1);
+    expect(audits[0].status).toBe("failed");
+    expect(audits[0].direction).toBe("download");
+    expect(audits[0].remotePath).toBe("/etc/hosts");
+  });
+
+  it("refuses an upload outside the roots without creating a temp file", async () => {
+    const { dc, audits } = makeConfinedSession([tmpDir]);
+    const before = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("rcp-upload-"));
+    dc.emit({ op: "upload", transferId: "t-up", path: "/etc/cron.d/pwn", name: "pwn", size: 4 });
+    await waitFor(() => audits.length > 0);
+    expect(dc.sentOfOp("error")[0]?.code).toBe("PATH_OUTSIDE_ROOTS");
+    expect(dc.sentOfOp("ready")).toHaveLength(0);
+    expect(audits[0].status).toBe("failed");
+    const after = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("rcp-upload-"));
+    expect(after).toEqual(before);
+  });
+
+  it("still allows normal work inside the roots", async () => {
+    fs.writeFileSync(path.join(tmpDir, "ok.txt"), "hello");
+    const { dc } = makeConfinedSession([tmpDir]);
+    dc.emit({ op: "list", path: tmpDir });
+    await waitFor(() => dc.sentOfOp("listing").length > 0);
+    const listing = dc.sentOfOp("listing")[0];
+    expect(listing.entries.map((e: any) => e.name)).toContain("ok.txt");
+    expect(dc.sentOfOp("error")).toHaveLength(0);
+  });
+
+  it("lets a deny path seal a subtree that sits inside an allowed root", async () => {
+    // The shape that matters in production: ProgramData is a useful root,
+    // but the agent's own credential directory lives underneath it and must
+    // stay unreachable. Deny has to beat roots.
+    const agentDir = path.join(tmpDir, "Tracenium", "Agent");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "client.key"), "PRIVATE KEY");
+
+    const dc = new FakeDataChannel();
+    const ctx: any = {
+      logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+      policyRuntime: {
+        getRcpFileJailConfig: () => ({
+          roots: [tmpDir],
+          denyPaths: [path.join(tmpDir, "Tracenium")]
+        })
+      }
+    };
+    new FileSession(dc as any, {
+      sessionId: "sess-deny-abcdef",
+      ctx,
+      sendFileTransferAudit: () => {},
+      onTeardown: () => {}
+    });
+
+    dc.emit({
+      op: "download",
+      transferId: "t-cred",
+      path: path.join(agentDir, "client.key")
+    });
+    await settle();
+    expect(dc.sentOfOp("error")[0]?.code).toBe("PATH_DENIED");
+    expect(dc.sentOfOp("chunk")).toHaveLength(0);
+
+    // …while a sibling inside the same root stays reachable.
+    fs.writeFileSync(path.join(tmpDir, "reachable.txt"), "ok");
+    dc.emit({ op: "list", path: tmpDir });
+    await waitFor(() => dc.sentOfOp("listing").length > 0);
+    expect(dc.sentOfOp("listing")[0].entries.map((e: any) => e.name)).toContain(
+      "reachable.txt"
+    );
+  });
+});

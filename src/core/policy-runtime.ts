@@ -1,6 +1,14 @@
 // src/core/policy-runtime.ts
 import { EventEmitter } from "events";
 import { PolicyStore } from "./policy-store";
+// Imported rather than re-implemented: the jail and the policy validator MUST
+// agree on what counts as an acceptable path, and two copies of that rule
+// would eventually drift — in a security control, silently. path-jail has no
+// imports beyond node:fs / node:path, so this introduces no cycle.
+import {
+  sanitizeAbsolutePaths,
+  type PathJailConfig
+} from "../plugins/rcp/path-jail";
 
 // RuntimePolicy
 //
@@ -42,6 +50,24 @@ export type RuntimePolicy = {
      *  inventory in addition to the auto-discovered JVM cacerts.
      *  Absolute paths; validated + capped in validatePolicy. */
     javaKeystorePaths?: string[];
+  };
+  /** Remote Control tuning that isn't a simple on/off capability gate.
+   *  The `features.remote*` flags decide WHETHER a capability runs; this
+   *  block decides HOW it is constrained once it does. */
+  rcp?: {
+    file?: {
+      /** Absolute subtrees `rcp.file` may reach. Empty/absent ⇒ the agent's
+       *  platform defaults (user profiles, temp, app data). Replacing this
+       *  list replaces the defaults entirely — it is not additive. */
+      roots?: string[];
+      /** Extra absolute subtrees to seal, merged with the agent's built-in
+       *  deny list (its own credential directory, registry hives, /etc
+       *  secrets). Deny always beats roots. */
+      denyPaths?: string[];
+      /** Extra file extensions to seal, merged with the built-in list of
+       *  private-key / credential container formats. */
+      denyExtensions?: string[];
+    };
   };
   plugins?: {
     enabled?: string[];
@@ -357,6 +383,28 @@ function sanitizeJavaKeystorePaths(input: unknown, logger: any): string[] {
   return out;
 }
 
+// Extensions for the rcp.file deny list. Same trust-boundary reasoning as the
+// path sanitizer: operator-authored, consumed by a root process. Must be a
+// dot-prefixed token, no separators, bounded length and count.
+const JAIL_EXTENSIONS_MAX = 32;
+
+function sanitizeExtensions(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of input) {
+    if (out.length >= JAIL_EXTENSIONS_MAX) break;
+    if (typeof raw !== "string") continue;
+    const ext = raw.trim().toLowerCase();
+    if (!ext.startsWith(".") || ext.length < 2 || ext.length > 16) continue;
+    if (/[\\/\0]/.test(ext)) continue;
+    if (seen.has(ext)) continue;
+    seen.add(ext);
+    out.push(ext);
+  }
+  return out;
+}
+
 const DEFAULT_POLICY: RuntimePolicy = {
   inventory: {
     intervalSeconds: 21600 // 6h
@@ -456,6 +504,19 @@ export class PolicyRuntime extends EventEmitter {
 
   getCdpJavaKeystorePaths(): string[] {
     return this.policy.cdp?.javaKeystorePaths ?? [];
+  }
+
+  /**
+   * Confinement config for `rcp.file`. Always returns an object — the jail
+   * treats empty lists as "use the platform defaults", so an unset policy
+   * yields the secure default posture rather than an unconstrained session.
+   */
+  getRcpFileJailConfig(): PathJailConfig {
+    return {
+      roots: this.policy.rcp?.file?.roots ?? [],
+      denyPaths: this.policy.rcp?.file?.denyPaths ?? [],
+      denyExtensions: this.policy.rcp?.file?.denyExtensions ?? []
+    };
   }
 
   // Returns the security policy block, or null if the operator hasn't
@@ -596,6 +657,19 @@ export class PolicyRuntime extends EventEmitter {
         this.logger
       )
     };
+    // rcp.file confinement. Path lists get the same hard sanitation as
+    // cdp.javaKeystorePaths — absolute only, bounded length, bounded count,
+    // de-duplicated — because they reach a SYSTEM/root process. The jail
+    // itself applies its built-in deny list on top of whatever survives
+    // here, so a hostile or malformed policy can only ever NARROW access
+    // relative to the defaults, never open the agent's own secrets.
+    const mergedRcp = {
+      file: {
+        roots: sanitizeAbsolutePaths(policy.rcp?.file?.roots),
+        denyPaths: sanitizeAbsolutePaths(policy.rcp?.file?.denyPaths),
+        denyExtensions: sanitizeExtensions(policy.rcp?.file?.denyExtensions)
+      }
+    };
     const mergedPlugins = {
       enabled:
         fromAgent.plugins?.enabled ??
@@ -632,6 +706,7 @@ export class PolicyRuntime extends EventEmitter {
       patch: mergedPatch,
       update: mergedUpdate,
       cdp: mergedCdp,
+      rcp: mergedRcp,
       plugins: mergedPlugins,
       modules: mergedModules,
       features: mergedFeatures,
