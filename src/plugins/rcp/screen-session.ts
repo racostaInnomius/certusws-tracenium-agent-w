@@ -15,8 +15,10 @@
 //
 //   Agent → Browser:
 //     { op: "screenInfo",  width, height, fps }                  // once at open
-//     { op: "frame",  seq, width, height, data, cursorX, cursorY } // small (≤ limit)
-//     { op: "frameStart", seq, width, height, chunks, cursorX, cursorY } // large
+//     { op: "frame",  seq, width, height, data, cursorX, cursorY,
+//                     full, x, y, rw, rh }                     // small (≤ limit)
+//     { op: "frameStart", seq, width, height, chunks, cursorX, cursorY,
+//                     full, x, y, rw, rh }                     // large
 //     { op: "frameChunk", seq, idx, data }                       // one chunk
 //     { op: "frameDone",  seq }                                  // all chunks sent
 //     { op: "error", code, message, terminal }
@@ -34,6 +36,13 @@
 //
 // cursorX/Y are -1 when PrivSvc couldn't read the position (rare:
 // lock screen, RDP detach). The browser hides the overlay in that case.
+//
+// Dirty rects: `width`/`height` are always the FULL desktop size (the browser
+// sizes its canvas from them, and input coordinates map through them).
+// `full` says whether `data` is the whole desktop or just the changed region
+// at (`x`,`y`) sized `rw`×`rh`, which the browser blits onto what it already
+// has. A response without `full` is a full frame — that's what the macOS and
+// Linux helpers, which only do whole-screen grabs, produce.
 //
 // Error semantics (`op: "error"`):
 //   `code` is PrivSvc's OWN stable code, forwarded verbatim — the browser
@@ -116,6 +125,22 @@ const TRANSIENT_ERROR_TOLERANCE = 5;
 // server doesn't burn a DXGI init attempt every 200 ms for hours.
 const TERMINAL_RETRY_INTERVAL_MS = 5_000;
 
+// Dirty-rect streaming: most frames carry only the region DXGI reports as
+// changed, which for typing or a moving cursor is a tiny fraction of the
+// screen. The browser blits each region onto the canvas it already has.
+//
+// That makes frames INTERDEPENDENT, and this DataChannel is deliberately
+// unreliable (ordered:false, maxRetransmits:0) — a dropped partial update
+// would otherwise leave a stale rectangle on the operator's screen forever,
+// with nothing to correct it. So we force a full frame on a fixed cadence:
+// the worst case for a drop becomes "wrong for up to this long" instead of
+// "wrong until the session ends".
+//
+// 4s is a compromise: at 5fps that's one full frame in twenty, so the
+// bandwidth win survives, and a corrupted region self-heals fast enough
+// that an operator is unlikely to act on stale pixels.
+const KEYFRAME_INTERVAL_MS = 4_000;
+
 export class ScreenSession {
   private readonly dc: any;
   private readonly args: ScreenSessionArgs;
@@ -134,6 +159,10 @@ export class ScreenSession {
   private lastReportedCode: string | null = null;
   // True while we're in the slow retry cadence after a terminal report.
   private terminalBackoff = false;
+  // When the last FULL frame went out. Drives the keyframe cadence that keeps
+  // dirty-rect streaming self-healing over an unreliable channel. Starts at 0
+  // so the very first capture is a keyframe.
+  private lastKeyframeAtMs = 0;
 
   constructor(dc: any, args: ScreenSessionArgs) {
     this.dc = dc;
@@ -278,7 +307,8 @@ export class ScreenSession {
     height: number,
     data: string,
     cursorX: number,
-    cursorY: number
+    cursorY: number,
+    region: { full: boolean; x: number; y: number; rw: number; rh: number }
   ): void {
     const chunks: string[] = [];
     for (let i = 0; i < data.length; i += FRAME_CHUNK_MAX) {
@@ -291,7 +321,8 @@ export class ScreenSession {
       height,
       chunks: chunks.length,
       cursorX,
-      cursorY
+      cursorY,
+      ...region
     });
     for (let idx = 0; idx < chunks.length; idx++) {
       this.send({ op: "frameChunk", seq, idx, data: chunks[idx] });
@@ -322,11 +353,17 @@ export class ScreenSession {
     const { ctx, sessionId, sendScreenAudit } = this.args;
 
     try {
+      // Ask for a keyframe when the cadence is due. The capture side also
+      // forces one after a duplication-chain re-init, where its dirty rects
+      // have nothing to diff against.
+      const now = Date.now();
+      const wantKeyframe = now - this.lastKeyframeAtMs >= KEYFRAME_INTERVAL_MS;
+
       const result = await (ctx.priv as any).call({
         v: 1,
-        id: `screen.capture.${Date.now()}`,
+        id: `screen.capture.${now}`,
         method: "screen.capture",
-        params: { quality: this.quality }
+        params: { quality: this.quality, forceFull: wantKeyframe }
       });
 
       if (!result?.ok) {
@@ -355,8 +392,17 @@ export class ScreenSession {
       // PrivSvc couldn't read it (rare; lock screen, RDP detach).
       const cursorX: number = Number(result.result?.cursorX ?? -1);
       const cursorY: number = Number(result.result?.cursorY ?? -1);
+      // Region metadata. macOS/Linux helpers only ever produce whole-screen
+      // grabs and don't send these, so absent `full` means full — never
+      // treat a legacy response as a partial update sitting at (0,0).
+      const full: boolean = result.result?.full !== false;
+      const rx: number = Number(result.result?.x ?? 0);
+      const ry: number = Number(result.result?.y ?? 0);
+      const rw: number = Number(result.result?.rw ?? width);
+      const rh: number = Number(result.result?.rh ?? height);
 
       if (!data) return;
+      if (full) this.lastKeyframeAtMs = Date.now();
 
       // Send screenInfo on the first frame or when screen resolution changes.
       if (this.seq === 0 || width !== this.lastWidth || height !== this.lastHeight) {
@@ -383,10 +429,11 @@ export class ScreenSession {
       // frameStart (chunked) so the browser can overlay the cursor in
       // sync with the underlying frame.
       const frameSeq = this.seq++;
+      const region = { full, x: rx, y: ry, rw, rh };
       if (data.length <= FRAME_CHUNK_MAX) {
-        this.send({ op: "frame", seq: frameSeq, width, height, data, cursorX, cursorY });
+        this.send({ op: "frame", seq: frameSeq, width, height, data, cursorX, cursorY, ...region });
       } else {
-        this.sendFrameChunked(frameSeq, width, height, data, cursorX, cursorY);
+        this.sendFrameChunked(frameSeq, width, height, data, cursorX, cursorY, region);
       }
     } catch (err: any) {
       // IPC itself threw (PrivSvc reconnecting, pipe closed mid-call). Same

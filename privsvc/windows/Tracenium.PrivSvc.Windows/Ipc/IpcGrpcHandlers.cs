@@ -860,10 +860,24 @@ public static class IpcGrpcHandlers
                 int quality = 80;
                 if (!string.IsNullOrWhiteSpace(qualStr)) int.TryParse(qualStr, out quality);
                 quality = Math.Max(1, Math.Min(100, quality));
+                // Dirty rects: the agent asks for a complete frame on its
+                // keyframe cadence (and the capture side forces one after a
+                // chain re-init). Anything else lets DXGI's change metadata
+                // decide how much actually gets encoded.
+                // Case-insensitive on purpose: GetString funnels a JSON
+                // boolean through JsonElement.ToString(), which yields "True"
+                // with a capital T — an exact "true" compare here silently
+                // never matches, keyframes are never requested, and every
+                // dropped partial update becomes a permanent artifact on the
+                // operator's canvas. Verified against System.Text.Json.
+                var fullStr = GetString(p, "forceFull");
+                var forceFull =
+                    string.Equals(fullStr, "true", StringComparison.OrdinalIgnoreCase) ||
+                    fullStr == "1";
                 // M3.S1+ — DXGI Desktop Duplication (replaces GDI BitBlt
                 // that failed on every Session 0 service-side capture).
                 // See ScreenCaptureDxgi.cs for the full rationale.
-                return ScreenCaptureDxgi.Capture(req.Id, quality);
+                return ScreenCaptureDxgi.Capture(req.Id, quality, forceFull);
             }
             catch (Exception ex)
             {

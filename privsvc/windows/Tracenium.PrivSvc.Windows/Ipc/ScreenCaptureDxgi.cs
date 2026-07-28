@@ -177,24 +177,34 @@ internal static class ScreenCaptureDxgi
         public uint DepthPitch;
     }
 
-    // The native layout is:
-    //   LARGE_INTEGER LastPresentTime;                       // 8
-    //   LARGE_INTEGER LastMouseUpdateTime;                   // 8
-    //   UINT          AccumulatedFrames;                     // 4
-    //   BOOL          RectsCoalesced;                        // 4
-    //   BOOL          ProtectedContentMaskedOut;             // 4
-    //   DXGI_OUTDUPL_POINTER_POSITION PointerPosition;       // 12 (POINT + BOOL)
-    //   UINT          TotalMetadataBufferSize;               // 4
-    //   UINT          PointerShapeBufferSize;                // 4
-    //                                                      = 48 bytes
-    // Wrong size = DXGI scribbles into adjacent stack memory and we crash
-    // unpredictably. We never READ from this struct — we only need it as
-    // an `out` parameter to satisfy the AcquireNextFrame ABI — so a single
-    // 48-byte buffer is enough.
-    [StructLayout(LayoutKind.Sequential, Size = 48)]
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DXGI_OUTDUPL_POINTER_POSITION
+    {
+        public POINT Position;   // 8
+        public int Visible;      // 4 (BOOL)
+    }
+
+    // This used to be an opaque `Size = 48` blob: we only needed it as an
+    // `out` parameter to satisfy the AcquireNextFrame ABI and never read it.
+    // Dirty-rect capture changes that — `TotalMetadataBufferSize` is how we
+    // learn whether DXGI has change metadata for this frame, and how big a
+    // buffer GetFrameDirtyRects needs.
+    //
+    // The layout must match the native one EXACTLY; a wrong size means DXGI
+    // scribbles into adjacent stack memory and we crash unpredictably. With
+    // natural x64 alignment the fields below land at 0, 8, 16, 20, 24, 28,
+    // 40, 44 — 48 bytes total, identical to the blob it replaces.
+    [StructLayout(LayoutKind.Sequential)]
     private struct DXGI_OUTDUPL_FRAME_INFO
     {
-        // No fields. `Size = 48` reserves the buffer the ABI requires.
+        public long LastPresentTime;            // LARGE_INTEGER
+        public long LastMouseUpdateTime;        // LARGE_INTEGER
+        public uint AccumulatedFrames;
+        public int RectsCoalesced;              // BOOL
+        public int ProtectedContentMaskedOut;   // BOOL
+        public DXGI_OUTDUPL_POINTER_POSITION PointerPosition;
+        public uint TotalMetadataBufferSize;
+        public uint PointerShapeBufferSize;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -251,6 +261,12 @@ internal static class ScreenCaptureDxgi
     // by VTABLE offsets directly. The interface lifetimes mirror the
     // duplication chain itself: tearing down requires releasing in reverse.
 
+    // Above this share of the screen, cropping stops paying for itself: the
+    // JPEG of the bounding box costs about what the whole screen costs and we
+    // would add a blit for nothing. Tuned conservatively — the point of dirty
+    // rects is the typing/cursor case, which is a tiny fraction of a screen.
+    private const int DIRTY_MAX_AREA_PERCENT = 55;
+
     private static readonly object _lock = new();
     private static IntPtr _d3dDevice;
     private static IntPtr _d3dContext;
@@ -258,6 +274,11 @@ internal static class ScreenCaptureDxgi
     private static uint _width;
     private static uint _height;
     private static bool _initialized;
+    // Set whenever the duplication chain is (re)created. The first
+    // AcquireNextFrame after DuplicateOutput has nothing to diff against, so
+    // its dirty rects can't be trusted — and the browser has no prior pixels
+    // for this chain either. Forces one full frame, then clears.
+    private static bool _needKeyframe = true;
 
     // ── Lazy JPEG encoder reused from ScreenCapture.cs path ────────────────────
 
@@ -279,7 +300,15 @@ internal static class ScreenCaptureDxgi
     /// a base64-encoded JPEG. Matches the signature of ScreenCapture.Capture
     /// so the IPC handler can be swapped without other code changes.
     /// </summary>
-    public static PrivSvcResponse Capture(string reqId, int quality = 80)
+    /// <param name="forceFull">
+    /// Ask for a complete frame even when DXGI reports a small dirty region.
+    /// The agent sets this on its keyframe cadence: the screen DataChannel is
+    /// unreliable (ordered:false, maxRetransmits:0), so a dropped partial
+    /// update would otherwise leave a stale rectangle on the operator's canvas
+    /// forever. See screen-session.ts.
+    /// </param>
+    public static PrivSvcResponse Capture(string reqId, int quality = 80,
+        bool forceFull = false)
     {
         quality = Math.Max(1, Math.Min(100, quality));
 
@@ -316,8 +345,9 @@ internal static class ScreenCaptureDxgi
                     }
                 }
 
-                hr = TryCaptureFrame(reqId, quality, out var response);
-                if (hr == S_OK && response != null) return response;
+                // A freshly (re)initialised chain always yields a keyframe.
+                hr = TryCaptureFrame(reqId, quality, forceFull || _needKeyframe, out var response);
+                if (hr == S_OK && response != null) { _needKeyframe = false; return response; }
 
                 if (hr == DXGI_ERROR_ACCESS_LOST && attempt == 0)
                 {
@@ -431,7 +461,7 @@ internal static class ScreenCaptureDxgi
         finally { Release(dxgiDevice); }
     }
 
-    private static int TryCaptureFrame(string reqId, int quality,
+    private static int TryCaptureFrame(string reqId, int quality, bool forceFull,
         out PrivSvcResponse? response)
     {
         response = null;
@@ -485,12 +515,51 @@ internal static class ScreenCaptureDxgi
                     using var bmp = new Bitmap(
                         (int)w, (int)h, (int)mapped.RowPitch,
                         PixelFormat.Format32bppArgb, mapped.pData);
-                    using var ms = new System.IO.MemoryStream();
 
+                    // ── Dirty-rect decision ───────────────────────────────
+                    // Encode only what changed when that's a real saving.
+                    // Full frame when: the caller asked for one (the agent's
+                    // periodic keyframe — the unreliable DataChannel means a
+                    // dropped delta would leave a permanent artifact), we
+                    // can't trust the metadata, or the changed region is big
+                    // enough that cropping buys nothing.
+                    var region = new Rectangle(0, 0, (int)w, (int)h);
+                    var isFull = true;
+                    if (!forceFull &&
+                        TryGetDirtyBounds(_outputDuplication, frameInfo, w, h, out var dirty))
+                    {
+                        var dw = dirty.Right - dirty.Left;
+                        var dh = dirty.Bottom - dirty.Top;
+                        long dirtyArea = (long)dw * dh;
+                        long screenArea = (long)w * h;
+                        // Below this share of the screen a crop is worth it.
+                        // Above it, the JPEG of the box costs about what the
+                        // whole screen costs and we'd pay an extra blit for
+                        // nothing.
+                        if (dirtyArea > 0 && dirtyArea * 100 < screenArea * DIRTY_MAX_AREA_PERCENT)
+                        {
+                            region = new Rectangle(dirty.Left, dirty.Top, dw, dh);
+                            isFull = false;
+                        }
+                    }
+
+                    using var ms = new System.IO.MemoryStream();
                     var encParams = new EncoderParameters(1);
                     encParams.Param[0] = new EncoderParameter(
                         Encoder.Quality, (long)quality);
-                    bmp.Save(ms, JpegCodec, encParams);
+
+                    if (isFull)
+                    {
+                        bmp.Save(ms, JpegCodec, encParams);
+                    }
+                    else
+                    {
+                        // Clone lifts the sub-rectangle out of the mapped
+                        // staging texture into managed memory, so the JPEG
+                        // encoder only ever sees the changed pixels.
+                        using var crop = bmp.Clone(region, PixelFormat.Format32bppArgb);
+                        crop.Save(ms, JpegCodec, encParams);
+                    }
 
                     int cursorX = -1, cursorY = -1;
                     if (GetCursorPos(out POINT cp))
@@ -504,8 +573,16 @@ internal static class ScreenCaptureDxgi
                     {
                         ok      = true,
                         data    = base64,
+                        // width/height stay the FULL desktop size — the
+                        // browser sizes its canvas from these, and an input
+                        // click maps through them. The region is separate.
                         width   = (int)w,
                         height  = (int)h,
+                        full    = isFull,
+                        x       = region.X,
+                        y       = region.Y,
+                        rw      = region.Width,
+                        rh      = region.Height,
                         cursorX,
                         cursorY,
                     });
@@ -536,6 +613,7 @@ internal static class ScreenCaptureDxgi
         if (_d3dContext        != IntPtr.Zero) { Release(_d3dContext);        _d3dContext        = IntPtr.Zero; }
         if (_d3dDevice         != IntPtr.Zero) { Release(_d3dDevice);         _d3dDevice         = IntPtr.Zero; }
         _initialized = false;
+        _needKeyframe = true;
     }
 
     // ── COM vtable navigation ──────────────────────────────────────────────────
@@ -612,12 +690,86 @@ internal static class ScreenCaptureDxgi
         return fn(pDuplication, timeoutMs, out frameInfo, out ppDesktopResource);
     }
 
+    private static int GetFrameDirtyRects(IntPtr pDuplication, uint bufferSize,
+        IntPtr pDirtyRectsBuffer, out uint requiredSize)
+    {
+        // IDXGIOutputDuplication::GetFrameDirtyRects — method index 9,
+        // immediately after AcquireNextFrame (8) and before
+        // GetFrameMoveRects (10). Valid only between Acquire and Release.
+        var slot = GetVtableSlot(pDuplication, 9);
+        var fn = Marshal.GetDelegateForFunctionPointer<GetFrameDirtyRectsFn>(slot);
+        return fn(pDuplication, bufferSize, pDirtyRectsBuffer, out requiredSize);
+    }
+
     private static int ReleaseFrame(IntPtr pDuplication)
     {
         // IDXGIOutputDuplication::ReleaseFrame — method index 14.
         var slot = GetVtableSlot(pDuplication, 14);
         var fn = Marshal.GetDelegateForFunctionPointer<ReleaseFrameFn>(slot);
         return fn(pDuplication);
+    }
+
+    /// <summary>
+    /// Union of the regions DXGI says changed since our previous
+    /// AcquireNextFrame, clamped to the desktop. Returns false when we can't
+    /// trust the metadata — no rects reported, a buffer that doesn't divide
+    /// into whole RECTs, or a call failure — in which case the caller must
+    /// fall back to a full frame rather than guess.
+    ///
+    /// A single bounding box rather than the individual rects: one JPEG
+    /// encode and one DataChannel message instead of N. The pathological
+    /// case (cursor in one corner, clock in the other) produces a big box,
+    /// but the caller measures the box against the screen and sends a full
+    /// frame when it isn't worth it — so the worst case is exactly today's
+    /// behaviour, never worse.
+    /// </summary>
+    private static bool TryGetDirtyBounds(IntPtr duplication,
+        in DXGI_OUTDUPL_FRAME_INFO info, uint screenW, uint screenH,
+        out RECT bounds)
+    {
+        bounds = default;
+        if (info.TotalMetadataBufferSize == 0) return false;
+
+        var buffer = Marshal.AllocHGlobal((int)info.TotalMetadataBufferSize);
+        try
+        {
+            var hr = GetFrameDirtyRects(duplication, info.TotalMetadataBufferSize,
+                buffer, out var required);
+            if (hr != S_OK || required == 0) return false;
+
+            var rectSize = Marshal.SizeOf<RECT>();
+            if (required % rectSize != 0) return false;
+            var count = (int)(required / rectSize);
+            if (count <= 0) return false;
+
+            int left = int.MaxValue, top = int.MaxValue;
+            int right = int.MinValue, bottom = int.MinValue;
+            for (int i = 0; i < count; i++)
+            {
+                var r = Marshal.PtrToStructure<RECT>(buffer + i * rectSize);
+                if (r.Right <= r.Left || r.Bottom <= r.Top) continue;
+                if (r.Left < left) left = r.Left;
+                if (r.Top < top) top = r.Top;
+                if (r.Right > right) right = r.Right;
+                if (r.Bottom > bottom) bottom = r.Bottom;
+            }
+            if (left == int.MaxValue) return false; // every rect was empty
+
+            // Clamp — a rect can legitimately extend to the desktop edge, and
+            // a malformed one must never produce an out-of-bounds crop.
+            left = Math.Max(0, left);
+            top = Math.Max(0, top);
+            right = Math.Min((int)screenW, right);
+            bottom = Math.Min((int)screenH, bottom);
+            if (right <= left || bottom <= top) return false;
+
+            bounds = new RECT { Left = left, Top = top, Right = right, Bottom = bottom };
+            return true;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
     }
 
     private static int CreateTexture2D(IntPtr pDevice, ref D3D11_TEXTURE2D_DESC desc,
@@ -677,6 +829,10 @@ internal static class ScreenCaptureDxgi
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate int AcquireNextFrameFn(IntPtr pThis, uint timeoutMs,
         out DXGI_OUTDUPL_FRAME_INFO frameInfo, out IntPtr ppDesktopResource);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    private delegate int GetFrameDirtyRectsFn(IntPtr pThis, uint bufferSize,
+        IntPtr pDirtyRectsBuffer, out uint pRequired);
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate int ReleaseFrameFn(IntPtr pThis);
