@@ -19,7 +19,7 @@
 //     { op: "frameStart", seq, width, height, chunks, cursorX, cursorY } // large
 //     { op: "frameChunk", seq, idx, data }                       // one chunk
 //     { op: "frameDone",  seq }                                  // all chunks sent
-//     { op: "error", code, message }
+//     { op: "error", code, message, terminal }
 //
 //   Browser → Agent:
 //     { op: "setQuality",  fps, quality }            // 1-100 JPEG quality
@@ -34,6 +34,17 @@
 //
 // cursorX/Y are -1 when PrivSvc couldn't read the position (rare:
 // lock screen, RDP detach). The browser hides the overlay in that case.
+//
+// Error semantics (`op: "error"`):
+//   `code` is PrivSvc's OWN stable code, forwarded verbatim — the browser
+//   branches on it to explain the situation to the operator (no interactive
+//   desktop, Wayland session, macOS TCC denied, …). This used to be collapsed
+//   into a single hardcoded "CAPTURE_FAILED", which made every one of those
+//   branches in ScreenShareViewer.jsx unreachable AND turned the routine
+//   idle-desktop timeout into a fatal "Connection error".
+//   `terminal` tells the browser whether the device can recover on its own:
+//   false = transient blip, keep showing the stream; true = nothing will
+//   arrive until something changes on the endpoint.
 //
 // The agent also fires RemoteScreenAudit gRPC events at "started" and
 // "stopped"/"error" via the sendScreenAudit callback so the backend
@@ -68,6 +79,43 @@ const MAX_QUALITY = 90;
 // overhead. 48 KB base64 ≈ 36 KB binary, well inside the limit.
 const FRAME_CHUNK_MAX = 48_000;
 
+// DXGI returns this whenever AcquireNextFrame times out with nothing new to
+// hand over — i.e. the desktop simply didn't change. On an idle machine that
+// fires every 500 ms. It is NOT a failure: the browser still has the last
+// frame painted on its canvas, so we stay quiet and let the loop poll again.
+const NO_FRAME_CODE = "screen_capture_no_frame";
+
+// Codes meaning "this endpoint will not produce a frame until something
+// changes on it" (someone logs in, an MDM profile lands, the session moves
+// off Wayland, the helper gets installed). We surface these to the operator
+// on the FIRST occurrence — waiting for the transient tolerance below would
+// just leave them staring at a spinner. Everything not listed here is treated
+// as a transient blip. Vocabulary is shared by all three PrivSvc
+// implementations: ScreenCaptureDxgi.cs (Windows), privsvc/macos and
+// privsvc/linux src/screen-capture.ts + their native helpers.
+const TERMINAL_CAPTURE_CODES = new Set([
+  "no_interactive_desktop",         // all three OSes — nobody logged in
+  "wayland_unsupported",            // Linux — X11-only helper
+  "no_screen_recording_permission", // macOS — TCC not granted via PPPC
+  "screen_capture_helper_missing",  // macOS/Linux — helper not deployed
+  "screen_capture_init_failed",     // Windows — DXGI chain wouldn't come up
+  "screen_capture_no_display",      // no display attached at all
+  "x11_connect_failed"              // Linux — helper can't reach the X server
+]);
+
+// Consecutive non-terminal failures absorbed before we bother the browser. A
+// UAC prompt, a fast-user-switch, a secure-desktop transition or a GPU driver
+// reset each produce one or two bad captures and then recover by themselves;
+// reporting those as errors is what made screen share look broken on
+// perfectly healthy machines.
+const TRANSIENT_ERROR_TOLERANCE = 5;
+
+// Once a terminal condition is reported we keep polling — the operator may
+// well fix it live (log into the console, approve the PPPC profile) and we
+// want the stream to resume on its own. But we back off hard so a headless
+// server doesn't burn a DXGI init attempt every 200 ms for hours.
+const TERMINAL_RETRY_INTERVAL_MS = 5_000;
+
 export class ScreenSession {
   private readonly dc: any;
   private readonly args: ScreenSessionArgs;
@@ -79,6 +127,13 @@ export class ScreenSession {
   private lastWidth = 0;
   private lastHeight = 0;
   private auditStartedSent = false;
+  // Failure bookkeeping — see reportCaptureFailure.
+  private consecutiveFailures = 0;
+  // Last code pushed to the browser, so a persistent condition reports once
+  // instead of once per capture tick. Cleared on the next good frame.
+  private lastReportedCode: string | null = null;
+  // True while we're in the slow retry cadence after a terminal report.
+  private terminalBackoff = false;
 
   constructor(dc: any, args: ScreenSessionArgs) {
     this.dc = dc;
@@ -130,10 +185,23 @@ export class ScreenSession {
       case "setQuality": {
         const fps = Number(msg.fps);
         const quality = Number(msg.quality);
+        const previousFps = this.fps;
         if (Number.isFinite(fps) && fps > 0)
           this.fps = Math.max(MIN_FPS, Math.min(MAX_FPS, Math.round(fps)));
         if (Number.isFinite(quality) && quality > 0)
           this.quality = Math.max(MIN_QUALITY, Math.min(MAX_QUALITY, Math.round(quality)));
+        // Echo the APPLIED frame rate back when it changed. The browser's
+        // slider can ask for anything; MIN_FPS/MAX_FPS clamp it here, and
+        // without this echo the UI would keep displaying a value the agent
+        // never honoured.
+        if (this.fps !== previousFps && this.seq > 0) {
+          this.send({
+            op: "screenInfo",
+            width: this.lastWidth,
+            height: this.lastHeight,
+            fps: this.fps
+          });
+        }
         // Reschedule with new interval.
         if (this.captureTimer) {
           clearTimeout(this.captureTimer);
@@ -235,7 +303,12 @@ export class ScreenSession {
 
   private scheduleNext(): void {
     if (this.disposed) return;
-    const intervalMs = Math.round(1000 / this.fps);
+    // In terminal backoff we poll slowly instead of at the requested frame
+    // rate — the next successful capture clears the flag and we snap back to
+    // the operator's fps.
+    const intervalMs = this.terminalBackoff
+      ? TERMINAL_RETRY_INTERVAL_MS
+      : Math.round(1000 / this.fps);
     this.captureTimer = setTimeout(async () => {
       if (!this.disposed) await this.captureFrame();
       if (!this.disposed) this.scheduleNext();
@@ -257,13 +330,23 @@ export class ScreenSession {
       });
 
       if (!result?.ok) {
-        const errMsg = String(result?.error?.message ?? result?.error ?? "capture failed");
-        ctx.logger?.warn?.("[rcp.screen] capture IPC failed", { sessionId, error: errMsg });
-        // Surface to the browser but keep the loop running — a single
-        // GDI transient (e.g. lock-screen flicker) shouldn't tear down.
-        this.send({ op: "error", code: "CAPTURE_FAILED", message: errMsg });
+        // Forward PrivSvc's OWN code — see the error semantics note at the
+        // top of this file for why collapsing it was a bug.
+        const errCode =
+          String(result?.error?.code ?? "").trim() || "screen_capture_failed";
+        const errMsg = String(
+          result?.error?.message ?? result?.error ?? "capture failed"
+        );
+        this.reportCaptureFailure(errCode, errMsg);
         return;
       }
+
+      // Good capture — clear the failure state so a session that recovers
+      // (user logs back in, UAC prompt dismissed) reports cleanly if it
+      // fails again later, and drops out of the slow retry cadence.
+      this.consecutiveFailures = 0;
+      this.lastReportedCode = null;
+      this.terminalBackoff = false;
 
       const data: string = String(result.result?.data ?? "");
       const width: number = Number(result.result?.width ?? 0);
@@ -306,12 +389,64 @@ export class ScreenSession {
         this.sendFrameChunked(frameSeq, width, height, data, cursorX, cursorY);
       }
     } catch (err: any) {
-      ctx.logger?.warn?.("[rcp.screen] capture error", {
-        sessionId,
-        err: err?.message
-      });
-      // Non-fatal — loop continues.
+      // IPC itself threw (PrivSvc reconnecting, pipe closed mid-call). Same
+      // treatment as a failed capture: transient until proven otherwise.
+      this.reportCaptureFailure(
+        "screen_capture_ipc_error",
+        err?.message || String(err)
+      );
     }
+  }
+
+  /**
+   * Decide what a failed capture means and whether the browser needs to hear
+   * about it.
+   *
+   * Three outcomes:
+   *   - `screen_capture_no_frame`: not a failure at all. The desktop didn't
+   *     change; the browser's canvas already holds the right pixels. Silent.
+   *   - terminal code: report immediately (once), then keep retrying slowly
+   *     in case the operator fixes the condition live.
+   *   - anything else: absorb up to TRANSIENT_ERROR_TOLERANCE consecutive
+   *     occurrences, then report as non-terminal so the browser can warn
+   *     without tearing the viewer down.
+   */
+  private reportCaptureFailure(code: string, message: string): void {
+    const { ctx, sessionId } = this.args;
+
+    if (code === NO_FRAME_CODE) {
+      // Deliberately not counted and not reported — an idle desktop is the
+      // single most common state a monitored machine is in.
+      ctx.logger?.debug?.("[rcp.screen] no new frame (idle desktop)", {
+        sessionId
+      });
+      return;
+    }
+
+    const terminal = TERMINAL_CAPTURE_CODES.has(code);
+    this.consecutiveFailures += 1;
+
+    ctx.logger?.warn?.("[rcp.screen] capture failed", {
+      sessionId,
+      code,
+      terminal,
+      consecutive: this.consecutiveFailures,
+      error: message
+    });
+
+    if (terminal) {
+      // Slow the loop down; a headless server would otherwise re-init the
+      // whole DXGI chain several times a second for the life of the session.
+      this.terminalBackoff = true;
+    } else if (this.consecutiveFailures < TRANSIENT_ERROR_TOLERANCE) {
+      return;
+    }
+
+    // Report once per distinct condition. Without this a persistent failure
+    // would emit an `error` message on every capture tick.
+    if (this.lastReportedCode === code) return;
+    this.lastReportedCode = code;
+    this.send({ op: "error", code, message, terminal });
   }
 
   // ── Teardown ───────────────────────────────────────────────────────────────
