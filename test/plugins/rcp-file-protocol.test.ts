@@ -288,12 +288,17 @@ describe("RCP file protocol — mensajes malformados", () => {
     expect(dc.sent.length).toBe(0);
   });
 
-  it("download sin transferId es no-op (guard temprano)", async () => {
+  // Antes era un no-op silencioso. Desde que transferId se valida en la
+  // frontera del protocolo (es parte del nombre del fichero de staging),
+  // un id ausente o malformado se rechaza explícitamente: al cliente le
+  // sirve más saber que su mensaje era inválido que ver silencio.
+  it("download sin transferId se rechaza y no toca el disco", async () => {
     const { dc, audits } = makeSession();
     dc.emit({ op: "download", path: "/whatever" });
     await settle();
     expect(audits.length).toBe(0);
-    expect(dc.sent.length).toBe(0);
+    expect(dc.sentOfOp("chunk")).toHaveLength(0);
+    expect(dc.sentOfOp("error")[0]?.code).toBe("INVALID_TRANSFER_ID");
   });
 
   it("mensaje sin 'op' se trata como op vacía y cae al default (no-op)", async () => {
@@ -446,5 +451,143 @@ describe("RCP file protocol — path confinement", () => {
     expect(dc.sentOfOp("listing")[0].entries.map((e: any) => e.name)).toContain(
       "reachable.txt"
     );
+  });
+});
+
+// ── Upload staging safety ──────────────────────────────────────────────
+//
+// The destination jail (path-jail.ts) guards `path`. The staging file is a
+// SECOND filesystem write with a SECOND attacker-influenced input — the
+// transfer id — and it is not covered by that jail. These cover it.
+describe("RCP file protocol — upload staging", () => {
+  function makeConfinedSession(roots: string[]) {
+    const dc = new FakeDataChannel();
+    const audits: FileTransferAuditPayload[] = [];
+    const ctx: any = {
+      logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+      policyRuntime: { getRcpFileJailConfig: () => ({ roots }) }
+    };
+    const session = new FileSession(dc as any, {
+      sessionId: "sess-stage-abcdef",
+      ctx,
+      sendFileTransferAudit: (a) => audits.push(a),
+      onTeardown: () => {}
+    });
+    return { dc, audits, session };
+  }
+
+  it("refuses a traversal in transferId instead of writing outside staging", async () => {
+    // The escape: `path` is perfectly legal so the destination jail passes,
+    // and the traversal rides on the id, which used to be interpolated
+    // straight into the staging filename.
+    const victim = path.join(tmpDir, "victim.txt");
+    fs.writeFileSync(victim, "ORIGINAL");
+
+    // The id had "rcp-upload-" glued to its front, so a bare leading "../"
+    // stayed a literal segment. The shape that actually escaped is
+    // "<anything>/../<path>": the first segment absorbs the prefix and the
+    // ".." then cancels it, leaving a path relative to the temp root.
+    // Verified against the pre-fix code: the victim's contents went to "".
+    const { dc } = makeConfinedSession([tmpDir]);
+    dc.emit({
+      op: "upload",
+      transferId: `x/../${path.relative(os.tmpdir(), victim)}`,
+      path: path.join(tmpDir, "innocent.txt"),
+      name: "innocent.txt",
+      size: 4
+    });
+    await settle();
+
+    expect(dc.sentOfOp("error")[0]?.code).toBe("INVALID_TRANSFER_ID");
+    expect(dc.sentOfOp("ready")).toHaveLength(0);
+    // The whole point: the pre-existing file is untouched.
+    expect(fs.readFileSync(victim, "utf8")).toBe("ORIGINAL");
+  });
+
+  it("rejects ids with separators or NUL regardless of op", async () => {
+    const { dc } = makeConfinedSession([tmpDir]);
+    for (const bad of ["a/b", "a\\b", "..", "a\0b", "", "x".repeat(65)]) {
+      dc.sent.length = 0;
+      dc.emit({ op: "chunk", transferId: bad, seq: 0, data: "AAAA" });
+      await settle();
+      expect(dc.sentOfOp("error")[0]?.code).toBe("INVALID_TRANSFER_ID");
+    }
+  });
+
+  it("accepts the UUID form the UI actually mints", async () => {
+    const { dc } = makeConfinedSession([tmpDir]);
+    dc.emit({
+      op: "upload",
+      transferId: "6f1c2e2a-7b3d-4c1e-9a0f-1b2c3d4e5f60",
+      path: path.join(tmpDir, "ok.bin"),
+      name: "ok.bin",
+      size: 3
+    });
+    await waitFor(() => dc.sentOfOp("ready").length > 0);
+    expect(dc.sentOfOp("ready")[0].transferId).toBe(
+      "6f1c2e2a-7b3d-4c1e-9a0f-1b2c3d4e5f60"
+    );
+    expect(dc.sentOfOp("error")).toHaveLength(0);
+  });
+
+  it("stages into a private per-session directory, not the shared temp root", async () => {
+    const { dc } = makeConfinedSession([tmpDir]);
+    dc.emit({
+      op: "upload",
+      transferId: "stage-check-1",
+      path: path.join(tmpDir, "staged.bin"),
+      name: "staged.bin",
+      size: 3
+    });
+    await waitFor(() => dc.sentOfOp("ready").length > 0);
+
+    const staging = fs
+      .readdirSync(os.tmpdir())
+      .filter((f) => f.startsWith("tracenium-rcp-"));
+    expect(staging.length).toBeGreaterThan(0);
+    // The old scheme dropped `rcp-upload-<id>` directly in the temp root.
+    expect(
+      fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("rcp-upload-"))
+    ).toHaveLength(0);
+
+    if (process.platform !== "win32") {
+      const mode = fs.statSync(path.join(os.tmpdir(), staging[0])).mode & 0o777;
+      expect(mode).toBe(0o700);
+    }
+  });
+
+  it("removes the staging directory when the channel closes", async () => {
+    const { dc } = makeConfinedSession([tmpDir]);
+    dc.emit({
+      op: "upload",
+      transferId: "stage-check-2",
+      path: path.join(tmpDir, "gone.bin"),
+      name: "gone.bin",
+      size: 3
+    });
+    await waitFor(() => dc.sentOfOp("ready").length > 0);
+    const before = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("tracenium-rcp-"));
+    expect(before.length).toBeGreaterThan(0);
+
+    dc.triggerClosed();
+    await settle();
+    const after = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith("tracenium-rcp-"));
+    expect(after.length).toBeLessThan(before.length);
+  });
+
+  it("still completes a normal upload end to end", async () => {
+    const dest = path.join(tmpDir, "sub", "final.txt");
+    const { dc, audits } = makeConfinedSession([tmpDir]);
+    dc.emit({ op: "upload", transferId: "happy-1", path: dest, name: "final.txt", size: 5 });
+    await waitFor(() => dc.sentOfOp("ready").length > 0);
+    dc.emit({
+      op: "chunk",
+      transferId: "happy-1",
+      seq: 0,
+      data: Buffer.from("hello").toString("base64")
+    });
+    dc.emit({ op: "uploadDone", transferId: "happy-1" });
+    await waitFor(() => audits.some((a) => a.status === "completed"));
+    expect(fs.readFileSync(dest, "utf8")).toBe("hello");
   });
 });

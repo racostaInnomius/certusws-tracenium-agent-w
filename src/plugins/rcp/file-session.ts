@@ -70,6 +70,19 @@ type FileSessionArgs = {
 // keeps each DataChannel message comfortably under the 64 KB SCTP limit.
 const CHUNK_SIZE = 32 * 1024;
 
+// Flags for creating an upload's staging file.
+//   O_CREAT|O_EXCL — fail if anything already exists at that name, so we can
+//                    never adopt or truncate a file someone else planted.
+//   O_NOFOLLOW     — refuse if the final component is a symlink.
+// O_NOFOLLOW is POSIX-only; Windows leaves it undefined, and there the 0700
+// per-session directory plus O_EXCL already cover the equivalent junction
+// trick. `|| 0` keeps the bitmask valid on that platform.
+const UPLOAD_OPEN_FLAGS =
+  fs.constants.O_WRONLY |
+  fs.constants.O_CREAT |
+  fs.constants.O_EXCL |
+  ((fs.constants as any).O_NOFOLLOW || 0);
+
 type UploadState = {
   path: string;
   tmpPath: string;
@@ -92,6 +105,9 @@ export class FileSession {
 
   // In-progress uploads keyed by transferId.
   private readonly uploads = new Map<string, UploadState>();
+  // Per-session staging directory, created lazily on the first upload and
+  // removed on dispose. See stagingDir().
+  private staging: string | null = null;
   // Transfer IDs of downloads the browser has cancelled.
   private readonly cancelledDownloads = new Set<string>();
 
@@ -157,6 +173,34 @@ export class FileSession {
     }
   }
 
+  /**
+   * Validate a browser-supplied transfer id before it is used for ANYTHING.
+   *
+   * This is not cosmetic. `transferId` reaches the filesystem as part of the
+   * upload staging filename, so an id of "../../../etc/cron.d/pwn" made
+   * path.join walk straight out of the staging directory and had the agent —
+   * running as LocalSystem / root — create, truncate and fill that file with
+   * operator-supplied bytes. The destination jail did not catch it: the jail
+   * checks `path`, and this is a different string entirely.
+   *
+   * The UI mints these with crypto.randomUUID(), so a strict charset costs
+   * nothing and removes the whole class of problem rather than escaping it.
+   */
+  private takeTransferId(msg: any): string | null {
+    const raw = typeof msg?.transferId === "string" ? msg.transferId : "";
+    if (/^[A-Za-z0-9_-]{1,64}$/.test(raw)) return raw;
+    this.args.ctx.logger?.warn?.("[rcp.file] rejected malformed transferId", {
+      sessionId: this.args.sessionId,
+      sample: raw.slice(0, 64)
+    });
+    this.send({
+      op: "error",
+      code: "INVALID_TRANSFER_ID",
+      message: "Transfer id must be alphanumeric (with - or _), 1-64 characters."
+    });
+    return null;
+  }
+
   private handleMessage(msg: any): void {
     const op = String(msg?.op ?? "");
     switch (op) {
@@ -177,44 +221,52 @@ export class FileSession {
         });
         break;
 
-      case "download":
-        this.handleDownload(
-          String(msg.transferId ?? ""),
-          String(msg.path ?? "")
-        ).catch((err: any) => {
+      case "download": {
+        const transferId = this.takeTransferId(msg);
+        if (!transferId) break;
+        this.handleDownload(transferId, String(msg.path ?? "")).catch((err: any) => {
           this.send({
             op: "error",
             code: "DOWNLOAD_FAILED",
             message: err?.message ?? String(err),
-            transferId: msg.transferId
+            transferId
           });
         });
         break;
+      }
 
-      case "upload":
+      case "upload": {
+        const transferId = this.takeTransferId(msg);
+        if (!transferId) break;
         this.handleUploadStart(
-          String(msg.transferId ?? ""),
+          transferId,
           String(msg.path ?? ""),
           String(msg.name ?? ""),
           Number(msg.size ?? 0)
         );
         break;
+      }
 
-      case "chunk":
-        this.handleChunk(
-          String(msg.transferId ?? ""),
-          Number(msg.seq ?? 0),
-          String(msg.data ?? "")
-        );
+      case "chunk": {
+        const transferId = this.takeTransferId(msg);
+        if (!transferId) break;
+        this.handleChunk(transferId, Number(msg.seq ?? 0), String(msg.data ?? ""));
         break;
+      }
 
-      case "uploadDone":
-        this.handleUploadDone(String(msg.transferId ?? "")).catch(() => {});
+      case "uploadDone": {
+        const transferId = this.takeTransferId(msg);
+        if (!transferId) break;
+        this.handleUploadDone(transferId).catch(() => {});
         break;
+      }
 
-      case "cancel":
-        this.handleCancel(String(msg.transferId ?? ""));
+      case "cancel": {
+        const transferId = this.takeTransferId(msg);
+        if (!transferId) break;
+        this.handleCancel(transferId);
         break;
+      }
 
       default:
         this.args.ctx.logger?.debug?.("[rcp.file] unknown op", {
@@ -438,10 +490,17 @@ export class FileSession {
       return;
     }
 
-    const tmpPath = path.join(os.tmpdir(), `rcp-upload-${transferId}`);
+    let tmpPath: string;
     let fd: number;
     try {
-      fd = fs.openSync(tmpPath, "w");
+      tmpPath = path.join(this.stagingDir(), transferId);
+      // O_EXCL: never adopt a file that is already there. O_NOFOLLOW: never
+      // follow a symlink at the final component. Together with the 0700
+      // mkdtemp directory above, this is what closes the classic
+      // world-writable-temp race — previously this was openSync(path, "w"),
+      // which happily followed a planted symlink and truncated whatever it
+      // pointed at, as root.
+      fd = fs.openSync(tmpPath, UPLOAD_OPEN_FLAGS, 0o600);
     } catch (err: any) {
       this.send({
         op: "error",
@@ -596,8 +655,47 @@ export class FileSession {
 
   // ── Cleanup ────────────────────────────────────────────────────────────────
 
+  /**
+   * Private staging directory for this session's uploads.
+   *
+   * `mkdtemp` is the point: it creates a directory with a name nobody can
+   * predict, atomically, failing if it somehow exists — so unlike a fixed
+   * path under the world-writable system temp directory, there is no window
+   * in which an unprivileged local user can pre-create it (or replace it
+   * with a symlink) and steer a root-owned write somewhere else.
+   *
+   * Mode 0700 on POSIX; on Windows the inherited ACL on the temp directory
+   * is what applies, and the unguessable name carries the weight.
+   */
+  private stagingDir(): string {
+    if (this.staging) return this.staging;
+    this.staging = fs.mkdtempSync(path.join(os.tmpdir(), "tracenium-rcp-"), {
+      encoding: "utf8"
+    } as any);
+    try {
+      fs.chmodSync(this.staging, 0o700);
+    } catch {
+      // Windows chmod is a no-op for anything but the read-only bit.
+    }
+    return this.staging;
+  }
+
   private cleanupTmp(tmpPath: string): void {
     try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+  }
+
+  /** Remove the staging directory once no upload can still be using it. */
+  private cleanupStaging(): void {
+    if (!this.staging) return;
+    try {
+      fs.rmSync(this.staging, { recursive: true, force: true });
+    } catch (err: any) {
+      this.args.ctx.logger?.debug?.("[rcp.file] staging cleanup failed", {
+        sessionId: this.args.sessionId,
+        err: err?.message
+      });
+    }
+    this.staging = null;
   }
 
   private cleanupAllUploads(): void {
@@ -606,6 +704,10 @@ export class FileSession {
       this.cleanupTmp(upload.tmpPath);
     }
     this.uploads.clear();
+    // Every fd is closed and every staged file gone — the directory itself
+    // can go now. Leaving these behind would accumulate one per session for
+    // the lifetime of the host.
+    this.cleanupStaging();
   }
 
   dispose(reason: string): void {
