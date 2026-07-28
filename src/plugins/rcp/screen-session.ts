@@ -141,6 +141,13 @@ const TERMINAL_RETRY_INTERVAL_MS = 5_000;
 // that an operator is unlikely to act on stale pixels.
 const KEYFRAME_INTERVAL_MS = 4_000;
 
+// How often to emit the throttled stream-stats line. Per-frame logging would
+// be spam at 5-15fps, but with NOTHING logged there is no way to tell from an
+// endpoint whether dirty rects are actually engaging — "the screen looked
+// smooth" is not evidence, and the DXGI path can only be exercised on real
+// Windows. One line every 10s is cheap and makes a smoke test measurable.
+const STATS_INTERVAL_MS = 10_000;
+
 export class ScreenSession {
   private readonly dc: any;
   private readonly args: ScreenSessionArgs;
@@ -163,6 +170,13 @@ export class ScreenSession {
   // dirty-rect streaming self-healing over an unreliable channel. Starts at 0
   // so the very first capture is a keyframe.
   private lastKeyframeAtMs = 0;
+  // Throttled stream stats — see STATS_INTERVAL_MS. Reset on each emit so
+  // every line describes one window rather than the whole session.
+  private statsWindowStartMs = 0;
+  private statFrames = 0;
+  private statPartials = 0;
+  private statBytes = 0;
+  private statPartialBytes = 0;
 
   constructor(dc: any, args: ScreenSessionArgs) {
     this.dc = dc;
@@ -430,6 +444,7 @@ export class ScreenSession {
       // sync with the underlying frame.
       const frameSeq = this.seq++;
       const region = { full, x: rx, y: ry, rw, rh };
+      this.recordFrameStats(full, data.length);
       if (data.length <= FRAME_CHUNK_MAX) {
         this.send({ op: "frame", seq: frameSeq, width, height, data, cursorX, cursorY, ...region });
       } else {
@@ -458,6 +473,53 @@ export class ScreenSession {
    *     occurrences, then report as non-terminal so the browser can warn
    *     without tearing the viewer down.
    */
+  /**
+   * Accumulate per-frame counters and emit one summary line per window.
+   *
+   * This is the only observable evidence that dirty rects are engaging on a
+   * real endpoint. `partial%` near 0 on an active desktop means the crop
+   * decision never fires (bad dirty-rect metadata, or every change exceeding
+   * DIRTY_MAX_AREA_PERCENT); `avgPartialKb` vs `avgKb` is the actual saving.
+   */
+  private recordFrameStats(full: boolean, payloadLen: number): void {
+    const now = Date.now();
+    if (this.statsWindowStartMs === 0) this.statsWindowStartMs = now;
+
+    this.statFrames += 1;
+    this.statBytes += payloadLen;
+    if (!full) {
+      this.statPartials += 1;
+      this.statPartialBytes += payloadLen;
+    }
+
+    const elapsed = now - this.statsWindowStartMs;
+    if (elapsed < STATS_INTERVAL_MS) return;
+
+    const frames = this.statFrames;
+    const partials = this.statPartials;
+    const fulls = frames - partials;
+    const kb = (n: number) => Math.round(n / 1024);
+    this.args.ctx.logger?.info?.("[rcp.screen] stream stats", {
+      sessionId: this.args.sessionId,
+      windowSec: Math.round(elapsed / 1000),
+      frames,
+      partialPct: frames ? Math.round((partials / frames) * 100) : 0,
+      keyframes: fulls,
+      fps: this.fps,
+      quality: this.quality,
+      avgKb: frames ? kb(this.statBytes / frames) : 0,
+      avgPartialKb: partials ? kb(this.statPartialBytes / partials) : 0,
+      avgFullKb: fulls ? kb((this.statBytes - this.statPartialBytes) / fulls) : 0,
+      totalKb: kb(this.statBytes)
+    });
+
+    this.statsWindowStartMs = now;
+    this.statFrames = 0;
+    this.statPartials = 0;
+    this.statBytes = 0;
+    this.statPartialBytes = 0;
+  }
+
   private reportCaptureFailure(code: string, message: string): void {
     const { ctx, sessionId } = this.args;
 
