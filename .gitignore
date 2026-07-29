@@ -42,3 +42,8 @@ Thumbs.db:encryptable
 
 # ── Test outputs (Vitest coverage) ──────────────────────────────────
 coverage/
+
+# SwiftPM transient build output of the macOS status app. Was tracked by
+# mistake — every `swift build` churns ~1500 .pcm/object files and buries
+# real diffs (the "1771 modified files" incident, 2026-07-28).
+macos/TraceniumAgentStatus/.build/
