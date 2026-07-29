@@ -1,6 +1,6 @@
 {
   "name": "certusws-tracenium-agent",
-  "version": "1.1.24",
+  "version": "1.1.25",
   "description": "Tracenium Agent - Hardware & Software inventory collector",
   "license": "MIT",
   "author": {
@@ -44,6 +44,7 @@
     "pkg:linux": "./scripts/build-linux-binaries.sh",
     "pkg:linux:arm64": "TRACENIUM_AGENT_ARCH=arm64 ./scripts/build-linux-binaries.sh",
     "pkg:macos": "./scripts/build-macos-pkg.sh",
+    "pkg:macos:x64": "TRACENIUM_AGENT_ARCH=x64 ./scripts/build-macos-pkg.sh",
     "pkg:windows:binaries": "./scripts/build-windows-binaries.sh",
     "pkg:windows:agentcore": "pwsh ./scripts/build-agentcore-windows.ps1",
     "pkg:windows:msi": "pwsh ./scripts/build-windows-msi.ps1",

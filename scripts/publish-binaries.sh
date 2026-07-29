@@ -22,7 +22,8 @@
 #
 # Assumes all binaries are already built on disk:
 #
-#   macOS pkg            →  build/pkg-out/Tracenium-Agent-<version>-arm64.pkg
+#   macOS arm64 pkg      →  build/pkg-out/Tracenium-Agent-<version>-arm64.pkg
+#   macOS x64   pkg      →  build/pkg-out/Tracenium-Agent-<version>-x64.pkg
 #   Windows arm64 MSI    →  build/win-msi/arm64/Tracenium-Agent-<version>-arm64.msi
 #   Windows x64   MSI    →  build/win-msi/x64/Tracenium-Agent-<version>-x64.msi
 #   Linux  amd64 .deb    →  build/linux/pkg-out/Tracenium-Agent-<version>-x64.deb
@@ -36,7 +37,8 @@
 #   ./scripts/publish-binaries.sh                    # version from package.json
 #   TRACENIUM_AGENT_VERSION=1.1.2 ./scripts/publish-binaries.sh
 #   DRY_RUN=1 ./scripts/publish-binaries.sh          # plan only, no upload
-#   SKIP_MACOS=1 ./scripts/publish-binaries.sh       # skip macOS upload
+#   SKIP_MACOS=1 ./scripts/publish-binaries.sh       # skip macOS arm64
+#   SKIP_MACOS_X64=1 ./scripts/publish-binaries.sh   # skip macOS x64
 #   SKIP_WIN_ARM64=1 ./scripts/publish-binaries.sh   # skip Windows arm64
 #   SKIP_WIN_X64=1 ./scripts/publish-binaries.sh     # skip Windows x64
 #   SKIP_LINUX_DEB=1 ./scripts/publish-binaries.sh   # skip Linux .deb
@@ -94,6 +96,10 @@ BLOB_AUTH_MODE="${TRACENIUM_AZ_AUTH_MODE:-key}"
 # -----------------------------------------------------------------------------
 
 MACOS_PKG="$AGENT_REPO_DIR/build/pkg-out/Tracenium-Agent-$VERSION-arm64.pkg"
+# macOS Intel (x64). Same builder, TRACENIUM_AGENT_ARCH=x64 — the pkg is
+# cross-built on Apple Silicon and its payload arch is enforced by
+# verify_payload_arch() in build-macos-pkg.sh.
+MACOS_X64_PKG="$AGENT_REPO_DIR/build/pkg-out/Tracenium-Agent-$VERSION-x64.pkg"
 # After May 2026 consolidation, the MSI builders write to:
 #   build/win-msi/<arch>/Tracenium-Agent-<version>-<arch>.msi
 # (previously: $WORKSPACE_DIR/tracenium-agent-installer{,-x64}/Tracenium-Agent.msi).
@@ -110,6 +116,10 @@ WIN_X64_MSI="$AGENT_REPO_DIR/build/win-msi/x64/Tracenium-Agent-$VERSION-x64.msi"
 # is identical to the blob path's filename component.
 LINUX_DEB="$AGENT_REPO_DIR/build/linux/pkg-out/Tracenium-Agent-${VERSION}-x64.deb"
 LINUX_RPM="$AGENT_REPO_DIR/build/linux/pkg-out/Tracenium-Agent-${VERSION}-x64.rpm"
+# Linux arm64 — built natively on an arm64 runner (the builder refuses
+# to cross-compile; better-sqlite3 must match the bundled node ABI).
+LINUX_ARM64_DEB="$AGENT_REPO_DIR/build/linux/pkg-out/Tracenium-Agent-${VERSION}-arm64.deb"
+LINUX_ARM64_RPM="$AGENT_REPO_DIR/build/linux/pkg-out/Tracenium-Agent-${VERSION}-arm64.rpm"
 
 # -----------------------------------------------------------------------------
 # Skip flags (1/true/yes = skip)
@@ -123,15 +133,21 @@ is_truthy() {
 }
 
 SKIP_MAC=0
+SKIP_MAC_X64=0
 SKIP_ARM64=0
 SKIP_X64=0
 SKIP_DEB=0
 SKIP_RPM=0
+SKIP_DEB_ARM64=0
+SKIP_RPM_ARM64=0
 if is_truthy "${SKIP_MACOS:-}";     then SKIP_MAC=1;   fi
+if is_truthy "${SKIP_MACOS_X64:-}"; then SKIP_MAC_X64=1; fi
 if is_truthy "${SKIP_WIN_ARM64:-}"; then SKIP_ARM64=1; fi
 if is_truthy "${SKIP_WIN_X64:-}";   then SKIP_X64=1;   fi
 if is_truthy "${SKIP_LINUX_DEB:-}"; then SKIP_DEB=1;   fi
 if is_truthy "${SKIP_LINUX_RPM:-}"; then SKIP_RPM=1;   fi
+if is_truthy "${SKIP_LINUX_DEB_ARM64:-}"; then SKIP_DEB_ARM64=1; fi
+if is_truthy "${SKIP_LINUX_RPM_ARM64:-}"; then SKIP_RPM_ARM64=1; fi
 
 # -----------------------------------------------------------------------------
 # Pre-flight checks (fail fast, before any upload)
@@ -149,11 +165,14 @@ check_file() {
   fi
 }
 
-check_file "macOS pkg"         "$MACOS_PKG"     "$SKIP_MAC"
+check_file "macOS arm64 pkg"   "$MACOS_PKG"     "$SKIP_MAC"
+check_file "macOS x64 pkg"     "$MACOS_X64_PKG" "$SKIP_MAC_X64"
 check_file "Windows arm64 MSI" "$WIN_ARM64_MSI" "$SKIP_ARM64"
 check_file "Windows x64 MSI"   "$WIN_X64_MSI"   "$SKIP_X64"
 check_file "Linux amd64 deb"   "$LINUX_DEB"     "$SKIP_DEB"
 check_file "Linux amd64 rpm"   "$LINUX_RPM"     "$SKIP_RPM"
+check_file "Linux arm64 deb"   "$LINUX_ARM64_DEB" "$SKIP_DEB_ARM64"
+check_file "Linux arm64 rpm"   "$LINUX_ARM64_RPM" "$SKIP_RPM_ARM64"
 
 if [ "$ERRORS" -gt 0 ]; then
   echo ""
@@ -182,6 +201,11 @@ if [ "$SKIP_MAC" = "0" ]; then
   MAC_SHA="$(sha_of "$MACOS_PKG")"
   MAC_SIZE="$(size_of "$MACOS_PKG")"
   MAC_BLOB="agents/macos/arm64/$VERSION/Tracenium-Agent-$VERSION-arm64.pkg"
+fi
+if [ "$SKIP_MAC_X64" = "0" ]; then
+  MAC_X64_SHA="$(sha_of "$MACOS_X64_PKG")"
+  MAC_X64_SIZE="$(size_of "$MACOS_X64_PKG")"
+  MAC_X64_BLOB="agents/macos/x64/$VERSION/Tracenium-Agent-$VERSION-x64.pkg"
 fi
 if [ "$SKIP_ARM64" = "0" ]; then
   ARM_SHA="$(sha_of "$WIN_ARM64_MSI")"
@@ -212,6 +236,16 @@ if [ "$SKIP_RPM" = "0" ]; then
   RPM_SIZE="$(size_of "$LINUX_RPM")"
   RPM_BLOB="agents/linux/x64/$VERSION/Tracenium-Agent-$VERSION-x64.rpm"
 fi
+if [ "$SKIP_DEB_ARM64" = "0" ]; then
+  DEB_ARM64_SHA="$(sha_of "$LINUX_ARM64_DEB")"
+  DEB_ARM64_SIZE="$(size_of "$LINUX_ARM64_DEB")"
+  DEB_ARM64_BLOB="agents/linux/arm64/$VERSION/Tracenium-Agent-$VERSION-arm64.deb"
+fi
+if [ "$SKIP_RPM_ARM64" = "0" ]; then
+  RPM_ARM64_SHA="$(sha_of "$LINUX_ARM64_RPM")"
+  RPM_ARM64_SIZE="$(size_of "$LINUX_ARM64_RPM")"
+  RPM_ARM64_BLOB="agents/linux/arm64/$VERSION/Tracenium-Agent-$VERSION-arm64.rpm"
+fi
 
 # -----------------------------------------------------------------------------
 # Plan summary
@@ -229,6 +263,12 @@ if [ "$SKIP_MAC" = "0" ]; then
   echo "                  → $MAC_BLOB"
 else
   echo "  [macOS arm64]   SKIPPED"
+fi
+if [ "$SKIP_MAC_X64" = "0" ]; then
+  echo "  [macOS x64]     $MAC_X64_SIZE bytes  sha256=$MAC_X64_SHA"
+  echo "                  → $MAC_X64_BLOB"
+else
+  echo "  [macOS x64]     SKIPPED"
 fi
 if [ "$SKIP_ARM64" = "0" ]; then
   echo "  [Windows arm64] $ARM_SIZE bytes  sha256=$ARM_SHA"
@@ -253,6 +293,18 @@ if [ "$SKIP_RPM" = "0" ]; then
   echo "                  → $RPM_BLOB"
 else
   echo "  [Linux rpm]     SKIPPED"
+fi
+if [ "$SKIP_DEB_ARM64" = "0" ]; then
+  echo "  [Linux arm64 deb] $DEB_ARM64_SIZE bytes  sha256=$DEB_ARM64_SHA"
+  echo "                  → $DEB_ARM64_BLOB"
+else
+  echo "  [Linux arm64 deb] SKIPPED"
+fi
+if [ "$SKIP_RPM_ARM64" = "0" ]; then
+  echo "  [Linux arm64 rpm] $RPM_ARM64_SIZE bytes  sha256=$RPM_ARM64_SHA"
+  echo "                  → $RPM_ARM64_BLOB"
+else
+  echo "  [Linux arm64 rpm] SKIPPED"
 fi
 echo "============================================================================="
 
@@ -317,6 +369,9 @@ upload_one() {
 if [ "$SKIP_MAC" = "0" ]; then
   upload_one "macOS arm64 pkg" "$MAC_BLOB" "$MACOS_PKG" "$MAC_SHA" "application/octet-stream"
 fi
+if [ "$SKIP_MAC_X64" = "0" ]; then
+  upload_one "macOS x64 pkg" "$MAC_X64_BLOB" "$MACOS_X64_PKG" "$MAC_X64_SHA" "application/octet-stream"
+fi
 if [ "$SKIP_ARM64" = "0" ]; then
   upload_one "Windows arm64 MSI" "$ARM_BLOB" "$WIN_ARM64_MSI" "$ARM_SHA" "application/x-msi"
 fi
@@ -329,6 +384,12 @@ fi
 if [ "$SKIP_RPM" = "0" ]; then
   upload_one "Linux amd64 rpm" "$RPM_BLOB" "$LINUX_RPM" "$RPM_SHA" "application/x-rpm"
 fi
+if [ "$SKIP_DEB_ARM64" = "0" ]; then
+  upload_one "Linux arm64 deb" "$DEB_ARM64_BLOB" "$LINUX_ARM64_DEB" "$DEB_ARM64_SHA" "application/vnd.debian.binary-package"
+fi
+if [ "$SKIP_RPM_ARM64" = "0" ]; then
+  upload_one "Linux arm64 rpm" "$RPM_ARM64_BLOB" "$LINUX_ARM64_RPM" "$RPM_ARM64_SHA" "application/x-rpm"
+fi
 
 echo ""
 echo "============================== PUBLISH DONE ================================="
@@ -340,7 +401,9 @@ fi
 
 echo "  Verify the backend picked up the release:"
 echo "    curl -sS 'https://api.tracenium.com/api/v1/binaries/agent/metadata?platform=macos&arch=arm64'   | python3 -m json.tool"
+echo "    curl -sS 'https://api.tracenium.com/api/v1/binaries/agent/metadata?platform=macos&arch=x64'     | python3 -m json.tool"
 echo "    curl -sS 'https://api.tracenium.com/api/v1/binaries/agent/metadata?platform=windows&arch=arm64' | python3 -m json.tool"
 echo "    curl -sS 'https://api.tracenium.com/api/v1/binaries/agent/metadata?platform=windows&arch=x64'   | python3 -m json.tool"
 echo "    curl -sS 'https://api.tracenium.com/api/v1/binaries/agent/metadata?platform=linux&arch=x64'     | python3 -m json.tool"
+echo "    curl -sS 'https://api.tracenium.com/api/v1/binaries/agent/metadata?platform=linux&arch=arm64'   | python3 -m json.tool"
 echo "============================================================================="

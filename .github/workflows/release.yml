@@ -1,6 +1,6 @@
 # .github/workflows/release.yml
 #
-# Build all five Tracenium Agent installers on push to `main` and
+# Build all eight Tracenium Agent installers on push to `main` and
 # publish them to Azure Blob Storage. The branch hygiene gate is at
 # the merge boundary: developers work on `Package-Prepare`, and a
 # manual PR / merge to `main` is what triggers a release.
@@ -84,7 +84,7 @@ on:
     # gated below to run ONLY on `main` — that's the two-stage validation
     # model:
     #
-    #   1. push to Package-Prepare → builds + signs all 5 artifacts,
+    #   1. push to Package-Prepare → builds + signs all 8 artifacts,
     #      uploads as GitHub Actions artifacts (downloadable from the run
     #      summary). NO blob upload. Operators install locally to verify.
     #
@@ -246,10 +246,31 @@ jobs:
   # linux — produces Tracenium-Agent-<v>-x64.{deb,rpm}
   # ──────────────────────────────────────────────────────────────────
   linux:
-    name: Build · Linux x64 (.deb + .rpm)
+    name: Build · Linux ${{ matrix.arch }} (.deb + .rpm)
     needs: resolve
     if: needs.resolve.outputs.build_mode == 'full'
-    runs-on: ubuntu-latest
+    # arm64 builds NATIVELY on ubuntu-24.04-arm — build-linux-binaries.sh
+    # refuses to cross-compile (better-sqlite3 must be rebuilt against the
+    # bundled node's libc/ABI), so each arch needs its own host. GitHub's
+    # arm64 hosted runners are free for public repos, same as the x64 ones.
+    #
+    # Two arch tokens per leg because the toolchain and the filenames
+    # disagree: nfpm/dpkg say "amd64", Node says "x64". `build_arch` feeds
+    # TRACENIUM_AGENT_ARCH + the nfpm download; `arch` is what ends up in
+    # the artifact and blob names.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            build_arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            build_arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      TRACENIUM_AGENT_ARCH: ${{ matrix.build_arch }}
     steps:
       - uses: actions/checkout@v4
 
@@ -263,7 +284,7 @@ jobs:
       - name: Install nfpm
         run: |
           NFPM_VERSION=2.39.0
-          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_amd64.deb" -o /tmp/nfpm.deb
+          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_${{ matrix.build_arch }}.deb" -o /tmp/nfpm.deb
           sudo dpkg -i /tmp/nfpm.deb
           nfpm --version
 
@@ -302,36 +323,52 @@ jobs:
           # reported the wrong version despite the .deb being labeled
           # correctly. See scripts/build-linux-binaries.sh for the
           # in-script defense; this cache key is the second layer.
-          key: linux-build-${{ needs.resolve.outputs.node_version }}-${{ hashFiles('package-lock.json', 'package.json') }}
+          key: linux-build-${{ matrix.arch }}-${{ needs.resolve.outputs.node_version }}-${{ hashFiles('package-lock.json', 'package.json') }}
 
       - name: Build .deb + .rpm
         run: npm run pkg:linux
 
       - uses: actions/upload-artifact@v4
         with:
-          name: linux-x64
+          name: linux-${{ matrix.arch }}
           path: |
-            build/linux/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-x64.deb
-            build/linux/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-x64.rpm
+            build/linux/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-${{ matrix.arch }}.deb
+            build/linux/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-${{ matrix.arch }}.rpm
           retention-days: 14
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────
-  # macos — produces Tracenium-Agent-<v>-arm64.pkg
+  # macos — produces Tracenium-Agent-<v>-{arm64,x64}.pkg
   # Runs on macos-14 (Apple Silicon, Xcode pre-installed)
+  #
+  # Both arches build on the SAME Apple Silicon runner: build-macos-pkg.sh
+  # is arch-parameterized (TRACENIUM_AGENT_ARCH) and cross-targets x64 —
+  # it downloads the darwin-x64 Node, rebuilds better-sqlite3 for x64,
+  # pulls the darwin-x64 node-datachannel prebuild, and builds the Swift
+  # status app universal. Its verify_payload_arch() gate fails the build
+  # if any shipped binary is the wrong slice, so a mislabeled pkg cannot
+  # reach the publish stage. Running the x64 build under Rosetta on the
+  # arm64 runner is fine — macos-14 images ship Rosetta.
+  #
+  # fail-fast: false so an arm64 notarization hiccup doesn't cancel the
+  # x64 build (and vice versa) — they're independent deliverables.
   # ──────────────────────────────────────────────────────────────────
   macos:
-    name: Build · macOS arm64 (.pkg)
+    name: Build · macOS ${{ matrix.arch }} (.pkg)
     needs: resolve
     if: needs.resolve.outputs.build_mode == 'full'
     runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
     # 45-min cap. The build itself takes ~5 min; notarization is the
     # tail — Apple's notary queue is normally 1-5 min but can spike
     # to 20-30 min on heavy days. 45 min covers a bad day without
     # letting a wedged submission burn the runner indefinitely.
     timeout-minutes: 45
     env:
-      TRACENIUM_AGENT_ARCH: arm64
+      TRACENIUM_AGENT_ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
 
@@ -407,7 +444,7 @@ jobs:
         with:
           path: |
             build/.node-cache
-          key: macos-arm64-${{ needs.resolve.outputs.node_version }}
+          key: macos-${{ matrix.arch }}-${{ needs.resolve.outputs.node_version }}
 
       - name: Build .pkg
         # The script auto-resolves the codesign identity from the
@@ -449,7 +486,7 @@ jobs:
           KEY_PATH="$RUNNER_TEMP/asc.p8"
           echo "$ASC_KEY_P8_BASE64" | base64 --decode > "$KEY_PATH"
 
-          PKG="build/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-arm64.pkg"
+          PKG="build/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-${{ matrix.arch }}.pkg"
           if [ ! -f "$PKG" ]; then
             echo "ERROR: expected .pkg not produced: $PKG" >&2
             ls -la build/pkg-out/ >&2
@@ -499,7 +536,7 @@ jobs:
         if: steps.notarize.outcome == 'success'
         run: |
           set -eu
-          PKG="build/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-arm64.pkg"
+          PKG="build/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-${{ matrix.arch }}.pkg"
           xcrun stapler staple "$PKG"
           xcrun stapler validate "$PKG"
 
@@ -529,8 +566,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-arm64
-          path: build/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-arm64.pkg
+          name: macos-${{ matrix.arch }}
+          path: build/pkg-out/Tracenium-Agent-${{ needs.resolve.outputs.version }}-${{ matrix.arch }}.pkg
           retention-days: 14
           if-no-files-found: error
 
@@ -826,7 +863,7 @@ jobs:
           if-no-files-found: error
 
   # ──────────────────────────────────────────────────────────────────
-  # publish — download all 5 artifacts and upload to Azure Blob.
+  # publish — download all 8 artifacts and upload to Azure Blob.
   #
   # Gated to `main` only — Package-Prepare runs produce SIGNED artifacts
   # downloadable from the Actions run (for validation install), but
@@ -881,7 +918,9 @@ jobs:
 
       # Re-stage downloaded artifacts into the layout publish-binaries.sh
       # expects. Each upload-artifact above named the directory by job,
-      # so dl/{linux-x64,macos-arm64,windows-x64,windows-arm64} hold the
+      # so dl/{linux-x64,linux-arm64,macos-arm64,macos-x64,windows-x64,
+      # windows-arm64}
+      # hold the
       # respective files at their root.
       - name: Stage artifacts into build/ layout
         run: |
@@ -894,8 +933,11 @@ jobs:
           mkdir -p build/win-msi/arm64
 
           cp "dl/macos-arm64/Tracenium-Agent-$V-arm64.pkg"     build/pkg-out/
+          cp "dl/macos-x64/Tracenium-Agent-$V-x64.pkg"         build/pkg-out/
           cp "dl/linux-x64/Tracenium-Agent-$V-x64.deb"         build/linux/pkg-out/
           cp "dl/linux-x64/Tracenium-Agent-$V-x64.rpm"         build/linux/pkg-out/
+          cp "dl/linux-arm64/Tracenium-Agent-$V-arm64.deb"     build/linux/pkg-out/
+          cp "dl/linux-arm64/Tracenium-Agent-$V-arm64.rpm"     build/linux/pkg-out/
           cp "dl/windows-x64/Tracenium-Agent-$V-x64.msi"       build/win-msi/x64/
           cp "dl/windows-arm64/Tracenium-Agent-$V-arm64.msi"   build/win-msi/arm64/
 
@@ -939,7 +981,7 @@ jobs:
           az account set --subscription "$AZURE_SUBSCRIPTION_ID"
           az account show --output table
 
-      - name: Publish all 5 artifacts to blob storage
+      - name: Publish all 8 artifacts to blob storage
         env:
           # publish-binaries.sh defaults to --auth-mode key (looks for a
           # storage account key). In CI we use --auth-mode login so the

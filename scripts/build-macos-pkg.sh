@@ -223,11 +223,23 @@ build_status_app_bundle() {
 
   (
     cd "$STATUS_APP_DIR"
-    swift build -c release
+    # Build UNIVERSAL (arm64 + x86_64) so a single build serves both the
+    # arm64 and the x64 pkg — same approach as the screencap helper above.
+    # Plain `swift build` targets only the build host, which silently put
+    # an arm64 status app inside the x64 pkg (caught by
+    # verify_payload_arch).
+    swift build -c release --arch arm64 --arch x86_64
   )
 
   local executable_path
-  executable_path="$STATUS_APP_DIR/.build/release/TraceniumAgentStatus"
+  # A multi-arch build lands under .build/apple/Products/Release. The
+  # single-arch layout (.build/release → arch-specific symlink) is kept
+  # as a fallback so this still works if the universal build is ever
+  # reverted.
+  executable_path="$STATUS_APP_DIR/.build/apple/Products/Release/TraceniumAgentStatus"
+  if [ ! -x "$executable_path" ]; then
+    executable_path="$STATUS_APP_DIR/.build/release/TraceniumAgentStatus"
+  fi
   if [ ! -x "$executable_path" ]; then
     echo "Missing built status app executable: $executable_path" >&2
     exit 1
@@ -415,6 +427,56 @@ rebuild_better_sqlite3() {
 # be a different major version than what the agent was built/tested
 # against. Pinning via .nodeversion + downloading guarantees the same
 # runtime regardless of which Mac built the .pkg.
+# node-datachannel ships N-API PREBUILDS (its install script is
+# `prebuild-install -r napi`), so what sits in the host's node_modules
+# is whatever arch this Mac is — arm64 on Apple Silicon. Unlike
+# better-sqlite3 (rebuilt from source above) and node-pty (which vendors
+# a prebuild per platform/arch under prebuilds/ and picks at runtime),
+# node-datachannel carries exactly ONE binary. Copying it verbatim into
+# an x64 payload ships an arm64 .node → the agent loads fine until RCP
+# starts, then PeerConnection dies on an Intel Mac. So: check the arch
+# of what we staged and re-fetch the correct prebuild when it doesn't
+# match the target.
+lipo_arch_for() {
+  # Map Node's arch token to the one `lipo -archs` reports.
+  case "$1" in
+    x64) echo "x86_64" ;;
+    arm64) echo "arm64" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+stage_node_datachannel() {
+  local binding="$BUILD_DIR/Agent/node_modules/node-datachannel/build/Release/node_datachannel.node"
+  local want; want="$(lipo_arch_for "$ARCH")"
+
+  if [ -f "$binding" ] && lipo -archs "$binding" 2>/dev/null | tr ' ' '\n' | grep -qx "$want"; then
+    echo "→ node-datachannel already $want, keeping staged copy"
+    return 0
+  fi
+
+  echo "→ fetching node-datachannel prebuild for darwin-$ARCH"
+  (
+    cd "$BUILD_DIR/Agent/node_modules/node-datachannel"
+    HOME="$ROOT_DIR/build" \
+    npm_config_cache="$NPM_CACHE_DIR" \
+    "$ROOT_DIR/node_modules/.bin/prebuild-install" \
+      -r napi --platform=darwin --arch="$ARCH" --force
+  ) || {
+    echo "ERROR: no node-datachannel prebuild for darwin-$ARCH." >&2
+    echo "       Remote control (RCP) would fail at runtime on that arch." >&2
+    exit 1
+  }
+
+  # Never ship the wrong slice: verify rather than trust the fetch.
+  if ! lipo -archs "$binding" 2>/dev/null | tr ' ' '\n' | grep -qx "$want"; then
+    echo "ERROR: node-datachannel is still not $want after prebuild-install." >&2
+    echo "       Got: $(lipo -archs "$binding" 2>/dev/null || echo 'unreadable')" >&2
+    exit 1
+  fi
+  echo "  node-datachannel: $want ✓"
+}
+
 stage_macos_node() {
   mkdir -p "$BUILD_DIR/Runtime"
   local cache_dir="$ROOT_DIR/build/.node-cache"
@@ -461,7 +523,18 @@ stage_macos_node() {
   chmod 0755 "$BUILD_DIR/Runtime/node"
 }
 
+# BUILD_DIR is shared by every arch ($ROOT_DIR/build/macos), so a runtime
+# left behind by a previous build of a DIFFERENT arch will happily sit
+# here. Staging only "if missing" then silently ships the wrong slice:
+# an x64 build inherits the arm64 node, the better-sqlite3 ABI probe runs
+# arm64-module-under-arm64-node and passes, and the result is a
+# `-x64.pkg` full of arm64 binaries that dies on an Intel Mac. Verify the
+# arch, not just the presence.
 if [ ! -x "$BUILD_DIR/Runtime/node" ]; then
+  stage_macos_node
+elif ! lipo -archs "$BUILD_DIR/Runtime/node" 2>/dev/null | tr ' ' '\n' | grep -qx "$(lipo_arch_for "$ARCH")"; then
+  echo "→ staged Node runtime is not $(lipo_arch_for "$ARCH") (stale build dir); re-staging"
+  rm -rf "$BUILD_DIR/Runtime"
   stage_macos_node
 fi
 
@@ -515,6 +588,10 @@ for pkg in better-sqlite3 bindings file-uri-to-path node-pty node-datachannel; d
   fi
 done
 
+# Must run AFTER the copy loop above (it operates on the staged copy)
+# and BEFORE the pkg is assembled.
+stage_node_datachannel
+
 if [ ! -f "$BUILD_DIR/PrivSvc/macos/privsvc.js" ]; then
   echo "Missing PrivSvc bundle: $BUILD_DIR/PrivSvc/macos/privsvc.js" >&2
   exit 1
@@ -527,6 +604,18 @@ fi
 
 if [ ! -f "$BUILD_DIR/Agent/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ]; then
   echo "better-sqlite3 native module missing. Rebuilding for bundled Node runtime..." >&2
+  rebuild_better_sqlite3
+fi
+
+# Arch check, explicitly BEFORE the ABI probe below. What we copied comes
+# from the host's node_modules (this Mac's arch), which is wrong whenever
+# ARCH != host. Relying on the ABI probe alone is not enough: it only
+# proves the module loads in the staged runtime, so a matching-but-wrong
+# arch pair passes it.
+BSQ_BINDING="$BUILD_DIR/Agent/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
+if [ -f "$BSQ_BINDING" ] && \
+   ! lipo -archs "$BSQ_BINDING" 2>/dev/null | tr ' ' '\n' | grep -qx "$(lipo_arch_for "$ARCH")"; then
+  echo "better-sqlite3 is not $(lipo_arch_for "$ARCH") (host/stale copy). Rebuilding..." >&2
   rebuild_better_sqlite3
 fi
 
@@ -570,6 +659,53 @@ rm -f "$PKG_ROOT/Library/Application Support/Tracenium/Agent/.env"
 find "$PKG_ROOT" -name ".DS_Store" -delete
 
 chmod +x "$SCRIPTS_DIR/preinstall" "$SCRIPTS_DIR/postinstall"
+
+# ─────────────────────────────────────────────────────────────────────
+# Arch gate: refuse to package a payload that doesn't match $ARCH.
+#
+# The per-module checks above each guard one dependency; this is the
+# backstop that catches anything they miss (a new native dep, a stale
+# artifact in the shared build dir, a copy from the host's node_modules).
+# A wrong slice here is invisible until the agent runs on the target Mac,
+# so failing the build is strictly better than shipping it.
+#
+# Universal binaries pass: `lipo -archs` lists every slice, and one of
+# them matching the target is enough (the screencap helper is arm64 +
+# x86_64 on purpose). node-pty's prebuilds/ tree is skipped — it vendors
+# one binary per platform/arch and selects at runtime, so foreign-arch
+# files in there are expected, not a defect.
+# NOTE: this file runs under #!/bin/sh — no process substitution, and a
+# `find | while` pipeline puts the loop in a SUBSHELL (a counter mutated
+# in there would be lost). Mismatches are collected in a temp file so the
+# verdict survives the subshell.
+verify_payload_arch() {
+  want="$(lipo_arch_for "$ARCH")"
+  bad_list="$BUILD_DIR/.arch-mismatches"
+  : > "$bad_list"
+
+  echo "→ verifying every payload binary is $want"
+  /usr/bin/find "$PKG_ROOT" -type f \
+    \( -name "*.node" -o -name "node" -o -perm -u+x \) | while IFS= read -r f; do
+    case "$f" in
+      */node-pty/prebuilds/*) continue ;;
+    esac
+    # Mach-O only; skip shell scripts, plists and data files.
+    /usr/bin/file -b "$f" 2>/dev/null | grep -q "Mach-O" || continue
+    archs="$(lipo -archs "$f" 2>/dev/null || echo '')"
+    if ! printf '%s' "$archs" | tr ' ' '\n' | grep -qx "$want"; then
+      printf '%s  → [%s]\n' "${f#"$PKG_ROOT"}" "$archs" >> "$bad_list"
+    fi
+  done
+
+  if [ -s "$bad_list" ]; then
+    echo "ERROR: payload binaries are not $want — refusing to build a mislabeled $ARCH pkg:" >&2
+    sed 's/^/  ✗ /' "$bad_list" >&2
+    exit 1
+  fi
+  echo "  payload arch OK ($want)"
+}
+
+verify_payload_arch
 
 # ─────────────────────────────────────────────────────────────────────
 # Sign all Mach-O binaries inside the pkg payload BEFORE pkgbuild.
