@@ -29,6 +29,12 @@ build/win-msi/
 build/agentcore/
 build/.node-cache/
 build/.npm-cache/
+# node-gyp's header cache. Committing ANY of it breaks CI in a subtle
+# way: node-gyp reads <version>/installVersion as "headers are already
+# here" and skips the download, so a checkout that carries the marker
+# without the headers fails with "common.gypi not found" the first time
+# a native module actually needs rebuilding.
+build/.node-gyp/
 
 # ── WiX intermediate outputs (Windows MSI build) ────────────────────
 *.wixpdb

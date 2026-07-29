@@ -398,6 +398,18 @@ rebuild_better_sqlite3() {
 
   mkdir -p "$NPM_CACHE_DIR" "$NODE_GYP_CACHE_DIR"
 
+  # node-gyp decides "headers for <version> are already installed" purely
+  # from <devdir>/<version>/installVersion, and skips the download when it
+  # exists. If that marker is present but the headers aren't, the build
+  # dies with "common.gypi not found" — which is exactly what a stray
+  # committed installVersion produced on a clean CI checkout. Treat an
+  # incomplete header dir as absent so node-gyp fetches a full copy.
+  if [ -f "$NODE_GYP_CACHE_DIR/$target_node_version/installVersion" ] && \
+     [ ! -f "$NODE_GYP_CACHE_DIR/$target_node_version/common.gypi" ]; then
+    echo "→ node-gyp headers for $target_node_version are incomplete; refetching"
+    rm -rf "$NODE_GYP_CACHE_DIR/$target_node_version"
+  fi
+
   (
     cd "$BUILD_DIR/Agent/node_modules/better-sqlite3"
     HOME="$ROOT_DIR/build" \
