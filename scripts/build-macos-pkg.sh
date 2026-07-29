@@ -791,10 +791,25 @@ else
   sign_internal_bin "$PKG_PREFIX/Runtime/node"
 
   # Sign every .node native binding under the Agent's node_modules.
-  # Today this is just better_sqlite3.node, but the find loop is
-  # future-proof for the day we add another native dep.
-  find "$PKG_PREFIX/Agent/node_modules" -name "*.node" -type f 2>/dev/null | while IFS= read -r nodebin; do
-    sign_internal_bin "$nodebin"
+  # Sign EVERY Mach-O in the payload — not just *.node.
+  #
+  # node-pty ships `spawn-helper`, an EXTENSIONLESS executable under
+  # prebuilds/darwin-<arch>/. The old `-name "*.node"` filter skipped it,
+  # so Apple's notary service rejected the whole pkg with three errors
+  # against that one file ("The binary is not signed", "The signature
+  # does not include a secure timestamp", "The executable does not have
+  # the hardened runtime enabled"). That's why notarization had been
+  # failing on BOTH arches — the pkg shipped signed-but-not-notarized.
+  #
+  # Matching on content instead of filename also covers whatever native
+  # dep gets added next. Non-Mach-O files (the win32/linux prebuilds, JS,
+  # JSON, licenses) are filtered out by `file`, so they're untouched.
+  # Foreign-arch Mach-O (the darwin-x64 helper inside an arm64 pkg and
+  # vice versa) still gets signed — Apple validates every slice it finds,
+  # regardless of the pkg's target arch.
+  find "$PKG_PREFIX/Agent/node_modules" -type f 2>/dev/null | while IFS= read -r cand; do
+    /usr/bin/file -b "$cand" 2>/dev/null | grep -q "Mach-O" || continue
+    sign_internal_bin "$cand"
   done
 fi
 
