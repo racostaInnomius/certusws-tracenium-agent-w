@@ -74,7 +74,7 @@ AGENTTRAY_PROJECT="$AGENT_REPO_DIR/windows/Tracenium.AgentTray/Tracenium.AgentTr
 # is on version X but the .exe says Y".
 #
 # AssemblyVersion / FileVersion require a 4-part numeric (a.b.c.d), so
-# we strip any semver pre-release suffix (e.g. "1.1.21-rc1" → "1.1.21")
+# we strip any semver pre-release suffix (e.g. "1.1.21-rc1" → "1.1.24")
 # before adding the trailing ".0". The full semver-friendly string still
 # rides on `-p:Version=` which accepts any SemVer 2.0 value.
 if [ -n "${TRACENIUM_AGENT_VERSION:-}" ]; then
