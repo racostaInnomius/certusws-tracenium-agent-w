@@ -95,6 +95,11 @@ export type RuntimePolicy = {
     // advertise rcp.consent).
     remoteRequireConsent?: boolean;
     selfUpdate?: boolean;
+    // Device-info widget: when true, the Windows AgentTray shows the
+    // always-visible top-center flyout with device info for support
+    // calls. The tray reads this via tray-status.json (policy.features).
+    // The in-window Device Info tab is NOT gated — only the flyout.
+    deviceInfoWidget?: boolean;
   };
 
   // Policy v2 — Agent Policy block. When present, the validator
@@ -124,6 +129,7 @@ export type RuntimePolicy = {
       remoteScreen?: boolean;
       remoteRequireConsent?: boolean;
       selfUpdate?: boolean;
+      deviceInfoWidget?: boolean;
     };
   };
 
@@ -443,7 +449,8 @@ const DEFAULT_POLICY: RuntimePolicy = {
     remoteFile:  false,
     remoteScreen: false,
     remoteRequireConsent: false,
-    selfUpdate: true
+    selfUpdate: true,
+    deviceInfoWidget: false
   }
 };
 

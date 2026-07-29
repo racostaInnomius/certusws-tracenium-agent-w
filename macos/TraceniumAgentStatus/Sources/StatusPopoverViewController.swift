@@ -26,6 +26,7 @@ final class StatusPopoverViewController: NSViewController {
     /// `StatusPopoverViewController.popoverSize`.
     static let popoverSize = NSSize(width: 480, height: 560)
     private static let headerHeight: CGFloat = 72
+    private static let tabStripHeight: CGFloat = 40
     private static let bodyPadding: CGFloat = 16
 
     // Header
@@ -34,9 +35,20 @@ final class StatusPopoverViewController: NSViewController {
     private let subtitleLabel = NSTextField(labelWithString: "Waiting for local status snapshot...")
     private let badgeLabel = NSTextField(labelWithString: "UNKNOWN")
 
-    // Body
-    private let grid = NSGridView()
+    // Tab strip — Device Info (support widget) | Agent Info (estado clásico)
+    private let tabControl = NSSegmentedControl(labels: ["Device Info", "Agent Info"], trackingMode: .selectOne, target: nil, action: nil)
+    private let copyButton = NSButton(title: "Copy all", target: nil, action: nil)
+
+    // Body — un scrollview por tab; se alterna con isHidden.
+    private let agentScroll = NSScrollView()
+    private let deviceScroll = NSScrollView()
+    private let grid = NSGridView()          // Agent Info (grid clásico)
+    private let deviceGrid = NSGridView()    // Device Info
     private var valueCells: [String: NSTextField] = [:]
+    private var deviceCells: [String: NSTextField] = [:]
+
+    // Último status renderizado — fuente del Copy all.
+    private var lastStatus: TrayStatus?
 
     override func loadView() {
         // Root: NSVisualEffectView para fondo translúcido nativo.
@@ -121,8 +133,40 @@ final class StatusPopoverViewController: NSViewController {
     // MARK: - Body
 
     private func configureBody() {
-        // Body container: ocupa lo que queda debajo del header.
-        let bodyHeight = Self.popoverSize.height - Self.headerHeight
+        // Tab strip entre header y body: segmented (izq) + Copy all (der).
+        let stripY = Self.popoverSize.height - Self.headerHeight - Self.tabStripHeight
+        let strip = NSView(frame: NSRect(
+            x: 0,
+            y: stripY,
+            width: Self.popoverSize.width,
+            height: Self.tabStripHeight
+        ))
+        strip.autoresizingMask = [.width, .minYMargin]
+
+        tabControl.selectedSegment = 0 // Device Info primero — es el caso de soporte
+        tabControl.target = self
+        tabControl.action = #selector(tabChanged(_:))
+        tabControl.translatesAutoresizingMaskIntoConstraints = false
+
+        copyButton.bezelStyle = .rounded
+        copyButton.controlSize = .small
+        copyButton.font = NSFont.systemFont(ofSize: 11)
+        copyButton.target = self
+        copyButton.action = #selector(copyAllPressed(_:))
+        copyButton.translatesAutoresizingMaskIntoConstraints = false
+
+        strip.addSubview(tabControl)
+        strip.addSubview(copyButton)
+        NSLayoutConstraint.activate([
+            tabControl.leadingAnchor.constraint(equalTo: strip.leadingAnchor, constant: Self.bodyPadding),
+            tabControl.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
+            copyButton.trailingAnchor.constraint(equalTo: strip.trailingAnchor, constant: -Self.bodyPadding),
+            copyButton.centerYAnchor.constraint(equalTo: strip.centerYAnchor)
+        ])
+        view.addSubview(strip)
+
+        // Body container: lo que queda debajo del strip.
+        let bodyHeight = Self.popoverSize.height - Self.headerHeight - Self.tabStripHeight
         let bodyContainer = NSView(frame: NSRect(
             x: 0,
             y: 0,
@@ -132,68 +176,90 @@ final class StatusPopoverViewController: NSViewController {
         bodyContainer.autoresizingMask = [.width, .height]
         view.addSubview(bodyContainer)
 
-        // ScrollView ocupa todo el body
-        let scrollView = NSScrollView(frame: bodyContainer.bounds)
+        // Un scrollview por tab, ambos ocupando el body completo;
+        // se alterna visibilidad en tabChanged.
+        configureScroll(agentScroll, in: bodyContainer, grid: grid)
+        configureScroll(deviceScroll, in: bodyContainer, grid: deviceGrid)
+
+        // ── Agent Info (grid clásico, intacto) ──
+        addSection(grid, "Connectivity")
+        addRow(grid, into: &valueCells, "Connectivity", key: "connectivity")
+        addRow(grid, into: &valueCells, "Last heartbeat", key: "lastHeartbeat")
+        addRow(grid, into: &valueCells, "Last connected", key: "lastConnected")
+        addRow(grid, into: &valueCells, "Last disconnected", key: "lastDisconnected")
+
+        addSection(grid, "Identity")
+        addRow(grid, into: &valueCells, "Hostname", key: "hostname")
+        addRow(grid, into: &valueCells, "Tenant ID", key: "tenantId")
+        addRow(grid, into: &valueCells, "Device ID", key: "deviceId")
+        addRow(grid, into: &valueCells, "Agent version", key: "agentVersion")
+        addRow(grid, into: &valueCells, "Core version", key: "coreVersion")
+
+        addSection(grid, "Policy")
+        addRow(grid, into: &valueCells, "Policy version", key: "policyVersion")
+        addRow(grid, into: &valueCells, "Plugins", key: "plugins")
+        addRow(grid, into: &valueCells, "Modules", key: "modules")
+
+        addSection(grid, "Operations")
+        addRow(grid, into: &valueCells, "Last job", key: "lastJob")
+        addRow(grid, into: &valueCells, "Update status", key: "updateStatus")
+        addRow(grid, into: &valueCells, "Last update check", key: "lastUpdateCheck")
+        addRow(grid, into: &valueCells, "Last update complete", key: "lastUpdateComplete")
+        addRow(grid, into: &valueCells, "Patch status", key: "patchStatus")
+        addRow(grid, into: &valueCells, "Patch last scan", key: "patchLastScan")
+        addRow(grid, into: &valueCells, "Patch error", key: "patchError")
+
+        // ── Device Info (widget de soporte) ──
+        addSection(deviceGrid, "User & Identity")
+        addRow(deviceGrid, into: &deviceCells, "Logged user", key: "devUser")
+        addRow(deviceGrid, into: &deviceCells, "Computer name", key: "devComputer")
+        addRow(deviceGrid, into: &deviceCells, "Domain", key: "devDomain")
+
+        addSection(deviceGrid, "Network")
+        addRow(deviceGrid, into: &deviceCells, "IP address", key: "devIp")
+        addRow(deviceGrid, into: &deviceCells, "MAC address", key: "devMac")
+
+        addSection(deviceGrid, "System")
+        addRow(deviceGrid, into: &deviceCells, "Operating system", key: "devOs")
+        addRow(deviceGrid, into: &deviceCells, "Model", key: "devModel")
+        addRow(deviceGrid, into: &deviceCells, "Serial number", key: "devSerial")
+        addRow(deviceGrid, into: &deviceCells, "Processor", key: "devCpu")
+        addRow(deviceGrid, into: &deviceCells, "Memory", key: "devMemory")
+        addRow(deviceGrid, into: &deviceCells, "Screen resolution", key: "devResolution")
+
+        addSection(deviceGrid, "Tracenium")
+        addRow(deviceGrid, into: &deviceCells, "Device ID", key: "devDeviceId")
+
+        for g in [grid, deviceGrid] {
+            if g.numberOfColumns >= 1 {
+                g.column(at: 0).xPlacement = .leading
+                g.column(at: 0).width = 140
+            }
+            if g.numberOfColumns >= 2 {
+                g.column(at: 1).xPlacement = .leading
+            }
+        }
+
+        deviceScroll.isHidden = false
+        agentScroll.isHidden = true
+    }
+
+    /// Monta un scrollview a pantalla completa del body con un grid
+    /// adentro (mismo patrón document-view + width-tie del original).
+    private func configureScroll(_ scrollView: NSScrollView, in container: NSView, grid: NSGridView) {
+        scrollView.frame = container.bounds
         scrollView.autoresizingMask = [.width, .height]
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.borderType = .noBorder
-        bodyContainer.addSubview(scrollView)
+        container.addSubview(scrollView)
 
-        // Grid: 2 columnas (label, value). NSGridView maneja
-        // automáticamente el alineamiento de columnas y rows.
         grid.translatesAutoresizingMaskIntoConstraints = false
         grid.columnSpacing = 16
         grid.rowSpacing = 6
         grid.rowAlignment = .firstBaseline
-        // Columna 0 (labels): trailing align — los valores quedan
-        // alineados verticalmente entre rows incluso si los labels
-        // varían en ancho. Pero para verse Windows-like dejamos
-        // leading.
-        if grid.numberOfColumns > 0 {
-            grid.column(at: 0).xPlacement = .leading
-        }
 
-        // Populate grid
-        addSection("Connectivity")
-        addRow("Connectivity", key: "connectivity")
-        addRow("Last heartbeat", key: "lastHeartbeat")
-        addRow("Last connected", key: "lastConnected")
-        addRow("Last disconnected", key: "lastDisconnected")
-
-        addSection("Identity")
-        addRow("Hostname", key: "hostname")
-        addRow("Tenant ID", key: "tenantId")
-        addRow("Device ID", key: "deviceId")
-        addRow("Agent version", key: "agentVersion")
-        addRow("Core version", key: "coreVersion")
-
-        addSection("Policy")
-        addRow("Policy version", key: "policyVersion")
-        addRow("Plugins", key: "plugins")
-        addRow("Modules", key: "modules")
-
-        addSection("Operations")
-        addRow("Last job", key: "lastJob")
-        addRow("Update status", key: "updateStatus")
-        addRow("Last update check", key: "lastUpdateCheck")
-        addRow("Last update complete", key: "lastUpdateComplete")
-        addRow("Patch status", key: "patchStatus")
-        addRow("Patch last scan", key: "patchLastScan")
-        addRow("Patch error", key: "patchError")
-
-        // Configurar columnas DESPUÉS de poblar — al momento de crear
-        // el grid no había columnas todavía.
-        if grid.numberOfColumns >= 1 {
-            grid.column(at: 0).xPlacement = .leading
-            grid.column(at: 0).width = 140
-        }
-        if grid.numberOfColumns >= 2 {
-            grid.column(at: 1).xPlacement = .leading
-        }
-
-        // Document view envuelve el grid con padding
         let documentView = NSView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
         documentView.addSubview(grid)
@@ -211,18 +277,24 @@ final class StatusPopoverViewController: NSViewController {
         documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor).isActive = true
     }
 
-    private func addSection(_ title: String) {
+    @objc private func tabChanged(_ sender: NSSegmentedControl) {
+        let deviceSelected = sender.selectedSegment == 0
+        deviceScroll.isHidden = !deviceSelected
+        agentScroll.isHidden = deviceSelected
+    }
+
+    private func addSection(_ targetGrid: NSGridView, _ title: String) {
         let label = NSTextField(labelWithString: title)
         label.font = NSFont.systemFont(ofSize: 13, weight: .bold)
         label.textColor = NSColor.controlAccentColor
         // Section spans both columns
-        let row = grid.addRow(with: [label, NSGridCell.emptyContentView])
+        let row = targetGrid.addRow(with: [label, NSGridCell.emptyContentView])
         row.mergeCells(in: NSRange(location: 0, length: 2))
-        row.topPadding = grid.numberOfRows == 1 ? 0 : 8
+        row.topPadding = targetGrid.numberOfRows == 1 ? 0 : 8
         row.bottomPadding = 2
     }
 
-    private func addRow(_ title: String, key: String) {
+    private func addRow(_ targetGrid: NSGridView, into cells: inout [String: NSTextField], _ title: String, key: String) {
         let labelField = NSTextField(labelWithString: title)
         labelField.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         labelField.textColor = NSColor.secondaryLabelColor
@@ -233,14 +305,19 @@ final class StatusPopoverViewController: NSViewController {
         valueField.lineBreakMode = .byTruncatingMiddle
         valueField.maximumNumberOfLines = 1
         valueField.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        valueCells[key] = valueField
+        // Valores seleccionables: soporte a veces quiere copiar UN campo
+        // (ej. solo la serie) en vez del bloque completo.
+        valueField.isSelectable = true
+        cells[key] = valueField
 
-        grid.addRow(with: [labelField, valueField])
+        targetGrid.addRow(with: [labelField, valueField])
     }
 
     // MARK: - Render
 
     func render(_ status: TrayStatus?) {
+        lastStatus = status
+        renderDeviceInfo(status)
         guard let status else {
             applyHeader(
                 online: false,
@@ -296,6 +373,88 @@ final class StatusPopoverViewController: NSViewController {
         set("patchStatus", formatPatch(status.patch))
         set("patchLastScan", format(status.patch.lastScanAtUtc))
         set("patchError", (status.patch.lastError?.isEmpty == false) ? status.patch.lastError! : "—")
+    }
+
+    // MARK: - Device Info tab
+
+    /// Campos que este proceso conoce mejor que el agente-root: usuario
+    /// de la sesión y resolución del display principal (en pixels
+    /// físicos, no points — soporte espera "3024x1964", no "1512x982").
+    private func localLoggedUser() -> String {
+        let short = NSUserName()
+        let full = NSFullUserName()
+        if !full.isEmpty && full != short { return "\(full) (\(short))" }
+        return short
+    }
+
+    private func localScreenResolution() -> String {
+        guard let screen = NSScreen.main else { return "—" }
+        let scale = screen.backingScaleFactor
+        let w = Int(screen.frame.width * scale)
+        let h = Int(screen.frame.height * scale)
+        return "\(w) x \(h)"
+    }
+
+    private func renderDeviceInfo(_ status: TrayStatus?) {
+        let d = status?.device
+        setDevice("devUser", localLoggedUser())
+        setDevice("devComputer", d?.fqdn ?? d?.hostname ?? resolveLocalHostname(status))
+        setDevice("devDomain", d?.domain ?? "—")
+        setDevice("devIp", d?.ipv4 ?? d?.ipv6 ?? "—")
+        setDevice("devMac", d?.mac ?? "—")
+        let osParts = [d?.osName, d?.osVersion].compactMap { $0 }.joined(separator: " ")
+        setDevice("devOs", osParts.isEmpty ? "—" : (d?.osBuild.map { "\(osParts) (build \($0))" } ?? osParts))
+        let modelParts = [d?.manufacturer, d?.model].compactMap { $0 }.joined(separator: " ")
+        setDevice("devModel", modelParts.isEmpty ? "—" : modelParts)
+        setDevice("devSerial", d?.serial ?? "—")
+        setDevice("devCpu", d?.cpu ?? "—")
+        setDevice("devMemory", d?.memoryGb.map { String(format: "%.1f GB", $0) } ?? "—")
+        setDevice("devResolution", localScreenResolution())
+        setDevice("devDeviceId", (status?.deviceId.isEmpty == false) ? status!.deviceId : "—")
+    }
+
+    private func setDevice(_ key: String, _ value: String) {
+        deviceCells[key]?.stringValue = value
+    }
+
+    private func resolveLocalHostname(_ status: TrayStatus?) -> String {
+        if let h = status?.hostname, !h.isEmpty { return h }
+        return Host.current().localizedName ?? ProcessInfo.processInfo.hostName
+    }
+
+    /// Texto plano con todos los campos del Device Info — lo que el
+    /// usuario pega en el chat/ticket de soporte.
+    private func deviceInfoText() -> String {
+        let d = lastStatus?.device
+        let osParts = [d?.osName, d?.osVersion].compactMap { $0 }.joined(separator: " ")
+        let modelParts = [d?.manufacturer, d?.model].compactMap { $0 }.joined(separator: " ")
+        var lines: [String] = []
+        lines.append("Logged user: \(localLoggedUser())")
+        lines.append("Computer name: \(d?.fqdn ?? d?.hostname ?? resolveLocalHostname(lastStatus))")
+        lines.append("Domain: \(d?.domain ?? "-")")
+        lines.append("IP address: \(d?.ipv4 ?? d?.ipv6 ?? "-")")
+        lines.append("MAC address: \(d?.mac ?? "-")")
+        lines.append("Operating system: \(osParts.isEmpty ? "-" : osParts)")
+        lines.append("Model: \(modelParts.isEmpty ? "-" : modelParts)")
+        lines.append("Serial number: \(d?.serial ?? "-")")
+        lines.append("Processor: \(d?.cpu ?? "-")")
+        lines.append("Memory: \(d?.memoryGb.map { String(format: "%.1f GB", $0) } ?? "-")")
+        lines.append("Screen resolution: \(localScreenResolution())")
+        if let id = lastStatus?.deviceId, !id.isEmpty {
+            lines.append("Tracenium device ID: \(id)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    @objc private func copyAllPressed(_ sender: NSButton) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(deviceInfoText(), forType: .string)
+        // Feedback breve en el propio botón — sin popups.
+        sender.title = "Copied ✓"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak sender] in
+            sender?.title = "Copy all"
+        }
     }
 
     private func applyHeader(online: Bool, hostname: String, version: String?, updatedAt: Date?) {

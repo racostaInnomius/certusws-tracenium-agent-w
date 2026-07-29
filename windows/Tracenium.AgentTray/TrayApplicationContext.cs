@@ -7,6 +7,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 {
     private readonly StatusReader _reader = new();
     private readonly StatusForm _statusForm = new();
+    private readonly DeviceInfoFlyout _deviceFlyout = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly Icon _trayIcon;
@@ -64,6 +65,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _trayIcon.Dispose();
         _timer.Dispose();
         _statusForm.Dispose();
+        _deviceFlyout.Dispose();
         base.ExitThreadCore();
     }
 
@@ -71,6 +73,21 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         TrayStatus? status = _reader.Read();
         _statusForm.Render(status);
+        _deviceFlyout.Render(status);
+
+        // Flyout top-center gateado por policy: solo visible cuando el
+        // tenant activó features.deviceInfoWidget. Show() sin robar foco
+        // (ShowWithoutActivation en el form); Hide() cuando la policy lo
+        // apaga — el toggle llega en el próximo refresh de 5s.
+        var flyoutEnabled = status?.Policy.Features?.DeviceInfoWidget == true;
+        if (flyoutEnabled && !_deviceFlyout.Visible)
+        {
+            _deviceFlyout.Show();
+        }
+        else if (!flyoutEnabled && _deviceFlyout.Visible)
+        {
+            _deviceFlyout.Hide();
+        }
 
         if (status is null)
         {

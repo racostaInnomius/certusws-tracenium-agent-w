@@ -12,6 +12,30 @@ struct TrayStatus: Decodable {
     var jobs: TrayJobStatus
     var update: TrayUpdateStatus
     var patch: TrayPatchStatus
+    // Device Info tab (support widget). Optional — older agents don't
+    // write this block; the tab shows placeholders in that case.
+    var device: TrayDeviceInfo?
+}
+
+/// Static device identity written by the agent at startup. The
+/// logged-in user and screen resolution are NOT here — this app runs in
+/// the user session, so it reads those live (NSUserName / NSScreen)
+/// where the root agent's view would be wrong.
+struct TrayDeviceInfo: Decodable {
+    var hostname: String?
+    var domain: String?
+    var fqdn: String?
+    var ipv4: String?
+    var ipv6: String?
+    var mac: String?
+    var osName: String?
+    var osVersion: String?
+    var osBuild: String?
+    var manufacturer: String?
+    var model: String?
+    var serial: String?
+    var cpu: String?
+    var memoryGb: Double?
 }
 
 struct TrayGrpcStatus: Decodable {

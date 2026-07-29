@@ -139,7 +139,25 @@ export async function startService() {
     } catch (e: any) {
       log.warn("Failed to initialize tray status snapshot", e?.message || e);
     }
-    
+
+    // Device-info block for the support widget (Device Info tab / flyout in
+    // the tray apps). Fire-and-forget: the si.* queries take ~1-2s and
+    // nothing at startup depends on them; on failure the tray just shows
+    // placeholders. Runs after writeStartupSnapshot so update() has a
+    // snapshot to merge into.
+    ctx.trayStatus
+      .refreshDeviceInfo?.()
+      .then((snap: any) => {
+        log.info("Tray device info collected", {
+          hostname: snap?.device?.hostname,
+          model: snap?.device?.model,
+          serial: snap?.device?.serial ? "present" : "absent"
+        });
+      })
+      .catch((e: any) => {
+        log.warn("Tray device info collection failed", e?.message || e);
+      });
+
     // Ping PrivSvc (best-effort)
     if (ctx.priv) {
       try {

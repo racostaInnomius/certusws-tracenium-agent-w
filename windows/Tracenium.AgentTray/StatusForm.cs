@@ -5,8 +5,11 @@ namespace Tracenium.AgentTray;
 internal sealed class StatusForm : Form
 {
     private readonly Dictionary<string, Label> _valueLabels = new();
+    private readonly List<Label> _deviceValueLabels = new();
     private readonly Label _statusBadge;
     private readonly Label _headerSubtitle;
+    private readonly Button _copyAllButton;
+    private TrayStatus? _lastStatus;
 
     public StatusForm()
     {
@@ -108,13 +111,101 @@ internal sealed class StatusForm : Form
         AddRow(content, "Patch last scan", "patchLastScan");
         AddRow(content, "Patch error", "patchError");
 
+        // Tabs: Device Info (soporte, default) | Agent Info (grid clásico).
+        var tabs = new TabControl
+        {
+            Dock = DockStyle.Fill
+        };
+
+        var devicePage = new TabPage("Device Info") { BackColor = Color.White, UseVisualStyleBackColor = true };
+        var agentPage = new TabPage("Agent Info") { BackColor = Color.White, UseVisualStyleBackColor = true };
+
+        // El grid clásico completo se muda intacto al tab de agente.
+        agentPage.Controls.Add(content);
+
+        // Device page: strip con "Copy all" arriba + grid de campos abajo.
+        var deviceLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2
+        };
+        deviceLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        deviceLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var copyStrip = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.RightToLeft,
+            AutoSize = true,
+            Padding = new Padding(12, 8, 12, 0)
+        };
+        _copyAllButton = new Button
+        {
+            Text = "Copy all",
+            AutoSize = true,
+            UseVisualStyleBackColor = true
+        };
+        _copyAllButton.Click += (_, _) => CopyAllToClipboard();
+        copyStrip.Controls.Add(_copyAllButton);
+
+        var deviceGrid = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(18, 6, 18, 18),
+            ColumnCount = 2,
+            AutoScroll = true
+        };
+        deviceGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
+        deviceGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        // Las rows salen del provider para que el tab, el flyout y el
+        // Copy all muestren siempre los mismos campos en el mismo orden.
+        AddSection(deviceGrid, "Device information");
+        foreach (var field in DeviceInfoProvider.BuildFields(null))
+        {
+            _deviceValueLabels.Add(AddDeviceRow(deviceGrid, field.Label));
+        }
+
+        deviceLayout.Controls.Add(copyStrip, 0, 0);
+        deviceLayout.Controls.Add(deviceGrid, 0, 1);
+        devicePage.Controls.Add(deviceLayout);
+
+        tabs.TabPages.Add(devicePage);
+        tabs.TabPages.Add(agentPage);
+
         root.Controls.Add(header, 0, 0);
-        root.Controls.Add(content, 0, 1);
+        root.Controls.Add(tabs, 0, 1);
         Controls.Add(root);
+    }
+
+    private void CopyAllToClipboard()
+    {
+        try
+        {
+            Clipboard.SetText(DeviceInfoProvider.BuildCopyText(_lastStatus));
+            // Feedback breve en el propio botón, sin popups.
+            _copyAllButton.Text = "Copied ✓";
+            var revert = new System.Windows.Forms.Timer { Interval = 1500 };
+            revert.Tick += (_, _) =>
+            {
+                _copyAllButton.Text = "Copy all";
+                revert.Stop();
+                revert.Dispose();
+            };
+            revert.Start();
+        }
+        catch
+        {
+            // Clipboard puede fallar si otro proceso lo tiene bloqueado —
+            // no es motivo para crashear el tray.
+        }
     }
 
     public void Render(TrayStatus? status)
     {
+        _lastStatus = status;
+        RenderDeviceInfo(status);
         if (status is null)
         {
             ApplyHeader(false, Environment.MachineName, null, null);
@@ -178,6 +269,43 @@ internal sealed class StatusForm : Form
 
         grid.Controls.Add(section, 0, row);
         grid.SetColumnSpan(section, 2);
+    }
+
+    private void RenderDeviceInfo(TrayStatus? status)
+    {
+        var fields = DeviceInfoProvider.BuildFields(status);
+        // BuildFields siempre devuelve la misma cantidad/orden de campos
+        // (los labels se crearon de esa misma lista en el constructor).
+        for (var i = 0; i < fields.Count && i < _deviceValueLabels.Count; i++)
+        {
+            _deviceValueLabels[i].Text = fields[i].Value;
+        }
+    }
+
+    private Label AddDeviceRow(TableLayoutPanel grid, string label)
+    {
+        var row = grid.RowStyles.Count;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        var labelControl = new Label
+        {
+            Text = label,
+            AutoSize = true,
+            Font = new Font(Font, FontStyle.Bold),
+            Margin = new Padding(0, 0, 12, 10)
+        };
+
+        var valueControl = new Label
+        {
+            Text = "—",
+            AutoSize = true,
+            MaximumSize = new Size(430, 0),
+            Margin = new Padding(0, 0, 0, 10)
+        };
+
+        grid.Controls.Add(labelControl, 0, row);
+        grid.Controls.Add(valueControl, 1, row);
+        return valueControl;
     }
 
     private void AddRow(TableLayoutPanel grid, string label, string key)
