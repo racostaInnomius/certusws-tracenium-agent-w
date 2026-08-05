@@ -210,6 +210,43 @@ export type SecurityPolicy = {
     smbv1Disabled?: boolean;              // → windows.network_sharing.smbv1_disabled
   };
 
+  // ── macOS (privsvc/macos/src/pmp-remediation.ts) ────────────────
+  // On macOS the GPO-equivalent surface splits in two: things a root
+  // agent can actually change (below), and things that need a
+  // configuration profile from an MDM (restrictions, managed prefs,
+  // PPPC) which no agent can apply. These are the first group.
+
+  gatekeeper?: {
+    mode?: SecurityMode;
+    required?: boolean;                   // → macos.gatekeeper.enabled (READ + REMEDIATE)
+  };
+
+  remoteLogin?: {
+    mode?: SecurityMode;
+    disabled?: boolean;                   // → macos.remote_login.disabled (READ + REMEDIATE)
+  };
+
+  // ── macOS read-only (drift is visible, remediation is impossible) ──
+  // Both have working READ handlers, so `report-only` gives real drift
+  // reporting. Neither can be remediated headless, and privsvc returns
+  // `unsupported_check` if asked:
+  //   * SIP is only togglable from the Recovery OS (`csrutil enable`).
+  //   * FileVault activation needs the user's password AND a Recovery
+  //     Key prompt — not safely automatable without MDM escrow.
+  // The backend validator rejects mode="auto" on these with
+  // UNENFORCEABLE_DESIRED_STATE so the operator is told at authoring
+  // time rather than discovering it in agent logs.
+
+  sip?: {
+    mode?: SecurityMode;
+    required?: boolean;                   // → macos.sip.enabled (READ only)
+  };
+
+  filevault?: {
+    mode?: SecurityMode;
+    required?: boolean;                   // → macos.filevault.enabled (READ only)
+  };
+
   // ── Placeholders (SCP collector exists, no remediator yet) ──────
 
   passwordPolicy?: {
@@ -279,6 +316,14 @@ const SECURITY_KNOWN_CAPABILITIES = new Set<string>([
   "ssh",
   "tls",
   "smb",
+  // macOS. Agents older than 1.1.26 drop these (unknown capability keys
+  // are discarded at parse time), so a tenant policy carrying them is
+  // safe to roll out ahead of the fleet update — it just does nothing
+  // until the agent catches up.
+  "gatekeeper",
+  "remoteLogin",
+  "sip",
+  "filevault",
   "passwordPolicy",
   "bitlocker",
   "usb",

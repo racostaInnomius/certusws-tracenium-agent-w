@@ -64,13 +64,22 @@ The binary is staged next to `privsvc.js` (the orchestrator resolves it
 via `path.resolve(__dirname, "tracenium-screencap")`) and ships inside
 the `.pkg` automatically (`pkgbuild --root` packages the whole tree).
 
-## TCC — MDM PPPC profile (required, no interactive prompt)
+## TCC — PPPC profile (required, no interactive prompt)
 
-Screen Recording is pre-granted fleet-wide via an MDM **PPPC**
-(Privacy Preferences Policy Control) configuration profile keyed to the
-helper's signing identity. The helper *preflights* and never *requests*
+Screen Recording is pre-granted fleet-wide via a **PPPC** (Privacy
+Preferences Policy Control) configuration profile keyed to the helper's
+signing identity. The helper *preflights* and never *requests*
 permission, so without this profile it returns
 `no_screen_recording_permission` instead of prompting.
+
+> **Who delivers this profile.** A PPPC payload can only be installed by
+> an MDM — no agent, however privileged, can grant itself TCC. Tracenium
+> is building its **own** MDM for exactly this class of control
+> (configuration profiles, restrictions, managed preferences); until
+> that ships, the profile has to come from whatever MDM the customer
+> already runs, and endpoints with no MDM at all will keep returning
+> `no_screen_recording_permission`. Earlier revisions of this file
+> assumed a third-party MDM was a given — that is no longer the plan.
 
 Payload — `com.apple.TCC.configuration-profile-policy`:
 

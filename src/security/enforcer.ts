@@ -36,6 +36,11 @@
 //     that has a desired value set, so the dashboard always shows
 //     drift even when remediation is paused.
 //
+//   * A few capabilities are READ-only by nature (`sip`, `filevault`
+//     on macOS): they have a remediator entry so drift is reported,
+//     but privsvc answers `unsupported_check` for the remediate call.
+//     The backend validator rejects mode="auto" for those.
+//
 //   * Capabilities WITHOUT a remediator entry in the table
 //     (`passwordPolicy`, `bitlocker`, `usb`, `shares`) are treated
 //     as policy-stored placeholders: the enforcer logs at debug
@@ -152,7 +157,11 @@ type CapabilityKey =
   | "firewall"
   | "ssh"
   | "tls"
-  | "smb";
+  | "smb"
+  | "gatekeeper"
+  | "remoteLogin"
+  | "sip"
+  | "filevault";
 
 type Platform = "linux" | "win32" | "darwin";
 
@@ -257,6 +266,51 @@ const SECURITY_CAPABILITY_REMEDIATORS: RemediatorEntry[] = [
     oses: ["win32"],
     policyHasValue: (cap) => typeof cap?.smbv1Disabled === "boolean",
     desiredEqual: (cap) => cap?.smbv1Disabled === true,
+  },
+
+  // ── macOS ──────────────────────────────────────────────────────
+  // Handlers live in privsvc/macos/src/pmp-remediation.ts. Gatekeeper
+  // and Remote Login are READ + REMEDIATE (spctl / systemsetup).
+  {
+    capability: "gatekeeper",
+    subfield: "required",
+    checkId: "macos.gatekeeper.enabled",
+    oses: ["darwin"],
+    policyHasValue: (cap) => typeof cap?.required === "boolean",
+    desiredEqual: (cap) => cap?.required === true,
+  },
+  {
+    capability: "remoteLogin",
+    subfield: "disabled",
+    checkId: "macos.remote_login.disabled",
+    oses: ["darwin"],
+    policyHasValue: (cap) => typeof cap?.disabled === "boolean",
+    desiredEqual: (cap) => cap?.disabled === true,
+  },
+
+  // SIP and FileVault are READ-only: the privsvc handlers surface state
+  // but return `unsupported_check` for REMEDIATE (SIP needs Recovery;
+  // FileVault needs interactive user auth + a Recovery Key prompt).
+  // They're listed here so `report-only` produces real drift reporting
+  // — the read path runs for any capability with a desired value. In
+  // `auto` the remediate call fails soft and is logged; the backend
+  // validator is what stops an operator from setting auto in the first
+  // place (UNENFORCEABLE_DESIRED_STATE).
+  {
+    capability: "sip",
+    subfield: "required",
+    checkId: "macos.sip.enabled",
+    oses: ["darwin"],
+    policyHasValue: (cap) => typeof cap?.required === "boolean",
+    desiredEqual: (cap) => cap?.required === true,
+  },
+  {
+    capability: "filevault",
+    subfield: "required",
+    checkId: "macos.filevault.enabled",
+    oses: ["darwin"],
+    policyHasValue: (cap) => typeof cap?.required === "boolean",
+    desiredEqual: (cap) => cap?.required === true,
   },
 ];
 
