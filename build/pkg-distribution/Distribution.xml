@@ -20,7 +20,7 @@
   <options customize="never" require-scripts="true" hostArchitectures="arm64,x86_64" />
   <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true" />
 
-  <pkg-ref id="com.certusws.tracenium.agent" version="1.1.25" auth="Root">TraceniumAgentComponent.pkg</pkg-ref>
+  <pkg-ref id="com.certusws.tracenium.agent" version="1.1.26" auth="Root">TraceniumAgentComponent.pkg</pkg-ref>
 
   <choices-outline>
     <line choice="tracenium-agent" />

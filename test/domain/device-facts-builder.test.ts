@@ -56,7 +56,7 @@ function makeCtx(): any {
       enrolledAtUtc: "2026-01-01T00:00:00.000Z",
       bootstrap: { capabilities: [], channel: "stable" }
     },
-    config: { agentVersion: "1.1.25", coreVersion: "1.0.0" },
+    config: { agentVersion: "1.1.26", coreVersion: "1.0.0" },
     policyRuntime: { getEnabledPlugins: () => [] as string[] }
   };
 }
