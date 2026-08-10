@@ -1,4 +1,5 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
   <!-- Manufacturer MUST match the legal entity on the Trusted Signing
        cert (CERTUS ITM LLC). The cert is issued to that exact name and
@@ -14,10 +15,36 @@
        already-enrolled device. The visible Publisher and the on-disk
        registry hive serve different purposes; only the former needs to
        match the cert. -->
+  <!--
+    ProductVersion viene inyectada por el build (`-d ProductVersion=x.y.z`
+    desde scripts/build-windows-msi.ps1, que la deriva de package.json).
+
+    Antes se mantenía A MANO aquí, y se olvidó exactamente una vez: el
+    release 1.1.23 salió con package.json=1.1.23 pero este archivo aún en
+    1.1.21. Como `MajorUpgrade` compara ProductVersion y
+    AllowSameVersionUpgrades="no", ese MSI NO se consideró upgrade sobre
+    el 1.1.21 instalado: RemoveExistingProducts no corrió y la instalación
+    sobrescribió archivos con los procesos corriendo. El .exe single-file
+    del AgentTray quedó reemplazado bajo el proceso vivo, y sus assemblies
+    (que se leen perezosamente del bundle DENTRO del .exe) dejaron de ser
+    alcanzables. Días después, al activar el toggle "Device info widget",
+    el flyout mostró el primer Form de esa sesión → `Form.OnLoad` →
+    `Application.OpenForms` → FileNotFoundException de
+    System.Collections.NonGeneric → diálogo modal de .NET no cerrable en 2
+    endpoints (2026-07-28).
+
+    Derivarla del build elimina esa clase de error de raíz: la versión del
+    MSI ya no puede desincronizarse del agente. El fallback 0.0.0 solo
+    aplica a invocaciones manuales de `wix build` fuera de los scripts.
+  -->
+  <?ifndef ProductVersion ?>
+    <?define ProductVersion = "0.0.0" ?>
+  <?endif ?>
+
   <Package
       Name="Tracenium Agent"
       Manufacturer="CERTUS ITM LLC"
-      Version="1.1.27"
+      Version="$(ProductVersion)"
       UpgradeCode="8F2C0D63-0C36-4D71-BE70-4A1A1A1F83F0"
       InstallerVersion="500"
       Compressed="yes"
@@ -36,6 +63,39 @@
         Schedule="afterInstallInitialize"
         AllowSameVersionUpgrades="no"
         AllowDowngrades="no" />
+
+    <!-- ============================= -->
+    <!-- CERRAR EL TRAY ANTES DE TOCAR SUS ARCHIVOS -->
+    <!-- ============================= -->
+    <!--
+      Defensa en profundidad junto con ProductVersion inyectada (arriba).
+      Aunque el MajorUpgrade ahora sí dispare, el tray corre desde una Run
+      key de HKLM en la sesión del usuario y no lo controla ServiceControl
+      como a AgentCore/PrivSvc — nada garantizaba que estuviera cerrado al
+      reemplazar su .exe.
+
+      Y ese .exe es single-file self-contained: sus managed assemblies se
+      leen PEREZOSAMENTE del bundle que vive dentro del propio ejecutable,
+      así que reemplazarlo bajo un proceso vivo deja al proceso sin poder
+      cargar nada nuevo (ver el bloque ProductVersion para el incidente).
+
+      CloseMessage intenta el cierre limpio (WM_CLOSE); TerminateProcess lo
+      fuerza si no responde — el tray no tiene estado propio, solo lee
+      tray-status.json, así que terminarlo es seguro. RebootPrompt="no"
+      evita que MSI pida reinicio por archivo en uso.
+
+      Nota: tras el upgrade el tray reaparece en el siguiente inicio de
+      sesión (Run key). Relanzarlo desde el MSI no es viable porque el
+      auto-update corre como SYSTEM y un proceso GUI lanzado desde ahí
+      quedaría huérfano en la sesión 0, sin icono visible.
+    -->
+    <util:CloseApplication
+        Id="CloseAgentTray"
+        Target="Tracenium.AgentTray.exe"
+        Description="El indicador de bandeja de Tracenium debe cerrarse para completar la actualización."
+        CloseMessage="yes"
+        TerminateProcess="0"
+        RebootPrompt="no" />
 
     <!-- ============================= -->
     <!-- ICONO (Apps & Features) -->

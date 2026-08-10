@@ -76,10 +76,22 @@ $Version = if ($env:TRACENIUM_AGENT_VERSION) {
 }
 if (-not $Version) { throw "Could not resolve agent version" }
 
+# MSI ProductVersion must be strictly numeric (major.minor.build, with
+# major/minor <= 255 and build <= 65535), so strip any semver
+# pre-release suffix: "1.1.26-rc1" -> "1.1.26". This is the value that
+# drives MajorUpgrade detection, so it MUST change between releases —
+# see the ProductVersion comment block in wix/Product.wxs for the
+# incident this prevents.
+$MsiVersion = ($Version -split '-')[0]
+if ($MsiVersion -notmatch '^\d+(\.\d+){1,3}$') {
+  throw "Version '$Version' does not yield a numeric MSI ProductVersion (got '$MsiVersion')"
+}
+
 Write-Host "==== build-windows-msi ====" -ForegroundColor Cyan
 Write-Host "  Repo:       $RepoRoot"
 Write-Host "  Arch:       $Arch"
 Write-Host "  Version:    $Version"
+Write-Host "  MSI ver:    $MsiVersion  (ProductVersion — drives MajorUpgrade)"
 Write-Host "  Installer:  $InstallerDir"
 Write-Host "  Inputs:     $BinSrcDir"
 Write-Host ""
@@ -134,6 +146,7 @@ try {
     -ext WixToolset.UI.wixext `
     -culture en-US `
     -arch $Arch `
+    -d ProductVersion=$MsiVersion `
     -bindpath (Get-Location).Path `
     -o $TmpMsi
   if ($LASTEXITCODE -ne 0) { throw "wix build failed (exit $LASTEXITCODE)" }
