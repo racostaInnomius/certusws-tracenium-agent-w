@@ -100,6 +100,13 @@ export type RuntimePolicy = {
     // calls. The tray reads this via tray-status.json (policy.features).
     // The in-window Device Info tab is NOT gated — only the flyout.
     deviceInfoWidget?: boolean;
+    // Endpoint positioning: when true, the agent asks the OPERATING SYSTEM for
+    // a coordinate (Windows Geolocation / macOS CoreLocation) and reports it in
+    // amp.geo. Off by default and fail-closed everywhere: a coordinate is
+    // personal data, and the backend re-checks this same switch before storing
+    // anything. Deliberately separate from mam.locationTracking — company
+    // phones and employee laptops are different populations.
+    locationTracking?: boolean;
   };
 
   // Policy v2 — Agent Policy block. When present, the validator
@@ -130,6 +137,7 @@ export type RuntimePolicy = {
       remoteRequireConsent?: boolean;
       selfUpdate?: boolean;
       deviceInfoWidget?: boolean;
+      locationTracking?: boolean;
     };
   };
 
@@ -495,7 +503,10 @@ const DEFAULT_POLICY: RuntimePolicy = {
     remoteScreen: false,
     remoteRequireConsent: false,
     selfUpdate: true,
-    deviceInfoWidget: false
+    deviceInfoWidget: false,
+    // Fail closed. An agent that cannot read its policy must not start
+    // collecting positions.
+    locationTracking: false
   }
 };
 

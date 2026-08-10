@@ -22,6 +22,13 @@
   <string>@TRACENIUM_AGENT_VERSION@</string>
   <key>CFBundleVersion</key>
   <string>@TRACENIUM_AGENT_VERSION@</string>
+  <!-- Shown verbatim in the macOS permission prompt. Written to say who sees
+       the data and why, because "Tracenium would like to use your location" on
+       its own tells the person nothing they can decide with. -->
+  <key>NSLocationUsageDescription</key>
+  <string>Your organization's IT team uses this device's approximate location to keep the asset inventory accurate and to help recover the device if it is lost or stolen. You can turn this off at any time in System Settings.</string>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>Your organization's IT team uses this device's approximate location to keep the asset inventory accurate and to help recover the device if it is lost or stolen. You can turn this off at any time in System Settings.</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSUIElement</key>

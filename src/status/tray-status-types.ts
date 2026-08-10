@@ -15,6 +15,10 @@ export type TrayPolicyStatus = {
   // older snapshots deserialize fine in both tray apps.
   features?: {
     deviceInfoWidget?: boolean;
+    // macOS only. CoreLocation can only be reached from a real .app bundle in
+    // the console user's session — which is exactly what the status app is —
+    // so the daemon publishes the switch here and the app does the collecting.
+    locationTracking?: boolean;
   };
 };
 

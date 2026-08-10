@@ -1,0 +1,282 @@
+// src/plugins/amp/providers/geo.ts
+//
+// Endpoint positioning for desktops: asks the OPERATING SYSTEM where it is.
+//
+// Why the OS and not an IP lookup
+// -----------------------------------------------------------------------------
+// The control plane used to infer a city from the device's public IP. Measured
+// against real hosts that was wrong in a way no dataset can fix: machines
+// egressing through Starlink gateways reported Chicago and Montreal, because
+// the address genuinely belongs to that gateway. The OS, by contrast, resolves
+// position from nearby Wi-Fi access points via Microsoft's/Apple's own
+// service — accurate to tens of metres, and unaffected by VPNs or satellite
+// routing.
+//
+// Why not scan BSSIDs ourselves
+// -----------------------------------------------------------------------------
+// We could read nearby BSSIDs and resolve them against a third-party
+// geolocation API. That would need a paid API key and would send the customer's
+// surrounding network names off-site. Letting the OS do it keeps both the key
+// and the BSSIDs where they belong. (It is also the only option on macOS 14+,
+// which returns a null BSSID without location permission anyway.)
+//
+// Everything here is fail-soft: no permission, no location service, an old
+// Windows build, a timeout — all resolve to `null`, which the caller treats as
+// "no position this tick". A position is a nice-to-have on an inventory tick
+// that must not fail because of it.
+
+import os from "os";
+import fs from "fs";
+import path from "path";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
+
+/** Matches the amp.geo shape the backend already reads (lat/lon/accuracyM). */
+export type AmpGeo = {
+  lat: number;
+  lon: number;
+  accuracyM: number | null;
+  collectedAtUtc: string;
+};
+
+/**
+ * A generous budget. The first fix after a cold start can take seconds while
+ * the OS scans Wi-Fi; anything beyond this is a hung location service, and the
+ * inventory tick should move on without it.
+ */
+const LOOKUP_TIMEOUT_MS = 20_000;
+
+/**
+ * PowerShell that asks Windows for a single reading and prints JSON.
+ *
+ * `Geolocator` is asynchronous WinRT. `GetGeopositionAsync` returns an
+ * IAsyncOperation, and PowerShell 5.1 cannot await one directly — hence the
+ * reflection dance to reach `AsTask`. This is the standard workaround for
+ * calling WinRT async APIs from Windows PowerShell.
+ *
+ * `ReportInterval` is set so the OS knows we want one prompt reading rather
+ * than a subscription it should keep warm.
+ */
+const WINDOWS_SCRIPT = `
+$ErrorActionPreference = 'Stop'
+try {
+  [void][Windows.Devices.Geolocation.Geolocator,Windows.Devices.Geolocation,ContentType=WindowsRuntime]
+  $locator = New-Object Windows.Devices.Geolocation.Geolocator
+  $locator.ReportInterval = 2000
+  $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+    $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
+    $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1'
+  })[0]
+  $asTask = $asTaskGeneric.MakeGenericMethod([Windows.Devices.Geolocation.Geoposition])
+  $task = $asTask.Invoke($null, @($locator.GetGeopositionAsync()))
+  if (-not $task.Wait(15000)) { Write-Output 'TIMEOUT'; exit 0 }
+  $p = $task.Result.Coordinate.Point.Position
+  $acc = $task.Result.Coordinate.Accuracy
+  Write-Output (ConvertTo-Json -Compress @{
+    lat = $p.Latitude; lon = $p.Longitude; accuracyM = $acc
+  })
+} catch {
+  # Most common causes: location services off for the machine, the
+  # CapabilityAccessManager consent store denying it, or a Server SKU with no
+  # location provider at all. None are recoverable here.
+  Write-Output ('ERROR:' + $_.Exception.Message)
+}
+`;
+
+/**
+ * Parse whatever the platform helper printed.
+ *
+ * Pure and exported: this is the part that must not regress, and it can be
+ * exercised without a Windows box or a location permission. Anything that is
+ * not a well-formed, in-range coordinate becomes null rather than a guess.
+ */
+export function parseGeoOutput(stdout: unknown, now: () => Date = () => new Date()): AmpGeo | null {
+  const text = typeof stdout === "string" ? stdout.trim() : "";
+  if (!text || text === "TIMEOUT" || text.startsWith("ERROR:")) return null;
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+
+  const lat = Number(parsed.lat);
+  const lon = Number(parsed.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  // 0,0 is Null Island — a zeroed struct, not a device in the Gulf of Guinea.
+  // The backend rejects it too; catching it here saves a pointless round trip.
+  if (lat === 0 && lon === 0) return null;
+
+  const accuracy = Number(parsed.accuracyM);
+
+  // Prefer the timestamp the source stamped on the fix. On macOS the reading
+  // is taken by the status app minutes before the daemon reads the file, and
+  // restamping it as "now" would report a 40-minute-old position as current.
+  // Windows has no such gap and simply omits the field.
+  const stamped = typeof parsed.collectedAtUtc === "string" ? Date.parse(parsed.collectedAtUtc) : NaN;
+  const collectedAtUtc = Number.isFinite(stamped)
+    ? new Date(stamped).toISOString()
+    : now().toISOString();
+
+  return {
+    lat,
+    lon,
+    // A negative or absent accuracy means "unknown", not "perfect".
+    accuracyM: Number.isFinite(accuracy) && accuracy >= 0 ? accuracy : null,
+    collectedAtUtc,
+  };
+}
+
+/** Platforms where we can actually ask the OS. */
+export function supportsOsLocation(platform: string = os.platform()): boolean {
+  // Linux has no equivalent system service — those devices keep falling back
+  // to the operator's CIDR→site mapping, which is exact anyway.
+  return platform === "win32" || platform === "darwin";
+}
+
+async function collectWindows(): Promise<string> {
+  const { stdout } = await execFileAsync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", WINDOWS_SCRIPT],
+    { timeout: LOOKUP_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 64 }
+  );
+  return String(stdout ?? "");
+}
+
+/**
+ * How old a published macOS fix may be before it is ignored.
+ *
+ * The status app refreshes every 15 minutes. This window is wider so a single
+ * missed cycle (asleep, no Wi-Fi, a failed request) does not blank the
+ * location — but it is finite on purpose: if the app is killed, the user
+ * revokes permission, or the machine is carried elsewhere with the lid shut,
+ * the last known fix must expire rather than be reported as current forever.
+ */
+const MACOS_FIX_MAX_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * Who is logged in at the console.
+ *
+ * The position is published into that user's own Application Support
+ * directory, so the daemon has to know whose home to look in. Returns null on
+ * a machine with nobody logged in (login window, pure server), where there is
+ * no session that could have collected anything anyway.
+ */
+export function parseConsoleUser(stdout: unknown): string | null {
+  const name = typeof stdout === "string" ? stdout.trim() : "";
+  if (!name || name === "root" || name === "loginwindow") return null;
+  // Defensive: this value is interpolated into a filesystem path.
+  if (!/^[a-zA-Z0-9._-]+$/.test(name)) return null;
+  return name;
+}
+
+/**
+ * Where a user's home actually is.
+ *
+ * Assuming /Users/<name> is right on the overwhelming majority of Macs and
+ * wrong on exactly the fleets most likely to be centrally managed — network and
+ * mobile accounts can live anywhere. dscl is the supported way to ask, and the
+ * hard-coded guess stays as the fallback.
+ */
+async function resolveHomeDirectory(user: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(
+      "/usr/bin/dscl",
+      [".", "-read", `/Users/${user}`, "NFSHomeDirectory"],
+      { timeout: 5_000 }
+    );
+    const home = String(stdout ?? "").replace(/^NFSHomeDirectory:\s*/, "").trim();
+    if (home.startsWith("/")) return home;
+  } catch {
+    // Directory service unavailable — fall through to the conventional path.
+  }
+  return path.join("/Users", user);
+}
+
+/**
+ * Is this published fix recent enough to report?
+ *
+ * Pure and exported so the staleness rule can be tested without a clock or a
+ * filesystem — it is the guard that keeps a dead status app from pinning a
+ * laptop to an office it left days ago.
+ */
+export function isFixFresh(collectedAtUtc: unknown, now: number = Date.now()): boolean {
+  if (typeof collectedAtUtc !== "string" || !collectedAtUtc) return false;
+  const at = Date.parse(collectedAtUtc);
+  if (!Number.isFinite(at)) return false;
+  // A timestamp in the future is a clock skew or a forged file, not a fix.
+  if (at > now + 60_000) return false;
+  return now - at <= MACOS_FIX_MAX_AGE_MS;
+}
+
+/**
+ * macOS: read what the menubar app published.
+ *
+ * The daemon cannot call CoreLocation itself — TCC grants location to a signed
+ * .app acting in a user session, and this process is a root LaunchDaemon in
+ * session 0 with neither. So the signed status app collects and drops the
+ * result here. See macos/TraceniumAgentStatus/Sources/LocationProvider.swift.
+ */
+async function collectMacos(): Promise<string> {
+  const { stdout } = await execFileAsync("/usr/bin/stat", ["-f%Su", "/dev/console"], {
+    timeout: 5_000,
+  });
+  const user = parseConsoleUser(stdout);
+  if (!user) return "";
+
+  const file = path.join(
+    await resolveHomeDirectory(user),
+    "Library/Application Support/Tracenium/location.json"
+  );
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    // Not published yet, permission never granted, or the app is not running.
+    return "";
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return "";
+  }
+
+  // Staleness is enforced HERE rather than in the shared parser: it is a
+  // macOS-specific concern, because macOS is the only platform where the fix
+  // is produced by a separate process that may have stopped running.
+  if (!isFixFresh(parsed?.collectedAtUtc)) return "";
+
+  return raw;
+}
+
+/**
+ * One position, or null.
+ *
+ * `enabled` is the tenant's `features.locationTracking`. It is checked here —
+ * not by the caller — so that every path into this module is gated, and the
+ * default of `false` means a forgotten check degrades to collecting nothing.
+ */
+export async function collectGeo(
+  enabled: boolean,
+  platform: string = os.platform()
+): Promise<AmpGeo | null> {
+  if (enabled !== true) return null;
+  if (!supportsOsLocation(platform)) return null;
+
+  try {
+    const stdout = platform === "win32" ? await collectWindows() : await collectMacos();
+    return parseGeoOutput(stdout);
+  } catch {
+    // Timeout, missing interpreter, denied consent store — all the same to the
+    // caller: no position this tick.
+    return null;
+  }
+}

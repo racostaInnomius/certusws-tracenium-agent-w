@@ -6,6 +6,9 @@ final class StatusBarController {
     private let reader = StatusSnapshotReader()
     private let contentController = StatusPopoverViewController()
     private var timer: Timer?
+    /// CoreLocation can only be reached from this process (signed bundle, user
+    /// session) — never from the root daemon. See LocationProvider.
+    private let locationProvider = LocationProvider()
     private var lastPresenceState: Bool?
     private var lastConnectivityState: Bool?
     private lazy var statusImage: NSImage? = {
@@ -54,6 +57,7 @@ final class StatusBarController {
     func stop() {
         timer?.invalidate()
         timer = nil
+        locationProvider.stop()
         Logger.shared.info("Status bar controller stopped")
     }
 
@@ -72,6 +76,11 @@ final class StatusBarController {
     private func refresh() {
         let status = reader.read()
         contentController.render(status)
+
+        // Driven straight off the snapshot poll: apply() is idempotent, so an
+        // unchanged switch costs nothing and a flipped one takes effect within
+        // one poll instead of waiting for a restart.
+        locationProvider.apply(enabled: status?.policy.features?.locationTracking ?? false)
 
         let hasSnapshot = status != nil
         if lastPresenceState != hasSnapshot {

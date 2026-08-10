@@ -50,6 +50,15 @@ struct TrayPolicyStatus: Decodable {
     var hash: String?
     var plugins: [String]
     var modules: [String]
+    /// Optional so snapshots written by older agents still decode.
+    var features: TrayPolicyFeatures?
+}
+
+/// Feature switches the user-session app acts on. The daemon owns the policy;
+/// this is how it tells the app what it is allowed to do.
+struct TrayPolicyFeatures: Decodable {
+    var deviceInfoWidget: Bool?
+    var locationTracking: Bool?
 }
 
 struct TrayJobStatus: Decodable {

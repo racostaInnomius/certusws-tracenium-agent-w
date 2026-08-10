@@ -209,7 +209,8 @@ export class TrayStatusStore {
         plugins: Array.isArray(policySnapshot?.plugins) ? policySnapshot.plugins : [],
         modules: Array.isArray(policySnapshot?.modules) ? policySnapshot.modules : [],
         features: {
-          deviceInfoWidget: Boolean(policySnapshot?.features?.deviceInfoWidget)
+          deviceInfoWidget: Boolean(policySnapshot?.features?.deviceInfoWidget),
+          locationTracking: Boolean(policySnapshot?.features?.locationTracking)
         }
       },
       jobs: {},
@@ -288,7 +289,8 @@ export class TrayStatusStore {
         plugins: Array.isArray(policySnapshot?.plugins) ? policySnapshot.plugins : [],
         modules: Array.isArray(policySnapshot?.modules) ? policySnapshot.modules : [],
         features: {
-          deviceInfoWidget: Boolean(policySnapshot?.features?.deviceInfoWidget)
+          deviceInfoWidget: Boolean(policySnapshot?.features?.deviceInfoWidget),
+          locationTracking: Boolean(policySnapshot?.features?.locationTracking)
         }
       }
     }));

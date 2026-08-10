@@ -170,6 +170,19 @@ export type PrinterInventory = {
  * field, and the backend ignores its absence — keeps the wire schema
  * additive and lets us roll out collector + backend in either order.
  */
+/**
+ * OS-reported position. Optional and usually absent: it requires the tenant to
+ * switch on `features.locationTracking` AND the endpoint's location service to
+ * be available. An agent that reports nothing here looks exactly like every
+ * agent did before the feature existed.
+ */
+export type AmpGeo = {
+  lat: number;
+  lon: number;
+  accuracyM: number | null;
+  collectedAtUtc: string;
+};
+
 export type AmpNamespace = {
   hardware: {
     static: HardwareStatic;
@@ -178,4 +191,5 @@ export type AmpNamespace = {
   security: SecurityInfo;
   software: SoftwareInventory;
   printers?: PrinterInventory;
+  geo?: AmpGeo;
 };
