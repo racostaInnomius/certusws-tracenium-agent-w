@@ -33,6 +33,32 @@ import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Why this device is or is not reporting a position.
+ *
+ * Reported on EVERY tick, including the failures. Without it a blank Location
+ * column is indistinguishable across "the tenant never switched it on", "this
+ * OS cannot do it", "the user denied the prompt" and "the agent is too old" —
+ * and an MSP looking at five clients' fleets has no way to tell which of those
+ * needs action. The absence of a coordinate is data.
+ */
+export type GeoStatus =
+  /** A fix was obtained and is in `geo`. */
+  | "ok"
+  /** The tenant has not enabled features.locationTracking. */
+  | "disabled"
+  /** No system location service on this platform (Linux). */
+  | "unsupported"
+  /** The OS refused: location services off, or consent denied. */
+  | "denied"
+  /** Supported and permitted, but no fix right now (indoors, cold start). */
+  | "unavailable";
+
+export type GeoResult = {
+  geo: AmpGeo | null;
+  status: GeoStatus;
+};
+
 /** Matches the amp.geo shape the backend already reads (lat/lon/accuracyM). */
 export type AmpGeo = {
   lat: number;
@@ -267,16 +293,35 @@ async function collectMacos(): Promise<string> {
 export async function collectGeo(
   enabled: boolean,
   platform: string = os.platform()
-): Promise<AmpGeo | null> {
-  if (enabled !== true) return null;
-  if (!supportsOsLocation(platform)) return null;
+): Promise<GeoResult> {
+  if (enabled !== true) return { geo: null, status: "disabled" };
+  if (!supportsOsLocation(platform)) return { geo: null, status: "unsupported" };
 
+  let stdout = "";
   try {
-    const stdout = platform === "win32" ? await collectWindows() : await collectMacos();
-    return parseGeoOutput(stdout);
+    stdout = platform === "win32" ? await collectWindows() : await collectMacos();
   } catch {
-    // Timeout, missing interpreter, denied consent store — all the same to the
-    // caller: no position this tick.
-    return null;
+    // Timeout, missing interpreter, a crashed helper. Reported as denied
+    // rather than unavailable: in practice this is overwhelmingly the consent
+    // store or a locked-down SKU, and "we could not ask" is closer to denied
+    // than to "we asked and got nothing".
+    return { geo: null, status: "denied" };
   }
+
+  return { geo: parseGeoOutput(stdout), status: classifyGeoOutput(stdout) };
+}
+
+/**
+ * Turn the helper's raw output into a reason.
+ *
+ * Pure, so every branch is testable without an OS that can refuse us.
+ */
+export function classifyGeoOutput(stdout: unknown): GeoStatus {
+  const text = typeof stdout === "string" ? stdout.trim() : "";
+  // Empty means the platform helper had nothing to give: on macOS that is the
+  // status app not running, no console user, or a fix that aged out.
+  if (!text) return "unavailable";
+  if (text === "TIMEOUT") return "unavailable";
+  if (text.startsWith("ERROR:")) return "denied";
+  return parseGeoOutput(text) ? "ok" : "unavailable";
 }

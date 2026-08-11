@@ -281,11 +281,25 @@ export class PeerSession {
             }
           });
         } catch (err: any) {
+          const cause = String(err?.message || err || "").trim();
           ctx.logger?.error?.("[rcp] PTY spawn failed at channel open", {
             sessionId,
-            err: err?.message || String(err)
+            shell: process.env.SHELL || null,
+            platform: process.platform,
+            arch: process.arch,
+            err: cause
           });
-          setImmediate(() => args.onTeardown("pty_spawn_failed"));
+          // Carry the underlying cause in the close reason, not just the
+          // opaque bucket name. The reason reaches the operator's panel and
+          // `remote_sessions.close_reason`, so a support engineer can tell
+          // "posix_spawnp failed" (node-pty's spawn-helper is missing or not
+          // executable for this arch) apart from a missing shell or a bad
+          // cwd — without shell access to the endpoint's log. Bounded so a
+          // long native error can't bloat the audit column.
+          const reason = cause
+            ? `pty_spawn_failed: ${cause.slice(0, 120)}`
+            : "pty_spawn_failed";
+          setImmediate(() => args.onTeardown(reason));
           return;
         }
 

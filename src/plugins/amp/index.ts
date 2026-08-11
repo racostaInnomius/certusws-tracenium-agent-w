@@ -23,13 +23,16 @@ export async function collectAMP(ctx: AgentContext): Promise<AmpNamespace> {
   //
   // collectGeo re-checks the gate itself and swallows every failure, so this
   // stays a plain merge with no error handling of its own.
-  const geo = await collectGeo(
+  const { geo, status } = await collectGeo(
     Boolean(ctx.policyRuntime?.isFeatureEnabled?.("locationTracking")),
     platform
   );
   if (geo) {
     result.geo = geo;
   }
+  // Always reported, including the failures: a blank Location column is
+  // useless to an MSP unless it says WHY it is blank.
+  result.geoStatus = status;
 
   return result;
 }

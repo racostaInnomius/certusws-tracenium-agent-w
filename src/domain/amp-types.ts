@@ -192,4 +192,6 @@ export type AmpNamespace = {
   software: SoftwareInventory;
   printers?: PrinterInventory;
   geo?: AmpGeo;
+  /** Why `geo` is present or absent. See GeoStatus in providers/geo.ts. */
+  geoStatus?: string;
 };

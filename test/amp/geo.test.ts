@@ -10,6 +10,7 @@ import {
   collectGeo,
   parseConsoleUser,
   isFixFresh,
+  classifyGeoOutput,
 } from "../../src/plugins/amp/providers/geo";
 
 const at = () => new Date("2026-08-09T18:00:00.000Z");
@@ -83,23 +84,51 @@ describe("supportsOsLocation", () => {
 });
 
 describe("collectGeo — the gate", () => {
-  it("collects nothing when the tenant has not enabled it", async () => {
-    expect(await collectGeo(false, "win32")).toBeNull();
+  it("collects nothing when the tenant has not enabled it, and says so", async () => {
+    expect(await collectGeo(false, "win32")).toEqual({ geo: null, status: "disabled" });
   });
 
   it("fails closed on anything that is not exactly true", async () => {
     // A policy that failed to load, or one carrying a truthy string, must not
     // start reading positions.
-    expect(await collectGeo(undefined as any, "win32")).toBeNull();
-    expect(await collectGeo(null as any, "win32")).toBeNull();
-    expect(await collectGeo("true" as any, "win32")).toBeNull();
-    expect(await collectGeo(1 as any, "win32")).toBeNull();
+    for (const value of [undefined, null, "true", 1]) {
+      const result = await collectGeo(value as any, "win32");
+      expect(result.geo).toBeNull();
+      expect(result.status).toBe("disabled");
+    }
   });
 
-  it("collects nothing on an unsupported platform even when enabled", async () => {
-    expect(await collectGeo(true, "linux")).toBeNull();
+  it("distinguishes an unsupported platform from a disabled tenant", async () => {
+    // Both produce no coordinate; only one of them is worth acting on.
+    expect(await collectGeo(true, "linux")).toEqual({ geo: null, status: "unsupported" });
+  });
+});
+
+describe("classifyGeoOutput — why there is no position", () => {
+  it("reports a usable reading as ok", () => {
+    expect(classifyGeoOutput('{"lat":19.4,"lon":-99.1}')).toBe("ok");
   });
 
+  it("separates a refusal from a miss", () => {
+    // "denied" is a configuration problem an admin can fix; "unavailable" is
+    // weather. Collapsing them would send an MSP chasing the wrong one.
+    expect(classifyGeoOutput("ERROR:Access is denied")).toBe("denied");
+    expect(classifyGeoOutput("TIMEOUT")).toBe("unavailable");
+  });
+
+  it("treats nothing-at-all as unavailable", () => {
+    // On macOS this is the status app not running, no console user, or a fix
+    // that aged out of the freshness window.
+    expect(classifyGeoOutput("")).toBe("unavailable");
+    expect(classifyGeoOutput("   ")).toBe("unavailable");
+    expect(classifyGeoOutput(null)).toBe("unavailable");
+  });
+
+  it("treats a malformed or rejected reading as unavailable, not ok", () => {
+    expect(classifyGeoOutput("not json")).toBe("unavailable");
+    expect(classifyGeoOutput('{"lat":0,"lon":0}')).toBe("unavailable");
+    expect(classifyGeoOutput('{"lat":91,"lon":0}')).toBe("unavailable");
+  });
 });
 
 describe("parseConsoleUser (macOS)", () => {
