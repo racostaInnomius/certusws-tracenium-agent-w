@@ -27,13 +27,18 @@ internal sealed class DeviceInfoFlyout : Form
     private const int CollapsedWidth = 160;
     private const int CollapsedHeight = 14;
     private const int ExpandedWidth = 400;
-    private const int ExpandedHeight = 460;
+    // Techo de seguridad: si por algún motivo el contenido creciera más
+    // que la pantalla, recortamos ahí y recién entonces habilitamos
+    // scroll. En la práctica nunca se alcanza.
+    private const int MaxExpandedHeight = 900;
 
     private const int WS_EX_TOOLWINDOW = 0x00000080;
     private const int WS_EX_NOACTIVATE = 0x08000000;
 
     private readonly List<Label> _valueLabels = new();
     private readonly Panel _expandedPanel;
+    private readonly TableLayoutPanel _grid;
+    private readonly FlowLayoutPanel _buttonStrip;
     private readonly Label _stripLabel;
     private readonly Button _copyButton;
     private TrayStatus? _lastStatus;
@@ -68,13 +73,23 @@ internal sealed class DeviceInfoFlyout : Form
             Padding = new Padding(14, 6, 14, 10)
         };
 
-        var grid = new TableLayoutPanel
+        // AutoScroll queda APAGADO a propósito: con él, WinForms pintaba
+        // una barra de scroll vertical permanente aunque el contenido
+        // cupiera (bug visual reportado 2026-08-10). En vez de scrollear,
+        // el flyout se dimensiona a su contenido en ApplyExpandedBounds()
+        // — los valores envuelven en varias líneas y su alto varía por
+        // equipo (el SO ocupa 2-3 líneas, el serial 2), así que una altura
+        // fija no sirve. Solo se reactiva si el contenido superara
+        // MaxExpandedHeight, caso en el que scrollear es preferible a
+        // cortar.
+        _grid = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            AutoScroll = true,
+            AutoScroll = false,
             BackColor = Color.Transparent
         };
+        var grid = _grid;
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
@@ -83,7 +98,7 @@ internal sealed class DeviceInfoFlyout : Form
             AddRow(grid, field.Label);
         }
 
-        var buttonStrip = new FlowLayoutPanel
+        _buttonStrip = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
             FlowDirection = FlowDirection.RightToLeft,
@@ -91,6 +106,7 @@ internal sealed class DeviceInfoFlyout : Form
             BackColor = Color.Transparent,
             Padding = new Padding(0, 4, 0, 0)
         };
+        var buttonStrip = _buttonStrip;
         _copyButton = new Button
         {
             Text = "Copy all",
@@ -141,6 +157,15 @@ internal sealed class DeviceInfoFlyout : Form
         {
             _valueLabels[i].Text = fields[i].Value;
         }
+
+        // Los textos acaban de cambiar y con ellos el alto del contenido
+        // (el refresh de 5s puede traer un SO/serial más largo, o pasar de
+        // placeholders "—" a valores reales). Si está abierto, re-medir
+        // para que siga sin necesitar scroll.
+        if (_expanded)
+        {
+            ApplyExpandedBounds();
+        }
     }
 
     private void Toggle()
@@ -179,14 +204,40 @@ internal sealed class DeviceInfoFlyout : Form
             CollapsedHeight);
     }
 
+    /// <summary>
+    /// Dimensiona el flyout a la altura EXACTA de su contenido, para que
+    /// no haga falta scroll. El alto real varía por equipo porque los
+    /// valores envuelven (nombre del SO, serial, device ID), así que
+    /// medimos en vez de asumir una constante.
+    /// </summary>
     private void ApplyExpandedBounds()
     {
         var screen = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 720);
+
+        // Ancho disponible para el grid dentro del panel (descontando su
+        // padding), necesario para que GetPreferredSize calcule bien el
+        // wrapping de los labels.
+        var innerWidth = ExpandedWidth - _expandedPanel.Padding.Horizontal;
+        var gridHeight = _grid.GetPreferredSize(new Size(innerWidth, 0)).Height;
+
+        var desired =
+            _stripLabel.Height +
+            _expandedPanel.Padding.Vertical +
+            gridHeight +
+            _buttonStrip.PreferredSize.Height;
+
+        // Nunca pasar del techo ni de la pantalla. Si se recorta —
+        // escenario que no debería darse— habilitamos scroll para que el
+        // contenido siga siendo alcanzable en vez de quedar cortado.
+        var maxHeight = Math.Min(MaxExpandedHeight, screen.Height);
+        var height = Math.Min(desired, maxHeight);
+        _grid.AutoScroll = desired > maxHeight;
+
         Bounds = new Rectangle(
             screen.Left + (screen.Width - ExpandedWidth) / 2,
             screen.Top,
             ExpandedWidth,
-            ExpandedHeight);
+            height);
     }
 
     private void AddRow(TableLayoutPanel grid, string label)
