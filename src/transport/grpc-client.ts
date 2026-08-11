@@ -285,7 +285,14 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
       lastServerActivityMs = Date.now();
 
       const params = pushMsg?.params ?? {};
-      ctx.logger?.info("[grpc-client] push message", { method, params });
+      // El `method` a INFO (barato y suficiente para seguir el flujo);
+      // los params completos a DEBUG. Este era EL mayor generador de
+      // volumen de log en endpoints: cada oferta SDP completa y cada
+      // candidato ICE de cada sesión RCP se escribían enteros. Con
+      // debug apagado (default) esto pasa de kilobytes por evento a una
+      // línea. Para diagnosticar, crear `debug.flag` en el data dir.
+      ctx.logger?.info("[grpc-client] push message", { method });
+      ctx.logger?.debug?.("[grpc-client] push params", { method, params });
 
       // Server ping (sent every ~90s by controlplane.ts). We don't
       // need to do anything with it — the activity stamp above is

@@ -67,10 +67,23 @@ internal static class Program
                 Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
                 "Tracenium", "Agent", "logs");
             Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, "tray-crash.log");
+
+            // Tope duro: un crash-loop podría escribir sin fin. Al pasar
+            // 1 MB conservamos el archivo como .1 (sobrescribiendo el
+            // anterior) y arrancamos limpio — nos quedan siempre los
+            // crashes recientes, que son los que importan, sin que el
+            // archivo crezca indefinidamente.
+            const long maxBytes = 1024 * 1024;
+            if (new FileInfo(path) is { Exists: true, Length: > maxBytes })
+            {
+                File.Move(path, path + ".1", overwrite: true);
+            }
+
             var line =
                 $"[{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}Z] tray fatal: " +
                 $"{ex?.GetType().Name}: {ex?.Message}{Environment.NewLine}{ex?.StackTrace}{Environment.NewLine}";
-            File.AppendAllText(Path.Combine(dir, "tray-crash.log"), line);
+            File.AppendAllText(path, line);
         }
         catch
         {

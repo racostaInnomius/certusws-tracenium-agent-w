@@ -933,7 +933,11 @@ export function startGrpcStream(ctx: AgentContext) {
           (ctx.priv as any)
             .call({ v: 1, id: `${field}-${Date.now()}`, method, params: msg[field] })
             .then(() => {
-              ctx.logger?.info?.(`[rcp] sendControl OK ${method}`);
+              // Confirmación pura → DEBUG. El "dispatching" de arriba ya
+              // deja constancia del intento y el fallo se loguea a ERROR,
+              // así que este par duplicaba líneas por CADA candidato ICE
+              // sin agregar información en el caso feliz.
+              ctx.logger?.debug?.(`[rcp] sendControl OK ${method}`);
             })
             .catch((err: any) => {
               // Elevate to ERROR — when this fires the operator gets a hung

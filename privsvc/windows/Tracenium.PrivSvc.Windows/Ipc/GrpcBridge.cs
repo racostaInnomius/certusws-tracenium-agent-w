@@ -89,10 +89,47 @@ private BridgeState _state = BridgeState.Disconnected;
             "PrivSvc",
             "logs");
 
+    // Tope de tamaño por archivo. Antes solo había límite por CANTIDAD
+    // (5 archivos) sin tope de bytes: un día con tormenta de
+    // reconexiones podía escribir un único archivo enorme. Al superarlo
+    // se corta y se sigue en un archivo nuevo del mismo día
+    // (grpcbridge-YYYYMMDD.2.log), que CleanupOldLogs también recorta.
+    // Cota dura resultante: 5 archivos × 5 MB = 25 MB.
+    private const long MaxLogBytes = 5 * 1024 * 1024;
+
+    // CleanupOldLogs enumeraba el directorio en CADA línea de log
+    // (GetFiles + Select + OrderBy por línea). Con el bridge hablador
+    // eso es un montón de I/O innecesario, así que se limita a una
+    // pasada cada 5 minutos.
+    private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(5);
+    private static DateTime _lastCleanupUtc = DateTime.MinValue;
+
     private static string GetDailyLogPath()
     {
-        var fileName = $"grpcbridge-{DateTime.UtcNow:yyyyMMdd}.log";
-        return Path.Combine(_logDir, fileName);
+        var stem = $"grpcbridge-{DateTime.UtcNow:yyyyMMdd}";
+        var path = Path.Combine(_logDir, $"{stem}.log");
+
+        try
+        {
+            // Si el archivo del día ya llegó al tope, seguimos en el
+            // siguiente índice libre del mismo día.
+            if (new FileInfo(path) is { Exists: true, Length: > MaxLogBytes })
+            {
+                for (var i = 2; i < 100; i++)
+                {
+                    var rolled = Path.Combine(_logDir, $"{stem}.{i}.log");
+                    var info = new FileInfo(rolled);
+                    if (!info.Exists || info.Length <= MaxLogBytes)
+                        return rolled;
+                }
+            }
+        }
+        catch
+        {
+            // Ante cualquier duda, escribir en el archivo del día.
+        }
+
+        return path;
     }
 
     private static void CleanupOldLogs()
@@ -101,6 +138,10 @@ private BridgeState _state = BridgeState.Disconnected;
         {
             if (!Directory.Exists(_logDir))
                 return;
+
+            if (DateTime.UtcNow - _lastCleanupUtc < CleanupInterval)
+                return;
+            _lastCleanupUtc = DateTime.UtcNow;
 
             var files = Directory.GetFiles(_logDir, "grpcbridge-*.log")
                 .Select(f => new FileInfo(f))

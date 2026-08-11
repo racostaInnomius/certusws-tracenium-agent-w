@@ -175,7 +175,13 @@ export async function handleRemoteSessionMessage(
   params: any
 ): Promise<void> {
   const sid = String(params?.sessionId || "").slice(-8);
-  ctx.logger?.info?.("[rcp] dispatch entered", { type, sid });
+  // `ice` llega 10-20+ veces por sesión (un mensaje por candidato) y es
+  // puro ruido en el caso feliz; offer/close/error son eventos de ciclo
+  // de vida, raros y valiosos. Se separan de nivel para bajar volumen
+  // sin perder la traza de establecimiento de sesión — que es justo
+  // donde este log sirve como chokepoint de fallos silenciosos.
+  const traceDispatch = type === "ice" ? ctx.logger?.debug : ctx.logger?.info;
+  traceDispatch?.("[rcp] dispatch entered", { type, sid });
   if (!manager) initRcp(ctx);
   if (!manager) {
     ctx.logger?.error?.("[rcp] dispatch aborted: manager init returned null", {
@@ -199,7 +205,7 @@ export async function handleRemoteSessionMessage(
         await manager.onError(params);
         break;
     }
-    ctx.logger?.info?.("[rcp] dispatch handler returned", { type, sid });
+    traceDispatch?.("[rcp] dispatch handler returned", { type, sid });
   } catch (err: any) {
     // Verbose by design: this is the chokepoint where any silent failure in the
     // session-manager / peer-session / node-datachannel chain surfaces. Without

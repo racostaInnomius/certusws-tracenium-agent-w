@@ -66,6 +66,11 @@ const livenessStartedAtMs = Date.now();
 export async function startService() {
   try {
     logger.info("Starting Tracenium Agent Core...");
+    // Deja constancia del nivel efectivo: al leer un log capturado en
+    // campo hay que poder saber si el detalle fino estaba activo o si
+    // simplemente no se registró. `debug.flag` en el data dir lo
+    // enciende sin reiniciar (ver bootstrap/logger.ts).
+    logger.info("Log level", { level: logger.level?.() ?? "info" });
 
     const ctx = await bootstrapContext();
     currentCtx = ctx;

@@ -10,10 +10,36 @@
   <arguments>"%BASE%\app\dist\index.js"</arguments>
 
   <logpath>%BASE%\logs</logpath>
-	  <log mode="roll-by-time">
-  	<pattern>yyyyMMdd</pattern>
-  	<keepFiles>14</keepFiles>
-	  </log>
+  <!--
+    Rotación por TAMAÑO + TIEMPO, con borrado real.
+
+    Antes esto era `roll-by-time` con <keepFiles>14</keepFiles>. Ese
+    modo usa TimeBasedRollingLogAppender, que crea un archivo por día
+    y NUNCA borra: `keepFiles` solo lo honran roll-by-size y
+    roll-by-size-time, así que se ignoraba en silencio. Resultado:
+    TraceniumAgentCore_YYYYMMDD.{out,err}.log acumulándose sin límite
+    ni tope de tamaño — un día con tormenta de reconexiones podía
+    escribir un único archivo enorme.
+
+    roll-by-size-time da las dos garantías que faltaban:
+      * sizeThreshold (KB) — corta al superar 10 MB, así ningún
+        archivo se dispara aunque el día sea muy ruidoso.
+      * autoRollAtTime — corta también a medianoche, para conservar
+        el _YYYYMMDD en el nombre (nuestro flujo de soporte se apoya
+        en la fecha del archivo).
+      * zipOlderThanNumDays — comprime lo que pasa de 7 días.
+      * keepFiles — SÍ aplica en este modo: borra pasados los 14.
+
+    Techo resultante por stream (out y err): ~10 MB vivos + los
+    comprimidos, muy por debajo de lo que se acumulaba antes.
+  -->
+  <log mode="roll-by-size-time">
+    <pattern>yyyyMMdd</pattern>
+    <sizeThreshold>10240</sizeThreshold>
+    <autoRollAtTime>00:00:00</autoRollAtTime>
+    <zipOlderThanNumDays>7</zipOlderThanNumDays>
+    <keepFiles>14</keepFiles>
+  </log>
 
   <env name="NODE_ENV" value="production" />
   <!--
