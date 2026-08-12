@@ -417,6 +417,15 @@ private const int MaxPendingPushEvents = 50;
 
     public bool IsReady => IsConnected && _helloAcked && _state == BridgeState.Connected;
 
+    /// <summary>
+    /// Thumbprint of the enrollment client certificate this agent authenticates
+    /// with (LocalMachine\My). Exposed so other privileged primitives can reuse
+    /// the SAME identity without re-plumbing it through their own IPC params —
+    /// notably SDP's distribution-point downloads, where the DP requires a
+    /// client cert chained to the tenant CA. Null until the first grpc.connect.
+    /// </summary>
+    public string? ClientCertThumbprint => _lastConnectOptions?.ClientCertThumbprint;
+
     public async Task<bool> WaitForReadyAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
     {
         if (IsReady)

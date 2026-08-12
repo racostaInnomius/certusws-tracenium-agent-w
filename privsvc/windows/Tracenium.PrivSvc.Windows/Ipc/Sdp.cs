@@ -27,6 +27,7 @@ using System.IO;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
@@ -52,6 +53,65 @@ public static class Sdp
     private const int DefaultDownloadTimeoutSeconds = 600;          // 10 min
     private const int DefaultInstallTimeoutSeconds = 1740;          // 29 min
     private const long StagingTtlMs = 24L * 60 * 60 * 1000;
+
+    // ── LAN distribution-point client (Distribution Phase B) ──────────
+    //
+    // Peers fetch from a site's DP over mTLS: the DP REQUIRES a client cert
+    // chained to the tenant CA — that mutual auth is the real access gate.
+    // We reuse the enrollment identity already sitting in LocalMachine\My
+    // (same cert the gRPC bridge authenticates with), so there is nothing new
+    // to provision on the endpoint.
+    //
+    // Server-cert validation is intentionally relaxed for this tier ONLY, and
+    // it is the direct analogue of the `-k` the macOS/Linux privsvc passes to
+    // curl: the DP's certificate carries its deviceId as CN, but peers dial it
+    // by LAN IP, so a hostname check can never pass. This is safe because the
+    // bytes are not trusted on transport grounds — every download is verified
+    // against the catalog sha256 (and the signature gate) after the fact, so a
+    // spoofed DP can only make us fall through to cdn/origin, never install
+    // anything. Built lazily and cached; a null cert means the tier is skipped.
+    private static readonly object DpClientLock = new();
+    private static HttpClient? _dpClient;
+    private static bool _dpClientAttempted;
+
+    private static HttpClient? GetDpHttpClient()
+    {
+        lock (DpClientLock)
+        {
+            if (_dpClientAttempted) return _dpClient;
+            _dpClientAttempted = true;
+            try
+            {
+                var thumbprint = GrpcBridgeSingleton.Instance.ClientCertThumbprint;
+                if (string.IsNullOrWhiteSpace(thumbprint)) return null;
+
+                using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
+                store.Open(OpenFlags.ReadOnly);
+                var normalized = new string(thumbprint.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
+                var matches = store.Certificates.Find(X509FindType.FindByThumbprint, normalized, validOnly: false);
+                if (matches.Count == 0) return null;
+                var clientCert = matches[0];
+                if (!clientCert.HasPrivateKey) return null;
+
+                var handler = new HttpClientHandler
+                {
+                    AllowAutoRedirect = false, // a DP serves the blob directly
+                    ClientCertificateOptions = ClientCertificateOption.Manual,
+                    ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
+                };
+                handler.ClientCertificates.Add(clientCert);
+                _dpClient = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+                return _dpClient;
+            }
+            catch
+            {
+                // No usable identity → the caller skips the dp tier and the
+                // cdn/origin fallbacks carry the download.
+                _dpClient = null;
+                return null;
+            }
+        }
+    }
 
     private static readonly HttpClient HttpClient = new(new HttpClientHandler
     {
@@ -184,7 +244,19 @@ public static class Sdp
                 var nonce = Convert.ToHexString(RandomBytes(8)).ToLowerInvariant();
                 var stagingPath = Path.Combine(StagingDir, $"pkg-{packageId}-{nonce}.{format}");
 
-                var attempt = await DownloadOneAsync(candidateUrl, stagingPath, expectedSha256, timeoutSeconds, rateLimitKbps);
+                // The LAN distribution point needs the mTLS client identity; every
+                // other tier uses the shared client. No usable identity → skip the
+                // dp tier rather than burn a doomed TLS handshake.
+                var isDpTier = string.Equals(tier, "dp", StringComparison.OrdinalIgnoreCase);
+                var client = isDpTier ? GetDpHttpClient() : HttpClient;
+                if (client is null)
+                {
+                    sawNetworkFailure = true;
+                    lastError = "dp tier unavailable: no enrollment client certificate";
+                    continue;
+                }
+
+                var attempt = await DownloadOneAsync(client, candidateUrl, stagingPath, expectedSha256, timeoutSeconds, rateLimitKbps);
                 if (attempt.Ok)
                 {
                     return PrivSvcResponse.Success(req.Id, new
@@ -237,13 +309,13 @@ public static class Sdp
     /// caller's candidate loop can move on to the next source.
     /// </summary>
     private static async Task<DownloadAttempt> DownloadOneAsync(
-        string url, string stagingPath, string expectedSha256, int timeoutSeconds, int rateLimitKbps = 0)
+        HttpClient client, string url, string stagingPath, string expectedSha256, int timeoutSeconds, int rateLimitKbps = 0)
     {
         var downloadStart = Stopwatch.GetTimestamp();
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
-            using var resp = await HttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            using var resp = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token);
             if (!resp.IsSuccessStatusCode)
             {
                 return new DownloadAttempt { Error = $"http {(int)resp.StatusCode}: {resp.ReasonPhrase}" };
@@ -349,12 +421,6 @@ public static class Sdp
                 ? (tEl.GetString() ?? "origin")
                 : "origin";
             if (string.IsNullOrWhiteSpace(tier)) tier = "origin";
-            // Distribution Phase B scoping: Windows peers skip the LAN DP tier
-            // for now — the DP requires an mTLS client cert and this HttpClient
-            // has no enrollment-cert plumbing yet. Skipping (instead of trying
-            // and failing the TLS handshake) saves a wasted timeout; cdn/origin
-            // fallbacks follow. Windows DP participation is a follow-up.
-            if (string.Equals(tier, "dp", StringComparison.OrdinalIgnoreCase)) continue;
             list.Add((tier, u!));
         }
         return list;
