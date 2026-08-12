@@ -133,6 +133,11 @@ public sealed class Router
             "sdp.uninstall" => Sdp.HandleUninstall(req),
             "sdp.verifySignature" => Sdp.HandleVerifySignature(req),
 
+            // Distribution Phase B — DP role: warm the LAN cache and serve
+            // peers over mTLS. Covered by the same `sdp.` LocalSystem gate.
+            "sdp.dp.prefetch" => Dp.HandlePrefetch(req),
+            "sdp.dp.status" => Dp.HandleStatus(req),
+
             // PMv2 — Phase 1-E remediation primitives. See Ipc/PmpRemediation.cs.
             // Phase 1 dispatch table covers 4 Windows checkIds:
             // legacy_tls_disabled / weak_ciphers_disabled /

@@ -293,6 +293,21 @@ public static class Sdp
         }
     }
 
+    /// <summary>
+    /// Download a package into the distribution-point cache. Thin wrapper over
+    /// the same verified-download primitive the install path uses, so the DP
+    /// warms its cache through exactly the tiers, hash gate and rate limit a
+    /// normal peer would — it just writes to the DP cache instead of staging.
+    /// Never throws; failures come back as (false, reason) so the caller can
+    /// move on to the next source.
+    /// </summary>
+    internal static async Task<(bool ok, string? error)> DownloadForDpAsync(
+        string url, string destPath, string expectedSha256, int timeoutSeconds, int rateLimitKbps)
+    {
+        var attempt = await DownloadOneAsync(HttpClient, url, destPath, expectedSha256, timeoutSeconds, rateLimitKbps);
+        return (attempt.Ok, attempt.Error);
+    }
+
     private sealed class DownloadAttempt
     {
         public bool Ok { get; init; }
@@ -400,7 +415,7 @@ public static class Sdp
     /// list, dropping malformed / non-https entries. Mirrors ExtractIdentity's
     /// handling of nested JSON.
     /// </summary>
-    private static List<(string tier, string url)> ExtractSources(Dictionary<string, object> p)
+    internal static List<(string tier, string url)> ExtractSources(Dictionary<string, object> p)
     {
         var list = new List<(string, string)>();
         if (!p.TryGetValue("sources", out var raw) || raw is not JsonElement el || el.ValueKind != JsonValueKind.Array)
@@ -1395,7 +1410,7 @@ public static class Sdp
         }
     }
 
-    private static string? GetString(Dictionary<string, object> p, string key)
+    internal static string? GetString(Dictionary<string, object> p, string key)
     {
         if (!p.TryGetValue(key, out var v) || v == null) return null;
         if (v is JsonElement el)
@@ -1405,7 +1420,7 @@ public static class Sdp
         return v.ToString();
     }
 
-    private static int? GetInt(Dictionary<string, object> p, string key)
+    internal static int? GetInt(Dictionary<string, object> p, string key)
     {
         if (!p.TryGetValue(key, out var v) || v == null) return null;
         if (v is JsonElement el && el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out var n))
@@ -1419,7 +1434,7 @@ public static class Sdp
         return null;
     }
 
-    private static long? GetLong(Dictionary<string, object> p, string key)
+    internal static long? GetLong(Dictionary<string, object> p, string key)
     {
         if (!p.TryGetValue(key, out var v) || v == null) return null;
         if (v is JsonElement el && el.ValueKind == JsonValueKind.Number && el.TryGetInt64(out var n))

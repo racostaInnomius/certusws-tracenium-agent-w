@@ -426,6 +426,14 @@ private const int MaxPendingPushEvents = 50;
     /// </summary>
     public string? ClientCertThumbprint => _lastConnectOptions?.ClientCertThumbprint;
 
+    /// <summary>
+    /// Thumbprint of the CA that issued this tenant's agent certificates.
+    /// The SDP distribution-point server uses it to decide whether an inbound
+    /// peer's client certificate belongs to this tenant — the access gate for
+    /// LAN blob serving. Null until the first grpc.connect.
+    /// </summary>
+    public string? IssuingCaThumbprint => _lastConnectOptions?.IssuingCaThumbprint;
+
     public async Task<bool> WaitForReadyAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
     {
         if (IsReady)
