@@ -47,34 +47,55 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=tracenium-agent
 
-# Hardening — the agent is the unprivileged half of the pair, so
-# we can lock it down harder than privsvc.
+# ── Hardening ──────────────────────────────────────────────────────
 #
-# ProtectSystem=strict makes / read-only except for explicit
-# ReadWritePaths entries. The agent only ever writes to
-# /var/lib/tracenium (outbox.db, baselines, policy.json,
-# enrollment.token) and /var/log/tracenium (file logs).
-# /etc/tracenium is read-only (cert paths, agent.json) — postinstall
-# and crypto.cert.install go through privsvc, which has its own
-# unit with broader permissions.
-ProtectSystem=strict
-ReadWritePaths=/var/lib/tracenium /var/log/tracenium
-ReadOnlyPaths=/etc/tracenium
-
-# /home is private — agent has no business reading user dirs.
-ProtectHome=true
+# ⚠️ NO agregar aquí directivas que creen un MOUNT NAMESPACE
+#    (ProtectSystem, ProtectHome, PrivateTmp, ReadOnlyPaths,
+#     ReadWritePaths, PrivateDevices, ProtectKernelTunables, …)
+#    hasta que volvamos a Node 24. Ver abajo.
+#
+# Este archivo tenía ProtectSystem=strict + ReadWritePaths +
+# ReadOnlyPaths + ProtectHome + PrivateTmp. Todas se quitaron el
+# 2026-08-12 porque hacen que el daemon NO ARRANQUE en Ubuntu 24.04.
+#
+# Diagnóstico (server.certusws.com, Ubuntu 24.04.4, kernel 6.8,
+# systemd 255), con strace dentro del namespace:
+#
+#     fstat(0, ...) = -1 EACCES (Permission denied)
+#     write(2, "----- Native stack trace -----")
+#     tgkill(...) SIGABRT
+#
+# Node hace fstat() sobre stdin al inicializar; dentro de un mount
+# namespace el LSM (AppArmor) se lo deniega y Node 22.22.3 aborta en
+# node::Start SIN imprimir mensaje de error — de ahí que el journal
+# solo mostrara un stack nativo sin causa. Verificado por bisección:
+#   * cualquier directiva de namespace  → ABRT
+#   * NoNewPrivileges=true              → OK
+#   * User/Group=tracenium              → OK
+#   * StandardInput=null                → NO ayuda (no es el fd, es
+#                                          el fstat el denegado)
+#   * el MISMO binario con Node 24.10.0 → OK con PrivateTmp=true
+#
+# Por qué no revertimos a Node 24 (que sería el fix "de verdad"):
+# .nodeversion se fijó en 22.22.3 a propósito porque los prebuilds de
+# `node-datachannel` (compilados contra Node 18) fastfailean al
+# construir PeerConnection en Node 24 — volver a 24 rompería RCP en
+# TODA la flota, Windows y macOS incluidos. Un servidor Linux caído no
+# justifica romper control remoto en todas partes.
+#
+# REVISAR cuando node-datachannel publique prebuilds para Node 24 (o
+# lo compilemos desde fuente): ahí se sube .nodeversion y se restaura
+# este bloque tal cual estaba.
+#
+# Lo que SÍ conservamos (probado que no dispara el abort): la
+# separación de privilegios por usuario, NoNewPrivileges, y los
+# permisos del socket/RuntimeDirectory que pone privsvc. La pérdida
+# real es el aislamiento de filesystem, no el modelo de privilegios.
 
 # Block privilege escalation. The tracenium user already has no
 # sudo entry but this is belt-and-braces against a future packaging
 # bug that accidentally adds it.
 NoNewPrivileges=true
-
-# Process namespace + tmpfs hardening. Cheap if the agent doesn't
-# need them; PrivateTmp gives us our own /tmp so a co-tenant on
-# the host can't snoop on temp files we'd write during chunked
-# FACTS reassembly (we don't today, but the future SDP download
-# path will).
-PrivateTmp=true
 
 # Reach the privsvc socket and talk to api.tracenium.com /
 # grpc.tracenium.com (REST + gRPC). The bind socket itself lives

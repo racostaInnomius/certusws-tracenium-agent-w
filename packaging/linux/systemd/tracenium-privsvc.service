@@ -102,7 +102,16 @@ SyslogIdentifier=tracenium-privsvc
 # A future Phase 10 will tighten these once we've measured what
 # patch.install / sdp.install actually touch in production.
 NoNewPrivileges=false
-PrivateTmp=true
+#
+# ⚠️ PrivateTmp=true QUITADO el 2026-08-12 — impedía el arranque en
+# Ubuntu 24.04. No volver a agregarlo (ni ninguna otra directiva que
+# cree mount namespace) mientras .nodeversion siga en 22.x.
+#
+# Node hace fstat() sobre stdin al inicializar; dentro de un mount
+# namespace el LSM lo deniega con EACCES y Node 22.22.3 aborta en
+# node::Start sin imprimir causa alguna. El mismo binario con Node
+# 24.10.0 arranca bien con PrivateTmp=true. Diagnóstico completo y
+# criterio de reversión en tracenium-agent.service.
 
 [Install]
 WantedBy=multi-user.target

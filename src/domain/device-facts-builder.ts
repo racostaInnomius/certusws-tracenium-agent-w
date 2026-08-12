@@ -586,6 +586,15 @@ export async function buildDeviceFacts(
         }
       : undefined;
 
+    // ⚠️ This literal is an ALLOWLIST, not a merge: anything the AMP collector
+    // produced that is not named here is silently dropped on the way to the
+    // wire. That already cost the printers pipeline a full release (see the
+    // comment above), and it cost the location feature another one — geo and
+    // geoStatus were collected on every tick and thrown away right here, so the
+    // backend saw an amp namespace of exactly {hardware, security, software,
+    // printers} and concluded the agent was too old to report a position.
+    //
+    // If you add a field to AmpNamespace, add it here too, or it will not ship.
     outNamespaces.amp = {
       hardware: {
         static: hardware.static,
@@ -593,7 +602,12 @@ export async function buildDeviceFacts(
       },
       security,
       software,
-      ...(printers ? { printers } : {})
+      ...(printers ? { printers } : {}),
+      // Position, when the OS gave one. Absent on most ticks by design.
+      ...(ampIn.geo ? { geo: ampIn.geo } : {}),
+      // WHY there is or is not a position. Sent on every tick — its whole
+      // purpose is to explain the ticks that carry no coordinate.
+      ...(ampIn.geoStatus ? { geoStatus: ampIn.geoStatus } : {})
     };
   }
 

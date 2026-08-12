@@ -148,3 +148,60 @@ describe("buildDeviceFacts — amp namespace passthrough", () => {
     expect(facts.namespaces.amp?.printers?.count).toBe(0);
   });
 });
+
+// Segunda vez que este allowlist se come un namespace entero. La primera fue
+// printers; la segunda, la ubicación: el agente 1.1.29 recolectaba geo y
+// geoStatus en cada tick y buildDeviceFacts los descartaba aquí, así que el
+// backend recibía amp = {hardware, security, software, printers} y la UI
+// concluía "este agente es muy viejo para reportar posición" sobre agentes
+// recién instalados.
+describe("buildDeviceFacts — amp.geo / amp.geoStatus passthrough", () => {
+  function ampWith(extra: Record<string, unknown>): Namespaces {
+    return {
+      amp: {
+        hardware: { static: {} as any, runtime: {} as any },
+        security: { status: "unknown" } as any,
+        software: { count: 0, delta: null, items: [], hasChanges: false },
+        ...extra
+      }
+    } as any;
+  }
+
+  it("preserves a position reported by the OS", async () => {
+    const geo = { lat: 19.432608, lon: -99.133209, accuracyM: 38, collectedAtUtc: "2026-08-11T18:00:00.000Z" };
+    const facts = await buildDeviceFacts(makeCtx(), ampWith({ geo }));
+    expect((facts.namespaces.amp as any)?.geo).toEqual(geo);
+  });
+
+  it("preserves geoStatus on the ticks that carry NO position", async () => {
+    // The whole point of the field: it explains the empty ticks, which are the
+    // overwhelming majority. Dropping it here is what made every device look
+    // like it was running an ancient agent.
+    for (const status of ["disabled", "unsupported", "denied", "unavailable"]) {
+      const facts = await buildDeviceFacts(makeCtx(), ampWith({ geoStatus: status }));
+      expect((facts.namespaces.amp as any)?.geoStatus).toBe(status);
+      expect((facts.namespaces.amp as any)?.geo).toBeUndefined();
+    }
+  });
+
+  it("carries both together when a fix was obtained", async () => {
+    const facts = await buildDeviceFacts(
+      makeCtx(),
+      ampWith({
+        geoStatus: "ok",
+        geo: { lat: 0, lon: 32.5, accuracyM: null, collectedAtUtc: "2026-08-11T18:00:00.000Z" }
+      })
+    );
+    expect((facts.namespaces.amp as any)?.geoStatus).toBe("ok");
+    // lat 0 is the equator, not "missing" — it must survive the rebuild.
+    expect((facts.namespaces.amp as any)?.geo?.lat).toBe(0);
+  });
+
+  it("does not invent the keys when the collector reported neither", async () => {
+    // An agent with the plugin disabled must produce byte-identical output to
+    // one that predates the feature.
+    const facts = await buildDeviceFacts(makeCtx(), ampWith({}));
+    expect((facts.namespaces.amp as any)?.geo).toBeUndefined();
+    expect((facts.namespaces.amp as any)?.geoStatus).toBeUndefined();
+  });
+});
