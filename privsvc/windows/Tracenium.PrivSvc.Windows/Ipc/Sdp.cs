@@ -477,15 +477,30 @@ public static class Sdp
             }
             if (!File.Exists(absTarget))
             {
+                IpcLog.Write($"[verifySignature] file not found path={absTarget}");
                 return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request", "file not found"));
             }
 
+            // WinVerifyTrust is the step the agent self-update blocks on, and it
+            // can stall well past the caller's IPC timeout: on an endpoint with
+            // no outbound path to a CRL/OCSP responder the chain build waits on
+            // network I/O inside the OS call, which we cannot cancel. Recording
+            // entry, size and elapsed time is what distinguishes "the handler
+            // never ran" from "the handler ran and took 40s".
+            var sizeBytes = new FileInfo(absTarget).Length;
+            IpcLog.Write($"[verifySignature] begin file={Path.GetFileName(absTarget)} bytes={sizeBytes}");
+
+            var sw = Stopwatch.StartNew();
             var (trusted, reason) = WinVerifyTrustFile(absTarget);
+            sw.Stop();
+
+            IpcLog.Write($"[verifySignature] done trusted={trusted} reason={reason} ({sw.ElapsedMilliseconds}ms)");
             return Task.FromResult(PrivSvcResponse.Success(req.Id, new { trusted, reason }));
         }
         catch (Exception ex)
         {
             // Fail closed: an inability to verify is reported as not-trusted.
+            IpcLog.Write($"[verifySignature] EXCEPTION {ex.GetType().Name}: {ex.Message}");
             return Task.FromResult(PrivSvcResponse.Success(req.Id,
                 new { trusted = false, reason = "verify_error:" + ex.Message }));
         }

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Principal;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
@@ -21,7 +22,75 @@ public sealed class Router
         return id != null && id.IsSystem;
     }
 
-    public Task<PrivSvcResponse> HandleAsync(PrivSvcRequest req, Action<object> push, CancellationToken ct)
+    // Methods the gRPC bridge drives continuously. Logging every one of these
+    // would bury the diagnostics we actually care about and churn the disk, so
+    // they are recorded only when they FAIL (see HandleAsync).
+    private static readonly HashSet<string> HighFrequencyMethods =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "ping",
+            "identity",
+            "grpc.ack",
+            "grpc.heartbeat",
+            "grpc.facts.send",
+            "grpc.facts.chunk",
+        };
+
+    /// <summary>
+    /// Entry point with diagnostics. Wraps the dispatch so every privileged
+    /// call leaves a trace of "arrived → how long → what it answered".
+    ///
+    /// This exists because a failed agent self-update surfaced on the Node side
+    /// as nothing but `PrivSvc timeout`: the PrivSvc only ever wrote the gRPC
+    /// bridge log, so there was no way to tell whether the IPC call reached a
+    /// handler, which one, or where it hung. An unanswered call is now visible
+    /// as a start line with no matching completion.
+    /// </summary>
+    public async Task<PrivSvcResponse> HandleAsync(PrivSvcRequest req, Action<object> push, CancellationToken ct)
+    {
+        var method = req.Method ?? "(none)";
+        var noisy = HighFrequencyMethods.Contains(method);
+        var startTicks = Stopwatch.GetTimestamp();
+
+        if (!noisy)
+        {
+            IpcLog.Write($"--> {method} id={req.Id} tenant={req.Meta?.TenantId} device={req.Meta?.DeviceId}");
+        }
+
+        try
+        {
+            var resp = await DispatchAsync(req, push, ct);
+            var ms = (Stopwatch.GetTimestamp() - startTicks) * 1000.0 / Stopwatch.Frequency;
+            var failed = resp?.Error != null;
+
+            // Always log failures, even for the chatty methods — a failing
+            // heartbeat is exactly the kind of thing worth seeing.
+            if (!noisy || failed)
+            {
+                IpcLog.Write(failed
+                    ? $"<-- {method} id={req.Id} FAILED code={resp?.Error?.Code} msg={Truncate(resp?.Error?.Message, 200)} ({ms:F0}ms)"
+                    : $"<-- {method} id={req.Id} ok ({ms:F0}ms)");
+            }
+            return resp!;
+        }
+        catch (Exception ex)
+        {
+            // A throw here means the caller gets no response at all and will
+            // sit until ITS timeout fires — precisely the invisible failure
+            // mode this instrumentation was added to expose.
+            var ms = (Stopwatch.GetTimestamp() - startTicks) * 1000.0 / Stopwatch.Frequency;
+            IpcLog.Write($"<-- {method} id={req.Id} THREW {ex.GetType().Name}: {Truncate(ex.Message, 300)} ({ms:F0}ms)");
+            throw;
+        }
+    }
+
+    private static string Truncate(string? s, int max)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s!.Length <= max ? s : s[..max];
+    }
+
+    private Task<PrivSvcResponse> DispatchAsync(PrivSvcRequest req, Action<object> push, CancellationToken ct)
     {
         // Basic validation
         if (req.Version != 1)

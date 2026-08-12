@@ -25,6 +25,33 @@ function getTimeoutForMethod(method: string): number {
       return 30000;
     case "patch.install":
       return 60 * 60 * 1000;
+    // ── SDP + self-update ────────────────────────────────────────────
+    //
+    // These were falling through to the 8s default while the privsvc side
+    // budgets 600s for a download and 1740s for an install: the client gave
+    // up long before the handler could answer, surfacing as "PrivSvc
+    // timeout" even though the privileged work was still running fine. A
+    // failed agent self-update on a live endpoint was traced to exactly
+    // this. The invariant is that the CALLER must outwait the handler, so
+    // each budget sits just above the privsvc-side ceiling.
+    case "sdp.download":
+      return 700 * 1000; // privsvc: 600s + margin
+    case "sdp.install":
+    case "sdp.uninstall":
+      return 1800 * 1000; // privsvc: 1740s + margin
+    case "sdp.dp.prefetch":
+      return 900 * 1000; // agent asks privsvc for 840s + margin
+    case "sdp.verifySignature":
+      // Signature verification is not instant: building the trust chain can
+      // block on network I/O inside the OS call (AIA fetch of intermediates)
+      // on hosts without a direct outbound path.
+      return 60 * 1000;
+    case "sdp.detect":
+      // command_exit rules run operator-supplied probes; the privsvc caps
+      // each at 15-30s.
+      return 60 * 1000;
+    case "agent.install":
+      return 1800 * 1000;
     default:
       return DEFAULT_TIMEOUT_MS;
   }
@@ -300,7 +327,10 @@ export class PrivSvcClient extends EventEmitter {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         this.emit("debug", { stage: "timeout", id, method: req.method });
-        reject(new Error("PrivSvc timeout"));
+        // Name the method and the budget: a bare "PrivSvc timeout" told an
+        // operator nothing about WHICH privileged call hung, which is what
+        // made a stalled self-update take a code read to diagnose.
+        reject(new Error(`PrivSvc timeout: ${req.method} did not answer within ${timeoutMs}ms`));
       }, timeoutMs);
 
       this.pending.set(id, { resolve, reject, timer });
