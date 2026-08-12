@@ -15,7 +15,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCopyrightAttribute("Copyright © CERTUS ITM LLC")]
 [assembly: System.Reflection.AssemblyDescriptionAttribute("Tracenium Agent — privileged cryptographic + gRPC bridge service")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ee21b01f668fd25bfac9c42be849d104c5107a3f")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c45876bc226181cdbf536eed34984d780c7d518f")]
 [assembly: System.Reflection.AssemblyProductAttribute("Tracenium Agent")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Tracenium Privilege Service")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
