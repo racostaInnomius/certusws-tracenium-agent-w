@@ -53,9 +53,13 @@ export type CdpCertItem = {
   san?: string[];
 
   store: CdpStoreInfo;
-  /** "store" = OS cert store; "java-store" = JKS/PKCS12 keystore
-   *  (JVM cacerts or operator-configured app keystore). */
-  source: "store" | "java-store";
+  /** Where the certificate was found:
+   *   "store"      — OS certificate store
+   *   "java-store" — JKS/PKCS12 keystore (JVM cacerts or app keystore)
+   *   "listener"   — captured from a live local TLS handshake, i.e. what
+   *                  the service actually serves (may differ from any
+   *                  store). */
+  source: "store" | "java-store" | "listener";
 };
 
 export type CdpDelta = {

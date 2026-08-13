@@ -110,6 +110,24 @@ export async function collectCDP(ctx: AgentContext): Promise<CdpNamespace> {
     });
   }
 
+  // TLS listeners — opt-in, loopback-only, and the only collector that
+  // opens sockets. Same fail-soft contract as the Java stores: a probe
+  // that misbehaves must never cost us the store scan that just
+  // succeeded.
+  if (ctx.policyRuntime.getCdpScanTlsListeners()) {
+    try {
+      const { collectTlsListeners } = await import("./providers/tls-listeners");
+      const listeners = await collectTlsListeners(ctx);
+      result.items.push(...listeners.items);
+      result.stores.push(...listeners.stores);
+      result.parseFailures += listeners.parseFailures;
+    } catch (err: any) {
+      ctx.logger?.warn?.("CDP: TLS listener scan failed (non-fatal)", {
+        error: err?.message || String(err)
+      });
+    }
+  }
+
   const { items, truncated } = applyCap(result.items);
 
   if (result.parseFailures > 0) {

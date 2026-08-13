@@ -1,0 +1,60 @@
+// test/plugins/tls-fixture.ts
+//
+// Throwaway self-signed key + certificate for the TLS listener tests.
+// Generated once with openssl (RSA 2048, CN=tls-probe-fixture.local) and
+// committed on purpose so the suite needs no openssl at run time and no
+// network.
+//
+// This key protects NOTHING: it exists only so a test can start a real
+// TLS server on 127.0.0.1 and prove the probe reads a served certificate.
+// It is never used by the agent, never shipped, and safe to publish.
+
+export const FIXTURE_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQC34BZ7cZJDC9Di
+SlsgkzgipwjorN1JNdU1Vm5+EgPV3ROQR4tfRh77gqgHV5JhktCXJx/mJHj55jal
+HnMBcDv0Gc9aV2R7gsb0ab0BZ9tfZE/TR4+5k8e1ww1M24HsS2sLK1dpRTF/M9fi
+K0kHRtZ1QUEgzRo6wISnCr2OSnqAviqcyuxA+qldH/HRJPaHvhJ+Q3E6zaUuZNly
+WQFh2mJTw0jgOtEoMS9HJ4A32FxCnEhKMBqdG89aGGAKLM5aKYulfSsGpqdUIfbR
+sdhq0lZzFlPJzg3ddqpWZdOSxF0Pgz2UFrUriU5wjvVBuo0LGTPNsq2/M62Q5F7D
+6UvCwv8FAgMBAAECggEAG/GcgRCatYE9crJxpGLzOELxxeiFbauWdhdnTdX/irgh
+Eb9ptSYzLa5mykza9GSrOhlqTd+zmejMW64jtK+BkQB+JGDdJq8SfND39hd6PYZB
+Yl7A/ycwBdW5dvlyBn7UqvsgeuFW2xm+IINLAyXXEDVFSE6bQpwA3ODzO0Vi1h8u
+YywXD/cm8zVw12oP61YwADwRwiFOsv49/nbSlXbsaonUzpUinHMh4jqkML137tBp
+oo8VbDZDzsEgKfU3uV7w9sSza6r8QKt4N+zM2WNCFwGGl5PQ7kvHGi/Z8sY5pzjI
+B9VDCxTFQRoEwxzgAIzzrLww18IwvPj2zz3Yu3MJmQKBgQDe5GBWpQ5GVoserjSV
++voRbv+WMIL2f+z4iCdUsogs8SnRlV/+fkGl7cTUfPA0JjMSMBgG/97Tt82NmJzw
+68Mk2V1xbi8l7OVxD7cXbL6mUY0KTrSp8oOlQWcarRlkDvTgK9oy0hLguPnryBUw
+8g7Qlmbd5p1b5EEYlXnrGV2WLQKBgQDTMBKsLN9dH7jduuMuxXOtt9orbDHK/hle
+BwthsAjB7sEKWbttdfARVjxyB2VxmKi2iVH0cPCeEqgaG+8XcrbEhQYgO5vsQusL
+n8E/ieNabcujUxth0e85iy5B38IOZS4utsJjiPlLqCp6/BS+I55lJty7fyNnyBV5
+SZSQkl8rOQKBgQCQvl/thGxbsxHPD7Pofb5tGdbycnhpmTOLRee8sd+Kx+WvS8C1
+5Mm+9kQu9R+Lzg62TfMcgIb0mFTtEeFA9umYAWwUIEiP6WIqZNkyZhT8rtLXkbry
+7iEdbPaGtUha2Peep/ufqxpFQvpRanKQgXCrdjBBA+TGatj3HQK6cJN81QKBgQCm
+YHYlfMiQBgDPdn+qhlZHItPXZ8qmoJ79i9E0qcmMd3tPmzfk2YhDMEw4jYknAFzS
+ScbuK9f0wL/8qcsoDvDcS+xykmOZs3KXWsmVNB2QTXWj+0JUQ18TV4oezZiFXMMQ
+fF0Sq4OzTg4Bi/0PeuI70G0Pre8HwQLh5c0MRLSDSQKBgQDJcLvKZkKFRWVb8bPj
+sts6eQpvpskHPUg+hweErt5GlYUHIJtIhl/rhBLCe04K2RkLEBWOMviGp3Y0MAfb
+BLr3BvhTysmkHCLUTrROWleYAR0MUCWzee5iz2Lb7p3FS/jFIsWsp1EppLRNDCeI
+35RdoqmvrqULam9SSJaXgwGg5g==
+-----END PRIVATE KEY-----`;
+
+export const FIXTURE_CERT = `-----BEGIN CERTIFICATE-----
+MIIDVzCCAj+gAwIBAgIUN8sdOPala+B4E2Hf5wp95dsz41QwDQYJKoZIhvcNAQEL
+BQAwOzEgMB4GA1UEAwwXdGxzLXByb2JlLWZpeHR1cmUubG9jYWwxFzAVBgNVBAoM
+DlRyYWNlbml1bSBUZXN0MB4XDTI2MDgxMzE0NTIxOFoXDTM2MDgxMDE0NTIxOFow
+OzEgMB4GA1UEAwwXdGxzLXByb2JlLWZpeHR1cmUubG9jYWwxFzAVBgNVBAoMDlRy
+YWNlbml1bSBUZXN0MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt+AW
+e3GSQwvQ4kpbIJM4IqcI6KzdSTXVNVZufhID1d0TkEeLX0Ye+4KoB1eSYZLQlycf
+5iR4+eY2pR5zAXA79BnPWldke4LG9Gm9AWfbX2RP00ePuZPHtcMNTNuB7EtrCytX
+aUUxfzPX4itJB0bWdUFBIM0aOsCEpwq9jkp6gL4qnMrsQPqpXR/x0ST2h74SfkNx
+Os2lLmTZclkBYdpiU8NI4DrRKDEvRyeAN9hcQpxISjAanRvPWhhgCizOWimLpX0r
+BqanVCH20bHYatJWcxZTyc4N3XaqVmXTksRdD4M9lBa1K4lOcI71QbqNCxkzzbKt
+vzOtkORew+lLwsL/BQIDAQABo1MwUTAdBgNVHQ4EFgQU2HH/GL/iVLCDPdoIUtyc
+W9OK+n8wHwYDVR0jBBgwFoAU2HH/GL/iVLCDPdoIUtycW9OK+n8wDwYDVR0TAQH/
+BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEANUTSM3ab24yPnY5fbOJrG+QH3OLU
+BLA8tf9TaRgmnD9hoW0aVO+3FdQIHWacRvIVOM48hJVftmVxv3QXo+LyrpVG1Zwz
+7bSkoQ0c+OzXdr48oCjHsaJgql6XRtBD8+iQhnJqXANIwDoGcRqCyrjToHiT9AFT
+eFaY407+jm+VrqcPzUjOcLU2mCfNppdoeLsu87dvbxN6RodTgSehoKLSj9Cjtriz
+6sjRFcIEcIuhOAH7/bFgeG88PzabzCYDkcuy72AOTMb03xuWtCrUAY6BdXPHhpyV
+RFWYfZNo0NgIAZOToSWpTNfDhHfuIlt4vPdrZ4x+Hyox4rXeMmNF4dSjyQ==
+-----END CERTIFICATE-----`;

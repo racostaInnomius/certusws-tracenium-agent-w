@@ -8,7 +8,11 @@ import { collectLinuxCdp } from "../src/plugins/cdp/providers/linux";
 import { collectJavaStores } from "../src/plugins/cdp/providers/java-stores";
 
 const ctx: any = {
-  policyRuntime: { getCdpJavaKeystorePaths: () => [] },
+  policyRuntime: {
+    getCdpJavaKeystorePaths: () => [],
+    getCdpScanTlsListeners: () => true,
+    getCdpTlsListenerPorts: () => []
+  },
   logger: { warn: console.warn, info: () => {}, debug: () => {} }
 };
 
@@ -39,4 +43,18 @@ const ctx: any = {
   const perStore: Record<string, number> = {};
   for (const i of java.items) perStore[i.store.name] = (perStore[i.store.name] ?? 0) + 1;
   console.log("certs per store:", perStore);
+})();
+
+// TLS listener probe — appended for M7. Run the same way as above.
+(async () => {
+  const { listListeningPorts } = await import("../src/plugins/cdp/listening-ports");
+  const { collectTlsListeners } = await import("./../src/plugins/cdp/providers/tls-listeners");
+  const ports = await listListeningPorts();
+  console.log("\n== TLS listeners ==");
+  console.log("listening ports:", ports.join(", ") || "(none)");
+  const res = await collectTlsListeners(ctx);
+  console.log("scanned:", res.portsScanned, "with TLS:", res.portsWithTls, "parseFailures:", res.parseFailures);
+  for (const i of res.items) {
+    console.log(` ${i.store.name}: CN=${i.subjectCN} issuer=${i.issuerCN} notAfter=${i.notAfter} ${i.keyAlgorithm}${i.keySizeBits ?? ""}`);
+  }
 })();

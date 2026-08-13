@@ -54,6 +54,13 @@ export type RuntimePolicy = {
      *  inventory in addition to the auto-discovered JVM cacerts.
      *  Absolute paths; validated + capped in validatePolicy. */
     javaKeystorePaths?: string[];
+    /** Opt-in: probe local TLS listeners to capture the certificate
+     *  each service actually serves. Off by default — it is the only
+     *  collector that opens sockets. Loopback only. */
+    scanTlsListeners?: boolean;
+    /** Optional narrowing: when non-empty, ONLY these ports are probed
+     *  (still intersected with what is actually listening). */
+    tlsListenerPorts?: number[];
   };
   /** Remote Control tuning that isn't a simple on/off capability gate.
    *  The `features.remote*` flags decide WHETHER a capability runs; this
@@ -499,6 +506,30 @@ function sanitizeExtensions(input: unknown): string[] {
   return out;
 }
 
+// Ports are operator-authored but reach a socket-opening loop, so the
+// list is bounded and every entry must be a real TCP port number.
+const CDP_TLS_PORTS_MAX = 64;
+
+function sanitizeTlsListenerPorts(input: unknown, logger: any): number[] {
+  if (!Array.isArray(input)) return [];
+
+  const out: number[] = [];
+  for (const raw of input) {
+    if (out.length >= CDP_TLS_PORTS_MAX) {
+      logger?.warn?.("cdp.tlsListenerPorts: cap reached, dropping remainder", {
+        cap: CDP_TLS_PORTS_MAX
+      });
+      break;
+    }
+    const port = Number(raw);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) continue;
+    if (out.includes(port)) continue;
+    out.push(port);
+  }
+
+  return out;
+}
+
 const DEFAULT_POLICY: RuntimePolicy = {
   inventory: {
     intervalSeconds: 21600 // 6h
@@ -602,6 +633,15 @@ export class PolicyRuntime extends EventEmitter {
 
   getCdpJavaKeystorePaths(): string[] {
     return this.policy.cdp?.javaKeystorePaths ?? [];
+  }
+
+  /** Opt-in gate for the TLS listener probe — off unless policy says so. */
+  getCdpScanTlsListeners(): boolean {
+    return this.policy.cdp?.scanTlsListeners === true;
+  }
+
+  getCdpTlsListenerPorts(): number[] {
+    return this.policy.cdp?.tlsListenerPorts ?? [];
   }
 
   /**
@@ -753,7 +793,9 @@ export class PolicyRuntime extends EventEmitter {
       javaKeystorePaths: sanitizeJavaKeystorePaths(
         policy.cdp?.javaKeystorePaths,
         this.logger
-      )
+      ),
+      scanTlsListeners: policy.cdp?.scanTlsListeners === true,
+      tlsListenerPorts: sanitizeTlsListenerPorts(policy.cdp?.tlsListenerPorts, this.logger)
     };
     // rcp.file confinement. Path lists get the same hard sanitation as
     // cdp.javaKeystorePaths — absolute only, bounded length, bounded count,
