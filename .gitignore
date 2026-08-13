@@ -27,7 +27,12 @@ build/windows/
 build/win-binaries/
 build/win-msi/
 build/agentcore/
-build/.node-cache/
+# Cache de distribuciones de Node descargadas por los scripts de build.
+# Patron global: la regla original solo cubria `build/.node-cache/` y dejaba
+# fuera `build/linux/.node-cache/`, donde quedaron trackeados 16 archivos /
+# 61 MB (tarballs de node-v24 x64+arm64 y su arbol extraido). Se redescargan
+# solos si faltan.
+**/.node-cache/
 build/.npm-cache/
 # node-gyp's header cache. Committing ANY of it breaks CI in a subtle
 # way: node-gyp reads <version>/installVersion as "headers are already
