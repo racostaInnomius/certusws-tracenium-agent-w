@@ -7,7 +7,13 @@ import { parseSshdConfig } from "./ssh-parse";
 const execFileAsync = promisify(execFile);
 
 type CommandResult = {
+  // stdout + stderr combined — what the regex-matching text collectors
+  // consume. Some Apple tools (systemsetup, socketfilterfw) put state
+  // lines on either stream, so the combined view is deliberate THERE.
   output: string;
+  // stdout alone — the only stream a JSON consumer may parse. See
+  // runJson below for why the split exists.
+  stdout: string;
   ok: boolean;
 };
 
@@ -16,11 +22,13 @@ async function run(command: string, args: string[], timeout = 5000): Promise<Com
     const { stdout, stderr } = await execFileAsync(command, args, { timeout, maxBuffer: 8 * 1024 * 1024 });
     return {
       output: `${stdout || ""}${stderr || ""}`.trim(),
+      stdout: String(stdout || "").trim(),
       ok: true
     };
   } catch (err: any) {
     return {
       output: String(err?.stdout || err?.stderr || err?.message || err || "").trim(),
+      stdout: String(err?.stdout || "").trim(),
       ok: false
     };
   }
@@ -28,14 +36,23 @@ async function run(command: string, args: string[], timeout = 5000): Promise<Com
 
 async function runJson<T>(command: string, args: string[], timeout = 10000): Promise<T | null> {
   const result = await run(command, args, timeout);
-  if (!result.output) return null;
+  // Parse stdout ONLY. The previous version parsed the combined
+  // output, and any stderr byte — system_profiler routinely emits
+  // warnings there — corrupted the JSON and turned the whole result
+  // into null. For patches that meant items:[] / count:0, silently,
+  // indistinguishable from a genuinely empty install history.
+  if (!result.stdout) return null;
 
   try {
-    return JSON.parse(result.output) as T;
+    return JSON.parse(result.stdout) as T;
   } catch {
     return null;
   }
 }
+
+// Test-only surface for the exec plumbing (see test/privsvc/
+// macos-exec.test.ts). Not for production imports.
+export const __test__ = { run, runJson };
 
 function parseDate(value: unknown): string | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
