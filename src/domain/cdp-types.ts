@@ -42,6 +42,11 @@ export type CdpCertItem = {
   keySizeBits?: number;
   curve?: string;
   signatureAlgorithm?: string;
+  /** Raw algorithm OIDs straight from the DER. Reported so the control
+   *  plane can name and classify algorithms this agent predates —
+   *  post-quantum in particular. See ADR-0004. */
+  publicKeyOid?: string;
+  signatureOid?: string;
 
   isCA?: boolean;
   selfSigned?: boolean;

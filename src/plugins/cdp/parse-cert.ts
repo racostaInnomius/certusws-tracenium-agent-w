@@ -12,6 +12,8 @@
 // forwarded verbatim.
 
 import crypto from "crypto";
+import { extractAlgorithmOids } from "./der";
+import { algorithmName, curveName } from "./algorithm-oids";
 import type { CdpCertItem, CdpStoreInfo } from "../../domain/cdp-types";
 
 /** Extract CN from an OpenSSL-style DN block ("subject=\nCN=Foo\nO=Bar"). */
@@ -42,47 +44,73 @@ function toIsoUtc(dateStr: string | undefined): string | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
 }
 
-function keyInfo(cert: crypto.X509Certificate): {
+function keyInfo(
+  cert: crypto.X509Certificate,
+  oids: { publicKeyOid: string | null; publicKeyParamOid: string | null }
+): {
   keyAlgorithm?: string;
   keySizeBits?: number;
   curve?: string;
 } {
+  // The OID is authoritative: it names algorithms Node cannot model at
+  // all (ML-DSA, SLH-DSA), which would otherwise report as no algorithm.
+  // Node still gives us the key SIZE, which the OID does not carry for
+  // RSA, so the two are combined rather than one replacing the other.
+  const fromOid = algorithmName(oids.publicKeyOid);
+
   try {
     const key = cert.publicKey;
     const type = key.asymmetricKeyType;
     const details = key.asymmetricKeyDetails;
 
     if (type === "rsa" || type === "rsa-pss") {
-      return { keyAlgorithm: "RSA", keySizeBits: details?.modulusLength };
+      return { keyAlgorithm: fromOid ?? "RSA", keySizeBits: details?.modulusLength };
     }
     if (type === "ec") {
       return {
-        keyAlgorithm: "EC",
+        keyAlgorithm: fromOid ?? "EC",
         // namedCurve is e.g. "prime256v1" — report the bit strength too.
         keySizeBits: details?.namedCurve?.match(/(\d{3})/)
           ? Number(details.namedCurve.match(/(\d{3})/)![1])
           : undefined,
-        curve: details?.namedCurve
+        curve: details?.namedCurve ?? curveName(oids.publicKeyParamOid)
       };
     }
     if (type === "ed25519" || type === "ed448" || type === "x25519" || type === "x448") {
-      return { keyAlgorithm: type.toUpperCase() };
+      return { keyAlgorithm: fromOid ?? type.toUpperCase() };
     }
-    return type ? { keyAlgorithm: type.toUpperCase() } : {};
+    return { keyAlgorithm: fromOid ?? (type ? type.toUpperCase() : undefined) };
   } catch {
-    return {};
+    // Node refused the key entirely (an algorithm it cannot load).
+    // The OID still names it — this is exactly the PQC case.
+    return fromOid ? { keyAlgorithm: fromOid } : {};
   }
 }
 
-/** Signature algorithm is not exposed by X509Certificate directly on all
- *  Node versions; fall back to sniffing the textual dump. */
-function signatureAlgorithm(cert: crypto.X509Certificate): string | undefined {
-  const anyCert = cert as unknown as { sigAlgName?: string; toString(): string };
-  if (typeof anyCert.sigAlgName === "string" && anyCert.sigAlgName) {
-    return anyCert.sigAlgName;
-  }
-  const match = cert.toString().match(/Signature Algorithm:\s*([^\s\n]+)/);
-  return match ? match[1] : undefined;
+/**
+ * Signature algorithm, from the DER.
+ *
+ * The previous implementation tried `sigAlgName` and then grepped
+ * `cert.toString()` for "Signature Algorithm:". Neither works on the Node
+ * versions we ship: the property is undefined and toString() returns PEM,
+ * not an OpenSSL text dump. The result was silent — every certificate
+ * reported no signature algorithm, so the `weak_sig` hygiene flag could
+ * never fire and the compliance check that reads it passed on evidence
+ * that did not exist. Measured on the pilot fleet: 2129 certificates, 0
+ * with a signature algorithm recorded.
+ */
+function signatureAlgorithm(
+  cert: crypto.X509Certificate,
+  oids: { signatureOid: string | null }
+): string | undefined {
+  const fromOid = algorithmName(oids.signatureOid);
+  if (fromOid) return fromOid;
+  // Keep the old property path as a fallback in case a future Node
+  // exposes it; harmless when undefined.
+  const anyCert = cert as unknown as { sigAlgName?: string };
+  return typeof anyCert.sigAlgName === "string" && anyCert.sigAlgName
+    ? anyCert.sigAlgName
+    : undefined;
 }
 
 export function certIdFor(fingerprint256: string, storeId: string): string {
@@ -123,6 +151,10 @@ export function parseCertToItem(
 
   const keyUsage = cert.keyUsage && cert.keyUsage.length ? [...cert.keyUsage] : undefined;
 
+  // `cert.raw` is the DER Node already parsed, so this costs no re-decode
+  // of the input and works whether we were handed PEM or DER.
+  const oids = extractAlgorithmOids(cert.raw);
+
   return {
     id: certIdFor(fingerprint256, opts.store.id),
     fingerprint256,
@@ -137,8 +169,13 @@ export function parseCertToItem(
     notBefore: toIsoUtc(cert.validFrom),
     notAfter: toIsoUtc(cert.validTo),
 
-    ...keyInfo(cert),
-    signatureAlgorithm: signatureAlgorithm(cert),
+    ...keyInfo(cert, oids),
+    signatureAlgorithm: signatureAlgorithm(cert, oids),
+    // Raw OIDs travel too: the control plane classifies them (see
+    // ADR-0004), so an algorithm this agent has never heard of can still
+    // be named and judged without a fleet rollout.
+    publicKeyOid: oids.publicKeyOid ?? undefined,
+    signatureOid: oids.signatureOid ?? undefined,
 
     isCA: cert.ca,
     selfSigned: subjectDN !== undefined && subjectDN === issuerDN,
