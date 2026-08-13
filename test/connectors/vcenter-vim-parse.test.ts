@@ -218,3 +218,71 @@ describe("xml entity round-trip", () => {
     expect(decodeXml("a&amp;b")).toBe("a&b");
   });
 });
+
+import { parseVmDatastoreRefs, parseDatastoreSummaries } from "../../src/connectors/vcenter/vim-parse";
+
+/** Verbatim response captured from the lab for vm-9637 (MSIG-VEEAM-SRV). */
+const REAL_VM_DATASTORE_XML = `<returnval>
+<obj type="VirtualMachine">vm-9637</obj>
+<propSet>
+<name>datastore</name>
+<val xsi:type="ArrayOfManagedObjectReference">
+<ManagedObjectReference type="Datastore" xsi:type="ManagedObjectReference">datastore-9389</ManagedObjectReference>
+</val>
+</propSet>
+</returnval>`;
+
+describe("parseVmDatastoreRefs — against the real captured shape", () => {
+  it("extracts the datastore moref", () => {
+    expect(parseVmDatastoreRefs(REAL_VM_DATASTORE_XML)).toEqual(["datastore-9389"]);
+  });
+
+  it("extracts several datastores for a multi-disk VM", () => {
+    const multi = REAL_VM_DATASTORE_XML.replace(
+      "</val>",
+      `<ManagedObjectReference type="Datastore" xsi:type="ManagedObjectReference">datastore-42</ManagedObjectReference></val>`
+    );
+    expect(parseVmDatastoreRefs(multi)).toEqual(["datastore-9389", "datastore-42"]);
+  });
+
+  it("ignores managed object references of other types", () => {
+    const withNetwork = REAL_VM_DATASTORE_XML.replace(
+      "</val>",
+      `<ManagedObjectReference type="Network" xsi:type="ManagedObjectReference">network-1</ManagedObjectReference></val>`
+    );
+    expect(parseVmDatastoreRefs(withNetwork)).toEqual(["datastore-9389"]);
+  });
+
+  it("returns [] when the VM reports none", () => {
+    expect(parseVmDatastoreRefs("<returnval></returnval>")).toEqual([]);
+  });
+});
+
+describe("parseDatastoreSummaries", () => {
+  it("reads capacity figures, using the real lab numbers", () => {
+    const xml = `<returnval><obj type="Datastore">datastore-9389</obj>
+      <propSet><name>name</name><val>datastore3</val></propSet>
+      <propSet><name>summary.capacity</name><val xsi:type="xsd:long">24003196printf</val></propSet>
+      <propSet><name>summary.freeSpace</name><val xsi:type="xsd:long">4497273584844</val></propSet>
+      <propSet><name>summary.uncommitted</name><val xsi:type="xsd:long">0</val></propSet>
+      </returnval>`;
+    const rows = parseDatastoreSummaries(xml.replace("24003196printf", "24003196289024"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe("datastore3");
+    expect(rows[0].capacity).toBe(24003196289024);
+    expect(rows[0].freeSpace).toBe(4497273584844);
+    expect(rows[0].uncommitted).toBe(0);
+  });
+
+  it("leaves capacity NaN when vCenter omits it, rather than defaulting to 0", () => {
+    // 0 would read as "completely full" and block patching on a healthy store.
+    const rows = parseDatastoreSummaries(
+      `<returnval><obj type="Datastore">ds-1</obj><propSet><name>name</name><val>x</val></propSet></returnval>`
+    );
+    expect(Number.isNaN(rows[0].capacity)).toBe(true);
+  });
+
+  it("ignores returnvals that are not datastores", () => {
+    expect(parseDatastoreSummaries(`<returnval><obj type="VirtualMachine">vm-1</obj></returnval>`)).toEqual([]);
+  });
+});

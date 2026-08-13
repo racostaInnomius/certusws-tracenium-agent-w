@@ -29,6 +29,9 @@ import {
   parsePropertyValue,
   parseSnapshotTree,
   parseVmSummaries,
+  parseDatastoreSummaries,
+  parseVmDatastoreRefs,
+  type DatastoreRow,
   type SnapshotNode,
   type VmSummary,
 } from "./vim-parse";
@@ -281,6 +284,29 @@ export class VimClient {
 
   async countVms(): Promise<number> {
     return (await this.listVms()).length;
+  }
+
+  /**
+   * Capacity figures for every datastore backing a VM.
+   *
+   * Read in ONE round trip per stage: the VM's datastore refs, then a single
+   * property fetch across them. A snapshot pre-check must not itself become a
+   * source of vCenter load on every patch.
+   */
+  async datastoresForVm(vmMoref: string): Promise<DatastoreRow[]> {
+    const refsXml = await this.retrieveProperties("VirtualMachine", vmMoref, ["datastore"]);
+    const refs = parseVmDatastoreRefs(refsXml);
+    if (!refs.length) return [];
+
+    const xml = await this.call(
+      `<urn:RetrieveProperties><urn:_this type="PropertyCollector">${this.svc.propertyCollector}</urn:_this><urn:specSet>` +
+        `<urn:propSet><urn:type>Datastore</urn:type><urn:pathSet>name</urn:pathSet>` +
+        `<urn:pathSet>summary.capacity</urn:pathSet><urn:pathSet>summary.freeSpace</urn:pathSet>` +
+        `<urn:pathSet>summary.uncommitted</urn:pathSet></urn:propSet>` +
+        refs.map((r) => `<urn:objectSet><urn:obj type="Datastore">${escapeXml(r)}</urn:obj></urn:objectSet>`).join("") +
+        `</urn:specSet></urn:RetrieveProperties>`
+    );
+    return parseDatastoreSummaries(xml);
   }
 
   async createSnapshot(

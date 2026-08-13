@@ -155,6 +155,42 @@ export function parsePrivilegeResults(xml: string): boolean[] {
   return [...matchAll(xml, /<returnval>([^<]*)<\/returnval>/g)].map((m) => m[1] === "true");
 }
 
+export interface DatastoreRow {
+  moref: string;
+  name: string;
+  capacity: number;
+  freeSpace: number;
+  uncommitted?: number;
+}
+
+/** Datastore capacity rows from a RetrieveProperties response. */
+export function parseDatastoreSummaries(xml: string): DatastoreRow[] {
+  const out: DatastoreRow[] = [];
+  for (const block of matchAll(xml, /<returnval[^>]*>([\s\S]*?)<\/returnval>/g)) {
+    const b = block[1];
+    const moref = (b.match(/<obj[^>]*type="Datastore"[^>]*>([^<]+)<\/obj>/) || [])[1];
+    if (!moref) continue;
+    const row: DatastoreRow = { moref, name: "", capacity: NaN, freeSpace: NaN };
+    for (const ps of matchAll(b, /<propSet>([\s\S]*?)<\/propSet>/g)) {
+      const name = (ps[1].match(/<name>([\s\S]*?)<\/name>/) || [])[1];
+      const val = (ps[1].match(/<val[^>]*>([\s\S]*?)<\/val>/) || [])[1];
+      if (val === undefined) continue;
+      if (name === "name") row.name = decodeXml(val);
+      else if (name === "summary.capacity") row.capacity = Number(val);
+      else if (name === "summary.freeSpace") row.freeSpace = Number(val);
+      else if (name === "summary.uncommitted") row.uncommitted = Number(val);
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+/** Datastore MoRefs attached to a VM (`datastore` property). */
+export function parseVmDatastoreRefs(xml: string): string[] {
+  return [...matchAll(xml, /<ManagedObjectReference type="Datastore"[^>]*>([^<]+)<\/ManagedObjectReference>/g)]
+    .map((m) => m[1]);
+}
+
 /** Every privilege id the server advertises (AuthorizationManager.privilegeList). */
 export function parsePrivilegeList(xml: string): string[] {
   return [...matchAll(xml, /<privId>([^<]+)<\/privId>/g)].map((m) => m[1]);

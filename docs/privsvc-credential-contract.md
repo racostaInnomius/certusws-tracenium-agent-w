@@ -2,7 +2,8 @@
 
 **Status:** specification, not yet implemented
 **Consumer:** `certusws-tracenium-agent-w` (already calls these methods)
-**Implementer:** the PrivSvc codebase (not this repo — only the IPC clients live here)
+**Implementer:** PrivSvc, in this repo under `privsvc/{windows,linux,macos}/`
+(the Node-side IPC clients are in `src/priv/`)
 **Context:** [ADR-0001 §(C)](../../certusws-tracenium/docs/adr/ADR-0001-patch-management-gateway.md)
 
 ---
@@ -209,13 +210,13 @@ using `/tmp/k.pem`. Shape of a real (throwaway) envelope, for reference:
 
 ## Status of the consuming side
 
-Already implemented and tested in this repo:
+Already implemented and tested (Node side):
 
 - `src/connectors/vcenter/index.ts` — `makeConnectorDeps()` calls `credential.retrieve`
 - `src/priv/ipc-types.ts` — the three methods declared
 - `src/transport/grpc-stream.ts` — `vcenter_verify` / `vcenter_snapshot` job dispatch
 
-Until PrivSvc implements these, `credential.retrieve` returns `not_found`, the
+Until PrivSvc implements these (Windows: `privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/Router.cs` dispatches by method name), `credential.retrieve` returns `not_found`, the
 gateway reports `vcenter_verify:failed;stage=credential;classify=no_credential`,
 and no vCenter connection is attempted. The failure is clean and diagnosable —
 but the feature does not work end-to-end.

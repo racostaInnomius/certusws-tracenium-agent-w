@@ -32,6 +32,7 @@ import {
   type SnapshotOutcome,
 } from "./ack";
 import { buildMatchCandidates, type EndpointVmFacts } from "./uuid-match";
+import { checkDatastores } from "./datastore-check";
 import type { GatewayConfig } from "./gateway-config";
 
 export interface VCenterCredential {
@@ -539,6 +540,34 @@ export async function runVcenterSnapshot(
         deploymentId: payload?.deploymentId,
         vmUuid: candidates[0].uuid,
         reason: "no vcenter vm matched any correlation key",
+      });
+    }
+
+    // Capacity gate. Taking a snapshot on a nearly-full datastore can wedge the
+    // VM itself — strictly worse than not patching it. Fail-OPEN when nothing
+    // can be measured (see datastore-check), fail-CLOSED on a measurement that
+    // actually says "too full".
+    try {
+      const capacity = checkDatastores(await client.datastoresForVm(vmMoref));
+      if (!capacity.proceed) {
+        deps.logger?.warn?.("snapshot blocked by datastore capacity", { detail: capacity.detail });
+        return buildSnapshotAck({
+          outcome: "rejected",
+          deploymentId: payload?.deploymentId,
+          vmUuid: matchedUuid,
+          vmMoref,
+          matchedBy,
+          reason: `datastore_${capacity.reason}`,
+          retryable: false,
+        });
+      }
+      if (capacity.unknown) {
+        deps.logger?.warn?.("snapshot proceeding without a capacity check", { detail: capacity.detail });
+      }
+    } catch (e: any) {
+      // The pre-check is a safety net, not a gate on its own plumbing.
+      deps.logger?.warn?.("datastore capacity check failed; proceeding", {
+        error: e?.message ?? String(e),
       });
     }
 
