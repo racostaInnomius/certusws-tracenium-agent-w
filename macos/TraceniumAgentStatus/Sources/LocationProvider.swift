@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import AppKit
 
 /// Publishes the Mac's position for the agent daemon to pick up.
 ///
@@ -83,25 +84,63 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
         timer = nil
     }
 
+    /// The OS status, as a string the daemon and the dashboard can act on.
+    ///
+    /// Mirrors GeoStatus on the agent side. `notDetermined` is its own answer
+    /// and NOT "unavailable": nobody has been asked yet, so waiting will never
+    /// help — somebody has to grant it.
+    private var statusName: String {
+        switch manager.authorizationStatus {
+        case .authorized, .authorizedAlways: return "ok"
+        case .denied, .restricted: return "denied"
+        case .notDetermined: return "consent_required"
+        @unknown default: return "unavailable"
+        }
+    }
+
     private func requestAuthorizationIfNeeded() {
-        if manager.authorizationStatus == .notDetermined {
-            manager.requestWhenInUseAuthorization()
+        guard manager.authorizationStatus == .notDetermined else { return }
+
+        // ⚠️ This app is LSUIElement — a menubar agent with no windows. macOS
+        // will register it as a location client (it shows up in locationd's
+        // clients.plist) but will NOT reliably present the permission alert to
+        // a process that is not foreground. That is exactly what happened in
+        // the field: every launch logged "enabled by policy", the client was
+        // Registered, no Authorized key was ever written, and the status sat
+        // at notDetermined forever while we silently re-asked every 15 minutes.
+        //
+        // Becoming a regular app for the duration of the ask puts us in the
+        // foreground so the alert can appear, then we drop straight back to
+        // accessory. The user sees a Dock icon for a moment — a fair price for
+        // a consent prompt that otherwise never shows.
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        manager.requestWhenInUseAuthorization()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+            NSApp.setActivationPolicy(.accessory)
         }
     }
 
     private func requestFix() {
         guard enabled else { return }
+
+        // Publish the reason on EVERY cycle, not only on success. The previous
+        // version wrote nothing at all unless a fix arrived, so the daemon saw
+        // an absent file and reported "no fix yet" — telling the operator to
+        // wait for something that was never going to happen.
+        LocationSink.writeStatus(statusName)
+
         switch manager.authorizationStatus {
         case .authorized, .authorizedAlways:
             // requestLocation delivers exactly one fix and powers the radio
             // back down, which is the whole point of not using startUpdating.
             manager.requestLocation()
         case .notDetermined:
+            Logger.shared.info("Location permission not yet answered; presenting the prompt")
             requestAuthorizationIfNeeded()
         default:
-            // Denied or restricted. Nothing to do and nothing to log every
-            // cycle — the daemon will see the file go stale and stop using it.
-            break
+            Logger.shared.info("Location permission is denied or restricted; not asking again")
         }
     }
 
@@ -160,8 +199,13 @@ enum LocationSink {
             // that through would render as a nonsense radius on the map.
             "accuracyM": accuracy >= 0 ? accuracy : NSNull(),
             "collectedAtUtc": ISO8601DateFormatter().string(from: location.timestamp),
+            "status": "ok",
         ]
 
+        write(payload: payload)
+    }
+
+    private static func write(payload: [String: Any]) {
         do {
             let dir = fileURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -173,6 +217,21 @@ enum LocationSink {
         } catch {
             Logger.shared.info("Failed to publish location: \(error.localizedDescription)")
         }
+    }
+
+    /// Publish WHY there is no position.
+    ///
+    /// Same file as a real fix, minus the coordinates: the daemon parses one
+    /// document either way, and a reason with no lat/lon can never be mistaken
+    /// for a position. Stamped so the daemon's staleness window applies to a
+    /// reason just as it does to a fix — a status from a process that died
+    /// hours ago is not current either.
+    static func writeStatus(_ status: String) {
+        guard status != "ok" else { return }
+        write(payload: [
+            "status": status,
+            "collectedAtUtc": ISO8601DateFormatter().string(from: Date()),
+        ])
     }
 
     static func clear() {

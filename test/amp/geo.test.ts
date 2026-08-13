@@ -131,6 +131,39 @@ describe("classifyGeoOutput — why there is no position", () => {
   });
 });
 
+describe("classifyGeoOutput — the reason macOS publishes", () => {
+  it("honours consent_required, which no amount of waiting fixes", () => {
+    // The bug this exists for: a menubar (LSUIElement) app registers as a
+    // location client but macOS never shows it the permission alert, so the
+    // status sits at notDetermined forever. Reported as "unavailable" it read
+    // as "no fix yet" and sent operators off to wait.
+    expect(classifyGeoOutput('{"status":"consent_required","collectedAtUtc":"2026-08-13T02:00:00Z"}'))
+      .toBe("consent_required");
+  });
+
+  it("honours a published denial", () => {
+    expect(classifyGeoOutput('{"status":"denied","collectedAtUtc":"2026-08-13T02:00:00Z"}'))
+      .toBe("denied");
+  });
+
+  it("refuses a published 'ok' that carries no usable coordinates", () => {
+    // The reason is trusted; a claim of success is verified.
+    expect(classifyGeoOutput('{"status":"ok"}')).toBe("unavailable");
+    expect(classifyGeoOutput('{"status":"ok","lat":0,"lon":0}')).toBe("unavailable");
+  });
+
+  it("accepts a published ok WITH coordinates", () => {
+    expect(classifyGeoOutput('{"status":"ok","lat":19.4,"lon":-99.1}')).toBe("ok");
+  });
+
+  it("ignores a status it does not recognise rather than propagating it", () => {
+    // The app ships independently; an unknown value must not become a status
+    // the backend and UI have no text for.
+    expect(classifyGeoOutput('{"status":"banana","lat":19.4,"lon":-99.1}')).toBe("ok");
+    expect(classifyGeoOutput('{"status":"banana"}')).toBe("unavailable");
+  });
+});
+
 describe("parseConsoleUser (macOS)", () => {
   it("accepts the logged-in console user", () => {
     expect(parseConsoleUser("javierpacheco\n")).toBe("javierpacheco");

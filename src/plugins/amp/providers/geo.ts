@@ -52,7 +52,16 @@ export type GeoStatus =
   /** The OS refused: location services off, or consent denied. */
   | "denied"
   /** Supported and permitted, but no fix right now (indoors, cold start). */
-  | "unavailable";
+  | "unavailable"
+  /**
+   * macOS: nobody has answered the OS permission prompt yet.
+   *
+   * Distinct from `denied` (answered: no) and emphatically distinct from
+   * `unavailable` (permitted, just no fix): waiting will never resolve this,
+   * somebody has to grant it. Reporting it as `unavailable` told operators to
+   * wait for something that was never going to happen.
+   */
+  | "consent_required";
 
 export type GeoResult = {
   geo: AmpGeo | null;
@@ -316,6 +325,13 @@ export async function collectGeo(
  *
  * Pure, so every branch is testable without an OS that can refuse us.
  */
+const PUBLISHED_STATUSES = new Set<GeoStatus>([
+  "ok",
+  "denied",
+  "unavailable",
+  "consent_required",
+]);
+
 export function classifyGeoOutput(stdout: unknown): GeoStatus {
   const text = typeof stdout === "string" ? stdout.trim() : "";
   // Empty means the platform helper had nothing to give: on macOS that is the
@@ -323,5 +339,20 @@ export function classifyGeoOutput(stdout: unknown): GeoStatus {
   if (!text) return "unavailable";
   if (text === "TIMEOUT") return "unavailable";
   if (text.startsWith("ERROR:")) return "denied";
+
+  // macOS publishes the REASON alongside (or instead of) a fix, because only
+  // the user-session app can see the OS permission state. Trust it over
+  // anything we could infer from the absence of coordinates.
+  try {
+    const published = JSON.parse(text)?.status;
+    if (typeof published === "string" && PUBLISHED_STATUSES.has(published as GeoStatus)) {
+      // A document claiming "ok" without usable coordinates is not ok.
+      if (published === "ok") return parseGeoOutput(text) ? "ok" : "unavailable";
+      return published as GeoStatus;
+    }
+  } catch {
+    // Not JSON — fall through to the coordinate check below.
+  }
+
   return parseGeoOutput(text) ? "ok" : "unavailable";
 }
