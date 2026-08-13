@@ -14,6 +14,9 @@ import type {
   SoftwareInventory,
   PrinterInventory
 } from "./amp-types";
+import type { ScpNamespace } from "./scp-types";
+import type { PmpNamespace } from "./pmp-types";
+import type { CdpNamespace } from "./cdp-types";
 
 import {
   normalizeCpu,
@@ -609,6 +612,28 @@ export async function buildDeviceFacts(
       // purpose is to explain the ticks that carry no coordinate.
       ...(ampIn.geoStatus ? { geoStatus: ampIn.geoStatus } : {})
     };
+  }
+
+  // The namespace-level `hasChanges` flag on scp/pmp/cdp is scheduler
+  // state (drives the send/skip decision), not evidence — all three
+  // type definitions document it as internal-only and promise it gets
+  // stripped here. Until 2026-08-13 that promise was FALSE for every
+  // namespace: the spread at the top of this function carried the flag
+  // to the wire untouched (the backend never read it, so this is
+  // hygiene, not a behavior fix). Note this is the same allowlist-vs-
+  // merge trap the AMP comment above documents, from the other
+  // direction: AMP drops too much, these dropped too little.
+  if (outNamespaces.scp) {
+    const { hasChanges: _scpInternal, ...scpWire } = outNamespaces.scp;
+    outNamespaces.scp = scpWire as ScpNamespace;
+  }
+  if (outNamespaces.pmp) {
+    const { hasChanges: _pmpInternal, ...pmpWire } = outNamespaces.pmp;
+    outNamespaces.pmp = pmpWire as PmpNamespace;
+  }
+  if (outNamespaces.cdp) {
+    const { hasChanges: _cdpInternal, ...cdpWire } = outNamespaces.cdp;
+    outNamespaces.cdp = cdpWire as CdpNamespace;
   }
 
   return {

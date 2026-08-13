@@ -205,3 +205,67 @@ describe("buildDeviceFacts — amp.geo / amp.geoStatus passthrough", () => {
     expect((facts.namespaces.amp as any)?.geoStatus).toBeUndefined();
   });
 });
+
+describe("buildDeviceFacts — strips internal hasChanges from scp/pmp/cdp (B8)", () => {
+  // Los tres tipos documentan hasChanges como "internal-only: el builder
+  // lo quita antes de enviar". Hasta 2026-08-13 esa promesa era falsa:
+  // el spread inicial lo dejaba pasar al wire tal cual. Este suite fija
+  // la promesa. El hasChanges de amp.software / amp.printers es OTRO
+  // campo (contrato real del wire con amp-projection) y debe seguir.
+  it("removes namespace-level hasChanges but keeps the rest of the evidence", async () => {
+    const namespaces: Namespaces = {
+      scp: {
+        schemaVersion: "2.0",
+        collector: { plugin: "scp", version: "1.4.0" } as any,
+        hasChanges: true,
+        firewall: { enabled: true }
+      } as any,
+      pmp: {
+        schemaVersion: "1.0",
+        collector: { plugin: "pmp", version: "1.0.0" },
+        hasChanges: true,
+        overall: { status: "ok" }
+      } as any,
+      cdp: {
+        schemaVersion: "1.0",
+        collector: { plugin: "cdp", version: "1.0.0" },
+        collectedAt: "2026-08-13T00:00:00Z",
+        hasChanges: true,
+        truncated: false,
+        stores: []
+      } as any
+    };
+
+    const facts = await buildDeviceFacts(makeCtx(), namespaces);
+
+    expect(facts.namespaces.scp).toBeDefined();
+    expect((facts.namespaces.scp as any).hasChanges).toBeUndefined();
+    expect((facts.namespaces.scp as any).firewall).toEqual({ enabled: true });
+
+    expect((facts.namespaces.pmp as any).hasChanges).toBeUndefined();
+    expect((facts.namespaces.pmp as any).overall).toEqual({ status: "ok" });
+
+    expect((facts.namespaces.cdp as any).hasChanges).toBeUndefined();
+    expect((facts.namespaces.cdp as any).stores).toEqual([]);
+  });
+
+  it("keeps amp.software.hasChanges — that one IS wire contract", async () => {
+    const namespaces: Namespaces = {
+      amp: {
+        hardware: { static: {} as any, runtime: {} as any },
+        security: { status: "unknown" } as any,
+        software: { count: 1, delta: null, items: [], hasChanges: true }
+      } as any
+    };
+
+    const facts = await buildDeviceFacts(makeCtx(), namespaces);
+    expect((facts.namespaces.amp as any).software.hasChanges).toBe(true);
+  });
+
+  it("does not invent scp/pmp/cdp keys when the input lacks them", async () => {
+    const facts = await buildDeviceFacts(makeCtx(), {} as Namespaces);
+    expect(facts.namespaces.scp).toBeUndefined();
+    expect(facts.namespaces.pmp).toBeUndefined();
+    expect(facts.namespaces.cdp).toBeUndefined();
+  });
+});
