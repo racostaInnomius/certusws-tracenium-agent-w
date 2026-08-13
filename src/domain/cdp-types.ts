@@ -68,6 +68,10 @@ export type CdpCertItem = {
     chainError?: string;
     /** Advisory only: a proxy legitimately serves other names. */
     coversDeviceHostname?: boolean;
+    /** Which process serves this certificate (ADR-0004 a). The join key
+     *  the control plane uses to attribute a certificate to an owning
+     *  application in the software inventory. */
+    process?: { pid: number; name?: string; path?: string };
   };
 
   isCA?: boolean;

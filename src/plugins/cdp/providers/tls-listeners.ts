@@ -30,6 +30,7 @@ import type { AgentContext } from "../../../core/agent-context";
 import type { CdpCertItem, CdpStoreInfo } from "../../../domain/cdp-types";
 import { parseCertToItem } from "../parse-cert";
 import { listListeningPorts } from "../listening-ports";
+import { resolveListenerOwners, type ProcessOwner } from "../process-owner";
 
 const PROBE_TIMEOUT_MS = 3000;
 const MAX_CONCURRENCY = 8;
@@ -70,6 +71,8 @@ type Options = {
   ports?: number[];
   /** Test seam: pin the device name used for SAN coverage. */
   hostname?: string;
+  /** Test seam: bypass process attribution. */
+  owners?: Map<number, ProcessOwner>;
   /** Test seam: override the probe. */
   probe?: (port: number) => Promise<TlsProbeResult | null>;
 };
@@ -248,6 +251,13 @@ export async function collectTlsListeners(
 
   const hostname = options.hostname ?? os.hostname();
 
+  // Which process serves each certificate (ADR-0004 a). Resolved only
+  // for the ports that actually answered TLS, so a host with hundreds of
+  // plaintext listeners costs nothing. Enrichment only: if it fails we
+  // still report the certificates.
+  const tlsPorts = candidates.filter((_, i) => probed[i]);
+  const owners = options.owners ?? (await resolveListenerOwners(tlsPorts));
+
   candidates.forEach((port, index) => {
     const hit = probed[index];
     if (!hit) return;
@@ -276,6 +286,10 @@ export async function collectTlsListeners(
         ...(() => {
           const covers = sanCoversHost(hit.san, hostname);
           return covers === undefined ? {} : { coversDeviceHostname: covers };
+        })(),
+        ...(() => {
+          const owner = owners.get(port);
+          return owner ? { process: owner } : {};
         })()
       };
       result.items.push(item);
