@@ -53,3 +53,14 @@ coverage/
 # mistake — every `swift build` churns ~1500 .pcm/object files and buries
 # real diffs (the "1771 modified files" incident, 2026-07-28).
 macos/TraceniumAgentStatus/.build/
+
+# ── .NET build output (PrivSvc + AgentTray) ─────────────────────────
+# bin/ y obj/ son salidas regenerables de MSBuild. Estaban trackeadas por
+# error: 150 archivos / 10.2 MB que reaparecen modificados en cada
+# `dotnet build` y entierran los cambios reales en `git status` — el mismo
+# problema que el .build/ de SwiftPM de arriba. El CI compila desde fuente
+# con `-c Release` y publica aparte, así que nada del pipeline depende de
+# estos archivos.
+**/bin/Debug/
+**/bin/Release/
+**/obj/
