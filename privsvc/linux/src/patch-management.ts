@@ -1,9 +1,20 @@
 // privsvc/linux/src/patch-management.ts
 //
-// Phase 6: read-only patch scan. We dispatch by distro family —
-// debian → apt, rhel → dnf (with yum fallback for RHEL 7), suse →
-// zypper. Phase 7 will add the install side; this file only ships
-// the `handlePatchScan` export plus its private helpers.
+// Patch scan AND install. We dispatch by distro family — debian → apt,
+// rhel → dnf (with yum fallback for RHEL 7), suse → zypper.
+//
+// Exports `handlePatchScan` (read-only) and `handlePatchInstall`, both
+// routed from router.ts. The install side runs fully unattended:
+// `apt-get install --only-upgrade -y` with --force-confdef/--force-confold
+// so operator-edited conffiles survive, DEBIAN_FRONTEND=noninteractive and
+// LANG=C for parseable errors; dnf/zypper use `upgrade -y`. Unlike macOS —
+// where an Apple Silicon system update needs a volume-owner credential that
+// a root daemon cannot supply — root here is sufficient, so Linux patch
+// install genuinely works headless.
+//
+// The likeliest real-world failure is contention for the apt lock against
+// the system's own `apt-daily.timer` / unattended-upgrades; that surfaces as
+// "E: Could not get lock" and is handled explicitly below.
 //
 // Scan philosophy:
 //   * NEVER run `apt-get update`, `dnf makecache`, or `zypper refresh`
