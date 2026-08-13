@@ -7,7 +7,7 @@ import type { PrivSvcRequest, PrivSvcResponse, PrivSvcPush } from "./ipc-types";
 const PIPE_PATH = "\\\\.\\pipe\\tracenium.privsvc.v1";
 const DEFAULT_TIMEOUT_MS = 8000;
 
-function getTimeoutForMethod(method: string): number {
+export function getTimeoutForMethod(method: string): number {
   switch (method) {
     case "grpc.connect":
       return 60000;
@@ -37,10 +37,24 @@ function getTimeoutForMethod(method: string): number {
       // completes, while still bounded so a genuinely-broken privsvc
       // doesn't wedge the agent's compliance pipeline indefinitely.
       return 90000;
-    case "patch.scan":
-      return 30000;
+    // ── Patch Management ─────────────────────────────────────────────
+    //
+    // THE INVARIANT: job timeout > THIS client budget > privsvc handler
+    // budget. If the caller does not outwait the handler, a handler that
+    // hits its own ceiling can never deliver its diagnostic — the client
+    // has already given up — and the failure surfaces as a bare timeout
+    // with an empty result. That is precisely how a macOS patch_install
+    // failed in production on 2026-08-11: privsvc, client and job were all
+    // 3600s, so all three expired together and the job completed with no
+    // result_json at all.
+    //
+    // privsvc ceilings these must stay above:
+    //   patch.install — Windows 90min (WUA), macOS/Linux 60min
+    //   patch.scan    — macOS 120s (softwareupdate --list), Windows 60s
     case "patch.install":
-      return 60 * 60 * 1000;
+      return 95 * 60 * 1000; // privsvc: 90min (Windows) + 5min margin
+    case "patch.scan":
+      return 180 * 1000; // privsvc: 120s (macOS) + margin
     // ── SDP + self-update ────────────────────────────────────────────
     //
     // These were falling through to the 8s default while the privsvc side
