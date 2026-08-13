@@ -30,6 +30,9 @@ const MAX_OID_BYTES = 64;
 
 export type Tlv = {
   tag: number;
+  /** Offset of the tag byte, i.e. where this TLV begins on the wire.
+   *  Needed by callers that must hash or copy the encoding itself. */
+  headerStart: number;
   /** Offset of the first content byte. */
   start: number;
   /** Offset one past the last content byte. */
@@ -69,7 +72,7 @@ export function readTlv(buf: Buffer, offset: number): Tlv | null {
   const end = start + length;
   if (end > buf.length) return null;
 
-  return { tag, start, end, next: end };
+  return { tag, headerStart: offset, start, end, next: end };
 }
 
 /** Direct children of a constructed TLV, in order. */
@@ -121,6 +124,42 @@ export function decodeOid(buf: Buffer, tlv: Tlv | null): string | null {
   if (pending) return null;
 
   return parts.join(".");
+}
+
+/**
+ * The raw SubjectPublicKeyInfo TLV, exactly as it appears in the
+ * certificate. Hashing this is the standard way to identify "the same
+ * key" across certificates (it is what `pin-sha256` pins).
+ *
+ * Extracted with the DER walker rather than
+ * `publicKey.export({type:"spki"})` for the same reason the OIDs are:
+ * Node cannot export a key whose algorithm it does not model, so the
+ * export path would silently yield nothing for exactly the post-quantum
+ * certificates we most want to track.
+ *
+ * SPKI (not the bare key bits) on purpose: it includes the algorithm
+ * identifier, so an RSA key and an EC key that happened to share bytes
+ * could never collide, and for EC the named curve is part of the
+ * identity.
+ */
+export function extractSpkiDer(der: Buffer): Buffer | null {
+  if (!Buffer.isBuffer(der) || der.length < 8) return null;
+
+  const cert = readTlv(der, 0);
+  if (!cert || cert.tag !== TAG_SEQUENCE) return null;
+
+  const tbs = children(der, cert)[0];
+  if (!tbs || tbs.tag !== TAG_SEQUENCE) return null;
+
+  const tbsChildren = children(der, tbs);
+  const base = tbsChildren[0]?.tag === TAG_CONTEXT_0 ? 1 : 0;
+  const spki = tbsChildren[base + 5];
+  if (!spki || spki.tag !== TAG_SEQUENCE) return null;
+
+  // From the tag byte, not the contents: the hash must cover the whole
+  // SubjectPublicKeyInfo encoding to match what every other tool means
+  // by a public-key hash.
+  return der.subarray(spki.headerStart, spki.end);
 }
 
 export type CertAlgorithmOids = {

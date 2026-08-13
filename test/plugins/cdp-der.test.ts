@@ -13,7 +13,13 @@
 
 import { describe, it, expect } from "vitest";
 import crypto from "crypto";
-import { readTlv, children, decodeOid, extractAlgorithmOids } from "../../src/plugins/cdp/der";
+import {
+  readTlv,
+  children,
+  decodeOid,
+  extractAlgorithmOids,
+  extractSpkiDer
+} from "../../src/plugins/cdp/der";
 import { algorithmName, curveName } from "../../src/plugins/cdp/algorithm-oids";
 import { parseCertToItem } from "../../src/plugins/cdp/parse-cert";
 import { FIXTURE_CERT } from "./tls-fixture";
@@ -160,5 +166,53 @@ describe("parseCertToItem — the blind spot this closes", () => {
     const item = parseCertToItem(FIXTURE_CERT, { store: STORE })!;
     expect(item.publicKeyOid).toBe("1.2.840.113549.1.1.1");
     expect(item.signatureOid).toBe("1.2.840.113549.1.1.11");
+  });
+});
+
+describe("extractSpkiDer — key identity (ADR-0004 d)", () => {
+  it("produces the same hash openssl's pin-sha256 does", () => {
+    // Not an arbitrary hash: this exact value is what `openssl x509
+    // -pubkey | openssl pkey -pubin -outform der | sha256` yields, so the
+    // fleet-wide key correlation lines up with every other tool.
+    const spki = extractSpkiDer(FIXTURE_DER)!;
+    const b64 = crypto.createHash("sha256").update(spki).digest("base64");
+    expect(b64).toBe("NuEZpUrVCr9LxomH9O/m8NPXmGpvMGHdgZ4Q4AW/ff0=");
+  });
+
+  it("covers the whole SubjectPublicKeyInfo, header included", () => {
+    const spki = extractSpkiDer(FIXTURE_DER)!;
+    // A SEQUENCE tag, then a long-form length — i.e. we captured the TLV
+    // from its first byte, not just the contents.
+    expect(spki[0]).toBe(0x30);
+    expect(spki.length).toBeGreaterThan(200);
+  });
+
+  it("agrees with Node's own SPKI export for an algorithm Node can model", () => {
+    const cert = new crypto.X509Certificate(FIXTURE_CERT);
+    const viaNode = cert.publicKey.export({ type: "spki", format: "der" }) as Buffer;
+    expect(extractSpkiDer(FIXTURE_DER)!.equals(viaNode)).toBe(true);
+  });
+
+  it("returns null on junk rather than throwing", () => {
+    for (const bad of [
+      Buffer.alloc(0),
+      Buffer.from("deadbeef", "hex"),
+      Buffer.from("3080", "hex"),
+      FIXTURE_DER.subarray(0, 30)
+    ]) {
+      expect(() => extractSpkiDer(bad)).not.toThrow();
+      expect(extractSpkiDer(bad)).toBeNull();
+    }
+    expect(extractSpkiDer(undefined as any)).toBeNull();
+  });
+
+  it("gives the parsed item a stable public key hash", () => {
+    const a = parseCertToItem(FIXTURE_CERT, { store: STORE })!;
+    const b = parseCertToItem(FIXTURE_DER, { store: { ...STORE, id: "other" } })!;
+    expect(a.publicKeyHash).toMatch(/^[0-9a-f]{64}$/);
+    // Same key, different store: the CERT id differs but the KEY hash
+    // must not — that is what makes cross-store correlation possible.
+    expect(b.publicKeyHash).toBe(a.publicKeyHash);
+    expect(b.id).not.toBe(a.id);
   });
 });

@@ -12,7 +12,7 @@
 // forwarded verbatim.
 
 import crypto from "crypto";
-import { extractAlgorithmOids } from "./der";
+import { extractAlgorithmOids, extractSpkiDer } from "./der";
 import { algorithmName, curveName } from "./algorithm-oids";
 import type { CdpCertItem, CdpStoreInfo } from "../../domain/cdp-types";
 
@@ -155,6 +155,15 @@ export function parseCertToItem(
   // of the input and works whether we were handed PEM or DER.
   const oids = extractAlgorithmOids(cert.raw);
 
+  // sha256 over the SubjectPublicKeyInfo — the standard identity for
+  // "the same key", byte-identical to `openssl ... | pin-sha256`. Two
+  // certificates sharing this share a key pair; two DEVICES sharing it
+  // while both claiming the private key means the key was copied.
+  const spki = extractSpkiDer(cert.raw);
+  const publicKeyHash = spki
+    ? crypto.createHash("sha256").update(spki).digest("hex")
+    : undefined;
+
   return {
     id: certIdFor(fingerprint256, opts.store.id),
     fingerprint256,
@@ -176,6 +185,7 @@ export function parseCertToItem(
     // be named and judged without a fleet rollout.
     publicKeyOid: oids.publicKeyOid ?? undefined,
     signatureOid: oids.signatureOid ?? undefined,
+    publicKeyHash,
 
     isCA: cert.ca,
     selfSigned: subjectDN !== undefined && subjectDN === issuerDN,

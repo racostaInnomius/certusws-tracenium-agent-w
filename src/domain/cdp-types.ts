@@ -47,6 +47,10 @@ export type CdpCertItem = {
    *  post-quantum in particular. See ADR-0004. */
   publicKeyOid?: string;
   signatureOid?: string;
+  /** sha256 of the DER SubjectPublicKeyInfo (same value as openssl's
+   *  pin-sha256, in hex). Identifies the KEY, not the certificate —
+   *  the control plane uses it to spot copied private keys. */
+  publicKeyHash?: string;
 
   isCA?: boolean;
   selfSigned?: boolean;
