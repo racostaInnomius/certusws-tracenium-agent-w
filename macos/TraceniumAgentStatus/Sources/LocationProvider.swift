@@ -81,6 +81,25 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
         stopTimer()
     }
 
+    /// True while a click on "Allow location…" would accomplish something.
+    var needsUserConsent: Bool {
+        enabled && manager.authorizationStatus == .notDetermined
+    }
+
+    /// Triggered by the person clicking the button in the popover.
+    ///
+    /// Bypasses the once-per-launch budget on purpose: that budget exists to
+    /// stop US from stealing focus unbidden. A click is the opposite situation
+    /// — they asked, the app is already frontmost, and this is the one moment
+    /// macOS reliably presents the alert.
+    func requestConsentFromUser() {
+        guard enabled else { return }
+        Logger.shared.info("Location permission requested by the user from the popover")
+        hasPresentedPromptThisLaunch = false
+        requestAuthorizationIfNeeded()
+        requestFix()
+    }
+
     // MARK: - Internals
 
     private func startTimer() {

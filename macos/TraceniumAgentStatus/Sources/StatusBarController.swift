@@ -24,6 +24,9 @@ final class StatusBarController {
     func start() {
         popover.behavior = .transient
         popover.contentViewController = contentController
+        contentController.onEnableLocation = { [weak self] in
+            self?.locationProvider.requestConsentFromUser()
+        }
         // Forzar el tamaño del popover ANTES del primer show. NSPopover
         // por default se reduce al tamaño intrínseco del contentVC view,
         // y `preferredContentSize` se aplica DESPUÉS del primer render
@@ -81,6 +84,11 @@ final class StatusBarController {
         // unchanged switch costs nothing and a flipped one takes effect within
         // one poll instead of waiting for a restart.
         locationProvider.apply(enabled: status?.policy.features?.locationTracking ?? false)
+
+        // Surface the manual path exactly while it would help: the automatic
+        // prompt is unreliable for a menubar app, so the person needs a way to
+        // ask for it themselves.
+        contentController.setLocationPromptVisible(locationProvider.needsUserConsent)
 
         let hasSnapshot = status != nil
         if lastPresenceState != hasSnapshot {

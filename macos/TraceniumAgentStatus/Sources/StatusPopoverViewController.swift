@@ -39,6 +39,19 @@ final class StatusPopoverViewController: NSViewController {
     private let tabControl = NSSegmentedControl(labels: ["Device Info", "Agent Info"], trackingMode: .selectOne, target: nil, action: nil)
     private let copyButton = NSButton(title: "Copy all", target: nil, action: nil)
 
+    /// Shown only while location is switched on by policy and still ungranted.
+    ///
+    /// The automatic prompt is unreliable for a menubar app: macOS registers us
+    /// as a location client but does not reliably present the alert to a
+    /// process that was not already frontmost, and once the client is
+    /// registered it may never offer again. A button the person CLICKS sidesteps
+    /// that entirely — the app is unambiguously frontmost at that instant,
+    /// which is exactly the condition the alert needs.
+    private let locationButton = NSButton(title: "Allow location…", target: nil, action: nil)
+
+    /// Set by the controller so the button can reach the provider.
+    var onEnableLocation: (() -> Void)?
+
     // Body — un scrollview por tab; se alterna con isHidden.
     private let agentScroll = NSScrollView()
     private let deviceScroll = NSScrollView()
@@ -155,13 +168,24 @@ final class StatusPopoverViewController: NSViewController {
         copyButton.action = #selector(copyAllPressed(_:))
         copyButton.translatesAutoresizingMaskIntoConstraints = false
 
+        locationButton.bezelStyle = .rounded
+        locationButton.controlSize = .small
+        locationButton.font = NSFont.systemFont(ofSize: 11)
+        locationButton.target = self
+        locationButton.action = #selector(enableLocationPressed(_:))
+        locationButton.translatesAutoresizingMaskIntoConstraints = false
+        locationButton.isHidden = true  // only while ungranted — see setLocationPromptVisible
+
         strip.addSubview(tabControl)
         strip.addSubview(copyButton)
+        strip.addSubview(locationButton)
         NSLayoutConstraint.activate([
             tabControl.leadingAnchor.constraint(equalTo: strip.leadingAnchor, constant: Self.bodyPadding),
             tabControl.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
             copyButton.trailingAnchor.constraint(equalTo: strip.trailingAnchor, constant: -Self.bodyPadding),
-            copyButton.centerYAnchor.constraint(equalTo: strip.centerYAnchor)
+            copyButton.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
+            locationButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -8),
+            locationButton.centerYAnchor.constraint(equalTo: strip.centerYAnchor)
         ])
         view.addSubview(strip)
 
@@ -314,6 +338,16 @@ final class StatusPopoverViewController: NSViewController {
     }
 
     // MARK: - Render
+
+    /// Show the button only when clicking it would actually achieve something:
+    /// policy on, permission not yet granted.
+    func setLocationPromptVisible(_ visible: Bool) {
+        locationButton.isHidden = !visible
+    }
+
+    @objc private func enableLocationPressed(_ sender: Any?) {
+        onEnableLocation?()
+    }
 
     func render(_ status: TrayStatus?) {
         lastStatus = status
