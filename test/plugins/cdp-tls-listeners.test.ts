@@ -17,6 +17,7 @@ import { parseProcNetTcp, parseNetstat } from "../../src/plugins/cdp/listening-p
 import {
   probeTlsPort,
   collectTlsListeners,
+  sanCoversHost,
   SKIPPED_PORTS
 } from "../../src/plugins/cdp/providers/tls-listeners";
 import type { AgentContext } from "../../src/core/agent-context";
@@ -128,9 +129,21 @@ describe("probeTlsPort against real sockets", () => {
 
   it("captures the certificate a real TLS service serves", async () => {
     const port = await startTlsServer();
-    const der = await probeTlsPort(port);
-    expect(der).toBeInstanceOf(Buffer);
-    expect(der!.length).toBeGreaterThan(0);
+    const hit = await probeTlsPort(port);
+    expect(hit!.der).toBeInstanceOf(Buffer);
+    expect(hit!.der.length).toBeGreaterThan(0);
+    expect(hit!.chainDepth).toBe(1);
+  });
+
+  it("reports a self-signed server as an untrusted chain, not as a failure", async () => {
+    const port = await startTlsServer();
+    const hit = await probeTlsPort(port);
+    expect(hit!.chainAuthorized).toBe(false);
+    // The verdict is about the CHAIN. If the hostname check were still
+    // active this would read ERR_TLS_CERT_ALTNAME_INVALID instead, and
+    // every real listener would look broken.
+    expect(hit!.chainError).toMatch(/SELF_SIGNED|UNABLE_TO_(GET|VERIFY)/);
+    expect(hit!.chainError).not.toContain("ALTNAME");
   });
 
   it("returns null for a plaintext listener instead of hanging or throwing", async () => {
@@ -154,6 +167,7 @@ describe("probeTlsPort against real sockets", () => {
 
     const item = result.items[0];
     expect(item.source).toBe("listener");
+    expect(item.tls).toMatchObject({ port, chainDepth: 1, chainAuthorized: false });
     expect(item.store.id).toBe(`listener/tcp/${port}`);
     // Machine scope on purpose: a served cert must reach the default
     // views and the expiry alert, unlike a trust-store root.
@@ -195,5 +209,35 @@ describe("collectTlsListeners scoping", () => {
     const result = await collectTlsListeners(makeCtx(), { ports: [], probe: trackingProbe });
     expect(probeCalls).toEqual([]);
     expect(result.items).toEqual([]);
+  });
+});
+
+describe("sanCoversHost", () => {
+  it("matches the FQDN and the short name", () => {
+    expect(sanCoversHost("DNS:web01.corp.local", "web01.corp.local")).toBe(true);
+    expect(sanCoversHost("DNS:web01", "web01.corp.local")).toBe(true);
+  });
+
+  it("honours a wildcard for exactly one label (RFC 6125)", () => {
+    expect(sanCoversHost("DNS:*.corp.local", "web01.corp.local")).toBe(true);
+    // A wildcard does NOT span two labels.
+    expect(sanCoversHost("DNS:*.corp.local", "web01.dc1.corp.local")).toBe(false);
+  });
+
+  it("reports a genuine mismatch", () => {
+    expect(sanCoversHost("DNS:figmadaemon.com, DNS:www.figmadaemon.com", "JPR-MacBookPro.local"))
+      .toBe(false);
+  });
+
+  it("returns undefined — not false — when there is nothing to compare", () => {
+    // "Unknown" must not read as "mismatch": a certificate with only IP
+    // SANs, or none at all, is not evidence of a problem.
+    expect(sanCoversHost(undefined, "host")).toBeUndefined();
+    expect(sanCoversHost("IP Address:127.0.0.1", "host")).toBeUndefined();
+    expect(sanCoversHost("DNS:a.com", "")).toBeUndefined();
+  });
+
+  it("is case-insensitive", () => {
+    expect(sanCoversHost("DNS:WEB01.Corp.Local", "web01.corp.local")).toBe(true);
   });
 });

@@ -25,6 +25,7 @@
 // cert is exactly what we most want to see, and no data is exchanged.
 
 import tls from "tls";
+import os from "os";
 import type { AgentContext } from "../../../core/agent-context";
 import type { CdpCertItem, CdpStoreInfo } from "../../../domain/cdp-types";
 import { parseCertToItem } from "../parse-cert";
@@ -33,6 +34,7 @@ import { listListeningPorts } from "../listening-ports";
 const PROBE_TIMEOUT_MS = 3000;
 const MAX_CONCURRENCY = 8;
 const MAX_PORTS = 200;
+const MAX_CHAIN_DEPTH = 12;
 
 /**
  * Never probed. Databases and mail/IRC-style protocols can log noisily or
@@ -66,19 +68,44 @@ export type TlsListenerResult = {
 type Options = {
   /** Test seam: bypass port enumeration. */
   ports?: number[];
+  /** Test seam: pin the device name used for SAN coverage. */
+  hostname?: string;
   /** Test seam: override the probe. */
-  probe?: (port: number) => Promise<Buffer | null>;
+  probe?: (port: number) => Promise<TlsProbeResult | null>;
+};
+
+export type TlsProbeResult = {
+  /** The leaf certificate, DER-encoded. */
+  der: Buffer;
+  /** How many certificates the server actually sent. */
+  chainDepth: number;
+  /** Does the DEVICE'S OWN trust store accept this chain? */
+  chainAuthorized: boolean;
+  /** OpenSSL verify code when it does not, e.g.
+   *  UNABLE_TO_VERIFY_LEAF_SIGNATURE (a missing intermediate). */
+  chainError?: string;
+  /** Raw subjectAltName, used to check coverage of the device's name. */
+  san?: string;
 };
 
 /**
- * One handshake. Resolves with the peer certificate in DER, or null when
- * the port is not TLS / does not answer in time. Never rejects — a
- * failed probe is an expected outcome, not an error.
+ * One handshake. Resolves with the served certificate and the verdict on
+ * its chain, or null when the port is not TLS / does not answer in time.
+ * Never rejects — a failed probe is an expected outcome, not an error.
+ *
+ * `checkServerIdentity` is disabled ON PURPOSE. We connect to 127.0.0.1
+ * with servername "localhost", so the built-in hostname check fails for
+ * essentially every real certificate and its error
+ * (ERR_TLS_CERT_ALTNAME_INVALID) MASKS the chain verdict — measured
+ * against a live listener whose chain was in fact perfectly valid.
+ * Disabling it makes `chainAuthorized` mean what it says: the device's
+ * own trust store accepts the chain the service serves. Hostname
+ * coverage is evaluated separately, against the device's real name.
  */
-export function probeTlsPort(port: number): Promise<Buffer | null> {
+export function probeTlsPort(port: number): Promise<TlsProbeResult | null> {
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (value: Buffer | null) => {
+    const finish = (value: TlsProbeResult | null) => {
       if (settled) return;
       settled = true;
       try {
@@ -97,17 +124,73 @@ export function probeTlsPort(port: number): Promise<Buffer | null> {
         rejectUnauthorized: false,
         // Some servers require SNI to present a certificate at all.
         servername: "localhost",
+        // See the doc comment: measures the CHAIN, not the name.
+        checkServerIdentity: () => undefined,
         timeout: PROBE_TIMEOUT_MS
       },
       () => {
-        const peer = socket.getPeerCertificate(false) as any;
-        finish(peer && peer.raw && peer.raw.length > 0 ? peer.raw : null);
+        const peer = socket.getPeerCertificate(true) as any;
+        if (!peer || !peer.raw || peer.raw.length === 0) return finish(null);
+
+        // Walk the chain the server sent. The last certificate points at
+        // itself when self-signed, so `seen` is what terminates the walk.
+        let depth = 0;
+        let node: any = peer;
+        const seen = new Set<string>();
+        while (node?.fingerprint256 && !seen.has(node.fingerprint256) && depth < MAX_CHAIN_DEPTH) {
+          seen.add(node.fingerprint256);
+          depth += 1;
+          node = node.issuerCertificate;
+        }
+
+        finish({
+          der: peer.raw,
+          chainDepth: depth,
+          chainAuthorized: socket.authorized === true,
+          chainError: socket.authorized ? undefined : String(socket.authorizationError ?? "UNKNOWN"),
+          san: typeof peer.subjectaltname === "string" ? peer.subjectaltname : undefined
+        });
       }
     );
 
     socket.setTimeout(PROBE_TIMEOUT_MS, () => finish(null));
     socket.on("error", () => finish(null));
     socket.on("close", () => finish(null));
+  });
+}
+
+/**
+ * Does the served certificate cover the device's own name?
+ *
+ * Reported as INFORMATION, never as a hygiene flag: a reverse proxy or
+ * virtual host legitimately serves names that have nothing to do with
+ * the machine it runs on, so flagging every mismatch would be noise.
+ * What it is good for is the opposite direction — spotting a service
+ * that should present its own host's name and does not.
+ */
+export function sanCoversHost(san: string | undefined, hostname: string): boolean | undefined {
+  if (!san || !hostname) return undefined;
+
+  const names = san
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.toUpperCase().startsWith("DNS:"))
+    .map((entry) => entry.slice(4).trim().toLowerCase());
+
+  if (names.length === 0) return undefined;
+
+  const host = hostname.toLowerCase();
+  const shortHost = host.split(".")[0];
+
+  return names.some((name) => {
+    if (name === host || name === shortHost) return true;
+    if (name.startsWith("*.")) {
+      // A wildcard covers exactly one label, per RFC 6125.
+      const suffix = name.slice(2);
+      const parent = host.split(".").slice(1).join(".");
+      return parent === suffix;
+    }
+    return false;
   });
 }
 
@@ -159,13 +242,15 @@ export async function collectTlsListeners(
   if (candidates.length === 0) return result;
 
   const probe = options.probe ?? probeTlsPort;
-  const der = await mapLimited(candidates, MAX_CONCURRENCY, (port) =>
+  const probed = await mapLimited(candidates, MAX_CONCURRENCY, (port) =>
     probe(port).catch(() => null)
   );
 
+  const hostname = options.hostname ?? os.hostname();
+
   candidates.forEach((port, index) => {
-    const raw = der[index];
-    if (!raw) return;
+    const hit = probed[index];
+    if (!hit) return;
 
     result.portsWithTls += 1;
 
@@ -177,9 +262,22 @@ export async function collectTlsListeners(
       scope: "machine"
     };
 
-    const item = parseCertToItem(raw, { store });
+    const item = parseCertToItem(hit.der, { store });
     if (item) {
       item.source = "listener";
+      // What the handshake said about the chain, kept next to the
+      // certificate it belongs to. `coversDeviceHostname` is reported,
+      // never flagged — see sanCoversHost.
+      item.tls = {
+        port,
+        chainDepth: hit.chainDepth,
+        chainAuthorized: hit.chainAuthorized,
+        ...(hit.chainError ? { chainError: hit.chainError } : {}),
+        ...(() => {
+          const covers = sanCoversHost(hit.san, hostname);
+          return covers === undefined ? {} : { coversDeviceHostname: covers };
+        })()
+      };
       result.items.push(item);
       result.stores.push(store);
     } else {

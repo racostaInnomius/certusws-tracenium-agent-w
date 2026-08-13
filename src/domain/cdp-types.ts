@@ -51,6 +51,20 @@ export type CdpCertItem = {
    *  pin-sha256, in hex). Identifies the KEY, not the certificate —
    *  the control plane uses it to spot copied private keys. */
   publicKeyHash?: string;
+  /** Only for `source: "listener"` — what the live handshake revealed
+   *  about the chain the service serves (ADR-0004 b). */
+  tls?: {
+    port: number;
+    /** Certificates the server actually sent. 1 usually means it
+     *  omitted the intermediates. */
+    chainDepth: number;
+    /** Does the device's own trust store accept the chain? */
+    chainAuthorized: boolean;
+    /** OpenSSL verify code when it does not. */
+    chainError?: string;
+    /** Advisory only: a proxy legitimately serves other names. */
+    coversDeviceHostname?: boolean;
+  };
 
   isCA?: boolean;
   selfSigned?: boolean;
