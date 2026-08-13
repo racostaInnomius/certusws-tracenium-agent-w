@@ -109,6 +109,14 @@ describe("classifyGeoOutput — why there is no position", () => {
     expect(classifyGeoOutput('{"lat":19.4,"lon":-99.1}')).toBe("ok");
   });
 
+  it("names the machine-wide switch when Windows has location off", () => {
+    // "denied" alone sent admins to check per-user consent on a service that
+    // runs as SYSTEM. The ConsentStore value is the gate a GPO can actually
+    // set, so the reason has to survive into the message.
+    expect(classifyGeoOutput("ERROR:location_services_off (ConsentStore=Deny)")).toBe("denied");
+    expect(classifyGeoOutput("ERROR:location_services_off (ConsentStore=unreadable)")).toBe("denied");
+  });
+
   it("separates a refusal from a miss", () => {
     // "denied" is a configuration problem an admin can fix; "unavailable" is
     // weather. Collapsing them would send an MSP chasing the wrong one.

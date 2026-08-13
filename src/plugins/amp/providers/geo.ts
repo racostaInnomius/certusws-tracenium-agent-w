@@ -96,6 +96,24 @@ const LOOKUP_TIMEOUT_MS = 20_000;
  */
 const WINDOWS_SCRIPT = `
 $ErrorActionPreference = 'Stop'
+
+# Check the machine-wide gate BEFORE asking, so "denied" can name the reason.
+#
+# The agent runs as SYSTEM in session 0, and Windows location consent is
+# per-user — but there IS a machine-wide switch (the same one the Settings
+# "Location services" toggle writes) that a GPO can set. Distinguishing "the
+# machine has location switched off" from "the API refused us" is the
+# difference between a fix an admin can deploy fleet-wide and a dead end.
+$consent = $null
+try {
+  $consent = (Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\location' -Name Value -ErrorAction Stop).Value
+} catch { $consent = 'unreadable' }
+
+if ($consent -ne 'Allow') {
+  Write-Output ('ERROR:location_services_off (ConsentStore=' + $consent + ')')
+  exit 0
+}
+
 try {
   [void][Windows.Devices.Geolocation.Geolocator,Windows.Devices.Geolocation,ContentType=WindowsRuntime]
   $locator = New-Object Windows.Devices.Geolocation.Geolocator

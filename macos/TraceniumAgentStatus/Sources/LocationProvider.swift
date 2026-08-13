@@ -36,6 +36,17 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
     private var timer: Timer?
     private var enabled = false
 
+    /// Whether we already presented the permission alert in THIS launch.
+    ///
+    /// Asking puts the app in the foreground, and the status stays
+    /// `.notDetermined` until somebody answers — so re-asking on every refresh
+    /// cycle meant stealing focus from whoever was using the Mac four times an
+    /// hour, indefinitely. Once per launch is the whole budget: if they ignore
+    /// it, the next login asks again, and the dashboard reports
+    /// `consent_required` in the meantime so an admin can see it and grant it
+    /// from System Settings instead.
+    private var hasPresentedPromptThisLaunch = false
+
     override init() {
         super.init()
         manager.delegate = self
@@ -100,6 +111,8 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
 
     private func requestAuthorizationIfNeeded() {
         guard manager.authorizationStatus == .notDetermined else { return }
+        guard !hasPresentedPromptThisLaunch else { return }
+        hasPresentedPromptThisLaunch = true
 
         // ⚠️ This app is LSUIElement — a menubar agent with no windows. macOS
         // will register it as a location client (it shows up in locationd's
@@ -137,8 +150,15 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
             // back down, which is the whole point of not using startUpdating.
             manager.requestLocation()
         case .notDetermined:
-            Logger.shared.info("Location permission not yet answered; presenting the prompt")
-            requestAuthorizationIfNeeded()
+            if hasPresentedPromptThisLaunch {
+                // Already asked this launch and nobody answered. Say so once
+                // per cycle in the log, but do NOT drag the app back to the
+                // foreground — the dashboard already carries the reason.
+                Logger.shared.info("Location permission still unanswered; not re-prompting until next launch")
+            } else {
+                Logger.shared.info("Location permission not yet answered; presenting the prompt")
+                requestAuthorizationIfNeeded()
+            }
         default:
             Logger.shared.info("Location permission is denied or restricted; not asking again")
         }
