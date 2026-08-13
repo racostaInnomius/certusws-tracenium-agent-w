@@ -57,6 +57,29 @@ function reconcilePendingUpdate(currentVersion: string, logger?: {
   return state;
 }
 
+/**
+ * What actually happened during an update attempt.
+ *
+ * This used to be `void`, and every failure was swallowed by the catch at the
+ * bottom of runUpdateTask: the promise resolved normally, so callers that
+ * ACK'd on resolution reported `update_completed` to the control plane for
+ * updates that never installed anything. Operators then saw a job marked
+ * completed against a host still on the old version, with the real cause
+ * (e.g. `PrivSvc timeout`) visible only in the endpoint's local err.log.
+ *
+ * Returning an outcome instead of throwing keeps every existing caller working
+ * (the scheduler ignores the value) while letting the two job-ACK paths report
+ * the truth.
+ *
+ * `started` means the installer was LAUNCHED, not that the new version is
+ * running — the process is about to be replaced. Confirmation comes later,
+ * from reconcilePendingUpdate on the next boot.
+ */
+export type UpdateOutcome =
+  | { status: "started"; version: string }
+  | { status: "skipped"; reason: string }
+  | { status: "failed"; error: string };
+
 export async function runUpdateTask(
   ctx: AgentContext,
   opts?: {
@@ -85,7 +108,7 @@ export async function runUpdateTask(
     downloadUrl?: string;
     expectedHash?: string;
   }
-) {
+): Promise<UpdateOutcome> {
   const logger = opts?.logger;
   const force = opts?.force === true;
   const targetVersion = opts?.targetVersion ? String(opts.targetVersion).trim() : undefined;
@@ -101,7 +124,7 @@ export async function runUpdateTask(
 
   if (!isWindows && !isMacos && !isLinux) {
     logger?.info?.("[update] skipping auto-update: platform not supported currently");
-    return;
+    return { status: "skipped", reason: "platform_not_supported" };
   }
 
   const currentVersion = String(ctx.agent?.version || "").trim();
@@ -113,7 +136,7 @@ export async function runUpdateTask(
     !looksLikeSemver(currentVersion)
   ) {
     logger?.warn?.("[update] missing current agentVersion");
-    return;
+    return { status: "skipped", reason: "missing_current_version" };
   }
 
   const state = reconcilePendingUpdate(currentVersion, logger);
@@ -123,7 +146,7 @@ export async function runUpdateTask(
     const lastAttempt = parseUtcMs(freshState.installStartedAtUtc || freshState.lastAttemptedAtUtc);
     if (nowMs() - lastAttempt < 10 * 60 * 1000) {
       logger?.warn?.("[update] update already in progress, skipping");
-      return;
+      return { status: "skipped", reason: "update_already_in_progress" };
     }
 
     logger?.warn?.("[update] stale updateInProgress detected, marking failed");
@@ -132,7 +155,7 @@ export async function runUpdateTask(
   }
 
   if (!force && !shouldCheckNow(intervalMs)) {
-    return;
+    return { status: "skipped", reason: "check_interval_not_elapsed" };
   }
 
   // ── Fast-path: job payload override ───────────────────────────────
@@ -167,7 +190,7 @@ export async function runUpdateTask(
       command: run.command,
       args: run.args
     });
-    return;
+    return { status: "started", version: targetVersion };
   }
 
   // If only PART of the override pair was supplied, that's a backend
@@ -178,7 +201,7 @@ export async function runUpdateTask(
       hasUrl: !!downloadUrlOverride,
       hasHash: !!expectedHashOverride
     });
-    return;
+    return { status: "failed", error: "job_payload_override_incomplete" };
   }
 
   try {
@@ -209,7 +232,7 @@ export async function runUpdateTask(
         lastAttemptedVersion: freshState.lastAttemptedVersion,
         lastSuccessVersion: freshState.lastSuccessVersion
       });
-      return;
+      return { status: "skipped", reason: "latest_already_installed" };
     }
 
     logger?.info?.("[update] metadata evaluated" )
@@ -226,7 +249,7 @@ export async function runUpdateTask(
         latestVersion: result.latestVersion,
         reason: result.reason
       });
-      return;
+      return { status: "skipped", reason: result.reason || "no_update_available" };
     }
 
     function resolveArch(): "x64" | "arm64" {
@@ -273,14 +296,14 @@ export async function runUpdateTask(
 
     if (!fileMeta) {
       logger?.warn?.("[update] no compatible binary for this arch", { arch });
-      return;
+      return { status: "failed", error: `no_compatible_binary_for_${arch}` };
     }
 
     const expectedHash = fileMeta.hash;
 
     if (!expectedHash) {
       logger?.warn?.("[update] missing expected hash, skipping update");
-      return;
+      return { status: "failed", error: "missing_expected_hash" };
     }
 
     updateUpdateState({
@@ -301,13 +324,19 @@ export async function runUpdateTask(
       command: run.command,
       args: run.args
     });
+    return { status: "started", version: effectiveVersion };
 
   } catch (err: any) {
-    markUpdateFailed(err?.message || String(err));
+    const error = err?.message || String(err);
+    markUpdateFailed(error);
 
     logger?.error?.("[update] update task failed", {
-      error: err?.message || String(err),
+      error,
       stack: err?.stack
     });
+    // Report the failure instead of resolving silently. Callers that ACK a
+    // job decide what to send back; swallowing this is what made the control
+    // plane believe failed updates had completed.
+    return { status: "failed", error };
   }
 }

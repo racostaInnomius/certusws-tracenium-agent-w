@@ -865,17 +865,23 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
 
       (ctx as any)._agentUpdateInProgress = true;
       try {
-        await runUpdateTask(ctx, {
+        const outcome = await runUpdateTask(ctx, {
           targetVersion: version,
           downloadUrl,
           expectedHash,
           logger: ctx.logger
         });
 
-        return {
-          status: 0,
-          message: "update_completed"
-        };
+        // Report what actually happened. This used to return
+        // `update_completed` unconditionally, so an update that never
+        // installed still closed the job as successful.
+        if (outcome.status === "failed") {
+          return { status: 2, message: `update_failed: ${outcome.error}` };
+        }
+        if (outcome.status === "skipped") {
+          return { status: 0, message: `update_skipped: ${outcome.reason}` };
+        }
+        return { status: 0, message: "update_started" };
       } finally {
         (ctx as any)._agentUpdateInProgress = false;
       }
@@ -1584,8 +1590,21 @@ stream = client.Connect();
           targetVersion: version,
           logger: ctx.logger
         })
-          .then(async () => {
-            await sendControlAck(ctx, eventId, 0, "update_completed");
+          .then(async (outcome: any) => {
+            // runUpdateTask catches its own errors and resolves, so this
+            // branch runs for failures too — the ACK has to be derived from
+            // the outcome, not from the promise settling. Previously every
+            // outcome ACK'd `update_completed`, which is why a host stuck on
+            // the old version still showed the job as completed.
+            if (outcome?.status === "failed") {
+              await sendControlAck(ctx, eventId, 2, `update_failed: ${outcome.error}`);
+              return;
+            }
+            if (outcome?.status === "skipped") {
+              await sendControlAck(ctx, eventId, 0, `update_skipped: ${outcome.reason}`);
+              return;
+            }
+            await sendControlAck(ctx, eventId, 0, "update_started");
           })
           .catch((err: any) => {
             ctx.logger?.error?.("agentUpdate execution failed", {
