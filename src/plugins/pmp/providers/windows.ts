@@ -1,6 +1,7 @@
 import type { AgentContext } from "../../../core/agent-context";
 import type { PmpNamespace, PmpScanItem, PmpSeverity } from "../../../domain/pmp-types";
 import { loadPmpState } from "../state";
+import { deriveScanNote } from "../scan-note";
 
 // MSRC severity strings that come from `IUpdate.MsrcSeverity` (the
 // canonical set Microsoft publishes for security updates). The wire
@@ -140,7 +141,11 @@ export async function collectWindowsPmp(ctx: AgentContext): Promise<PmpNamespace
         mode: "inventory_only",
         installedPatchCount: 0,
         securityPatchCount: 0,
-        items: []
+        items: [],
+        // The reason belongs on the SCAN. It used to live only in
+        // remediation.lastError, which reads as "the install failed" for
+        // something that never got as far as scanning.
+        note: message
       },
       remediation: remediation.status === "idle" && !(remediation.results || []).length
         ? {
@@ -174,6 +179,12 @@ export async function collectWindowsPmp(ctx: AgentContext): Promise<PmpNamespace
       scannedAtUtc: posture?.scannedAtUtc ?? new Date().toISOString(),
       source: "windows_update_agent",
       mode: "inventory_only",
+      // privsvc returns status:"unknown" + a `note` (stderr tail) when the
+      // Windows Update scan produced no stdout at all — the usual signature of
+      // a WUA/WSUS query that errored out. Dropping it turned a diagnosable
+      // fault into "Inventory Only, 0 patches", which looks like a healthy
+      // machine with nothing pending.
+      note: deriveScanNote(posture),
       installedPatchCount: Number(posture?.updateCount ?? scanItems.length),
       securityPatchCount: Number(posture?.securityUpdateCount ?? scanItems.length),
       items: scanItems

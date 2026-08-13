@@ -18,6 +18,7 @@
 import type { AgentContext } from "../../../core/agent-context";
 import type { PmpNamespace, PmpScanItem, PmpSeverity } from "../../../domain/pmp-types";
 import { loadPmpState } from "../state";
+import { deriveScanNote } from "../scan-note";
 
 function normalizeArray(value: unknown): any[] {
   if (Array.isArray(value)) return value;
@@ -165,6 +166,10 @@ export async function collectLinuxPmp(ctx: AgentContext): Promise<PmpNamespace> 
         scannedAtUtc: new Date().toISOString(),
         source: "patch_management_unavailable",
         mode: "inventory_only",
+        // The IPC call never produced a posture, so this message is the only
+        // evidence of what went wrong. Without it the row is indistinguishable
+        // from a machine with nothing pending.
+        note: message,
         installedPatchCount: 0,
         securityPatchCount: 0,
         items: [],
@@ -196,6 +201,7 @@ export async function collectLinuxPmp(ctx: AgentContext): Promise<PmpNamespace> 
       scannedAtUtc: posture?.scannedAtUtc ?? new Date().toISOString(),
       source: asScanSource(posture?.source),
       mode: "inventory_only",
+      note: deriveScanNote(posture),
       installedPatchCount: Number(posture?.updateCount ?? scanItems.length),
       securityPatchCount: Number(posture?.securityUpdateCount ?? 0),
       items: scanItems,

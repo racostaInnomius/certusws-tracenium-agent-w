@@ -76,6 +76,20 @@ export type PmpNamespace = {
     installedPatchCount: number;
     securityPatchCount: number;
     items?: PmpScanItem[];
+    /**
+     * Why this scan returned nothing usable.
+     *
+     * PrivSvc already explains itself — an empty-stdout scan comes back as
+     * `status:"unknown"` WITH a `note` carrying the stderr tail, and a failed
+     * IPC call carries its own message. The provider used to drop both, so a
+     * dashboard showing "Inventory Only, 0 patches" was indistinguishable from
+     * a healthy machine with nothing pending. Tenant 111 sat like that across
+     * 12 servers: the reason existed on every one of them and never left the
+     * endpoint.
+     *
+     * Absent on a healthy scan. Never contains anything but diagnostic text.
+     */
+    note?: string;
   };
   remediation?: {
     status: PmpRemediationStatus;
