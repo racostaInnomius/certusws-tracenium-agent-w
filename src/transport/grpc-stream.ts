@@ -169,6 +169,10 @@ const CONNECTIVITY_CHECK_INTERVAL_MS = 60 * 1000;
 // supervisor can fire.
 let lastConnectedAtMs = Date.now();
 let connectivitySupervisorTimer: NodeJS.Timeout | null = null;
+// Progreso del loop de reconexión, NO conectividad. Ver la nota sobre
+// "wedged vs unreachable" en armConnectivitySupervisor.
+let lastProgressAtMs = Date.now();
+let lastReconnectCountSeen = 0;
 
 function armConnectivitySupervisor(ctx: AgentContext) {
   if (connectivitySupervisorTimer) return; // already armed (first stream only)
@@ -180,18 +184,51 @@ function armConnectivitySupervisor(ctx: AgentContext) {
       // keep the clock fresh so a later disconnect measures from "now".
       if (grpcMetrics.connectedSinceUtc != null) {
         lastConnectedAtMs = Date.now();
+        lastProgressAtMs = Date.now();
         return;
       }
+
+      // ── Wedged vs unreachable ────────────────────────────────────
+      //
+      // Estar desconectado NO es motivo para reciclar el proceso. Este
+      // supervisor existe para un fallo concreto: que la MAQUINARIA de
+      // reconexión se cuelgue (un priv.call que nunca retorna), donde el
+      // loop deja de iterar y solo un reinicio lo destraba.
+      //
+      // Un host que simplemente no alcanza el control plane —firewall
+      // que dropea el 443, laptop sin red, corte de WAN— tiene un loop
+      // PERFECTAMENTE SANO: reintenta con backoff y falla con un error
+      // de red legítimo. Reiniciarlo no abre un firewall; solo produce
+      // un ciclo de reinicios cada N minutos que ante el operador
+      // parece "el servicio se cae solo" (reportado 2026-08-13 en
+      // FTP-SPS, con SocketException 10060 = TCP connect timeout).
+      //
+      // `reconnectCount` es el latido del loop: si avanza entre ticks,
+      // la maquinaria está viva aunque no haya red, y NO salimos. Solo
+      // reciclamos si además de estar desconectados el contador lleva
+      // congelado más que el umbral — que es la firma exacta del wedge.
+      if (grpcMetrics.reconnectCount !== lastReconnectCountSeen) {
+        lastReconnectCountSeen = grpcMetrics.reconnectCount;
+        lastProgressAtMs = Date.now();
+      }
+
       const offlineMs = Date.now() - lastConnectedAtMs;
-      if (offlineMs >= CONNECTIVITY_EXIT_THRESHOLD_MS) {
+      const stalledMs = Date.now() - lastProgressAtMs;
+      if (stalledMs >= CONNECTIVITY_EXIT_THRESHOLD_MS) {
         const recycler =
           process.platform === "win32" ? "WinSW" :
           process.platform === "darwin" ? "launchd" : "systemd";
         ctx.logger?.error?.(
-          "gRPC stream: control plane unreachable for " +
-            `${Math.round(offlineMs / 1000)}s (reconnect wedged) — exiting so ` +
-            `${recycler} can recycle the process`,
-          { offlineMs, thresholdMs: CONNECTIVITY_EXIT_THRESHOLD_MS, reconnectCount: grpcMetrics.reconnectCount }
+          "gRPC stream: reconnect loop stalled for " +
+            `${Math.round(stalledMs / 1000)}s (no attempt progressed; offline ` +
+            `${Math.round(offlineMs / 1000)}s) — exiting so ${recycler} can ` +
+            "recycle the process",
+          {
+            stalledMs,
+            offlineMs,
+            thresholdMs: CONNECTIVITY_EXIT_THRESHOLD_MS,
+            reconnectCount: grpcMetrics.reconnectCount
+          }
         );
         try { ctx.trayStatus.markGrpcDisconnected(); } catch {}
         setTimeout(() => process.exit(1), 500).unref?.();
