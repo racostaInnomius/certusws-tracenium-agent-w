@@ -787,6 +787,116 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       }
     }
 
+    case "vcenter_verify": {
+      // Infrastructure Gateway self-check. The control plane cannot validate a
+      // credential it is cryptographically unable to read, so the gateway
+      // verifies and reports back a structured diagnostic. Never throws — the
+      // report IS the product. See ADR-0001 (C-bis).
+      try {
+        const { runVcenterVerify, makeConnectorDeps } = await import("../connectors/vcenter");
+        return await runVcenterVerify(makeConnectorDeps(ctx));
+      } catch (err: any) {
+        ctx.logger?.error?.("vcenter_verify handler threw unexpectedly", {
+          jobId,
+          error: err?.message || String(err),
+        });
+        return { status: 2, message: "vcenter_verify:failed;stage=handler;classify=handler_threw" };
+      }
+    }
+
+    case "vcenter_credential_provision": {
+      // Store a credential sealed against THIS device's certificate. Only
+      // PrivSvc can open it — the control plane relayed ciphertext it holds no
+      // key for. On success the handler self-verifies, so the ack answers "does
+      // this credential work?" rather than just "the bytes arrived".
+      try {
+        const { runVcenterCredentialProvision, makeConnectorDeps } = await import(
+          "../connectors/vcenter"
+        );
+        return await runVcenterCredentialProvision(makeConnectorDeps(ctx), payload || {});
+      } catch (err: any) {
+        ctx.logger?.error?.("vcenter_credential_provision handler threw unexpectedly", {
+          jobId,
+          error: err?.message || String(err),
+        });
+        return {
+          status: 2,
+          message: "vcenter_credential_provision:rejected;reason=handler_threw",
+        };
+      }
+    }
+
+    case "vcenter_credential_remove": {
+      // Gateway de-registered: forget the credential. A secret that outlives
+      // its purpose is a liability.
+      try {
+        const { runVcenterCredentialRemove, makeConnectorDeps } = await import(
+          "../connectors/vcenter"
+        );
+        return await runVcenterCredentialRemove(makeConnectorDeps(ctx), payload || {});
+      } catch (err: any) {
+        ctx.logger?.error?.("vcenter_credential_remove handler threw unexpectedly", {
+          jobId,
+          error: err?.message || String(err),
+        });
+        return { status: 1, message: "vcenter_credential_remove:failed;reason=handler_threw" };
+      }
+    }
+
+    case "vcenter_snapshot_remove": {
+      // Retention sweep. Each snapshot in the batch succeeds or fails
+      // independently — one busy VM must not strand the rest, because whatever
+      // is left behind keeps growing against the datastore.
+      try {
+        const { runVcenterSnapshotRemove, makeConnectorDeps } = await import(
+          "../connectors/vcenter"
+        );
+        return await runVcenterSnapshotRemove(makeConnectorDeps(ctx), payload || {});
+      } catch (err: any) {
+        ctx.logger?.error?.("vcenter_snapshot_remove handler threw unexpectedly", {
+          jobId,
+          error: err?.message || String(err),
+        });
+        return { status: 1, message: "vcenter_snapshot_remove:failed;removed=0;reason=handler_threw" };
+      }
+    }
+
+    case "vcenter_snapshot_revert": {
+      // Operator-initiated rollback ONLY. A revert discards everything written
+      // since the snapshot, so nothing in the agent may trigger it on its own.
+      try {
+        const { runVcenterSnapshotRevert, makeConnectorDeps } = await import(
+          "../connectors/vcenter"
+        );
+        return await runVcenterSnapshotRevert(makeConnectorDeps(ctx), payload || {});
+      } catch (err: any) {
+        ctx.logger?.error?.("vcenter_snapshot_revert handler threw unexpectedly", {
+          jobId,
+          error: err?.message || String(err),
+        });
+        return { status: 1, message: "vcenter_snapshot_revert:failed;reason=handler_threw" };
+      }
+    }
+
+    case "vcenter_snapshot": {
+      // Pre-patch snapshot. Correlation is fail-closed: if no vCenter VM
+      // matches the endpoint, we snapshot NOTHING rather than guess — a wrong
+      // guess would snapshot, and later potentially roll back, the wrong host.
+      try {
+        const { runVcenterSnapshot, makeConnectorDeps } = await import("../connectors/vcenter");
+        return await runVcenterSnapshot(makeConnectorDeps(ctx), payload || {});
+      } catch (err: any) {
+        ctx.logger?.error?.("vcenter_snapshot handler threw unexpectedly", {
+          jobId,
+          error: err?.message || String(err),
+        });
+        return {
+          status: 1,
+          message: `vcenter_snapshot:failed;deploymentId=${Number(payload?.deploymentId) || 0};reason=handler_threw`,
+        };
+      }
+    }
+
     case "software_dp_prefetch": {
       // Distribution Phase B — this agent is a site's distribution point:
       // warm the LAN cache before the backend releases the site's held

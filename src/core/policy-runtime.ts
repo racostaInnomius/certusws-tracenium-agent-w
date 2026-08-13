@@ -1,6 +1,10 @@
 // src/core/policy-runtime.ts
 import { EventEmitter } from "events";
 import { PolicyStore } from "./policy-store";
+import {
+  parseGatewayConfig,
+  type GatewayConfig
+} from "../connectors/vcenter/gateway-config";
 // Imported rather than re-implemented: the jail and the policy validator MUST
 // agree on what counts as an acceptable path, and two copies of that rule
 // would eventually drift — in a security control, silently. path-jail has no
@@ -67,6 +71,37 @@ export type RuntimePolicy = {
       /** Extra file extensions to seal, merged with the built-in list of
        *  private-key / credential container formats. */
       denyExtensions?: string[];
+    };
+  };
+  /** Infrastructure Gateway. Delivered ONLY in a per-device policy override,
+   *  to the single host per site that has line-of-sight to vCenter — never in
+   *  the tenant-wide policy. Deliberately NOT a `plugins.enabled` entry: the
+   *  fleet plugins act on the endpoint they run on, this one brokers to a third
+   *  party on behalf of the site. The PRESENCE of a valid block is the
+   *  enablement, so there is no separate flag to drift out of sync, and a
+   *  `vcenter_snapshot` job aimed at any other endpoint finds no config and is
+   *  rejected. Shape is validated by connectors/vcenter/gateway-config.
+   *  See ADR-0001 (A). */
+  gateway?: {
+    vcenter?: {
+      url?: string;
+      port?: number;
+      /** SHA-256 pin. REQUIRED — vCenter certs are self-signed by the VMCA, so
+       *  without it nothing authenticates the server we hand credentials to. */
+      tlsThumbprintSha256?: string;
+      /** Key into the gateway's OS credential store. NEVER the secret. */
+      credentialRef?: string;
+    };
+    scope?: {
+      datacenter?: string;
+      folders?: string[];
+    };
+    snapshot?: {
+      memory?: boolean;
+      quiesce?: boolean;
+      retentionHours?: number;
+      maxConcurrent?: number;
+      perVmTimeoutSec?: number;
     };
   };
   plugins?: {
@@ -770,6 +805,10 @@ export class PolicyRuntime extends EventEmitter {
       update: mergedUpdate,
       cdp: mergedCdp,
       rcp: mergedRcp,
+      // Passed through verbatim; parseGatewayConfig() is the single validator
+      // and it fails CLOSED — an absent or malformed block yields no connector
+      // at all rather than a half-configured gateway.
+      gateway: policy.gateway,
       plugins: mergedPlugins,
       modules: mergedModules,
       features: mergedFeatures,
@@ -838,6 +877,23 @@ export class PolicyRuntime extends EventEmitter {
   pluginEnabled(name: string): boolean {
     const enabled = this.getEnabledPlugins();
     return enabled.includes(name);
+  }
+
+  // ---------- Infrastructure Gateway ----------
+
+  /**
+   * Validated vCenter gateway configuration, or null when this device is not a
+   * gateway. Deliberately NOT routed through `pluginEnabled`: the config's
+   * presence IS the enablement (ADR-0001 (A)). Callers must treat null as
+   * "reject any gateway job" — never as "use defaults".
+   */
+  gatewayConfig(): GatewayConfig | null {
+    return parseGatewayConfig(this.policy.gateway);
+  }
+
+  /** True when a valid gateway block is present on this device. */
+  isGateway(): boolean {
+    return this.gatewayConfig() !== null;
   }
 
   listEnabledModules(): string[] {

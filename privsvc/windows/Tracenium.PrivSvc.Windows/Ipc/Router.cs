@@ -140,7 +140,7 @@ public sealed class Router
             "ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 service = "TraceniumPrivSvc",
-                version = "1.1.31",
+                version = "1.1.32",
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
@@ -162,6 +162,13 @@ public sealed class Router
             "patch.install" => PatchManagement.HandleInstall(req),
 
             // Crypto
+            // Infrastructure Gateway credential custody (ADR-0001). PrivSvc holds
+            // the enrollment private key, so it is the only component that can
+            // open a credential sealed against this device's certificate.
+            "credential.provision" => CredentialStore.HandleProvision(req),
+            "credential.retrieve" => CredentialStore.HandleRetrieve(req),
+            "credential.remove" => CredentialStore.HandleRemove(req),
+
             "crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),
             "crypto.cert.install" => CryptoCertInstall.HandleInstallCert(req),
             "crypto.cert.renew" => CryptoCertRenew.HandleRenewCert(req),
