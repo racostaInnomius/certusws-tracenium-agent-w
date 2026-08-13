@@ -172,6 +172,32 @@ describe("classifyGeoOutput — the reason macOS publishes", () => {
   });
 });
 
+describe("classifyGeoOutput — las tres formas de no tener posición en macOS", () => {
+  it("separa 'nadie ha iniciado sesión' de una falla", () => {
+    // La posición la recolecta la app de sesión de usuario. Un Mac en la
+    // pantalla de login no tiene NADA que pudiera recolectar — no es un fallo
+    // que perseguir.
+    expect(classifyGeoOutput("NO_USER")).toBe("no_user_session");
+  });
+
+  it("marca como falla que la app no esté publicando", () => {
+    // Hay usuario en consola pero la app no dejó archivo, o el que dejó ya
+    // caducó. Eso SÍ es algo que revisar.
+    expect(classifyGeoOutput("NO_PUBLISHER")).toBe("agent_not_publishing");
+  });
+
+  it("reserva 'unavailable' para el caso legítimo: viva, con permiso, sin fix", () => {
+    // Antes los tres casos producían este mismo valor, así que el mensaje
+    // "aún no produce un fix" se mostraba también cuando la app estaba muerta.
+    expect(classifyGeoOutput('{"status":"unavailable","collectedAtUtc":"2026-08-13T20:00:00Z"}'))
+      .toBe("unavailable");
+  });
+
+  it("un fix real sigue ganando sobre cualquier motivo", () => {
+    expect(classifyGeoOutput('{"status":"ok","lat":19.4,"lon":-99.1}')).toBe("ok");
+  });
+});
+
 describe("parseConsoleUser (macOS)", () => {
   it("accepts the logged-in console user", () => {
     expect(parseConsoleUser("javierpacheco\n")).toBe("javierpacheco");

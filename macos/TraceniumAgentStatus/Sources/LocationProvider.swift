@@ -165,6 +165,11 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
 
         switch manager.authorizationStatus {
         case .authorized, .authorizedAlways:
+            // Heartbeat. Granted-but-no-fix-yet used to leave NO file at all,
+            // which the daemon could not tell apart from "this app is dead" —
+            // both looked like an absent file. Writing a reason here makes the
+            // difference visible, and it never clobbers a fix we already have.
+            LocationSink.writeStatusIfNoFix("unavailable")
             // requestLocation delivers exactly one fix and powers the radio
             // back down, which is the whole point of not using startUpdating.
             manager.requestLocation()
@@ -271,6 +276,21 @@ enum LocationSink {
             "status": status,
             "collectedAtUtc": ISO8601DateFormatter().string(from: Date()),
         ])
+    }
+
+    /// Publish a reason ONLY when there is no usable fix on disk already.
+    ///
+    /// A device that got a fix and then stops producing new ones keeps showing
+    /// the last known position until the daemon's staleness window retires it.
+    /// Overwriting it with a status would blank the map 45 minutes early for a
+    /// laptop that is simply indoors.
+    static func writeStatusIfNoFix(_ status: String) {
+        if let data = try? Data(contentsOf: fileURL),
+           let doc = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           doc["lat"] != nil, doc["lon"] != nil {
+            return
+        }
+        writeStatus(status)
     }
 
     static func clear() {

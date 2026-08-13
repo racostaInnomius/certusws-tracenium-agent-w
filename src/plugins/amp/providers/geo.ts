@@ -61,7 +61,19 @@ export type GeoStatus =
    * somebody has to grant it. Reporting it as `unavailable` told operators to
    * wait for something that was never going to happen.
    */
-  | "consent_required";
+  | "consent_required"
+  /**
+   * macOS: nobody is logged in at the console.
+   *
+   * Position is collected by the user-session app, so a Mac sitting at the
+   * login window has nothing that COULD collect. Not a fault to chase.
+   */
+  | "no_user_session"
+  /**
+   * macOS: somebody is logged in, but the status app is not publishing —
+   * not running, crashed, or its last write aged out. This one IS a fault.
+   */
+  | "agent_not_publishing";
 
 export type GeoResult = {
   geo: AmpGeo | null;
@@ -280,7 +292,9 @@ async function collectMacos(): Promise<string> {
     timeout: 5_000,
   });
   const user = parseConsoleUser(stdout);
-  if (!user) return "";
+  // Distinct sentinels instead of a bare "": the three ways macOS produces no
+  // position mean three different things to whoever has to act on them.
+  if (!user) return "NO_USER";
 
   const file = path.join(
     await resolveHomeDirectory(user),
@@ -291,21 +305,23 @@ async function collectMacos(): Promise<string> {
   try {
     raw = fs.readFileSync(file, "utf8");
   } catch {
-    // Not published yet, permission never granted, or the app is not running.
-    return "";
+    // Somebody is logged in but the status app left nothing behind.
+    return "NO_PUBLISHER";
   }
 
   let parsed: any;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return "";
+    return "NO_PUBLISHER";
   }
 
   // Staleness is enforced HERE rather than in the shared parser: it is a
   // macOS-specific concern, because macOS is the only platform where the fix
   // is produced by a separate process that may have stopped running.
-  if (!isFixFresh(parsed?.collectedAtUtc)) return "";
+  // A stale document means the app stopped refreshing it — same fault as not
+  // publishing at all, and equally worth surfacing.
+  if (!isFixFresh(parsed?.collectedAtUtc)) return "NO_PUBLISHER";
 
   return raw;
 }
@@ -355,6 +371,8 @@ export function classifyGeoOutput(stdout: unknown): GeoStatus {
   // Empty means the platform helper had nothing to give: on macOS that is the
   // status app not running, no console user, or a fix that aged out.
   if (!text) return "unavailable";
+  if (text === "NO_USER") return "no_user_session";
+  if (text === "NO_PUBLISHER") return "agent_not_publishing";
   if (text === "TIMEOUT") return "unavailable";
   if (text.startsWith("ERROR:")) return "denied";
 
