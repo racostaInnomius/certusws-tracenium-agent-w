@@ -51,6 +51,10 @@ export type CdpCertItem = {
    *  pin-sha256, in hex). Identifies the KEY, not the certificate —
    *  the control plane uses it to spot copied private keys. */
   publicKeyHash?: string;
+  /** CRL distribution point URLs from the certificate (ADR-0004 c). */
+  crlUrls?: string[];
+  /** OCSP responder URLs from Authority Information Access. */
+  ocspUrls?: string[];
   /** Only for `source: "listener"` — what the live handshake revealed
    *  about the chain the service serves (ADR-0004 b). */
   tls?: {

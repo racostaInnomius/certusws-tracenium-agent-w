@@ -233,3 +233,109 @@ export function extractAlgorithmOids(der: Buffer): CertAlgorithmOids {
 
   return result;
 }
+
+const TAG_CONTEXT_3 = 0xa3; // [3] EXPLICIT — the `extensions` field
+const TAG_OCTET_STRING = 0x04;
+const TAG_IA5_STRING = 0x16;
+const TAG_CONTEXT_6 = 0x86; // [6] IMPLICIT IA5String — GeneralName.uniformResourceIdentifier
+
+/** X.509 extension OIDs we read. */
+export const EXT_CRL_DISTRIBUTION_POINTS = "2.5.29.31";
+export const EXT_AUTHORITY_INFO_ACCESS = "1.3.6.1.5.5.7.1.1";
+/** AccessDescription.accessMethod for an OCSP responder. */
+const ACCESS_METHOD_OCSP = "1.3.6.1.5.5.7.48.1";
+
+const MAX_URLS = 8;
+const MAX_URL_LEN = 512;
+
+/**
+ * The contents of one extension's extnValue (the bytes INSIDE the
+ * OCTET STRING wrapper), or null when the certificate has no such
+ * extension.
+ *
+ * TBSCertificate lays out `extensions` as a [3] EXPLICIT wrapper after
+ * the optional unique-id fields, so we scan the tail rather than index
+ * a fixed position.
+ */
+export function extractExtension(der: Buffer, oid: string): Tlv | null {
+  if (!Buffer.isBuffer(der) || der.length < 8) return null;
+
+  const cert = readTlv(der, 0);
+  if (!cert || cert.tag !== TAG_SEQUENCE) return null;
+  const tbs = children(der, cert)[0];
+  if (!tbs || tbs.tag !== TAG_SEQUENCE) return null;
+
+  const extensionsWrapper = children(der, tbs).find((c) => c.tag === TAG_CONTEXT_3);
+  if (!extensionsWrapper) return null;
+
+  const extensionsSeq = children(der, extensionsWrapper)[0];
+  if (!extensionsSeq || extensionsSeq.tag !== TAG_SEQUENCE) return null;
+
+  for (const ext of children(der, extensionsSeq)) {
+    if (ext.tag !== TAG_SEQUENCE) continue;
+    const parts = children(der, ext);
+    if (decodeOid(der, parts[0]) !== oid) continue;
+    // `critical` is optional, so extnValue is the last element.
+    const value = parts[parts.length - 1];
+    return value && value.tag === TAG_OCTET_STRING ? value : null;
+  }
+
+  return null;
+}
+
+/** Every IA5String / [6] URI nested anywhere under `parent`. */
+function collectUris(der: Buffer, parent: Tlv, out: string[], depth = 0): void {
+  if (depth > 6 || out.length >= MAX_URLS) return;
+
+  for (const child of children(der, parent)) {
+    if (out.length >= MAX_URLS) return;
+    if (child.tag === TAG_IA5_STRING || child.tag === TAG_CONTEXT_6) {
+      const value = der.subarray(child.start, child.end).toString("latin1").trim();
+      if (value.length > 0 && value.length <= MAX_URL_LEN && /^https?:\/\//i.test(value)) {
+        if (!out.includes(value)) out.push(value);
+      }
+      continue;
+    }
+    // Constructed nodes only; a primitive we do not recognise is skipped.
+    if ((child.tag & 0x20) !== 0) collectUris(der, child, out, depth + 1);
+  }
+}
+
+/**
+ * CRL distribution point URLs. These plus the serial number are all the
+ * control plane needs to answer "was this revoked?" — no certificate
+ * bytes have to leave the endpoint.
+ */
+export function extractCrlUrls(der: Buffer): string[] {
+  const ext = extractExtension(der, EXT_CRL_DISTRIBUTION_POINTS);
+  if (!ext) return [];
+  // extnValue wraps a DER structure; step into the OCTET STRING first.
+  const inner = readTlv(der, ext.start);
+  if (!inner) return [];
+  const urls: string[] = [];
+  collectUris(der, inner, urls);
+  return urls;
+}
+
+/**
+ * OCSP responder URLs from Authority Information Access. Collected for
+ * completeness and display; the control plane cannot actually query them
+ * without the ISSUER's certificate (an OCSP request identifies a
+ * certificate by hashes of the issuer's name and public key, neither of
+ * which is derivable from the metadata we keep). See ADR-0004 (c).
+ */
+export function extractOcspUrls(der: Buffer): string[] {
+  const ext = extractExtension(der, EXT_AUTHORITY_INFO_ACCESS);
+  if (!ext) return [];
+  const inner = readTlv(der, ext.start);
+  if (!inner || inner.tag !== TAG_SEQUENCE) return [];
+
+  const urls: string[] = [];
+  for (const accessDescription of children(der, inner)) {
+    if (accessDescription.tag !== TAG_SEQUENCE) continue;
+    const parts = children(der, accessDescription);
+    if (decodeOid(der, parts[0]) !== ACCESS_METHOD_OCSP) continue;
+    collectUris(der, accessDescription, urls);
+  }
+  return urls;
+}

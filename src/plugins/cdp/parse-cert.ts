@@ -12,7 +12,12 @@
 // forwarded verbatim.
 
 import crypto from "crypto";
-import { extractAlgorithmOids, extractSpkiDer } from "./der";
+import {
+  extractAlgorithmOids,
+  extractSpkiDer,
+  extractCrlUrls,
+  extractOcspUrls
+} from "./der";
 import { algorithmName, curveName } from "./algorithm-oids";
 import type { CdpCertItem, CdpStoreInfo } from "../../domain/cdp-types";
 
@@ -186,6 +191,18 @@ export function parseCertToItem(
     publicKeyOid: oids.publicKeyOid ?? undefined,
     signatureOid: oids.signatureOid ?? undefined,
     publicKeyHash,
+    // Revocation pointers. These plus the serial number let the CONTROL
+    // PLANE answer "was this revoked?" without any certificate bytes
+    // leaving the endpoint, and without turning every device into a CRL
+    // or OCSP client. See ADR-0004 (c).
+    ...(() => {
+      const crlUrls = extractCrlUrls(cert.raw);
+      const ocspUrls = extractOcspUrls(cert.raw);
+      return {
+        ...(crlUrls.length ? { crlUrls } : {}),
+        ...(ocspUrls.length ? { ocspUrls } : {})
+      };
+    })(),
 
     isCA: cert.ca,
     selfSigned: subjectDN !== undefined && subjectDN === issuerDN,
