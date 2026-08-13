@@ -131,14 +131,32 @@ The browser will produce the identical wire format via Web Crypto.
 
 ## Storage requirements
 
-| Platform | Store |
-|---|---|
-| Windows | Credential Manager (DPAPI, machine scope) |
-| macOS | System Keychain, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` |
-| Linux | libsecret when a daemon is present |
-| Fallback (any) | AES-256-GCM file, mode `0600`, key derived from enrollment material |
+| Platform | Store | As implemented |
+|---|---|---|
+| Windows | DPAPI, machine scope | `ProtectedData.Protect(..., LocalMachine)` into `%ProgramData%\Tracenium\credentials`, ACL'd to SYSTEM + Administrators |
+| macOS | AES-256-GCM file | root-owned `0600`, beside the enrollment key |
+| Linux | AES-256-GCM file | root-owned `0600`, beside the enrollment key |
 
 Namespace entries by `ref` so a future second gateway target does not collide.
+The `ref` arrives off the wire and is flattened before it reaches a path.
+
+**Why not the Keychain on macOS, or libsecret on Linux** — both were the stated
+preference and both were rejected after looking at how this daemon actually runs:
+
+- **macOS `security` CLI takes the secret as a command-line argument**, which
+  puts the vCenter password in the process table for anything running `ps`. That
+  is a worse exposure than the one we are removing, and the CLI offers no
+  argv-free path. Linking Security.framework is out of scope for this daemon.
+- **libsecret talks to a keyring daemon over the *session* D-Bus.** PrivSvc is a
+  system daemon with no session and no unlocked keyring, so on a headless
+  server — exactly what a gateway host is — it is absent or permanently locked.
+  Shipping a path that silently fails in the target deployment is worse than not
+  shipping it.
+
+On both platforms the file mode is the same boundary that already protects the
+enrollment private key sitting next to it: anything that can read one can read
+the other. Windows is different — DPAPI machine scope means the protecting key
+is managed by the OS, so a stolen file is inert on another machine.
 
 ---
 
@@ -208,9 +226,18 @@ using `/tmp/k.pem`. Shape of a real (throwaway) envelope, for reference:
 
 ---
 
-## Status of the consuming side
+## Status
 
-Already implemented and tested (Node side):
+**Implemented** on all three platforms:
+- Windows — `privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/CredentialStore.cs`
+- Linux — `privsvc/linux/src/credential-store.ts`
+- macOS — `privsvc/macos/src/credential-store.ts`
+
+Interop verified: an envelope sealed by the browser implementation is opened by
+the C# crypto path, with the fingerprint agreeing across implementations and the
+AAD binding rejecting a rewritten fingerprint.
+
+Consuming side (Node), already implemented and tested:
 
 - `src/connectors/vcenter/index.ts` — `makeConnectorDeps()` calls `credential.retrieve`
 - `src/priv/ipc-types.ts` — the three methods declared

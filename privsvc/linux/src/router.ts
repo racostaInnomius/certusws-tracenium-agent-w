@@ -20,6 +20,11 @@ import { fail, success } from "./protocol";
 import { logger } from "./logger";
 import { handleGenerateCsr, handleInstallCert, handleRenewCert } from "./crypto-store";
 import {
+  handleCredentialProvision,
+  handleCredentialRetrieve,
+  handleCredentialRemove,
+} from "./credential-store";
+import {
   handleAck,
   handleClose,
   handleFactsChunk,
@@ -104,6 +109,18 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
       });
 
     // ── Crypto / cert lifecycle (Phase 2) ─────────────────────────
+    // Infrastructure Gateway credential custody (ADR-0001). PrivSvc holds the
+    // enrollment private key, so it is the only component that can open a
+    // credential sealed against this device's certificate.
+    case "credential.provision":
+      return handleCredentialProvision(req);
+
+    case "credential.retrieve":
+      return handleCredentialRetrieve(req);
+
+    case "credential.remove":
+      return handleCredentialRemove(req);
+
     case "crypto.csr.generate":
       return handleGenerateCsr(req);
 
