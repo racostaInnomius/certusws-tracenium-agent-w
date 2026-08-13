@@ -163,6 +163,31 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
   let connectPromise: Promise<void> | null = null;
   let ended = false;
   let localClose = false;
+
+  // Node's EventEmitter throws SYNCHRONOUSLY when you emit 'error' with
+  // zero listeners attached — it's the one event name with that special
+  // case. grpc-stream.ts's stop() calls stream.removeAllListeners() as
+  // part of a normal, already-handled disconnect; if a heartbeat IPC
+  // call that was in flight at that exact moment resolves as a failure
+  // a tick later, the plain `stream.emit("error", ...)` below used to
+  // throw with nothing left to catch it — three call sites deep (the
+  // heartbeat failure branch re-emits from its own catch, which the
+  // outer writeChain catch then re-emits again), landing as a genuine
+  // unhandled promise rejection that killed the whole agent process.
+  // Confirmed in the field 2026-08-13: a device stuck in a ~5s
+  // reconnect loop crashed on almost every cycle via this exact path,
+  // compounding the outage instead of just reconnecting cleanly.
+  // Route every post-teardown error emission through this guard instead
+  // of calling stream.emit("error", ...) directly.
+  const safeEmitError = (err: Error) => {
+    if (stream.listenerCount("error") === 0) {
+      ctx.logger?.debug?.("[grpc-client] dropping error emit — no listener attached (stream already torn down)", {
+        error: err?.message || String(err)
+      });
+      return;
+    }
+    stream.emit("error", err);
+  };
   // Fires if PrivSvc accepts a `grpc.connect` but never sends the
   // `grpc.connected` READY push (e.g. it restarts mid-handshake). See
   // armConnectReadyTimeout for the full rationale.
@@ -768,7 +793,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               connected = false;
               connectPromise = null;
               // Surface to stream.on('error') so scheduleReconnect() runs.
-              stream.emit("error", new Error(`heartbeat_failed:${errorCode || errorMessage}`));
+              safeEmitError(new Error(`heartbeat_failed:${errorCode || errorMessage}`));
             } else {
               // Bridge accepted heartbeat AND wrote it to the live
               // gRPC stream without erroring → wire is alive. See
@@ -786,7 +811,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
             try {
               ctx.trayStatus.markGrpcDisconnected();
             } catch {}
-            stream.emit("error", err instanceof Error ? err : new Error(String(err)));
+            safeEmitError(err instanceof Error ? err : new Error(String(err)));
           }
 
           return;
@@ -841,7 +866,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         if (msg?.facts?.eventId) {
           inFlightEvents.delete(String(msg.facts.eventId));
         }
-        stream.emit("error", err);
+        safeEmitError(err);
       });
   };
 
