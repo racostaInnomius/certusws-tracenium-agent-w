@@ -68,7 +68,30 @@ export type PrivSvcMethod =
   //     downloaded package via the OS (WinVerifyTrust): digest + chain
   //     to the Windows trust store + revocation. Returns { trusted,
   //     reason }. Gate before install when the package requires signing.
-  | "sdp.verifySignature";
+  | "sdp.verifySignature"
+  // Infrastructure Gateway — vCenter credential custody. PrivSvc runs as
+  // SYSTEM/root and already owns the mTLS private key, so it is the only
+  // component that can open a credential envelope sealed against this
+  // device's certificate, and the only one that should touch the OS
+  // credential store. The control plane never sees the plaintext: the
+  // admin's BROWSER seals it against the gateway's public key and the
+  // backend only relays ciphertext it has no key for. See ADR-0001 (C).
+  //
+  //   * `credential.provision` — params { ref, envelope }. Opens the sealed
+  //     envelope with the enrollment private key and writes the credential to
+  //     the OS store (Windows Credential Manager / macOS Keychain / libsecret,
+  //     falling back to an AES-256-GCM file at mode 0600). Returns
+  //     { ok, certFingerprint } or fails with code
+  //     `stale_envelope` when it was sealed against a certificate that has
+  //     since rotated — deliberately distinct from a decrypt failure so the
+  //     UI can tell the admin to re-enter rather than "invalid credential".
+  //   * `credential.retrieve` — params { ref }. Returns { username, password }
+  //     for the duration of ONE vCenter operation. Callers must not cache it.
+  //   * `credential.remove`   — params { ref }. Used when a gateway is
+  //     de-registered so the secret does not outlive its purpose.
+  | "credential.provision"
+  | "credential.retrieve"
+  | "credential.remove";
 
 export type GrpcAckParams = {
   eventId: string;

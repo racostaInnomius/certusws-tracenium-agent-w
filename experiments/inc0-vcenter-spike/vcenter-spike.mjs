@@ -14,7 +14,37 @@
 import https from "node:https";
 import tls from "node:tls";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import process from "node:process";
+
+// ----------------------------------------------------------------------------
+// .env loader — read the file HERE, in Node.
+// Deliberately NOT `source .env` in the shell: zsh/bash expand `=`, `$`, backticks
+// and quotes inside values, which both corrupts passwords and can leak fragments
+// of them into shell error messages. Parsing it ourselves keeps the secret in
+// this process only. Existing process.env always wins.
+// ----------------------------------------------------------------------------
+function loadDotEnv() {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  const file = path.join(dir, ".env");
+  if (!fs.existsSync(file)) return;
+  for (const raw of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1); // everything after the FIRST '=' , verbatim
+    if ((val.startsWith('"') && val.endsWith('"') && val.length > 1) ||
+        (val.startsWith("'") && val.endsWith("'") && val.length > 1)) {
+      val = val.slice(1, -1);
+    }
+    if (process.env[key] === undefined) process.env[key] = val;
+  }
+}
+loadDotEnv();
 
 // ----------------------------------------------------------------------------
 // Config (env-driven; never hardcode lab creds)
@@ -55,7 +85,8 @@ async function main() {
   const fp = await serverFingerprint(base.hostname, Number(base.port || 443));
   console.log(`🔐 Server cert SHA-256: ${fp}`);
   if (cfg.thumbprint) {
-    const ok = fp.toLowerCase() === cfg.thumbprint.toLowerCase();
+    // compare canonical forms: strip separators + lowercase on BOTH sides
+    const ok = normThumb(fp) === cfg.thumbprint;
     record("TLS thumbprint pin", ok, ok ? "matches" : `MISMATCH vs VC_THUMBPRINT (${cfg.thumbprint})`);
     if (!ok) throw new Error("Server fingerprint does not match VC_THUMBPRINT — aborting before auth.");
   } else {
@@ -203,7 +234,13 @@ async function soap(inner) {
   const sc = res.headers["set-cookie"];
   if (sc && sc.length) cookie = sc[0].split(";")[0];
   if (/<(?:\w+:)?Fault>/.test(res.body) || /faultstring/.test(res.body)) {
-    throw new Error(`SOAP fault: ${decode(extractTag(res.body, "faultstring") || res.body.slice(0, 300))}`);
+    // faultstring is usually unprefixed; localizedMessage carries the human text.
+    const msg =
+      extractTag(res.body, "localizedMessage") ||
+      extractTag(res.body, "faultstring") ||
+      (res.body.match(/<faultstring[^>]*>([\s\S]*?)<\/faultstring>/) || [])[1] ||
+      res.body.replace(/\s+/g, " ").slice(0, 400);
+    throw new Error(`SOAP fault: ${decode(msg).trim()}`);
   }
   if (res.status >= 400) throw new Error(`HTTP ${res.status} on /sdk: ${res.body.slice(0, 300)}`);
   return res.body;
@@ -320,13 +357,39 @@ async function currentSnapshotMoref(vm) {
 async function waitTask(task, timeoutMs = 15 * 60 * 1000) {
   const start = Date.now();
   for (;;) {
-    const p = await retrieveProps("Task", task, ["info.state", "info.error.localizedMessage"]);
+    // Only ask for info.state. Asking for info.error.localizedMessage up-front makes
+    // vCenter fault when the task has no error (the optional nested path is unset).
+    const p = await retrieveProps("Task", task, ["info.state"]);
     const state = p["info.state"];
     if (state === "success") return;
-    if (state === "error") throw new Error(`Task ${task} failed: ${p["info.error.localizedMessage"] || "unknown"}`);
+    if (state === "error") {
+      let why = "unknown";
+      try {
+        const e = await retrieveProps("Task", task, ["info.error"]);
+        why = e["info.error"] || "unknown";
+      } catch { /* best effort */ }
+      throw new Error(`Task ${task} failed: ${why}`);
+    }
     if (Date.now() - start > timeoutMs) throw new Error(`Task ${task} timed out after ${timeoutMs}ms (last state: ${state})`);
     await sleep(1500);
   }
+}
+
+// List the VM's snapshot tree: [{moref, name, createTime}]
+async function listSnapshots(vm) {
+  const xml = await soap(
+    `<urn:RetrieveProperties><urn:_this type="PropertyCollector">propertyCollector</urn:_this><urn:specSet>` +
+    `<urn:propSet><urn:type>VirtualMachine</urn:type><urn:pathSet>snapshot.rootSnapshotList</urn:pathSet></urn:propSet>` +
+    `<urn:objectSet><urn:obj type="VirtualMachine">${vm}</urn:obj></urn:objectSet></urn:specSet></urn:RetrieveProperties>`
+  );
+  const out = [];
+  for (const m of matchAll(xml, /<snapshot[^>]*type="VirtualMachineSnapshot"[^>]*>([^<]+)<\/snapshot>/g)) {
+    out.push({ moref: m[1] });
+  }
+  const names = [...matchAll(xml, /<name>([^<]*)<\/name>/g)].map((m) => decode(m[1]));
+  const times = [...matchAll(xml, /<createTime>([^<]*)<\/createTime>/g)].map((m) => m[1]);
+  out.forEach((s, i) => { s.name = names[i] ?? "?"; s.createTime = times[i] ?? "?"; });
+  return out;
 }
 
 function taskRef(xml) {
