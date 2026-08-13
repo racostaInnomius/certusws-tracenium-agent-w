@@ -21,22 +21,18 @@ export function getTimeoutForMethod(method: string): number {
     case "software.inventory":
       return 60000; // inventory can be heavy (WMI/registry)
     case "security.compliance":
-      // 90s. Bumped from 30s because the Windows privsvc handler runs
-      // ~10 PowerShell scripts in series (bitlocker, defender, firewall,
-      // smb, shares, antivirus, domain/gpo, ciphers, protocols, patches),
-      // and the patches call alone — `Microsoft.Update.Session.
-      // QueryHistory()` — is notoriously slow on hosts with hundreds of
-      // historical updates AND/OR a WSUS policy pointing at a remote
-      // server. We observed DESKTOP-9G467VM intermittently exceeding the
-      // 30s budget (~30% of scans) and the agent giving up while
-      // privsvc was still processing — the response landed seconds
-      // later but was already dropped, so `patches.count` went to 0
-      // and the dashboard regressed to "Last patch = unknown".
-      //
-      // 90s is generous enough that even a heavily-patched WSUS host
-      // completes, while still bounded so a genuinely-broken privsvc
-      // doesn't wedge the agent's compliance pipeline indefinitely.
-      return 90000;
+      // 270s. History: 30s → 90s after DESKTOP-9G467VM's slow WU
+      // history query (~30% of scans gave up mid-handler and the
+      // dashboard regressed to "Last patch = unknown"). But 90s still
+      // violated THE INVARIANT (caller must outwait handler): the
+      // handler runs every section SEQUENTIALLY, each RunPs bounded at
+      // DEFAULT_PS_TIMEOUT_MS=15s, plus 45s for patches and a 15s
+      // Get-HotFix fallback — worst case ≈ 240s when several sections
+      // time out on the same sick host. Exactly the hosts where the
+      // diagnostic matters most were the ones whose response the
+      // client dropped. 240s ceiling + margin = 270s; the scheduler's
+      // 30-min stuck-worker guard stays the outer bound.
+      return 270000;
     // ── Patch Management ─────────────────────────────────────────────
     //
     // THE INVARIANT: job timeout > THIS client budget > privsvc handler

@@ -21,7 +21,14 @@ export function getTimeoutForMethod(method: string): number {
     case "software.inventory":
       return 60000;
     case "security.compliance":
-      return 30000;
+      // 120s (was 30s, which violated THE INVARIANT below): the updates
+      // collector runs its package-manager commands SERIALLY at
+      // UPDATES_TIMEOUT_MS=20s each — the dnf path is three commands
+      // (check-update, security count, needs-restarting) = 60s worst
+      // case on its own. 60s ceiling (see test/priv/
+      // ipc-timeout-ordering.test.ts) + generous margin for slow
+      // mirrors.
+      return 120000;
     // ── Patch Management ─────────────────────────────────────────────
     //
     // THE INVARIANT: job timeout > THIS client budget > privsvc handler

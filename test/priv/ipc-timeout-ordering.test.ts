@@ -22,6 +22,14 @@ import { getTimeoutForMethod as linuxTimeout } from "../../src/priv/privsvc-clie
  * exists to make that failure loud.
  */
 const PRIVSVC_CEILING_MS: Record<string, { windows?: number; macos?: number; linux?: number }> = {
+  // The 4th documented victim of the invariant — and, embarrassingly,
+  // the one this file's docblock already cited without covering.
+  // Windows: every section runs sequentially at 15s (DEFAULT_PS_
+  // TIMEOUT_MS) + 45s patches + 15s Get-HotFix fallback ≈ 240s worst
+  // case. macOS: system_profiler 25s + sequential smb/ssh 8s each +
+  // per-share probes ≈ 45s. Linux: serial dnf path 3 × 20s
+  // (UPDATES_TIMEOUT_MS) = 60s.
+  "security.compliance": { windows: 240_000, macos: 45_000, linux: 60_000 },
   // Windows WUA install; macOS/Linux softwareupdate/apt-dnf.
   "patch.install": { windows: 90 * 60_000, macos: 60 * 60_000, linux: 60 * 60_000 },
   // macOS `softwareupdate --list` 120s; Windows scan 60s.

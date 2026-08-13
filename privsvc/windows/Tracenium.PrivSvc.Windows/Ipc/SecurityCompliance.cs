@@ -37,14 +37,21 @@ public static class SecurityCompliance
         _firstError.Value = null;
         try
         {
+            // Computed once and shared with GetAntivirusStatus below.
+            // It used to be invoked twice (top-level `defender` + again
+            // inside `antivirus.defender`), which cost a redundant
+            // PowerShell process — 15s of budget on a host where
+            // Get-MpComputerStatus times out — for byte-identical data.
+            var defender = GetDefenderStatus();
+
             var result = new
             {
                 bitlocker = GetBitlockerStatus(),
-                defender = GetDefenderStatus(),
+                defender,
                 firewall = GetFirewallStatus(),
                 smb = GetSmbStatus(),
                 shares = GetRiskyShares(),
-                antivirus = GetAntivirusStatus(),
+                antivirus = GetAntivirusStatus(defender),
                 domain = GetDomainAndGpoStatus(),
                 // Platform integrity — TPM + UEFI Secure Boot. Consumed by the
                 // backend catalog checks windows.tpm.* / windows.secureboot.*.
@@ -284,11 +291,10 @@ public static class SecurityCompliance
         }
     }
 
-    private static object GetAntivirusStatus()
+    private static object GetAntivirusStatus(object defender)
     {
         try
         {
-            var defender = GetDefenderStatus();
             var securityCenterOutput = RunPs(
                 "Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction SilentlyContinue | Select-Object displayName, pathToSignedProductExe, productState, timestamp | ConvertTo-Json -Depth 4"
             );

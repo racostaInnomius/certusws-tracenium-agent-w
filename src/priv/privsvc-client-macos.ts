@@ -24,7 +24,13 @@ export function getTimeoutForMethod(method: string): number {
     case "software.inventory":
       return 60000;
     case "security.compliance":
-      return 30000;
+      // 90s (was 30s, which violated THE INVARIANT below): the handler's
+      // parallel phase is bounded by system_profiler at 25s, then
+      // collectSmb (8s) and collectSsh (8s) run sequentially, and
+      // per-share `ls -lde` risk probes (8s each) stretch the worst
+      // case past 40s on hosts with several shares. 45s ceiling
+      // (see test/priv/ipc-timeout-ordering.test.ts) + margin.
+      return 90000;
     // ── Patch Management ─────────────────────────────────────────────
     //
     // THE INVARIANT: job timeout > THIS client budget > privsvc handler
