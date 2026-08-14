@@ -35,6 +35,7 @@ interface AgentCheckEntry {
 }
 
 // Phase 1 — 4 Windows checkIds.
+// Phase 2 — 1 more Windows checkId added (SMB share ACLs).
 // Phase 8 — 4 Linux checkIds added (sshd hardening + firewall).
 //
 // Names match the catalog seed (`<os>.<category>.<spec>`) so
@@ -56,6 +57,12 @@ const ENTRIES: AgentCheckEntry[] = [
   },
   {
     checkId: "windows.firewall.profiles_enabled",
+    applicableTo: new Set<CheckOsApplicability>(["windows"]),
+  },
+
+  // ── Windows Phase 2 ─────────────────────────────────────────────
+  {
+    checkId: "windows.shares.no_everyone_full_control",
     applicableTo: new Set<CheckOsApplicability>(["windows"]),
   },
 

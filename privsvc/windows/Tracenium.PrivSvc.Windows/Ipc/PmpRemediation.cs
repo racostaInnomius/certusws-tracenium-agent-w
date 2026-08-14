@@ -18,6 +18,8 @@
 //   * windows.cryptography.weak_ciphers_disabled
 //   * windows.network_sharing.smbv1_disabled
 //   * windows.firewall.profiles_enabled
+// Phase 2 adds:
+//   * windows.shares.no_everyone_full_control
 //
 // The dispatch keys MUST match exactly what the backend snapshots
 // from the catalog and what the agent's remediation-checks.ts
@@ -63,6 +65,7 @@ public static class PmpRemediation
                 "windows.cryptography.weak_ciphers_disabled" => ReadWeakCiphers(),
                 "windows.network_sharing.smbv1_disabled" => ReadSmbV1(),
                 "windows.firewall.profiles_enabled" => ReadFirewallProfiles(),
+                "windows.shares.no_everyone_full_control" => ReadSharesEveryoneFullControl(),
                 _ => null
             };
 
@@ -103,6 +106,7 @@ public static class PmpRemediation
                 "windows.cryptography.weak_ciphers_disabled" => ApplyWeakCiphersDisabled(),
                 "windows.network_sharing.smbv1_disabled" => await ApplySmbV1Disabled(),
                 "windows.firewall.profiles_enabled" => await ApplyFirewallProfilesEnabled(),
+                "windows.shares.no_everyone_full_control" => await ApplySharesEveryoneFullControlRevoked(),
                 _ => RemediateResult.ForUnsupported(checkId),
             };
 
@@ -578,6 +582,166 @@ public static class PmpRemediation
                 : Truncate(stderrAccum.ToString(), 1024),
             DurationMs = sw.ElapsedMilliseconds,
             RequiresReboot = false, // takes effect immediately
+            ChangesApplied = changes,
+        };
+    }
+
+    // ── 5) SMB shares granting Everyone:FullControl ────────────────
+    //
+    // A share-level ACL problem, distinct from NTFS permissions:
+    //   Get-SmbShare              — enumerate non-administrative shares
+    //                                (Special shares like C$/ADMIN$/IPC$
+    //                                are OS-managed; touching their ACLs
+    //                                is out of scope and risks breaking
+    //                                remote administration).
+    //   Get-SmbShareAccess <name> — the share's ACL entries.
+    //
+    // Remediation removes ONLY the offending ACE (Everyone: Full) via
+    // Revoke-SmbShareAccess, one share at a time. It does not invent a
+    // replacement grant — the catalog's own remediation text ("replace
+    // Everyone with least-privilege ACLs") requires knowing who SHOULD
+    // have access, which is a judgment call this handler can't make
+    // safely. Revoking the overly-broad grant is the deterministic,
+    // safe subset of that guidance and is exactly what the check
+    // (Everyone:Full specifically, not "Everyone has any access") flags.
+
+    private static (List<string> Shares, bool Ok) QuerySharesWithEveryoneFullControl()
+    {
+        var psi = new ProcessStartInfo("powershell.exe",
+            "-NoProfile -ExecutionPolicy Bypass -Command "
+            + "\"$shares = @(Get-SmbShare | Where-Object { -not $_.Special } | ForEach-Object { "
+            + "$n = $_.Name; "
+            + "if (@(Get-SmbShareAccess -Name $n | Where-Object { $_.AccountName -eq 'Everyone' -and $_.AccessRight -eq 'Full' }).Count -gt 0) { $n } "
+            + "}); $shares | ConvertTo-Json -Compress\"")
+        {
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var proc = Process.Start(psi);
+        if (proc == null) return (new List<string>(), false);
+
+        var stdout = proc.StandardOutput.ReadToEnd();
+        proc.WaitForExit(20_000);
+        if (proc.ExitCode != 0) return (new List<string>(), false);
+
+        var shares = new List<string>();
+        var trimmed = stdout.Trim();
+        if (string.IsNullOrEmpty(trimmed) || trimmed == "null") return (shares, true);
+
+        try
+        {
+            using var doc = JsonDocument.Parse(trimmed);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in doc.RootElement.EnumerateArray())
+                {
+                    var s = item.GetString();
+                    if (!string.IsNullOrEmpty(s)) shares.Add(s);
+                }
+            }
+            else if (doc.RootElement.ValueKind == JsonValueKind.String)
+            {
+                var s = doc.RootElement.GetString();
+                if (!string.IsNullOrEmpty(s)) shares.Add(s);
+            }
+        }
+        catch
+        {
+            return (shares, false);
+        }
+
+        return (shares, true);
+    }
+
+    private static ReadResult ReadSharesEveryoneFullControl()
+    {
+        var (shares, ok) = QuerySharesWithEveryoneFullControl();
+        var state = new Dictionary<string, object?>
+        {
+            ["sharesWithEveryoneFullControl"] = shares,
+        };
+
+        if (!ok)
+        {
+            // Query failed — report non-compliant rather than silently
+            // claiming a clean state we couldn't actually verify; the
+            // next remediation attempt will re-query.
+            state["queryError"] = true;
+            return new ReadResult { State = state, IsCompliant = false };
+        }
+
+        return new ReadResult { State = state, IsCompliant = shares.Count == 0 };
+    }
+
+    private static async Task<RemediateResult> ApplySharesEveryoneFullControlRevoked()
+    {
+        var sw = Stopwatch.StartNew();
+        var changes = new List<string>();
+        var stderrAccum = new StringBuilder();
+        int exitCode = 0;
+
+        var (shares, ok) = QuerySharesWithEveryoneFullControl();
+        if (!ok)
+        {
+            return new RemediateResult
+            {
+                ExitCode = -1,
+                StderrExcerpt = "failed to enumerate SMB shares",
+                DurationMs = sw.ElapsedMilliseconds,
+                RequiresReboot = false,
+                ChangesApplied = changes,
+            };
+        }
+
+        foreach (var share in shares)
+        {
+            var escaped = share.Replace("'", "''");
+            var psi = new ProcessStartInfo("powershell.exe",
+                "-NoProfile -ExecutionPolicy Bypass -Command "
+                + $"\"Revoke-SmbShareAccess -Name '{escaped}' -AccountName Everyone -Force -ErrorAction Stop\"")
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var proc = Process.Start(psi)
+                ?? throw new InvalidOperationException("Process.Start returned null");
+
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+
+            using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+            {
+                try { await proc.WaitForExitAsync(cts.Token); }
+                catch (OperationCanceledException)
+                {
+                    try { proc.Kill(entireProcessTree: true); } catch { }
+                    throw new TimeoutException($"Revoke-SmbShareAccess on '{share}' timed out");
+                }
+            }
+
+            var stderr = await stderrTask;
+            await stdoutTask; // drain
+            if (proc.ExitCode != 0)
+            {
+                exitCode = proc.ExitCode;
+                stderrAccum.AppendLine($"[{share}] {stderr.Trim()}");
+            }
+            changes.Add($"Revoke-SmbShareAccess -Name '{share}' -AccountName Everyone");
+        }
+
+        sw.Stop();
+        return new RemediateResult
+        {
+            ExitCode = exitCode,
+            StderrExcerpt = stderrAccum.Length == 0
+                ? null
+                : Truncate(stderrAccum.ToString(), 1024),
+            DurationMs = sw.ElapsedMilliseconds,
+            RequiresReboot = false, // share ACL changes apply immediately
             ChangesApplied = changes,
         };
     }
