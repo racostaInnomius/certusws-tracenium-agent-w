@@ -604,14 +604,28 @@ public static class PmpRemediation
     // safely. Revoking the overly-broad grant is the deterministic,
     // safe subset of that guidance and is exactly what the check
     // (Everyone:Full specifically, not "Everyone has any access") flags.
+    //
+    // AccessControlType matters: both the read query and the detection
+    // used after a revoke must match AccessControlType='Allow' only.
+    // Once a share has no remaining explicit grant, Get-SmbShareAccess
+    // reports a synthetic Everyone/Deny/Full row for the empty ACL —
+    // matching on AccountName+AccessRight alone would keep flagging an
+    // already-fixed share as non-compliant.
 
     private static (List<string> Shares, bool Ok) QuerySharesWithEveryoneFullControl()
     {
+        // AccessControlType must be constrained to 'Allow'. Once a share's
+        // only grant is revoked, Get-SmbShareAccess synthesizes an
+        // Everyone/Deny/Full row to represent the now-empty ACL ("no
+        // explicit grant = nobody connects") — without this filter that
+        // synthetic row keeps matching AccountName+AccessRight and the
+        // share is flagged as non-compliant forever, even right after a
+        // successful remediation.
         var psi = new ProcessStartInfo("powershell.exe",
             "-NoProfile -ExecutionPolicy Bypass -Command "
             + "\"$shares = @(Get-SmbShare | Where-Object { -not $_.Special } | ForEach-Object { "
             + "$n = $_.Name; "
-            + "if (@(Get-SmbShareAccess -Name $n | Where-Object { $_.AccountName -eq 'Everyone' -and $_.AccessRight -eq 'Full' }).Count -gt 0) { $n } "
+            + "if (@(Get-SmbShareAccess -Name $n | Where-Object { $_.AccountName -eq 'Everyone' -and $_.AccessRight -eq 'Full' -and $_.AccessControlType -eq 'Allow' }).Count -gt 0) { $n } "
             + "}); $shares | ConvertTo-Json -Compress\"")
         {
             CreateNoWindow = true,
