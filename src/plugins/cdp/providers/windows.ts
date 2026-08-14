@@ -39,6 +39,25 @@ export async function collectWindowsCdp(ctx: AgentContext): Promise<WindowsCdpRe
     throw new Error(resp?.error?.message || "cdp.certs.read failed");
   }
 
+  // A scan that ran out of its handler budget is a FAILED scan, not a
+  // short one. PrivSvc still returns what it managed to read, but that
+  // payload must never reach the projection: a CDP baseline reconciles,
+  // so every certificate missing from a truncated list would be marked
+  // removed — turning a slow host into a fleet of phantom deletions.
+  // Throwing puts us on the collectorError path, where the control plane
+  // keeps the last good projection. The count and elapsed time ride along
+  // because "stopped at 412 certs after 45s" is a diagnosis and
+  // "timeout" is not.
+  if (resp.result?.budgetExceeded === true) {
+    const seen = Array.isArray(resp.result?.certificates)
+      ? resp.result.certificates.length
+      : 0;
+    throw new Error(
+      `cdp.certs.read exceeded its handler budget: stopped after ${seen} ` +
+        `certificate(s) in ${resp.result?.elapsedMs ?? "?"}ms`
+    );
+  }
+
   const rawCerts: Array<{
     store?: string;
     rawDerBase64?: string;
