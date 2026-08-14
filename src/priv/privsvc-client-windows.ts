@@ -78,13 +78,24 @@ export function getTimeoutForMethod(method: string): number {
       return 60 * 1000;
     case "agent.install":
       return 1800 * 1000;
+    // ── CDP ──────────────────────────────────────────────────────────
+    //
+    // 5th victim of the 8s default. The handler walks 7 LocalMachine
+    // X509Stores and reads HasPrivateKey per certificate, which opens a
+    // CNG/CSP handle — on a host whose keys live in a TPM, a smart card
+    // or a network-backed KSP that is not a constant-time lookup. The
+    // handler had NO ceiling of its own until this fix, so "the client
+    // must outwait the handler" was not even a statable claim; it now
+    // budgets 45s (CdpCertificates.HandlerBudgetMs) and returns what it
+    // has, so this sits above it with margin.
+    case "cdp.certs.read":
+      return 60 * 1000; // privsvc: 45s + margin
     default:
       return DEFAULT_TIMEOUT_MS;
   }
 }
 const CONNECT_TIMEOUT_MS = 8000;
 const MAX_PENDING = 500; // hard cap to prevent unbounded growth
-const MAX_BUFFER_CHARS = 2 * 1024 * 1024; // 2MB safety cap
 
 type Pending = {
   resolve: (r: PrivSvcResponse) => void;
@@ -93,12 +104,82 @@ type Pending = {
   method: string;
 };
 
+/**
+ * A request accepted by `call()` but not yet written to the pipe.
+ *
+ * WHY A QUEUE AT ALL — the invariant had a hole.
+ *
+ * `NamedPipeServer.HandleClientAsync` is strictly serial per connection:
+ * it awaits the handler before it even READS the next line. We keep one
+ * connection, so every privileged call in the agent shares one lane.
+ * Until this change the client ignored that: `call()` wrote immediately
+ * and started the method's timer at WRITE time, so a request could burn
+ * its whole budget queued behind somebody else's handler and be rejected
+ * having never been dispatched.
+ *
+ * That is what "PrivSvc timeout: cdp.certs.read did not answer within
+ * 8000ms" actually was in production (2026-08-13, 4 of 16 CDP scans on
+ * the pilot fleet). Every occurrence landed within ~40s of a gRPC
+ * reconnect, and on agents whose event sequence was still in the double
+ * digits — i.e. freshly restarted. On reconnect the policy handlers call
+ * `startPipelines`, which fires inventory + compliance + cdp + patch with
+ * no await between them; `software.inventory` (60s) and
+ * `security.compliance` (270s) went into the lane first and CDP, holding
+ * the smallest budget in the agent, was the one that lost. Long-running
+ * agents at sequence 3600+ never failed: same host, same stores, empty
+ * lane.
+ *
+ * So the documented invariant — job > client > handler — was necessary
+ * but not sufficient. It assumed a budget only has to cover its OWN
+ * handler. With one serial lane it must cover the queue ahead of it too.
+ * Rather than inflate every constant to hide that, the client now models
+ * the lane: one request in flight, and the method budget starts at
+ * DISPATCH. Each number then means what it says.
+ *
+ * Windows only, deliberately. The macOS/Linux privsvc handles each
+ * `data` event in its own async callback, so those servers really do
+ * interleave requests; serialising their clients would remove
+ * concurrency that exists, and would park a 5s heartbeat behind a 60s
+ * compliance run that today overtakes it.
+ *
+ * THE WAIT IS SELF-BOUNDING, so there is no separate queue deadline.
+ * Whatever is in the lane leaves it when its own budget expires — the
+ * timeout path frees the lane and pumps the next entry — so a queued
+ * request waits at most the sum of the budgets ahead of it, by
+ * construction. An extra timer derived from that same sum could only
+ * fire after the thing it was guarding had already fired, which is a
+ * safety net that cannot catch anything. The outer bound stays the
+ * scheduler's 30-minute stuck-worker guard.
+ *
+ * The cost of this is a real behaviour change: a request that used to
+ * fail fast behind a long handler now waits for it instead. That is the
+ * intended trade — failing fast on a lane you were never going to get is
+ * how CDP lost 25% of its scans — but it means a heartbeat issued during
+ * a 29-minute `sdp.install` is now late rather than rejected.
+ */
+type Queued = {
+  req: PrivSvcRequest;
+  budgetMs: number;
+  resolve: (r: PrivSvcResponse) => void;
+  reject: (e: Error) => void;
+  settled: boolean;
+  /** For the timeout diagnostic: how long the lane was busy, and with what. */
+  queuedAt: number;
+  queuedBehind: string[];
+};
+
 export class PrivSvcClient extends EventEmitter {
   private socket: net.Socket | null = null;
   private buffer = "";
   private connecting: Promise<void> | null = null;
   private pending = new Map<string, Pending>();
   private closedByClient = false;
+
+  /** Requests accepted but not yet written. See `Queued`. */
+  private queue: Queued[] = [];
+  /** The single request currently occupying the pipe's serial lane. */
+  private inFlight: { id: string; method: string; budgetMs: number; startedAt: number } | null =
+    null;
 
   private earlyPushQueue: PrivSvcPush[] = [];
   private pushListenerAttached = false;
@@ -332,6 +413,12 @@ export class PrivSvcClient extends EventEmitter {
     const sock = this.socket;
     this.socket = null;
 
+    // Drain the queue FIRST. Rejecting a pending request runs the
+    // continuation that pumps the lane, and we do not want it dispatching
+    // queued work onto a socket we just gave up on — they would come back
+    // with a vaguer "socket not available" than the error we actually have.
+    this.drainQueue(new Error(errMessage || "PrivSvc socket error"));
+
     // fail all pending
     for (const [id, p] of this.pending.entries()) {
       this.pending.delete(id);
@@ -358,8 +445,26 @@ export class PrivSvcClient extends EventEmitter {
     }
   }
 
+  /**
+   * Reject everything still waiting for the lane. Without this a dropped
+   * pipe would leave queued callers hanging until their queue deadline —
+   * the reconnect burst is exactly when the queue is deepest, so it is
+   * also exactly when the socket is most likely to go away underneath it.
+   */
+  private drainQueue(err: Error) {
+    const queued = this.queue.splice(0, this.queue.length);
+    for (const entry of queued) {
+      if (entry.settled) continue;
+      entry.settled = true;
+      entry.reject(err);
+    }
+    this.inFlight = null;
+  }
+
   private onSocketClose() {
     const wasManual = this.closedByClient;
+    // Drain before pending, for the reason given in onSocketError.
+    this.drainQueue(new Error("PrivSvc connection closed"));
     // fail all pending
     for (const [id, p] of this.pending.entries()) {
       this.pending.delete(id);
@@ -397,59 +502,122 @@ export class PrivSvcClient extends EventEmitter {
     this.socket = null;
   }
 
+  /** Methods occupying the lane ahead of a queued request, for diagnostics. */
+  private laneAhead(): string[] {
+    const ahead = this.inFlight ? [this.inFlight.method] : [];
+    return ahead.concat(this.queue.map((q) => q.req.method));
+  }
+
+  /**
+   * Dispatch the head of the queue if the lane is free. Called on every
+   * enqueue and every time a request leaves the lane — including on
+   * timeout, so one wedged handler cannot stall the queue behind it
+   * forever.
+   */
+  private pump() {
+    if (this.inFlight) return;
+
+    const entry = this.queue.shift();
+    if (!entry || entry.settled) {
+      if (entry) this.pump();
+      return;
+    }
+
+    const id = entry.req.id!;
+    const method = entry.req.method;
+    const timeoutMs = entry.budgetMs;
+    const waitedMs = Date.now() - entry.queuedAt;
+    const waitedBehind = entry.queuedBehind;
+
+    const finish = () => {
+      if (this.inFlight?.id === id) this.inFlight = null;
+      this.pump();
+    };
+
+    const sock = this.socket;
+    if (!sock || sock.destroyed || sock.writable === false) {
+      entry.settled = true;
+      entry.reject(new Error("PrivSvc socket not available"));
+      this.pump();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.pending.delete(id);
+      this.emit("debug", { stage: "timeout", id, method, waitedMs, waitedBehind });
+      // Name the method and the budget: a bare "PrivSvc timeout" told an
+      // operator nothing about WHICH privileged call hung, which is what
+      // made a stalled self-update take a code read to diagnose.
+      //
+      // The budget now covers only this handler, so this sentence is true
+      // as written. The queue context is appended rather than folded in,
+      // because "waited 61s for the lane behind security.compliance, then
+      // got 60s of its own" is the difference between a slow certificate
+      // scan and a busy pipe — and the old message could not tell them
+      // apart at all.
+      entry.settled = true;
+      const lane =
+        waitedBehind.length > 0
+          ? ` (waited ${waitedMs}ms for the IPC lane behind ${waitedBehind.join(", ")})`
+          : "";
+      entry.reject(
+        new Error(`PrivSvc timeout: ${method} did not answer within ${timeoutMs}ms${lane}`)
+      );
+      finish();
+    }, timeoutMs);
+
+    this.inFlight = { id, method, budgetMs: timeoutMs, startedAt: Date.now() };
+    this.pending.set(id, {
+      method,
+      timer,
+      resolve: (r) => {
+        entry.settled = true;
+        entry.resolve(r);
+        finish();
+      },
+      reject: (e) => {
+        entry.settled = true;
+        entry.reject(e);
+        finish();
+      }
+    });
+
+    try {
+      const payload = JSON.stringify(entry.req) + "\n";
+      this.emit("debug", { stage: "call_write", id, method });
+      const wrote = sock.write(payload);
+      if (!wrote) sock.once("drain", () => {});
+    } catch (e: any) {
+      clearTimeout(timer);
+      this.pending.delete(id);
+      entry.settled = true;
+      entry.reject(e);
+      finish();
+    }
+  }
+
   async call(req: PrivSvcRequest): Promise<PrivSvcResponse> {
     await this.ensureConnected();
 
-    if (this.pending.size >= MAX_PENDING) {
+    if (this.pending.size + this.queue.length >= MAX_PENDING) {
       throw new Error(`PrivSvc pending requests overflow (${MAX_PENDING})`);
     }
 
     if (!req.id) req.id = randomUUID();
 
     return new Promise<PrivSvcResponse>((resolve, reject) => {
-      const id = req.id!;
-      const timeoutMs = getTimeoutForMethod(req.method);
+      const entry: Queued = {
+        req,
+        budgetMs: getTimeoutForMethod(req.method),
+        resolve,
+        reject,
+        settled: false,
+        queuedAt: Date.now(),
+        queuedBehind: this.laneAhead()
+      };
 
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        this.emit("debug", { stage: "timeout", id, method: req.method });
-        // Name the method and the budget: a bare "PrivSvc timeout" told an
-        // operator nothing about WHICH privileged call hung, which is what
-        // made a stalled self-update take a code read to diagnose.
-        reject(new Error(`PrivSvc timeout: ${req.method} did not answer within ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      this.pending.set(id, { resolve, reject, timer, method: req.method });
-
-      try {
-        const sock = this.socket;
-        if (!sock || sock.destroyed || sock.writable === false) {
-          clearTimeout(timer);
-          this.pending.delete(id);
-          reject(new Error("PrivSvc socket not available"));
-          return;
-        }
-
-        let wrote = false;
-        try {
-          const payload = JSON.stringify(req) + "\n";
-          this.emit("debug", { stage: "call_write", id, method: req.method });
-          wrote = sock.write(payload);
-        } catch (e: any) {
-          clearTimeout(timer);
-          this.pending.delete(id);
-          reject(e);
-          return;
-        }
-
-        if (!wrote) {
-          sock.once("drain", () => {});
-        }
-      } catch (e: any) {
-        clearTimeout(timer);
-        this.pending.delete(id);
-        reject(e);
-      }
+      this.queue.push(entry);
+      this.pump();
     });
   }
 

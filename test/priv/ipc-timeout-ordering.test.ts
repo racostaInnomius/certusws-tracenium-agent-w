@@ -20,6 +20,15 @@ import { getTimeoutForMethod as linuxTimeout } from "../../src/priv/privsvc-clie
  * These are the privsvc-side ceilings the clients must stay above. Raising a
  * handler budget without raising its client is what breaks it, so this test
  * exists to make that failure loud.
+ *
+ * ⚠️ NECESSARY BUT NOT SUFFICIENT. A 5th occurrence (cdp.certs.read,
+ * 2026-08-13) satisfied every assertion in this file and still failed in
+ * production, because the Windows pipe serves ONE request at a time and the
+ * old client started each timer at write instead of at dispatch — so a
+ * budget could be spent entirely on somebody else's handler. The ordering
+ * asserted here only holds per-request; the queue in
+ * privsvc-client-windows.ts is what makes it true end to end. See
+ * ipc-lane-queue.test.ts.
  */
 const PRIVSVC_CEILING_MS: Record<string, { windows?: number; macos?: number; linux?: number }> = {
   // The 4th documented victim of the invariant — and, embarrassingly,
@@ -38,6 +47,11 @@ const PRIVSVC_CEILING_MS: Record<string, { windows?: number; macos?: number; lin
   "sdp.install": { windows: 1_740_000, macos: 1_740_000, linux: 1_740_000 },
   "sdp.uninstall": { windows: 1_740_000, macos: 1_740_000, linux: 1_740_000 },
   "sdp.dp.prefetch": { windows: 840_000, macos: 840_000, linux: 840_000 },
+  // 5th victim (2026-08-13). Windows-only: the macOS/Linux CDP collectors
+  // read the trust stores directly and never go through privsvc.
+  // CdpCertificates.HandlerBudgetMs — which did not exist until this bug;
+  // an unbounded handler is one the invariant cannot even be stated for.
+  "cdp.certs.read": { windows: 45_000 },
 };
 
 const CLIENTS = {
