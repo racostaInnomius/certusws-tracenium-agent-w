@@ -49,9 +49,12 @@ profile tracenium-privsvc /usr/lib/tracenium/node {
   /run/tracenium/**                                 rw,
 
   # ── Config ───────────────────────────────────────────────────────
-  /etc/tracenium/                                   r,
+  # `w` sobre los directorios ademas de los ficheros: la renovacion de certs
+  # hace chmod, que apparmor contabiliza como escritura sobre el directorio.
+  # Sin esto se veian deniegos de chmod sobre /etc/tracenium/ y /certs/.
+  /etc/tracenium/                                   rw,
   /etc/tracenium/agent.json                         r,
-  /etc/tracenium/certs/                             r,
+  /etc/tracenium/certs/                             rw,
   /etc/tracenium/certs/*                            rw,    # cert renewal writes back
 
   # ── System inventory + posture inputs ────────────────────────────
@@ -72,6 +75,12 @@ profile tracenium-privsvc /usr/lib/tracenium/node {
   /sys/kernel/security/apparmor/profiles            r,
   /sys/class/dmi/id/                                r,
   /sys/class/dmi/id/**                              r,
+  # apt lee su configuracion antes de listar actualizaciones. Sin esto el
+  # escaneo de parches fallaba con "Unable to read /etc/apt/apt.conf.d/".
+  /etc/apt/                                         r,
+  /etc/apt/**                                       r,
+  # version_signature: deteccion de kernel en Ubuntu.
+  /proc/version_signature                           r,
   /proc/cpuinfo                                     r,
   /proc/meminfo                                     r,
   /proc/version                                     r,
@@ -87,25 +96,44 @@ profile tracenium-privsvc /usr/lib/tracenium/node {
   /var/run/tracenium/                               rw,
   /var/run/tracenium/**                             rw,
 
+  # systemd-run se comunica con el gestor por este socket privado. Permitir
+  # solo el exec no basta: la llamada falla igualmente.
+  /run/systemd/private                              rw,
+
   # ── Subprocess execs ─────────────────────────────────────────────
   # Every binary the privsvc invokes via execFile in any phase.
-  # The `Px` qualifier (profile transition) means each child runs
-  # under its OWN unconfined profile (unconfined here is fine —
-  # apt-get/dnf/systemctl have their own complex permission
-  # surfaces and confining them via apparmor is out of scope and
-  # a long debugging exercise).
+  #
+  # `Ux` (unconfined exec) para los gestores de paquetes y systemd-run, NO
+  # `ix`. Con `ix` el hijo hereda ESTE perfil, y los postinst de un .deb hacen
+  # de todo: ejecutan sh, cat, hostname, dmidecode, piden sys_admin y
+  # dac_override. Medido en produccion el 2026-08-15: con `ix`, dpkg arrancaba
+  # y sus postinst morian a deniegos, dejando el paquete a medio configurar.
+  # Confinar a apt/dnf/dpkg es una superficie enorme y fuera de alcance.
+  #
+  # El resto sigue con `ix`: son lecturas acotadas que no lanzan subprocesos.
   /usr/bin/curl                                     ix,
   /usr/bin/openssl                                  ix,
-  /usr/bin/dpkg                                     ix,
+  /usr/bin/dpkg                                     Ux,
   /usr/bin/dpkg-query                               ix,
-  /usr/bin/apt                                      ix,
-  /usr/bin/apt-get                                  ix,
-  /usr/bin/dnf                                      ix,
-  /usr/bin/yum                                      ix,
-  /usr/bin/rpm                                      ix,
+  /usr/bin/apt                                      Ux,
+  /usr/bin/apt-get                                  Ux,
+  /usr/bin/dnf                                      Ux,
+  /usr/bin/yum                                      Ux,
+  /usr/bin/rpm                                      Ux,
   /usr/bin/snap                                     ix,
   /usr/bin/flatpak                                  ix,
   /usr/bin/systemctl                                ix,
+  # systemd-run: lanza el dpkg del auto-update en un scope propio, para que
+  # sobreviva al reinicio del servicio que provoca su propia instalacion.
+  # Sin esta regla el spawn daba EACCES y el update NUNCA se ejecutaba.
+  /usr/bin/systemd-run                              Ux,
+  # dash: shell por defecto de Debian/Ubuntu; execFile con shell:true y los
+  # postinst pasan por aqui.
+  /usr/bin/dash                                     ix,
+  /usr/bin/sh                                       ix,
+  # who/logname: sesion interactiva, para el widget de soporte.
+  /usr/bin/who                                      ix,
+  /usr/bin/logname                                  ix,
   /usr/bin/journalctl                               ix,
   /usr/bin/firewall-cmd                             ix,
   /usr/bin/needs-restarting                         ix,

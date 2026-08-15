@@ -98,6 +98,38 @@ function getPlatform(): "windows" | "macos" | "linux" {
   return "linux";
 }
 
+/**
+ * Borra instaladores viejos del directorio de descargas.
+ *
+ * Cada intento de actualizacion deja su paquete y, si la descarga se corta, un
+ * .tmp a medias. Nadie los recogia: en el servidor de produccion se
+ * acumularon 7 versiones — 477 MB — en una maquina que ya habia llegado al 98%
+ * de disco. Un endpoint con disco pequeno lo nota mucho antes.
+ *
+ * Se conserva SOLO el fichero recien validado. Los anteriores no sirven para
+ * reintentar: si hace falta otra version se vuelve a descargar, y guardar un
+ * paquete cuyo hash ya no se comprueba es peor que no tenerlo.
+ *
+ * Nunca lanza: una limpieza fallida no puede tumbar una actualizacion que si
+ * funciono.
+ */
+function pruneOldDownloads(dir: string, keepPath: string): void {
+  try {
+    const keep = path.basename(keepPath);
+    for (const name of fs.readdirSync(dir)) {
+      if (name === keep) continue;
+      if (!/\.(deb|rpm|msi|pkg|tmp)$/i.test(name)) continue;
+      try {
+        fs.rmSync(path.join(dir, name), { force: true });
+      } catch {
+        /* un fichero bloqueado no debe abortar el resto */
+      }
+    }
+  } catch {
+    /* directorio ilegible: no es motivo para fallar la actualizacion */
+  }
+}
+
 function getArch(): "x64" | "arm64" {
   const envArch = process.env.TRACENIUM_ARCH;
   if (envArch === "arm64" || envArch === "x64") {
@@ -601,6 +633,8 @@ export async function downloadWindowsMsi(
     throw new Error("update_hash_mismatch");
   }
 
+  pruneOldDownloads(dir, filePath);
+
   updateUpdateState({
     lastDownloadedPath: filePath,
     lastDownloadedSha256: sha256,
@@ -645,6 +679,8 @@ export async function downloadMacosPkg(
     fs.rmSync(filePath, { force: true });
     throw new Error("update_hash_mismatch");
   }
+
+  pruneOldDownloads(dir, filePath);
 
   updateUpdateState({
     lastDownloadedPath: filePath,
@@ -731,6 +767,8 @@ export async function performWindowsMsiUpdate(
       throw new Error("update_hash_mismatch");
     }
 
+    pruneOldDownloads(dir, filePath);
+
     downloaded = {
       filePath,
       fileName,
@@ -806,6 +844,8 @@ export async function performMacosPkgUpdate(
       fs.rmSync(filePath, { force: true });
       throw new Error("update_hash_mismatch");
     }
+
+    pruneOldDownloads(dir, filePath);
 
     downloaded = {
       filePath,
@@ -912,6 +952,8 @@ export async function downloadLinuxPkg(
     throw new Error("update_hash_mismatch");
   }
 
+  pruneOldDownloads(dir, filePath);
+
   updateUpdateState({
     lastDownloadedPath: filePath,
     lastDownloadedSha256: sha256,
@@ -959,6 +1001,8 @@ export async function performLinuxUpdate(
       fs.rmSync(filePath, { force: true });
       throw new Error("update_hash_mismatch");
     }
+
+    pruneOldDownloads(dir, filePath);
 
     downloaded = {
       filePath,
