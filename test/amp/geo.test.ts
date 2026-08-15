@@ -110,12 +110,19 @@ describe("classifyGeoOutput — why there is no position", () => {
     expect(classifyGeoOutput('{"lat":19.4,"lon":-99.1}')).toBe("ok");
   });
 
-  it("names the machine-wide switch when Windows has location off", () => {
-    // "denied" alone sent admins to check per-user consent on a service that
-    // runs as SYSTEM. The ConsentStore value is the gate a GPO can actually
-    // set, so the reason has to survive into the message.
-    expect(classifyGeoOutput("ERROR:location_services_off (ConsentStore=Deny)")).toBe("denied");
-    expect(classifyGeoOutput("ERROR:location_services_off (ConsentStore=unreadable)")).toBe("denied");
+  it("names WHICH of the two Windows gates is closed", () => {
+    // Found in the field: HKLM=Allow (Settings shows location ON) but the
+    // SYSTEM account's own consent = Deny, so every request from the agent was
+    // refused while the machine looked correctly configured. The two cases have
+    // different fixes, so they must not read the same.
+    const machine = "ERROR:location_services_off machine-wide (HKLM=Deny)";
+    const account = "ERROR:location_denied_for_service_account (HKLM=Allow, HKCU=Deny); the agent runs as SYSTEM and that account has no location consent";
+    expect(classifyGeoOutput(machine)).toBe("denied");
+    expect(classifyGeoOutput(account)).toBe("denied");
+    // El detalle es lo que hace accionable a cada uno.
+    expect(extractDetail(machine)).toMatch(/machine-wide/);
+    expect(extractDetail(account)).toMatch(/service_account/);
+    expect(extractDetail(account)).toMatch(/SYSTEM/);
   });
 
   it("separates a refusal from a miss", () => {

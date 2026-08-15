@@ -126,13 +126,28 @@ $ErrorActionPreference = 'Stop'
 # "Location services" toggle writes) that a GPO can set. Distinguishing "the
 # machine has location switched off" from "the API refused us" is the
 # difference between a fix an admin can deploy fleet-wide and a dead end.
-$consent = $null
-try {
-  $consent = (Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\location' -Name Value -ErrorAction Stop).Value
-} catch { $consent = 'unreadable' }
+function Read-Consent($root) {
+  try { return (Get-ItemProperty -Path ($root + '\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\location') -Name Value -ErrorAction Stop).Value }
+  catch { return 'absent' }
+}
 
-if ($consent -ne 'Allow') {
-  Write-Output ('ERROR:location_services_off (ConsentStore=' + $consent + ')')
+# TWO gates, and the second is the one that bit us in the field.
+#
+# HKLM is the machine-wide "Location services" toggle. HKCU is the consent of
+# the account making the call — and this process runs as SYSTEM, whose branch
+# is S-1-5-18. A fleet was found with HKLM=Allow and SYSTEM=Deny, which reads
+# as "location is on" in Settings while every request from the agent is
+# refused. Naming WHICH gate is closed is the difference between a one-line GPO
+# and days of guessing.
+$machine = Read-Consent 'HKLM:'
+$account = Read-Consent 'HKCU:'
+
+if ($machine -ne 'Allow') {
+  Write-Output ('ERROR:location_services_off machine-wide (HKLM=' + $machine + ')')
+  exit 0
+}
+if ($account -ne 'Allow') {
+  Write-Output ('ERROR:location_denied_for_service_account (HKLM=Allow, HKCU=' + $account + '); the agent runs as SYSTEM and that account has no location consent')
   exit 0
 }
 
