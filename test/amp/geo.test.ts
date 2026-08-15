@@ -11,6 +11,7 @@ import {
   parseConsoleUser,
   isFixFresh,
   classifyGeoOutput,
+  extractDetail,
 } from "../../src/plugins/amp/providers/geo";
 
 const at = () => new Date("2026-08-09T18:00:00.000Z");
@@ -278,5 +279,30 @@ describe("parseGeoOutput — the fix's own timestamp", () => {
     expect(
       parseGeoOutput('{"lat":19.4,"lon":-99.1,"collectedAtUtc":"nope"}', at)?.collectedAtUtc
     ).toBe("2026-08-09T18:00:00.000Z");
+  });
+});
+
+describe("extractDetail — las palabras del SO", () => {
+  it("conserva el mensaje de la excepción", () => {
+    // En Windows con ConsentStore=Allow a nivel máquina, ese texto es lo único
+    // que separa "la cuenta SYSTEM no tiene consentimiento" de "este SKU no
+    // trae proveedor de ubicación". Se estaba descartando.
+    expect(extractDetail("ERROR:Access is denied. (0x80070005)")).toBe("Access is denied. (0x80070005)");
+  });
+
+  it("no inventa detalle cuando no hubo queja", () => {
+    expect(extractDetail('{"lat":19.4,"lon":-99.1}')).toBeUndefined();
+    expect(extractDetail("TIMEOUT")).toBeUndefined();
+    expect(extractDetail("")).toBeUndefined();
+    expect(extractDetail(null)).toBeUndefined();
+  });
+
+  it("acota el largo — es una línea de log, no un volcado", () => {
+    expect(extractDetail("ERROR:" + "x".repeat(500))!.length).toBe(300);
+  });
+
+  it("trata un ERROR vacío como ausencia de detalle", () => {
+    expect(extractDetail("ERROR:")).toBeUndefined();
+    expect(extractDetail("ERROR:   ")).toBeUndefined();
   });
 });

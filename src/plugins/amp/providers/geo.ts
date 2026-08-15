@@ -78,6 +78,16 @@ export type GeoStatus =
 export type GeoResult = {
   geo: AmpGeo | null;
   status: GeoStatus;
+  /**
+   * The platform's own words, when it refused.
+   *
+   * The status says WHICH category of failure; this says what the OS actually
+   * reported. On Windows that exception text is the only thing that separates
+   * "the SYSTEM account has no location consent" from "this SKU has no
+   * provider" — and it was being discarded, leaving `denied` with nothing
+   * actionable behind it.
+   */
+  detail?: string;
 };
 
 /** Matches the amp.geo shape the backend already reads (lat/lon/accuracyM). */
@@ -343,15 +353,19 @@ export async function collectGeo(
   let stdout = "";
   try {
     stdout = platform === "win32" ? await collectWindows() : await collectMacos();
-  } catch {
+  } catch (err: any) {
     // Timeout, missing interpreter, a crashed helper. Reported as denied
     // rather than unavailable: in practice this is overwhelmingly the consent
     // store or a locked-down SKU, and "we could not ask" is closer to denied
     // than to "we asked and got nothing".
-    return { geo: null, status: "denied" };
+    return { geo: null, status: "denied", detail: String(err?.message ?? err).slice(0, 300) };
   }
 
-  return { geo: parseGeoOutput(stdout), status: classifyGeoOutput(stdout) };
+  return {
+    geo: parseGeoOutput(stdout),
+    status: classifyGeoOutput(stdout),
+    detail: extractDetail(stdout),
+  };
 }
 
 /**
@@ -365,6 +379,17 @@ const PUBLISHED_STATUSES = new Set<GeoStatus>([
   "unavailable",
   "consent_required",
 ]);
+
+/**
+ * The platform's verbatim complaint, or undefined when it did not complain.
+ *
+ * Pure, so the extraction is testable without an OS that refuses us.
+ */
+export function extractDetail(stdout: unknown): string | undefined {
+  const text = typeof stdout === "string" ? stdout.trim() : "";
+  if (!text.startsWith("ERROR:")) return undefined;
+  return text.slice("ERROR:".length).trim().slice(0, 300) || undefined;
+}
 
 export function classifyGeoOutput(stdout: unknown): GeoStatus {
   const text = typeof stdout === "string" ? stdout.trim() : "";

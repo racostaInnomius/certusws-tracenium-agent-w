@@ -81,11 +81,27 @@ struct TrayDeviceInfo: Decodable {
     var memoryGb: Double?
 }
 
+/// Lenient like TrayStatus, and for the same reason: replacing the whole block
+/// on one bad field would throw away the good fields next to it.
 struct TrayGrpcStatus: Decodable {
     var connected: Bool
     var lastConnectedAtUtc: Date?
     var lastDisconnectedAtUtc: Date?
     var lastHeartbeatAtUtc: Date?
+
+    private enum CodingKeys: String, CodingKey { case connected, lastConnectedAtUtc, lastDisconnectedAtUtc, lastHeartbeatAtUtc }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        connected = ((try? c.decodeIfPresent(Bool.self, forKey: .connected)) ?? nil) ?? false
+        lastConnectedAtUtc = (try? c.decodeIfPresent(Date.self, forKey: .lastConnectedAtUtc)) ?? nil
+        lastDisconnectedAtUtc = (try? c.decodeIfPresent(Date.self, forKey: .lastDisconnectedAtUtc)) ?? nil
+        lastHeartbeatAtUtc = (try? c.decodeIfPresent(Date.self, forKey: .lastHeartbeatAtUtc)) ?? nil
+    }
+
+    init(connected: Bool) {
+        self.connected = connected
+    }
 }
 
 struct TrayPolicyStatus: Decodable {
@@ -95,6 +111,30 @@ struct TrayPolicyStatus: Decodable {
     var modules: [String]
     /// Optional so snapshots written by older agents still decode.
     var features: TrayPolicyFeatures?
+
+    private enum CodingKeys: String, CodingKey { case version, hash, plugins, modules, features }
+
+    /// ⚠️ `features` is the field the location pipeline hangs off. A policy
+    /// block that fails to decode used to be swapped for a default with
+    /// `features: nil`, which reads as "location off" — so one missing
+    /// `version` string silently disabled positioning on the whole machine.
+    /// Every field degrades on its own so that cannot happen again.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version  = ((try? c.decodeIfPresent(String.self, forKey: .version)) ?? nil) ?? ""
+        hash     = (try? c.decodeIfPresent(String.self, forKey: .hash)) ?? nil
+        plugins  = ((try? c.decodeIfPresent([String].self, forKey: .plugins)) ?? nil) ?? []
+        modules  = ((try? c.decodeIfPresent([String].self, forKey: .modules)) ?? nil) ?? []
+        features = (try? c.decodeIfPresent(TrayPolicyFeatures.self, forKey: .features)) ?? nil
+    }
+
+    init(version: String, hash: String?, plugins: [String], modules: [String], features: TrayPolicyFeatures?) {
+        self.version = version
+        self.hash = hash
+        self.plugins = plugins
+        self.modules = modules
+        self.features = features
+    }
 }
 
 /// Feature switches the user-session app acts on. The daemon owns the policy;
