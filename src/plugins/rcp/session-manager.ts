@@ -291,6 +291,27 @@ export class SessionManager {
     sdpMid: string,
     sdpMLineIndex: number
   ): void {
+    // Candidate dispatch was the one step in the whole RCP handshake with no
+    // trace at all. When a session dies with `ice_failed` and the browser
+    // reports zero remote candidates, there was no way to tell "the agent
+    // never gathered any" apart from "it gathered them and they were lost on
+    // the way" — which are completely different bugs in different repos.
+    //
+    // One line per candidate is fine: a handshake produces a handful, not a
+    // stream, and they only flow during the first seconds of a session.
+    // `typ` is the useful part (host / srflx / relay), so we extract it
+    // instead of logging the whole candidate line.
+    const typ = /(?:^| )typ (\w+)/.exec(candidate || "")?.[1] ?? "unknown";
+    this.ctx.logger?.info?.("[rcp] sendIce dispatching", {
+      sid: sessionId.slice(-8),
+      typ,
+      sdpMid,
+      // libdatachannel emits candidates prefixed with "a=", while the browser
+      // side expects the bare "candidate:..." attribute. Recorded so a
+      // format mismatch is visible in the log rather than inferred.
+      hasAPrefix: String(candidate || "").startsWith("a="),
+      len: String(candidate || "").length
+    });
     this.ctx.sendControl?.({
       remoteSessionIce: { sessionId, candidate, sdpMid, sdpMLineIndex }
     });
