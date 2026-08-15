@@ -157,7 +157,11 @@ if ($machine -ne 'Allow') {
   exit 0
 }
 if ($account -ne 'Allow') {
-  Write-Output ('ERROR:location_denied_for_service_account (HKLM=Allow, HKCU=' + $account + '); the agent runs as SYSTEM and that account has no location consent')
+  # The agent normally repairs this itself before we get here (see
+  # windows-location-consent.ts). Reaching this branch means the repair failed
+  # — most likely the registry write was refused — so say so rather than
+  # letting the API fail with something less specific.
+  Write-Output ('ERROR:location_denied_for_service_account (HKLM=Allow, HKCU=' + $account + '); the agent could not grant its own service account location consent')
   exit 0
 }
 

@@ -2,6 +2,7 @@
 import os from "os";
 import { getProvider } from "./providers";
 import { collectGeo } from "./providers/geo";
+import { applyWindowsLocationConsent } from "./providers/windows-location-consent";
 import type { AgentContext } from "../../core/agent-context";
 import type { AmpNamespace } from "../../domain/amp-types";
 
@@ -23,6 +24,18 @@ export async function collectAMP(ctx: AgentContext): Promise<AmpNamespace> {
   //
   // collectGeo re-checks the gate itself and swallows every failure, so this
   // stays a plain merge with no error handling of its own.
+  // Windows gates location on the consent of the CALLING account, and this
+  // service runs as LocalSystem — a branch no UI shows and no admin can be
+  // expected to find. Bring it in line with the policy before asking, and give
+  // it back when the policy is switched off.
+  const consentNote = await applyWindowsLocationConsent(
+    Boolean(ctx.policyRuntime?.isFeatureEnabled?.("locationTracking")),
+    platform
+  );
+  if (consentNote) {
+    ctx.logger?.info?.(`AMP geo: ${consentNote}`);
+  }
+
   const { geo, status, detail } = await collectGeo(
     Boolean(ctx.policyRuntime?.isFeatureEnabled?.("locationTracking")),
     platform
