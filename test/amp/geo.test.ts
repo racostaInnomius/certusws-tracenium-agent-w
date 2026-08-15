@@ -313,3 +313,34 @@ describe("extractDetail — las palabras del SO", () => {
     expect(extractDetail("ERROR:   ")).toBeUndefined();
   });
 });
+
+describe("Windows PositionSource — no aceptar una adivinanza por IP", () => {
+  const wifi = '{"lat":19.4,"lon":-99.1,"accuracyM":38,"source":2}';
+  const ip   = '{"lat":42.06975,"lon":-2.0098,"accuracyM":382,"source":3}';
+  const def  = '{"lat":42.06975,"lon":-2.0098,"accuracyM":382,"source":5}';
+
+  it("acepta una posición que el equipo observó (WiFi, celular, satélite)", () => {
+    expect(parseGeoOutput(wifi)?.lat).toBe(19.4);
+    expect(classifyGeoOutput(wifi)).toBe("ok");
+    expect(parseGeoOutput('{"lat":19.4,"lon":-99.1,"source":0}')).not.toBeNull();
+    expect(parseGeoOutput('{"lat":19.4,"lon":-99.1,"source":1}')).not.toBeNull();
+  });
+
+  it("RECHAZA la derivada de IP aunque traiga un radio creíble", () => {
+    // Caso real: un equipo reportó 42.07,-2.01 (España) con acc=382. La misma
+    // clase de mentira que nos hizo abandonar la geolocalización por IP; pasarla
+    // por una API del sistema no la vuelve cierta.
+    expect(parseGeoOutput(ip)).toBeNull();
+    expect(classifyGeoOutput(ip)).toBe("ip_derived_rejected");
+  });
+
+  it("RECHAZA también la posición 'Default'", () => {
+    expect(parseGeoOutput(def)).toBeNull();
+    expect(classifyGeoOutput(def)).toBe("ip_derived_rejected");
+  });
+
+  it("no rompe con agentes que aún no mandan 'source'", () => {
+    // El campo es nuevo; su ausencia no puede invalidar un fix bueno.
+    expect(parseGeoOutput('{"lat":19.4,"lon":-99.1,"accuracyM":38}')).not.toBeNull();
+  });
+});

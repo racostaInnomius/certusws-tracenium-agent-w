@@ -73,7 +73,17 @@ export type GeoStatus =
    * macOS: somebody is logged in, but the status app is not publishing —
    * not running, crashed, or its last write aged out. This one IS a fault.
    */
-  | "agent_not_publishing";
+  | "agent_not_publishing"
+  /**
+   * Windows answered, but with a position it derived from the IP address.
+   *
+   * That is the same guess we removed from the control plane for being wrong
+   * in ways no dataset can fix — a machine egressing through another country
+   * gets that country's coordinates, dressed up with a plausible accuracy
+   * radius. Laundering it through a system API does not make it true, so it is
+   * refused here rather than stored as if the device reported itself.
+   */
+  | "ip_derived_rejected";
 
 export type GeoResult = {
   geo: AmpGeo | null;
@@ -155,6 +165,12 @@ try {
   [void][Windows.Devices.Geolocation.Geolocator,Windows.Devices.Geolocation,ContentType=WindowsRuntime]
   $locator = New-Object Windows.Devices.Geolocation.Geolocator
   $locator.ReportInterval = 2000
+  # ⚠️ PowerShell 5.1 does NOT load System.Runtime.WindowsRuntime on its own, so
+  # [System.WindowsRuntimeSystemExtensions] resolves to nothing and the AsTask
+  # lookup below silently yields $null. Verified as SYSTEM on Win11 26100: without
+  # this line the script fails with "type not found" and the agent reported it as
+  # 'denied' — a permissions problem it never was.
+  Add-Type -AssemblyName System.Runtime.WindowsRuntime -ErrorAction Stop
   $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
     $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
     $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1'
@@ -162,10 +178,18 @@ try {
   $asTask = $asTaskGeneric.MakeGenericMethod([Windows.Devices.Geolocation.Geoposition])
   $task = $asTask.Invoke($null, @($locator.GetGeopositionAsync()))
   if (-not $task.Wait(15000)) { Write-Output 'TIMEOUT'; exit 0 }
-  $p = $task.Result.Coordinate.Point.Position
-  $acc = $task.Result.Coordinate.Accuracy
+  $coord = $task.Result.Coordinate
+  $p = $coord.Point.Position
+  # WHERE the position came from. Windows falls back to IP-based location when
+  # it has no Wi-Fi or cellular data to work with, and reports it with a
+  # plausible-looking accuracy — which is exactly the failure that made us
+  # abandon IP geolocation in the first place. A datacentre VM will happily
+  # report a city on another continent this way, so the source travels with the
+  # fix and the backend decides whether to trust it.
+  #   0=Cellular 1=Satellite 2=WiFi 3=IPAddress 4=Unknown 5=Default 6=Obfuscated
   Write-Output (ConvertTo-Json -Compress @{
-    lat = $p.Latitude; lon = $p.Longitude; accuracyM = $acc
+    lat = $p.Latitude; lon = $p.Longitude; accuracyM = $coord.Accuracy
+    source = [int]$coord.PositionSource
   })
 } catch {
   # Most common causes: location services off for the machine, the
@@ -193,6 +217,10 @@ export function parseGeoOutput(stdout: unknown, now: () => Date = () => new Date
     return null;
   }
   if (!parsed || typeof parsed !== "object") return null;
+
+  // PositionSource, when the platform told us: 3=IPAddress, 5=Default. Both
+  // mean "we guessed"; neither is a position the device observed about itself.
+  if (parsed.source === 3 || parsed.source === 5) return null;
 
   const lat = Number(parsed.lat);
   const lon = Number(parsed.lon);
@@ -415,6 +443,15 @@ export function classifyGeoOutput(stdout: unknown): GeoStatus {
   if (text === "NO_PUBLISHER") return "agent_not_publishing";
   if (text === "TIMEOUT") return "unavailable";
   if (text.startsWith("ERROR:")) return "denied";
+
+  // An IP-derived answer is a refusal dressed as a success: say so plainly
+  // instead of letting it fall through to the generic "no fix".
+  try {
+    const src = JSON.parse(text)?.source;
+    if (src === 3 || src === 5) return "ip_derived_rejected";
+  } catch {
+    // Not JSON — handled below.
+  }
 
   // macOS publishes the REASON alongside (or instead of) a fix, because only
   // the user-session app can see the OS permission state. Trust it over
