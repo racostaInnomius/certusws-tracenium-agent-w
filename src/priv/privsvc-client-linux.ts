@@ -18,6 +18,38 @@ export function getTimeoutForMethod(method: string): number {
       return 30000;
     case "grpc.heartbeat":
       return 5000;
+    // ── RCP signaling + audit (agent → backend) ──────────────────────
+    // The handler on the PrivSvc side is a single write to the gRPC
+    // stream — microseconds of work. This budget is NOT about the
+    // handler being slow; it exists because the IPC pipe is a SERIAL
+    // lane: one request is served at a time, and the client's clock
+    // starts at the write, not when PrivSvc picks the request up.
+    //
+    // ICE candidates are the pathological case. libdatachannel emits
+    // them in a BURST (4-5 at once as gathering completes), so the
+    // 2nd-5th sit queued behind the 1st plus whatever else was already
+    // in flight. At the 8s default they expired before ever reaching
+    // the stream, the browser got no remote candidates, and the session
+    // died with `ice_failed` — observed in production on 2026-08-15:
+    //   "PrivSvc timeout: grpc.send.remoteSessionIce did not answer
+    //    within 8000ms"
+    //
+    // ⚠️ This is MITIGATION, not a cure. If the lane is occupied by a
+    // long privileged operation (sdp.install budgets 1800s) no signaling
+    // budget saves us. The real fix is a separate lane / priority for
+    // latency-critical signaling — see the IPC serialization ADR.
+    //
+    // 30s: comfortably longer than any realistic queue behind a normal
+    // request, and past the point where a late ICE candidate is still
+    // useful anyway (the browser's connectivity checks have moved on).
+    case "grpc.send.remoteSessionAnswer":
+    case "grpc.send.remoteSessionIce":
+    case "grpc.send.remoteSessionClose":
+    case "grpc.send.remoteSessionError":
+    case "grpc.send.remoteSessionTranscript":
+    case "grpc.send.remoteFileTransferAudit":
+    case "grpc.send.remoteScreenAudit":
+      return 30000;
     case "software.inventory":
       return 60000;
     case "security.compliance":

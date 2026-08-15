@@ -21,6 +21,14 @@ import { getTimeoutForMethod as linuxTimeout } from "../../src/priv/privsvc-clie
  * handler budget without raising its client is what breaks it, so this test
  * exists to make that failure loud.
  *
+ * A 6th occurrence (grpc.send.remoteSessionIce, 2026-08-15) was a DIFFERENT
+ * shape again: the handler is a microsecond stream write, so no ceiling was
+ * ever violated. What killed it was the QUEUE — ICE candidates arrive in a
+ * burst of 4-5 and the later ones spent their whole 8s default budget waiting
+ * their turn on the serial lane. RCP sessions died with `ice_failed` and the
+ * browser never saw a remote candidate. Budgets below are therefore about
+ * queueing latency, not handler duration.
+ *
  * ⚠️ NECESSARY BUT NOT SUFFICIENT. A 5th occurrence (cdp.certs.read,
  * 2026-08-13) satisfied every assertion in this file and still failed in
  * production, because the Windows pipe serves ONE request at a time and the
@@ -87,6 +95,49 @@ describe("IPC client budgets outwait the privsvc handler", () => {
   it("an unknown method still gets the conservative default", () => {
     for (const t of Object.values(CLIENTS)) {
       expect(t("something.new")).toBe(8000);
+    }
+  });
+});
+
+// The 6th occurrence has no handler ceiling to outwait — these budgets exist
+// to survive QUEUEING on the serial IPC lane, so they get their own block
+// rather than an entry in PRIVSVC_CEILING_MS.
+describe("RCP signaling survives the serial IPC lane", () => {
+  const RCP_SENDS = [
+    "grpc.send.remoteSessionAnswer",
+    "grpc.send.remoteSessionIce",
+    "grpc.send.remoteSessionClose",
+    "grpc.send.remoteSessionError",
+    "grpc.send.remoteSessionTranscript",
+    "grpc.send.remoteFileTransferAudit",
+    "grpc.send.remoteScreenAudit",
+  ];
+
+  for (const method of RCP_SENDS) {
+    it(`${method} is off the 8s default on every platform`, () => {
+      for (const t of Object.values(CLIENTS)) {
+        // 8s is what expired mid-burst in production. Anything at the
+        // default here means a platform was missed when the case list grew.
+        expect(t(method)).toBeGreaterThan(8000);
+      }
+    });
+  }
+
+  it("all three platforms agree on the signaling budget", () => {
+    // Signaling is platform-independent: the same burst, the same lane
+    // semantics. A per-platform divergence would only ever be an oversight,
+    // and would make RCP fail on exactly one OS — the hardest thing to spot.
+    for (const method of RCP_SENDS) {
+      const budgets = Object.values(CLIENTS).map((t) => t(method));
+      expect(new Set(budgets).size).toBe(1);
+    }
+  });
+
+  it("ICE is not given so long a budget that it outlives its usefulness", () => {
+    // A candidate that lands after the browser's connectivity checks have
+    // moved on is worse than a failure: it holds the lane for nothing.
+    for (const t of Object.values(CLIENTS)) {
+      expect(t("grpc.send.remoteSessionIce")).toBeLessThanOrEqual(60_000);
     }
   });
 });
