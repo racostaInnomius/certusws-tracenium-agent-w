@@ -59,6 +59,11 @@ const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 // link. Caller can override via params.timeoutSeconds.
 const DEFAULT_DOWNLOAD_TIMEOUT_S = 600;
 
+// Floor for one source's slice of the download budget. Below this an attempt
+// cannot say anything useful — it would expire during the TLS handshake and
+// report a healthy source as broken.
+const MIN_PER_SOURCE_TIMEOUT_S = 30;
+
 // 29 min install (60s under the agent orchestrator's 30 min cap).
 const DEFAULT_INSTALL_TIMEOUT_S = 1740;
 
@@ -505,7 +510,45 @@ export async function handleSdpDownload(req: PrivSvcRequest): Promise<PrivSvcRes
   let sawShaMismatch = false;
   let lastError = "";
 
-  for (const candidate of candidates) {
+  // `timeoutSeconds` is the budget for the WHOLE operation, not for each
+  // source.
+  //
+  // It used to be handed intact to every candidate, so N sources meant N x 600s
+  // of worst case while the IPC client waits 700s for sdp.download. One
+  // unresponsive source burned the entire budget and the caller gave up before
+  // the fallback could finish — the caller-outwaits-handler invariant, broken
+  // again, this time by multiplication rather than by a small number.
+  //
+  // A shared deadline keeps the handler inside what the client will wait for,
+  // and dividing the remainder by the sources still to try guarantees every
+  // tier gets a turn: a dp that hangs consumes at most its share, and a dp that
+  // fails fast hands the whole remainder to origin (sourcesLeft drops to 1).
+  const opStart = Date.now();
+  const remainingSeconds = () =>
+    timeoutSeconds - Math.floor((Date.now() - opStart) / 1000);
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+
+    const remaining = remainingSeconds();
+    if (remaining < MIN_PER_SOURCE_TIMEOUT_S) {
+      // Out of budget. Transient by nature: the remaining sources may well be
+      // healthy and simply slower than this deployment allows.
+      sawNetworkFailure = true;
+      const untried = candidates.length - i;
+      lastError =
+        `download budget of ${timeoutSeconds}s exhausted with ${untried} source(s) untried; ` +
+        `last error: ${lastError || "none"}`;
+      logger.warn("sdp_download_budget_exhausted", { packageId, untried, timeoutSeconds });
+      break;
+    }
+
+    const sourcesLeft = candidates.length - i;
+    const perSourceTimeout = Math.min(
+      remaining,
+      Math.max(MIN_PER_SOURCE_TIMEOUT_S, Math.floor(remaining / sourcesLeft))
+    );
+
     // Filename: pkg-<packageId>-<random>.<format>. We DON'T derive the
     // name from the URL because URLs can carry attacker-controlled
     // chars; our random suffix prevents collisions across concurrent
@@ -521,7 +564,7 @@ export async function handleSdpDownload(req: PrivSvcRequest): Promise<PrivSvcRes
     // integrity gate. URL trust comes from the catalog/backend.
     const curlArgs = [
       "-fSL",
-      "--max-time", String(timeoutSeconds),
+      "--max-time", String(perSourceTimeout),
       "--max-filesize", String(MAX_DOWNLOAD_BYTES),
       "-o", stagingPath,
     ];
@@ -548,7 +591,7 @@ export async function handleSdpDownload(req: PrivSvcRequest): Promise<PrivSvcRes
         // Outer Node timeout is +30s of curl's --max-time, so curl's
         // own timeout fires first and we get its useful stderr instead
         // of a generic "killed" error from Node.
-        timeout: (timeoutSeconds + 30) * 1000,
+        timeout: (perSourceTimeout + 30) * 1000,
         maxBuffer: 1024 * 1024,
       });
     } catch (err: any) {

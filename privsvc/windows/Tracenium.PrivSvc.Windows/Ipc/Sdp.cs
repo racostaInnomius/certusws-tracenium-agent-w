@@ -51,6 +51,11 @@ public static class Sdp
 
     private const long MaxDownloadBytes = 2L * 1024 * 1024 * 1024; // 2 GB ceiling
     private const int DefaultDownloadTimeoutSeconds = 600;          // 10 min
+
+    // Floor for one source's slice of the download budget. Below this an
+    // attempt cannot say anything useful — it would expire during the TLS
+    // handshake and report a healthy source as broken.
+    private const int MinPerSourceTimeoutSeconds = 30;
     private const int DefaultInstallTimeoutSeconds = 1740;          // 29 min
     private const long StagingTtlMs = 24L * 60 * 60 * 1000;
 
@@ -237,8 +242,46 @@ public static class Sdp
             var sawShaMismatch = false;
             var lastError = "";
 
-            foreach (var (tier, candidateUrl) in candidates)
+            // `timeoutSeconds` is the budget for the WHOLE operation, not for
+            // each source.
+            //
+            // It used to be handed intact to every candidate, so N sources
+            // meant N x 600s of worst case while the IPC client waits 700s for
+            // sdp.download. One unresponsive source burned the entire budget
+            // and the caller gave up before the fallback could finish — the
+            // caller-outwaits-handler invariant, broken again, this time by
+            // multiplication rather than by a small number.
+            //
+            // A shared deadline keeps the handler inside what the client will
+            // wait for, and dividing the remainder by the sources still to try
+            // guarantees every tier gets a turn: a dp that hangs can consume at
+            // most its share, and a dp that fails fast hands the whole
+            // remainder to origin (sourcesLeft drops to 1).
+            var opStart = Stopwatch.GetTimestamp();
+            int RemainingSeconds() =>
+                timeoutSeconds - (int)((Stopwatch.GetTimestamp() - opStart) / (double)Stopwatch.Frequency);
+
+            for (var i = 0; i < candidates.Count; i++)
             {
+                var (tier, candidateUrl) = candidates[i];
+
+                var remaining = RemainingSeconds();
+                if (remaining < MinPerSourceTimeoutSeconds)
+                {
+                    // Out of budget. Transient by nature: the sources may well
+                    // be fine and simply slower than this deployment allows.
+                    sawNetworkFailure = true;
+                    lastError = $"download budget of {timeoutSeconds}s exhausted with " +
+                                $"{candidates.Count - i} source(s) untried; last error: " +
+                                (lastError.Length > 0 ? lastError : "none");
+                    IpcLog.Write($"[sdp.download] budget exhausted packageId={packageId} untried={candidates.Count - i}");
+                    break;
+                }
+
+                var sourcesLeft = candidates.Count - i;
+                var perSourceTimeout = Math.Max(MinPerSourceTimeoutSeconds, remaining / sourcesLeft);
+                if (perSourceTimeout > remaining) perSourceTimeout = remaining;
+
                 // pkg-<packageId>-<random>.<format>; random suffix avoids
                 // collisions across concurrent downloads and attempts.
                 var nonce = Convert.ToHexString(RandomBytes(8)).ToLowerInvariant();
@@ -256,7 +299,7 @@ public static class Sdp
                     continue;
                 }
 
-                var attempt = await DownloadOneAsync(client, candidateUrl, stagingPath, expectedSha256, timeoutSeconds, rateLimitKbps);
+                var attempt = await DownloadOneAsync(client, candidateUrl, stagingPath, expectedSha256, perSourceTimeout, rateLimitKbps);
                 if (attempt.Ok)
                 {
                     return PrivSvcResponse.Success(req.Id, new
