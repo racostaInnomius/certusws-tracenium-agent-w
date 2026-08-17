@@ -807,8 +807,19 @@ else
   # Foreign-arch Mach-O (the darwin-x64 helper inside an arm64 pkg and
   # vice versa) still gets signed — Apple validates every slice it finds,
   # regardless of the pkg's target arch.
+  #
+  # Y de paso, el bit de ejecución. node-pty publica en npm el prebuild
+  # darwin-x64 de `spawn-helper` SIN +x (el darwin-arm64 sí lo trae), así
+  # que en un Mac Intel node-pty falla al arrancar con
+  # `pty_spawn_failed: forkpty(3) failed` — un modo de fallo que no menciona
+  # permisos por ningún lado. Un chmod aquí lo cubre venga el bit mal de
+  # npm, del `cp -R` o de lo que se añada después: si es Mach-O ejecutable,
+  # tiene que poder ejecutarse. Los .node son bundles, no ejecutables, así
+  # que `file` los deja fuera y no se tocan.
   find "$PKG_PREFIX/Agent/node_modules" -type f 2>/dev/null | while IFS= read -r cand; do
-    /usr/bin/file -b "$cand" 2>/dev/null | grep -q "Mach-O" || continue
+    kind="$(/usr/bin/file -b "$cand" 2>/dev/null)"
+    case "$kind" in *Mach-O*) ;; *) continue ;; esac
+    case "$kind" in *executable*) chmod 0755 "$cand" ;; esac
     sign_internal_bin "$cand"
   done
 fi
