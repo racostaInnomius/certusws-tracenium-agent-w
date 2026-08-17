@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>tracenium-session-probe</AssemblyName>
+    <!-- Permite publicar para Windows desde macOS/Linux, igual que el csproj
+         del PrivSvc. Solo afecta al build. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- El CÓDIGO REAL del agente, no una reimplementación parecida. Si la
+         sonda captura y el servicio no, la única variable es la sesión. -->
+    <Compile Include="../../privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/Protocol.cs" />
+    <Compile Include="../../privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/ScreenCaptureDxgi.cs" />
+    <Compile Include="../../privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/ScreenCapture.cs" />
+  </ItemGroup>
+</Project>
