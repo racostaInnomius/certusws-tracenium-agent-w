@@ -191,9 +191,31 @@
 
     <InstallExecuteSequence>
       <!-- Configure recovery + register watchdog after service is installed
-           but before it starts. Re-apply on reinstall/upgrade (idempotent). -->
-      <Custom Action="ConfigureAgentCoreRecovery" After="InstallServices"           Condition="NOT Installed OR REINSTALL"/>
-      <Custom Action="RegisterTraceniumWatchdog"  After="ConfigureAgentCoreRecovery" Condition="NOT Installed OR REINSTALL"/>
+           but before it starts.
+
+           These used to carry Condition="NOT Installed OR REINSTALL". That
+           looks right, but it silently skipped both layers on any install
+           that Windows did not classify as a fresh install or an explicit
+           reinstall — which is exactly what the fleet went through while the
+           MSI was shipping a hardcoded ProductVersion 1.1.21 and MajorUpgrade
+           was therefore dead (see Product.wxs history). Hosts installed in
+           that window ended up with NO SCM failure actions and NO watchdog
+           task, and nothing ever re-applied them, because the condition only
+           fires on the install shapes those hosts never see again.
+
+           Found in the field in August 2026: a 1.1.35 host answered
+           `sc qfailure TraceniumAgentCore` with RESET_PERIOD 0 and no
+           actions at all. Its AgentCore crashed and stayed down for days —
+           layer 2 and layer 3 were both absent.
+
+           Both actions are idempotent (`sc.exe failure` overwrites;
+           register-watchdog.ps1 re-registers), so there is nothing to gain
+           from conditioning them and a whole outage to lose. Run them every
+           time. The PrivSvc re-applies the recovery policy at every start as
+           well (ServiceRecovery.cs) so already-deployed hosts get repaired
+           without waiting for an upgrade to reach them. -->
+      <Custom Action="ConfigureAgentCoreRecovery" After="InstallServices"/>
+      <Custom Action="RegisterTraceniumWatchdog"  After="ConfigureAgentCoreRecovery"/>
 
       <!-- Remove watchdog on full uninstall only (NOT on upgrade). -->
       <Custom Action="UnregisterTraceniumWatchdog" Before="RemoveExistingProducts"   Condition='REMOVE="ALL"'/>

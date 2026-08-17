@@ -22,6 +22,14 @@ public sealed class Worker : BackgroundService
     {
         _logger.LogInformation("TraceniumPrivSvc starting...");
 
+        // Repair AgentCore's SCM restart policy before anything else. The MSI
+        // is supposed to set this, but hosts have been found in the field with
+        // no failure actions at all — one crash away from staying down forever.
+        // We run as LocalSystem and start before AgentCore (it depends on us),
+        // so this is the earliest point where the fix can land, and it reaches
+        // already-deployed hosts without needing an upgrade.
+        ServiceRecovery.EnsureConfigured(_logger);
+
         _ = Task.Run(async () =>
         {
             try
