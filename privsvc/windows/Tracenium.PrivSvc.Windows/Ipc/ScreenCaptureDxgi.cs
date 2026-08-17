@@ -207,7 +207,12 @@ internal static class ScreenCaptureDxgi
         public uint PointerShapeBufferSize;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
+    // ⚠️ CharSet.Unicode NO es opcional. El campo nativo es WCHAR DeviceName[32],
+    // o sea 64 bytes. Sin CharSet el default es Ansi y ByValTStr marshala 32,
+    // dejando todo lo que va detrás corrido 32 bytes: DesktopCoordinates cae
+    // sobre la segunda mitad de DeviceName, que va rellena de ceros. GetDesc
+    // devuelve S_OK y aun así el escritorio mide 0x0.
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct DXGI_OUTPUT_DESC
     {
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
@@ -478,12 +483,17 @@ internal static class ScreenCaptureDxgi
                     try
                     {
                         // Cache the desktop size from the output description.
+                        // Sin tamaño no hay captura posible: la textura de staging
+                        // tiene que medir exactamente lo mismo que el escritorio o
+                        // CopyResource no copia nada. Fallar aquí y ruidosamente es
+                        // preferible a seguir con un tamaño inventado y devolver
+                        // una imagen negra que aparenta funcionar.
                         hr = GetDesc(output, out var desc);
-                        if (hr == S_OK)
-                        {
-                            _width  = (uint)(desc.DesktopCoordinates.Right  - desc.DesktopCoordinates.Left);
-                            _height = (uint)(desc.DesktopCoordinates.Bottom - desc.DesktopCoordinates.Top);
-                        }
+                        if (hr != S_OK) return hr;
+
+                        _width  = (uint)(desc.DesktopCoordinates.Right  - desc.DesktopCoordinates.Left);
+                        _height = (uint)(desc.DesktopCoordinates.Bottom - desc.DesktopCoordinates.Top);
+                        if (_width == 0 || _height == 0) return E_FAIL;
 
                         hr = DuplicateOutput(output1, _d3dDevice, out _outputDuplication);
                         if (hr != S_OK) return hr;
@@ -522,8 +532,14 @@ internal static class ScreenCaptureDxgi
             IntPtr stagingTex = IntPtr.Zero;
             try
             {
-                var w = _width;  if (w == 0) w = 1920;  // safe defaults
-                var h = _height; if (h == 0) h = 1080;
+                // Nada de valores por defecto: un 1920x1080 inventado sobre un
+                // escritorio de otro tamaño hace que CopyResource —que exige
+                // dimensiones idénticas— no copie, y la textura de staging se
+                // lee sin inicializar. El síntoma es un JPEG negro del tamaño
+                // equivocado, que es peor que un fallo porque parece funcionar.
+                if (_width == 0 || _height == 0) return E_FAIL;
+                var w = _width;
+                var h = _height;
 
                 var stagingDesc = new D3D11_TEXTURE2D_DESC
                 {
