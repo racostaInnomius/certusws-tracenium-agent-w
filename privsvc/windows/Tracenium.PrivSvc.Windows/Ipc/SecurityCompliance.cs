@@ -656,7 +656,7 @@ foreach ($entry in $history) {
     operation     = 'install'
     resultCode    = [int]$entry.ResultCode
     updateId      = $updateId
-    supportUrl    = try { [string]$entry.SupportUrl } catch { $null }
+    supportUrl    = $(try { [string]$entry.SupportUrl } catch { $null })
   }
 }
 

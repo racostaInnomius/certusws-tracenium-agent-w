@@ -42,18 +42,18 @@ foreach ($update in $result.Updates) {
   }
 
   $items += [pscustomobject]@{
-    updateId = try { [string]$update.Identity.UpdateID } catch { $null }
-    revisionNumber = try { [int]$update.Identity.RevisionNumber } catch { $null }
+    updateId = $(try { [string]$update.Identity.UpdateID } catch { $null })
+    revisionNumber = $(try { [int]$update.Identity.RevisionNumber } catch { $null })
     title = [string]$update.Title
     description = [string]$update.Description
-    msrcSeverity = try { [string]$update.MsrcSeverity } catch { $null }
+    msrcSeverity = $(try { [string]$update.MsrcSeverity } catch { $null })
     kbArticleIds = $kbs
     categories = $categories
     isDownloaded = [bool]$update.IsDownloaded
     isMandatory = [bool]$update.IsMandatory
     rebootRequired = [bool]$update.RebootRequired
     eulaAccepted = [bool]$update.EulaAccepted
-    supportUrl = try { [string]$update.SupportUrl } catch { $null }
+    supportUrl = $(try { [string]$update.SupportUrl } catch { $null })
   }
 }
 
@@ -193,8 +193,8 @@ foreach ($update in $searchResult.Updates) {{
 
   [void]$updates.Add($update)
   $selected += [pscustomobject]@{{
-    updateId = try {{ [string]$update.Identity.UpdateID }} catch {{ $null }}
-    revisionNumber = try {{ [int]$update.Identity.RevisionNumber }} catch {{ $null }}
+    updateId = $(try {{ [string]$update.Identity.UpdateID }} catch {{ $null }})
+    revisionNumber = $(try {{ [int]$update.Identity.RevisionNumber }} catch {{ $null }})
     title = [string]$update.Title
     kbArticleIds = $kbs
     categories = $categories
@@ -243,11 +243,11 @@ if ($mode -eq 'download' -or $mode -eq 'install') {{
     if ($downloaded) {{ $downloadedCount++ }}
 
     $results += [pscustomobject]@{{
-      updateId = try {{ [string]$update.Identity.UpdateID }} catch {{ $null }}
+      updateId = $(try {{ [string]$update.Identity.UpdateID }} catch {{ $null }})
       kb = if ($kbs.Count -gt 0) {{ $kbs[0] }} else {{ $null }}
       title = [string]$update.Title
       result = if ($downloaded) {{ 'downloaded' }} else {{ 'failed' }}
-      hresult = try {{ ('0x' + [Convert]::ToString([int]$downloadResult.HResult, 16)) }} catch {{ $null }}
+      hresult = $(try {{ ('0x' + [Convert]::ToString([int]$downloadResult.HResult, 16)) }} catch {{ $null }})
       message = if ($downloaded) {{ 'downloaded' }} else {{ 'download_failed' }}
     }}
   }}
@@ -280,12 +280,12 @@ if ($mode -eq 'install') {{
     if ([bool]$updateResult.RebootRequired -or [bool]$installResult.RebootRequired) {{ $rebootRequired = $true }}
 
     $results += [pscustomobject]@{{
-      updateId = try {{ [string]$update.Identity.UpdateID }} catch {{ $null }}
+      updateId = $(try {{ [string]$update.Identity.UpdateID }} catch {{ $null }})
       kb = if ($kbs.Count -gt 0) {{ $kbs[0] }} else {{ $null }}
       title = [string]$update.Title
       result = $mappedResult
-      hresult = try {{ ('0x' + [Convert]::ToString([int]$updateResult.HResult, 16)) }} catch {{ $null }}
-      message = try {{ [string]$updateResult.ResultCode }} catch {{ $null }}
+      hresult = $(try {{ ('0x' + [Convert]::ToString([int]$updateResult.HResult, 16)) }} catch {{ $null }})
+      message = $(try {{ [string]$updateResult.ResultCode }} catch {{ $null }})
     }}
   }}
 }}
