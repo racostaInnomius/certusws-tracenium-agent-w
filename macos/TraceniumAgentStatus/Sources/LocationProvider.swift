@@ -114,16 +114,43 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
         timer = nil
     }
 
+    /// Every authorization state that lets us actually ask for a fix.
+    ///
+    /// ⚠️ `requestWhenInUseAuthorization()` (the call we make below) grants
+    /// `.authorizedWhenInUse` on macOS — a case that was missing from all three
+    /// switches that consumed the status. The result was that granting the
+    /// permission accomplished nothing: `statusName` reported "unavailable",
+    /// `requestFix()` fell through to the "denied or restricted" branch and
+    /// never called `requestLocation()`, and the delegate ignored the grant
+    /// entirely. The published document then aged past the daemon's one-hour
+    /// staleness window and the dashboard settled on `agent_not_publishing`
+    /// — "the menubar app is not reporting" — for a Mac whose menubar app was
+    /// running fine and whose user had said yes.
+    ///
+    /// Deriving all three from ONE predicate is the point: three parallel
+    /// switches over the same enum is how a case goes missing from some of
+    /// them but not others.
+    private var isAuthorized: Bool {
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse: return true
+        default: return false
+        }
+    }
+
     /// The OS status, as a string the daemon and the dashboard can act on.
     ///
     /// Mirrors GeoStatus on the agent side. `notDetermined` is its own answer
     /// and NOT "unavailable": nobody has been asked yet, so waiting will never
     /// help — somebody has to grant it.
     private var statusName: String {
+        if isAuthorized { return "ok" }
         switch manager.authorizationStatus {
-        case .authorized, .authorizedAlways: return "ok"
         case .denied, .restricted: return "denied"
         case .notDetermined: return "consent_required"
+        // Unreachable — `isAuthorized` returned above for both. Listed anyway
+        // so the switch stays exhaustive: that is what makes the compiler,
+        // rather than a field report, catch the next case we forget.
+        case .authorizedAlways, .authorizedWhenInUse: return "ok"
         @unknown default: return "unavailable"
         }
     }
@@ -163,8 +190,7 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
         // wait for something that was never going to happen.
         LocationSink.writeStatus(statusName)
 
-        switch manager.authorizationStatus {
-        case .authorized, .authorizedAlways:
+        if isAuthorized {
             // Heartbeat. Granted-but-no-fix-yet used to leave NO file at all,
             // which the daemon could not tell apart from "this app is dead" —
             // both looked like an absent file. Writing a reason here makes the
@@ -173,6 +199,10 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
             // requestLocation delivers exactly one fix and powers the radio
             // back down, which is the whole point of not using startUpdating.
             manager.requestLocation()
+            return
+        }
+
+        switch manager.authorizationStatus {
         case .notDetermined:
             if hasPresentedPromptThisLaunch {
                 // Already asked this launch and nobody answered. Say so once
@@ -204,10 +234,13 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        switch manager.authorizationStatus {
-        case .authorized, .authorizedAlways:
+        if isAuthorized {
             Logger.shared.info("Location authorization granted")
             requestFix()
+            return
+        }
+
+        switch manager.authorizationStatus {
         case .denied, .restricted:
             Logger.shared.info("Location authorization denied by the user")
             // The user said no. Drop anything we published earlier rather than

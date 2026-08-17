@@ -7,6 +7,38 @@ import path from "path";
 import type { RunUpdateResult } from "./update-types";
 import { updateUpdateState } from "./update-state";
 
+/** How long a shim has to be untouched before we consider it abandoned. */
+const SHIM_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Delete update shims left by earlier runs.
+ *
+ * Best-effort by design: a shim we cannot remove is litter in %TEMP%, not a
+ * reason to abandon an update. The age guard keeps us off a shim that a task
+ * scheduled a minute ago is about to execute — the schtasks start time has
+ * minute granularity, so "written recently" and "already running" overlap.
+ */
+function purgeOldShims(now: number = Date.now()): void {
+  const dir = os.tmpdir();
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+
+  for (const name of names) {
+    if (!name.startsWith("tracenium-update-") || !name.endsWith(".cmd")) continue;
+    const full = path.join(dir, name);
+    try {
+      if (now - fs.statSync(full).mtimeMs < SHIM_MAX_AGE_MS) continue;
+      fs.unlinkSync(full);
+    } catch {
+      // Locked, already gone, or not ours to delete. Leave it.
+    }
+  }
+}
+
 export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
   if (!fs.existsSync(msiPath)) {
     throw new Error(`msi_not_found: ${msiPath}`);
@@ -38,24 +70,57 @@ export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
   // without needing a password. Task auto-deletes after running via
   // /z + /sd /ed combo (we set ed = now + 1 hour as the cutoff).
 
+  // Shims from previous updates. They used to delete themselves, which is
+  // exactly what broke the exit code (see the shim below), so cleanup moved
+  // here: the NEXT update sweeps the last one's leftovers, and nothing has to
+  // delete a file it is currently executing.
+  purgeOldShims();
+
   // 1. Write a tiny .cmd shim that:
   //    - waits 10 seconds (gives the agent time to be stopped cleanly)
   //    - runs msiexec
-  //    - deletes itself afterwards
+  //    - removes the one-shot task it was launched from
   // Using a shim instead of inlining the command in /tr keeps quoting
   // sane for paths with spaces (Program Files, etc.).
   const shimPath = path.join(
     os.tmpdir(),
     `tracenium-update-${Date.now()}-${process.pid}.cmd`
   );
+
+  // Compute "start in ~1 minute" for the schtasks /st HH:MM time.
+  // schtasks accepts HH:mm only (no seconds), so we round up.
+  const startAt = new Date(Date.now() + 60_000);
+  const hh = String(startAt.getHours()).padStart(2, "0");
+  const mm = String(startAt.getMinutes()).padStart(2, "0");
+  const startTime = `${hh}:${mm}`;
+
+  // Named before the shim is written: the shim deletes this task by name.
+  const taskName = `TraceniumAgentUpdate_${Date.now()}`;
+
   const shimContents = [
     "@echo off",
     "rem One-shot update launcher — see updater-runner.ts header for rationale.",
-    "timeout /t 10 /nobreak >nul",
+    "rem",
+    "rem `timeout` is NOT used here. It reads the console input handle, and a",
+    "rem task running as SYSTEM with no interactive session has none: it aborts",
+    "rem instantly with \"Input redirection is not supported\". The 10-second",
+    "rem grace period this design depends on — letting the agent exit before",
+    "rem msiexec starts hammering the install dir — therefore never happened.",
+    "rem `ping` is the portable console-free sleep: -n 11 waits ~10s.",
+    "ping -n 11 127.0.0.1 >nul",
     `msiexec.exe /i "${msiPath}" /qn /norestart`,
     "set MSIEXEC_RC=%ERRORLEVEL%",
-    "rem self-delete after run",
-    `del /q "%~f0"`,
+    "rem Remove the one-shot task. The header of this file used to claim that",
+    "rem `/z /sd /ed` did this, but those flags were never passed — so every",
+    "rem update left a scheduled task behind, permanently, on every endpoint",
+    "rem (4 of them found on one host, 2026-08-14).",
+    `schtasks.exe /delete /tn "${taskName}" /f >nul 2>&1`,
+    "rem NOTE: this shim deliberately does NOT delete itself. `del \"%~f0\"` on",
+    "rem the running .cmd makes cmd.exe fail to read the next line, so the",
+    "rem `exit /b` below never ran and Task Scheduler recorded LastResult 1 on",
+    "rem installs that had in fact succeeded (all three on 2026-08-13, against",
+    "rem an Event Log saying \"status: 0\"). That cost us the only signal we had",
+    "rem for whether an update worked. The next run purges it instead.",
     "exit /b %MSIEXEC_RC%"
   ].join("\r\n");
 
@@ -64,15 +129,6 @@ export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
   } catch (err: any) {
     throw new Error(`update_shim_write_failed: ${err?.message || err}`);
   }
-
-  // 2. Compute "start in 30 seconds" for the schtasks /st HH:MM time.
-  // schtasks accepts HH:mm only (no seconds), so we round up.
-  const startAt = new Date(Date.now() + 60_000);
-  const hh = String(startAt.getHours()).padStart(2, "0");
-  const mm = String(startAt.getMinutes()).padStart(2, "0");
-  const startTime = `${hh}:${mm}`;
-
-  const taskName = `TraceniumAgentUpdate_${Date.now()}`;
   const schArgs = [
     "/create",
     "/tn", taskName,
