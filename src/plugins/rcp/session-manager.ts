@@ -48,12 +48,23 @@ type PendingIce = {
   sdpMLineIndex: number;
 };
 
+/** `a=ice-ufrag:` from an SDP. Identifies an ICE generation: a new value
+ *  means the far side restarted ICE rather than resending its offer. */
+function extractIceUfrag(sdp: string): string | null {
+  const m = /^a=ice-ufrag:(\S+)/m.exec(String(sdp || ""));
+  return m ? m[1] : null;
+}
+
 export class SessionManager {
   private readonly sessions = new Map<string, PeerSession>();
   private readonly pendingIce = new Map<
     string,
     { at: number; items: PendingIce[] }
   >();
+  // ice-ufrag of the offer each live session was built from. A second offer
+  // carrying the SAME ufrag is a signaling retransmit; a DIFFERENT one is an
+  // ICE restart, which this WebRTC stack cannot apply — see onOffer.
+  private readonly sessionUfrag = new Map<string, string>();
 
   constructor(private readonly ctx: AgentContext) {}
 
@@ -110,12 +121,54 @@ export class SessionManager {
     }
 
     if (this.sessions.has(sessionId)) {
-      // Duplicate offer for the same sessionId — could be a
-      // signaling retry. Resend the answer if we already have a
-      // PeerSession; otherwise log and ignore.
-      this.ctx.logger?.warn?.("[rcp] duplicate offer for existing session", {
-        sessionId
+      // A second offer for a live session is one of two very different
+      // things, and the old code ignored both — which left the browser
+      // waiting for an answer that never came until its retries ran out
+      // ("WebRTC connection lost — retries exhausted").
+      const incomingUfrag = extractIceUfrag(sdp);
+      const knownUfrag = this.sessionUfrag.get(sessionId);
+      const peer = this.sessions.get(sessionId)!;
+
+      if (incomingUfrag && knownUfrag && incomingUfrag === knownUfrag) {
+        // Same ICE credentials ⇒ a plain retransmit of the offer we already
+        // answered (bus redelivery, or the browser resending). Re-applying is
+        // safe: libdatachannel accepts an identical remote description and
+        // emits a fresh answer, which is exactly what the browser is waiting
+        // for. Verified against node-datachannel before relying on it.
+        this.ctx.logger?.info?.("[rcp] offer retransmit — re-answering", {
+          sid: sessionId.slice(-8)
+        });
+        peer.acceptOffer(sdp).catch((err: any) => {
+          this.ctx.logger?.warn?.("[rcp] re-answer failed", {
+            sid: sessionId.slice(-8),
+            err: err?.message || String(err)
+          });
+        });
+        return;
+      }
+
+      // Different ice-ufrag ⇒ the browser attempted an ICE RESTART
+      // (createOffer({iceRestart:true}) in iceRestart.js). libdatachannel
+      // rejects a remote description with new ICE credentials on an existing
+      // PeerConnection — "Invalid ICE settings from remote SDP" — so we
+      // cannot renegotiate in place, and pretending otherwise would just
+      // throw inside the native layer.
+      //
+      // Closing with an explicit reason at least turns a silent hang into a
+      // message the operator can act on. Rebuilding the peer from scratch
+      // WOULD recover connectivity, but it drops the DataChannel and with it
+      // the PTY / in-flight transfer — the very thing ICE restart exists to
+      // preserve — so that trade-off is not made here unilaterally.
+      this.ctx.logger?.warn?.("[rcp] ICE restart requested but unsupported by the WebRTC stack", {
+        sid: sessionId.slice(-8),
+        knownUfrag,
+        incomingUfrag
       });
+      this.sessions.delete(sessionId);
+      this.sessionUfrag.delete(sessionId);
+      this.pendingIce.delete(sessionId);
+      void peer.dispose("ice_restart_unsupported");
+      this.sendClose(sessionId, "ice_restart_unsupported");
       return;
     }
 
@@ -225,6 +278,8 @@ export class SessionManager {
       sid: sessionId.slice(-8)
     });
     this.sessions.set(sessionId, peer);
+    const ufrag = extractIceUfrag(sdp);
+    if (ufrag) this.sessionUfrag.set(sessionId, ufrag);
 
     try {
       this.ctx.logger?.info?.("[rcp] acceptOffer starting", {
@@ -245,6 +300,7 @@ export class SessionManager {
       });
       this.sessions.delete(sessionId);
       this.pendingIce.delete(sessionId);
+      this.sessionUfrag.delete(sessionId);
       this.sendError(sessionId, "SDP_PARSE_ERROR", err?.message || String(err));
     }
   }

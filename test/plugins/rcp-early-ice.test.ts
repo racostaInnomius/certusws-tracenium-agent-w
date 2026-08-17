@@ -31,6 +31,7 @@ function makeManager() {
   added.length = 0;
   acceptOffer.mockClear();
   const logs: any[] = [];
+  const sent: any[] = [];
   const ctx: any = {
     logger: {
       info: (m: string, d: any) => logs.push([m, d]),
@@ -38,9 +39,9 @@ function makeManager() {
       error: () => {}, debug: () => {}
     },
     policyRuntime: { isFeatureEnabled: (f: string) => f === "remoteShell" },
-    sendControl: () => {}
+    sendControl: (m: any) => sent.push(m)
   };
-  return { mgr: new SessionManager(ctx), logs };
+  return { mgr: new SessionManager(ctx), logs, sent };
 }
 
 const offer = (sessionId: string) => ({
@@ -134,5 +135,55 @@ describe("early ICE — el buffer está acotado", () => {
   it("ignora un sessionId vacío", () => {
     const { mgr } = makeManager();
     expect(() => mgr.onIce({ candidate: "c" })).not.toThrow();
+  });
+});
+
+// ── Ofertas duplicadas ────────────────────────────────────────────────
+//
+// Una segunda oferta para una sesión viva son dos cosas MUY distintas, y
+// antes se ignoraban las dos: el navegador se quedaba esperando una
+// respuesta que nunca llegaba hasta agotar reintentos ("WebRTC connection
+// lost — retries exhausted").
+//
+// Verificado contra node-datachannel antes de escribir esto:
+//   - misma oferta reenviada        -> la acepta y emite respuesta nueva
+//   - oferta con ice-ufrag distinto -> "Invalid ICE settings from remote SDP"
+// Por eso el retransmit se re-responde y el ICE restart se cierra con un
+// motivo explícito en vez de intentar una renegociación que la librería
+// no soporta.
+describe("ofertas duplicadas", () => {
+  const withUfrag = (sessionId: string, ufrag: string) => ({
+    sessionId,
+    sdp: `v=0\r\na=ice-ufrag:${ufrag}\r\na=ice-pwd:xxxx\r\n`,
+    capability: "rcp.shell",
+    sessionTimeoutSeconds: 60
+  });
+
+  it("re-responde a una retransmisión (mismo ice-ufrag)", async () => {
+    const { mgr } = makeManager();
+    await mgr.onOffer(withUfrag("s1", "AAAA"));
+    expect(acceptOffer).toHaveBeenCalledTimes(1);
+    await mgr.onOffer(withUfrag("s1", "AAAA"));
+    // Segunda aplicación => libdatachannel emite una respuesta nueva.
+    expect(acceptOffer).toHaveBeenCalledTimes(2);
+  });
+
+  it("cierra con motivo explícito ante un ICE restart (ufrag distinto)", async () => {
+    const { mgr, sent } = makeManager();
+    await mgr.onOffer(withUfrag("s1", "AAAA"));
+    await mgr.onOffer(withUfrag("s1", "BBBB"));
+    // No se intenta renegociar: la librería lo rechazaría.
+    expect(acceptOffer).toHaveBeenCalledTimes(1);
+    const close = sent.find((m: any) => m.remoteSessionClose);
+    expect(close?.remoteSessionClose?.reason).toBe("ice_restart_unsupported");
+  });
+
+  it("tras el cierre por ICE restart, la sesión deja de estar viva", async () => {
+    const { mgr } = makeManager();
+    await mgr.onOffer(withUfrag("s1", "AAAA"));
+    await mgr.onOffer(withUfrag("s1", "BBBB"));
+    // Una oferta posterior se trata como sesión nueva, no como duplicada.
+    await mgr.onOffer(withUfrag("s1", "CCCC"));
+    expect(acceptOffer).toHaveBeenCalledTimes(2);
   });
 });
