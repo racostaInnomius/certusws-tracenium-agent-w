@@ -11,33 +11,49 @@
 
   <logpath>%BASE%\logs</logpath>
   <!--
-    Rotación por TAMAÑO + TIEMPO, con borrado real.
+    Rotación por TAMAÑO, con borrado real.
 
-    Antes esto era `roll-by-time` con <keepFiles>14</keepFiles>. Ese
-    modo usa TimeBasedRollingLogAppender, que crea un archivo por día
-    y NUNCA borra: `keepFiles` solo lo honran roll-by-size y
-    roll-by-size-time, así que se ignoraba en silencio. Resultado:
-    TraceniumAgentCore_YYYYMMDD.{out,err}.log acumulándose sin límite
-    ni tope de tamaño — un día con tormenta de reconexiones podía
-    escribir un único archivo enorme.
+    ⚠️ NO volver a `roll-by-size-time`. Ese modo MATA EL SERVICIO.
 
-    roll-by-size-time da las dos garantías que faltaban:
-      * sizeThreshold (KB) — corta al superar 10 MB, así ningún
-        archivo se dispara aunque el día sea muy ruidoso.
-      * autoRollAtTime — corta también a medianoche, para conservar
-        el _YYYYMMDD en el nombre (nuestro flujo de soporte se apoya
-        en la fecha del archivo).
-      * zipOlderThanNumDays — comprime lo que pasa de 7 días.
-      * keepFiles — SÍ aplica en este modo: borra pasados los 14.
+    Historia, porque este archivo ya pasó por los tres modos:
 
-    Techo resultante por stream (out y err): ~10 MB vivos + los
-    comprimidos, muy por debajo de lo que se acumulaba antes.
+    1. `roll-by-time` + <keepFiles>14</keepFiles> — usa
+       TimeBasedRollingLogAppender, que crea un archivo por día y
+       NUNCA borra: keepFiles solo lo honran los modos por tamaño,
+       así que se ignoraba en silencio y los logs crecían sin tope.
+
+    2. `roll-by-size-time` (2026-08-10, para conseguir el borrado) —
+       arregló la retención y rompió algo mucho peor. En WinSW 2.12
+       RollingSizeTimeLogAppender cierra el FileStream mientras el
+       hilo que copia stdout del agente sigue escribiendo:
+
+         System.ObjectDisposedException: Cannot access a closed file.
+            at System.IO.FileStream.Write(...)
+            at WinSW.StreamCopyOperation.CopyLine()
+            at WinSW.RollingSizeTimeLogAppender.CopyStreamWithRotation(...)
+            at System.Threading.Thread.StartCallback()
+
+       Va en un hilo de background, así que .NET termina el proceso:
+       muere TraceniumAgentCore.exe (el propio WinSW) y el node.exe
+       hijo cae con él por el Job Object. Los crashes en campo caían
+       a las 00:02–00:05 hora local, es decir en el autoRollAtTime.
+       Con el SCM sin recovery actions el servicio quedaba STOPPED
+       para siempre, y el PrivSvc lo disimulaba manteniendo el device
+       "online" en el portal. 12 de 22 endpoints afectados.
+
+    3. `roll-by-size` (ahora) — SizeBasedRollingLogAppender es otra
+       clase, sin rotación temporal, así que no entra en esa carrera,
+       y sí honra keepFiles. Conserva las dos garantías que
+       buscábamos: tope duro por archivo y borrado real.
+
+    Coste aceptado: se pierde el sufijo _YYYYMMDD del nombre. Los
+    archivos quedan TraceniumAgentCore.out.log + .1.log … .14.log,
+    así que a soporte se le piden por número, no por fecha.
+    WinSW 2.12 es la última de la línea 2.x: no hay upgrade que
+    arregle el appender, la salida es no usarlo.
   -->
-  <log mode="roll-by-size-time">
-    <pattern>yyyyMMdd</pattern>
+  <log mode="roll-by-size">
     <sizeThreshold>10240</sizeThreshold>
-    <autoRollAtTime>00:00:00</autoRollAtTime>
-    <zipOlderThanNumDays>7</zipOlderThanNumDays>
     <keepFiles>14</keepFiles>
   </log>
 
