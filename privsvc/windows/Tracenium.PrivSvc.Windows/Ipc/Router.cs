@@ -52,6 +52,12 @@ public sealed class Router
         var noisy = HighFrequencyMethods.Contains(method);
         var startTicks = Stopwatch.GetTimestamp();
 
+        // Traffic on the pipe is the only honest proof that AgentCore's event
+        // loop is still turning. GrpcBridge's heartbeat loop reads this to
+        // decide whether it may keep telling the control plane this device is
+        // online — see AgentLiveness for why that gate exists.
+        AgentLiveness.Touch();
+
         if (!noisy)
         {
             IpcLog.Write($"--> {method} id={req.Id} tenant={req.Meta?.TenantId} device={req.Meta?.DeviceId}");

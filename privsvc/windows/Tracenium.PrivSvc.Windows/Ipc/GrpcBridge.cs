@@ -11,6 +11,7 @@ using System.Linq;
 using Grpc.Net.Client;
 using Grpc.Core;
 using Tracenium.Control; // namespace generado por proto
+using Tracenium.PrivSvc.Windows.Ipc; // AgentLiveness — gate del heartbeat
 
 namespace Tracenium.PrivSvc.Windows.Grpc;
 
@@ -23,6 +24,10 @@ public sealed class GrpcBridge : IDisposable
     private Task? _senderTask;
     private Task? _watchdogTask;
     private Task? _heartbeatTask;
+
+    // Edge-trigger for the AgentCore-silence log line, so a dead agent writes
+    // one entry instead of one every 30s forever.
+    private bool _agentSilenceLogged;
     private DateTime _connectedAtUtc = DateTime.MinValue;
     private DateTime _lastReceiveUtc = DateTime.MinValue;
     private DateTime _lastSendUtc = DateTime.MinValue;
@@ -1468,6 +1473,34 @@ private const int MaxPendingPushEvents = 50;
 
                 if (!IsConnected || _call is null)
                     continue;
+
+                // Never vouch for a dead AgentCore. This loop exists to keep an
+                // idle stream open, NOT to assert the agent is healthy — but the
+                // backend cannot tell the two apart: it derives "online now"
+                // straight from last_heartbeat. Emitting here while AgentCore is
+                // gone is what let 12 endpoints sit green in the portal for days
+                // with nothing able to run a job on them.
+                //
+                // Going quiet is the whole fix: the backend ages the device out
+                // to offline within 90s. The stream is deliberately left open so
+                // an AgentCore that comes back resumes without a reconnect — its
+                // first IPC call re-stamps liveness and heartbeats continue.
+                if (!AgentLiveness.IsAlive)
+                {
+                    if (!_agentSilenceLogged)
+                    {
+                        _agentSilenceLogged = true;
+                        Log($"HEARTBEAT suppressed: AgentCore silent for {AgentLiveness.SilenceSeconds}s " +
+                            "(device will age out to offline — the agent is not running)");
+                    }
+                    continue;
+                }
+
+                if (_agentSilenceLogged)
+                {
+                    _agentSilenceLogged = false;
+                    Log("HEARTBEAT resumed: AgentCore is talking to us again");
+                }
 
                 try
                 {
