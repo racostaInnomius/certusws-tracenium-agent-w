@@ -28,8 +28,32 @@ import {
 // resources" safety net.
 const MAX_CONCURRENT_LOCAL_PEERS = 8;
 
+// Candidates that arrive before their session exists are held here, keyed by
+// sessionId, until onOffer creates the peer. See onIce for why.
+//
+// Bounds are deliberate: this map is fed directly by inbound network messages,
+// so an unbounded version is a memory-growth primitive for anyone who can
+// reach the signaling path. A real gathering emits well under a dozen
+// candidates; anything past the cap is a bug or an attack, not a session.
+const PENDING_ICE_MAX_SESSIONS = 16;
+const PENDING_ICE_MAX_PER_SESSION = 32;
+// A session whose offer never turns up is dead weight. 60s is far longer than
+// the offer/answer round trip (sub-second in practice) and matches the
+// backend's own signal-bus TTL.
+const PENDING_ICE_TTL_MS = 60_000;
+
+type PendingIce = {
+  candidate: string;
+  sdpMid: string;
+  sdpMLineIndex: number;
+};
+
 export class SessionManager {
   private readonly sessions = new Map<string, PeerSession>();
+  private readonly pendingIce = new Map<
+    string,
+    { at: number; items: PendingIce[] }
+  >();
 
   constructor(private readonly ctx: AgentContext) {}
 
@@ -210,6 +234,9 @@ export class SessionManager {
       this.ctx.logger?.info?.("[rcp] acceptOffer completed", {
         sid: sessionId.slice(-8)
       });
+      // Now that the remote description is in place, hand over anything the
+      // browser trickled while we were still setting the session up.
+      this.drainEarlyIce(sessionId, peer);
     } catch (err: any) {
       this.ctx.logger?.error?.("[rcp] acceptOffer failed", {
         sessionId,
@@ -217,29 +244,98 @@ export class SessionManager {
         stack: err?.stack
       });
       this.sessions.delete(sessionId);
+      this.pendingIce.delete(sessionId);
       this.sendError(sessionId, "SDP_PARSE_ERROR", err?.message || String(err));
     }
   }
 
   onIce(params: any): void {
     const sessionId = String(params?.sessionId || "").trim();
-    const peer = this.sessions.get(sessionId);
-    if (!peer) {
-      // ICE arriving for a session we never saw (or already
-      // closed). Common during the close-race; log at debug, not
-      // warn.
-      this.ctx.logger?.debug?.("[rcp] ice for unknown session", { sessionId });
-      return;
-    }
-    peer.addRemoteIce({
+    if (!sessionId) return;
+    const ice: PendingIce = {
       candidate: String(params?.candidate || ""),
       sdpMid: String(params?.sdpMid || ""),
       sdpMLineIndex: Number(params?.sdpMLineIndex || 0)
+    };
+
+    const peer = this.sessions.get(sessionId);
+    if (peer) {
+      peer.addRemoteIce(ice);
+      return;
+    }
+
+    // No peer yet. This is NOT necessarily a late candidate for a closed
+    // session — the browser starts trickling the moment it calls
+    // setLocalDescription, so its first candidates routinely overtake the
+    // offer on the way here. Dropping them (which is what this did) made
+    // connectivity depend on which message won the race: the same device,
+    // network and ICE servers would connect on one attempt and fail with
+    // `ice_failed` on the next. That non-determinism is also what made the
+    // whole RCP investigation so slow — every measurement was a coin flip.
+    //
+    // So buffer, and let onOffer drain once the peer exists.
+    this.rememberEarlyIce(sessionId, ice);
+  }
+
+  /** Hold a candidate that arrived ahead of its offer. Bounded + TTL'd. */
+  private rememberEarlyIce(sessionId: string, ice: PendingIce): void {
+    this.sweepPendingIce();
+
+    let entry = this.pendingIce.get(sessionId);
+    if (!entry) {
+      if (this.pendingIce.size >= PENDING_ICE_MAX_SESSIONS) {
+        this.ctx.logger?.warn?.("[rcp] early-ice buffer full, dropping", {
+          sid: sessionId.slice(-8),
+          buffered: this.pendingIce.size
+        });
+        return;
+      }
+      entry = { at: Date.now(), items: [] };
+      this.pendingIce.set(sessionId, entry);
+    }
+    if (entry.items.length >= PENDING_ICE_MAX_PER_SESSION) {
+      this.ctx.logger?.warn?.("[rcp] early-ice cap reached for session", {
+        sid: sessionId.slice(-8)
+      });
+      return;
+    }
+    entry.items.push(ice);
+    this.ctx.logger?.debug?.("[rcp] buffered early ice", {
+      sid: sessionId.slice(-8),
+      pending: entry.items.length
     });
+  }
+
+  /**
+   * Feed the buffered candidates to a freshly-created peer.
+   *
+   * MUST run after acceptOffer: libdatachannel wants the remote description
+   * set before it will accept remote candidates, so draining any earlier
+   * would throw them away a second time — with the buffer masking the bug.
+   */
+  private drainEarlyIce(sessionId: string, peer: PeerSession): void {
+    const entry = this.pendingIce.get(sessionId);
+    if (!entry) return;
+    this.pendingIce.delete(sessionId);
+    this.ctx.logger?.info?.("[rcp] draining early ice", {
+      sid: sessionId.slice(-8),
+      count: entry.items.length
+    });
+    for (const ice of entry.items) peer.addRemoteIce(ice);
+  }
+
+  /** Drop buffers whose offer never arrived. */
+  private sweepPendingIce(): void {
+    if (this.pendingIce.size === 0) return;
+    const cutoff = Date.now() - PENDING_ICE_TTL_MS;
+    for (const [sid, entry] of this.pendingIce) {
+      if (entry.at < cutoff) this.pendingIce.delete(sid);
+    }
   }
 
   async onClose(params: any): Promise<void> {
     const sessionId = String(params?.sessionId || "").trim();
+    this.pendingIce.delete(sessionId);
     const reason = String(params?.reason || "remote_closed");
     const peer = this.sessions.get(sessionId);
     if (!peer) return;
@@ -250,6 +346,7 @@ export class SessionManager {
   async onError(params: any): Promise<void> {
     const sessionId = String(params?.sessionId || "").trim();
     const code = String(params?.code || "remote_error");
+    this.pendingIce.delete(sessionId);
     this.ctx.logger?.warn?.("[rcp] backend reported error", {
       sessionId,
       code,

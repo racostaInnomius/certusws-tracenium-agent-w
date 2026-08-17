@@ -324,20 +324,59 @@ internal static class ScreenCaptureDxgi
                     hr = TryInitialize();
                     if (hr != S_OK)
                     {
-                        // Common failure: no interactive desktop available. Map
-                        // it to a stable error code the UI can branch on.
                         Cleanup();
-                        if (hr == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE ||
-                            hr == DXGI_ERROR_UNSUPPORTED ||
-                            hr == DXGI_ERROR_ACCESS_DENIED ||
-                            hr == E_ACCESSDENIED)
+
+                        // These four HRESULTs used to collapse into a single
+                        // `no_interactive_desktop`, which told operators their
+                        // machine had nobody logged in — while they were
+                        // looking at their own desktop. Observed 2026-08-17 on
+                        // an ARM64 VM with an active console session. They mean
+                        // genuinely different things and only the first one
+                        // justifies that message.
+                        //
+                        // The raw HRESULT is appended in every branch: the
+                        // mapping below is a best-effort reading of what DXGI
+                        // meant, and when it is wrong the hex is the only way
+                        // to find out.
+                        var hex = $"0x{hr:X8}";
+
+                        if (hr == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE)
                         {
+                            // Also returned when the per-output duplication
+                            // limit is already taken by another process — a
+                            // second remote-control tool on the same box will
+                            // produce this with a user very much logged in.
                             return PrivSvcResponse.Fail(reqId,
                                 "no_interactive_desktop",
-                                "No active interactive desktop. " +
-                                "Screen sharing requires a user to be logged " +
-                                "into the device. For headless servers, use " +
-                                "rcp.shell instead.");
+                                "No desktop available to duplicate. Either no user is " +
+                                "logged into the device, or another application is " +
+                                $"already capturing this display. ({hex})");
+                        }
+                        if (hr == DXGI_ERROR_UNSUPPORTED)
+                        {
+                            // The classic virtual-machine case: basic display
+                            // adapters and several virtio/paravirtual GPUs do
+                            // not implement Desktop Duplication at all. Nothing
+                            // about the login state is wrong — the adapter
+                            // simply can't do it.
+                            return PrivSvcResponse.Fail(reqId,
+                                "screen_capture_unsupported_adapter",
+                                "This device's display adapter does not support Desktop " +
+                                "Duplication, which screen sharing requires. This is " +
+                                "common on virtual machines using a basic or " +
+                                $"paravirtual display adapter. ({hex})");
+                        }
+                        if (hr == DXGI_ERROR_ACCESS_DENIED || hr == E_ACCESSDENIED)
+                        {
+                            // Session 0 isolation, or the secure desktop (UAC /
+                            // lock screen / Ctrl-Alt-Del) owning the input desk
+                            // at the moment of the call.
+                            return PrivSvcResponse.Fail(reqId,
+                                "screen_capture_access_denied",
+                                "The agent was denied access to the interactive desktop. " +
+                                "This happens while a secure desktop is showing (UAC " +
+                                "prompt, lock screen) and on builds where the service " +
+                                $"cannot attach to the user's session. ({hex})");
                         }
                         return PrivSvcResponse.Fail(reqId,
                             "screen_capture_init_failed",

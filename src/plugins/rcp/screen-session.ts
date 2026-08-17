@@ -109,6 +109,8 @@ const TERMINAL_CAPTURE_CODES = new Set([
   "screen_capture_helper_missing",  // macOS/Linux — helper not deployed
   "screen_capture_init_failed",     // Windows — DXGI chain wouldn't come up
   "screen_capture_no_display",      // no display attached at all
+  "screen_capture_unsupported_adapter", // Windows — adapter can't do Desktop Duplication
+  "screen_capture_access_denied",   // Windows — secure desktop / session isolation
   "x11_connect_failed"              // Linux — helper can't reach the X server
 ]);
 
