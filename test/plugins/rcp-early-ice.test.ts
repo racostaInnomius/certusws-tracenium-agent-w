@@ -17,11 +17,12 @@ import { describe, it, expect, vi } from "vitest";
 
 const added: any[] = [];
 const acceptOffer = vi.fn(async () => {});
+const disposed: string[] = [];
 vi.mock("../../src/plugins/rcp/peer-session", () => ({
   PeerSession: class {
     acceptOffer = acceptOffer;
     addRemoteIce = (ice: any) => { added.push(ice); };
-    dispose = async () => {};
+    dispose = async (reason: string) => { disposed.push(reason); };
   }
 }));
 
@@ -29,6 +30,7 @@ import { SessionManager } from "../../src/plugins/rcp/session-manager";
 
 function makeManager() {
   added.length = 0;
+  disposed.length = 0;
   acceptOffer.mockClear();
   const logs: any[] = [];
   const sent: any[] = [];
@@ -38,10 +40,15 @@ function makeManager() {
       warn: (m: string, d: any) => logs.push([m, d]),
       error: () => {}, debug: () => {}
     },
-    policyRuntime: { isFeatureEnabled: (f: string) => f === "remoteShell" },
+    policyRuntime: {
+      // Las tres capacidades habilitadas; consentimiento NO — con él, el
+      // prompter fail-closed deniega y la sesión muere antes del peer.
+      isFeatureEnabled: (f: string) =>
+        f === "remoteShell" || f === "remoteFile" || f === "remoteScreen"
+    },
     sendControl: (m: any) => sent.push(m)
   };
-  return { mgr: new SessionManager(ctx), logs, sent };
+  return { mgr: new SessionManager(ctx), logs, sent, disposed };
 }
 
 const offer = (sessionId: string) => ({
@@ -185,5 +192,65 @@ describe("ofertas duplicadas", () => {
     // Una oferta posterior se trata como sesión nueva, no como duplicada.
     await mgr.onOffer(withUfrag("s1", "CCCC"));
     expect(acceptOffer).toHaveBeenCalledTimes(2);
+  });
+});
+
+
+// ── ICE restart: qué hacer depende de lo que transporte el canal ─────
+//
+// libdatachannel no puede renegociar in situ, así que la única vía de
+// recuperación es reconstruir el peer — lo que tira el DataChannel. Si eso
+// compensa depende por completo de QUÉ va por el canal, así que se decide
+// por capacidad en vez de aplicar una regla única.
+describe("ICE restart por capacidad", () => {
+  const restartOffer = (sessionId: string, ufrag: string, capability: string) => ({
+    sessionId,
+    sdp: `v=0\r\na=ice-ufrag:${ufrag}\r\na=ice-pwd:xxxx\r\n`,
+    capability,
+    sessionTimeoutSeconds: 60
+  });
+
+  it("rcp.screen: reconstruye el peer y sigue viva", async () => {
+    // Sin estado acumulado: el operador ve una congelación breve y el
+    // siguiente keyframe repinta. Recuperar en silencio es mejor que morir.
+    const { mgr, sent, disposed } = makeManager();
+    await mgr.onOffer(restartOffer("s1", "AAAA", "rcp.screen"));
+    await mgr.onOffer(restartOffer("s1", "BBBB", "rcp.screen"));
+    expect(disposed).toContain("ice_restart_rebuild");
+    // Se construyó un peer nuevo con la oferta nueva.
+    expect(acceptOffer).toHaveBeenCalledTimes(2);
+    expect(sent.find((m: any) => m.remoteSessionClose)).toBeUndefined();
+  });
+
+  it("rcp.shell: cierra en vez de entregar una shell nueva disfrazada", async () => {
+    // Un PTY reconstruido pierde directorio, entorno y lo que hubiera a
+    // medio escribir. Que parezca la sesión de antes es peor que fallar.
+    const { mgr, sent, disposed } = makeManager();
+    await mgr.onOffer(restartOffer("s1", "AAAA", "rcp.shell"));
+    await mgr.onOffer(restartOffer("s1", "BBBB", "rcp.shell"));
+    expect(disposed).toContain("ice_restart_unsupported");
+    expect(acceptOffer).toHaveBeenCalledTimes(1);
+    expect(sent.find((m: any) => m.remoteSessionClose)?.remoteSessionClose?.reason)
+      .toBe("ice_restart_unsupported");
+  });
+
+  it("rcp.file: cierra — una transferencia a medias no se recupera sola", async () => {
+    const { mgr, sent } = makeManager();
+    await mgr.onOffer(restartOffer("s1", "AAAA", "rcp.file"));
+    await mgr.onOffer(restartOffer("s1", "BBBB", "rcp.file"));
+    expect(sent.find((m: any) => m.remoteSessionClose)?.remoteSessionClose?.reason)
+      .toBe("ice_restart_unsupported");
+  });
+
+  it("la reconstrucción destruye el peer viejo ANTES de crear el nuevo", async () => {
+    // Construir sobre una PeerConnection a medio cerrar es como se atasca la
+    // capa nativa; el dispose se espera a propósito.
+    const { mgr, disposed } = makeManager();
+    const order: string[] = [];
+    acceptOffer.mockImplementation(async () => { order.push("accept:" + disposed.length); });
+    await mgr.onOffer(restartOffer("s1", "AAAA", "rcp.screen"));
+    await mgr.onOffer(restartOffer("s1", "BBBB", "rcp.screen"));
+    // El segundo acceptOffer ocurre con el dispose ya registrado.
+    expect(order[1]).toBe("accept:1");
   });
 });

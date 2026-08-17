@@ -148,28 +148,67 @@ export class SessionManager {
       }
 
       // Different ice-ufrag ⇒ the browser attempted an ICE RESTART
-      // (createOffer({iceRestart:true}) in iceRestart.js). libdatachannel
-      // rejects a remote description with new ICE credentials on an existing
-      // PeerConnection — "Invalid ICE settings from remote SDP" — so we
-      // cannot renegotiate in place, and pretending otherwise would just
-      // throw inside the native layer.
+      // (createOffer({iceRestart:true}) in iceRestart.js), because the
+      // network path broke: Wi-Fi roam, NAT mapping aged out, TURN
+      // allocation expired.
       //
-      // Closing with an explicit reason at least turns a silent hang into a
-      // message the operator can act on. Rebuilding the peer from scratch
-      // WOULD recover connectivity, but it drops the DataChannel and with it
-      // the PTY / in-flight transfer — the very thing ICE restart exists to
-      // preserve — so that trade-off is not made here unilaterally.
-      this.ctx.logger?.warn?.("[rcp] ICE restart requested but unsupported by the WebRTC stack", {
+      // libdatachannel cannot apply new ICE credentials to an existing
+      // PeerConnection — it rejects the remote description with "Invalid ICE
+      // settings from remote SDP" (verified against node-datachannel). So
+      // renegotiating in place is not on the table with this stack.
+      //
+      // The only way to recover is to throw the peer away and rebuild from
+      // the new offer. That works, but it drops the DataChannel — and with
+      // it whatever the capability was carrying. Whether that is a good
+      // trade depends entirely on WHAT is being carried, so we decide per
+      // capability rather than applying one rule to different situations:
+      //
+      //   rcp.screen — stateless. The stream is a sequence of frames with no
+      //     accumulated state; rebuilding costs the operator a brief freeze
+      //     and the next keyframe repaints. Recovering silently is strictly
+      //     better than dying.
+      //
+      //   rcp.shell / rcp.file — stateful. A rebuilt channel means a fresh
+      //     PTY (losing the working directory, environment, and any
+      //     half-typed command) or an aborted transfer. Silently handing the
+      //     operator a clean prompt that LOOKS like their old session is
+      //     worse than an honest failure, because they may not notice.
+      const rebuildable = capability === "rcp.screen";
+      this.ctx.logger?.warn?.("[rcp] ICE restart requested", {
         sid: sessionId.slice(-8),
+        capability,
         knownUfrag,
-        incomingUfrag
+        incomingUfrag,
+        action: rebuildable ? "rebuilding peer" : "closing session"
       });
+
       this.sessions.delete(sessionId);
       this.sessionUfrag.delete(sessionId);
-      this.pendingIce.delete(sessionId);
-      void peer.dispose("ice_restart_unsupported");
-      this.sendClose(sessionId, "ice_restart_unsupported");
-      return;
+      if (!rebuildable) this.pendingIce.delete(sessionId);
+
+      // Await the teardown: the old native PeerConnection still holds its
+      // sockets and DataChannel, and building the replacement on top of a
+      // half-closed one is how the native layer gets wedged.
+      try {
+        await peer.dispose(
+          rebuildable ? "ice_restart_rebuild" : "ice_restart_unsupported"
+        );
+      } catch (err: any) {
+        this.ctx.logger?.warn?.("[rcp] dispose during ICE restart failed", {
+          sid: sessionId.slice(-8),
+          err: err?.message || String(err)
+        });
+      }
+
+      if (!rebuildable) {
+        this.sendClose(sessionId, "ice_restart_unsupported");
+        return;
+      }
+      // Fall through: with the session removed, the rest of onOffer builds a
+      // fresh peer from this offer exactly as it would for a new session.
+      this.ctx.logger?.info?.("[rcp] rebuilding peer for ICE restart", {
+        sid: sessionId.slice(-8)
+      });
     }
 
     if (this.sessions.size >= MAX_CONCURRENT_LOCAL_PEERS) {
