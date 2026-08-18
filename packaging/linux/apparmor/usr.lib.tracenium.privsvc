@@ -131,6 +131,45 @@ profile tracenium-privsvc /usr/lib/tracenium/node {
   # postinst pasan por aqui.
   /usr/bin/dash                                     ix,
   /usr/bin/sh                                       ix,
+
+  # ── RCP remote shell ─────────────────────────────────────────────
+  # ⚠️ Este perfil se ancla a /usr/lib/tracenium/node, que es el MISMO
+  # binario con el que arranca el AgentCore (ExecStart=/usr/lib/tracenium/node
+  # /usr/lib/tracenium/agent/index.js). O sea que un perfil escrito para el
+  # privsvc confina también al agente. Sin las reglas de abajo, node-pty no
+  # podía abrir un pty y remote shell moría con "pty_spawn_failed:
+  # forkpty(3) failed" — un mensaje que no menciona AppArmor por ningún lado.
+  #
+  # Medido en el endpoint, mismo módulo y mismo usuario:
+  #   /usr/lib/tracenium/node        (confinado)   -> forkpty(3) failed.
+  #   copia del mismo node en /tmp   (sin confinar) -> OK pid 2797042
+  #
+  # El pty maestro y su esclavo. Es lo mínimo: sin esto no hay terminal.
+  /dev/ptmx                                         rw,
+  /dev/pts/*                                        rw,
+
+  # Los shells interactivos que puede elegir pickShell(). Van como Ux
+  # (SIN confinar) a propósito, y conviene entender el trato:
+  #
+  # Con `ix` el shell heredaría este perfil y el operador tendría una
+  # terminal donde casi todo se deniega — un shell de soporte inservible
+  # que además falla de formas desconcertantes. Con `Ux` el shell corre
+  # de verdad, pero fuera de AppArmor.
+  #
+  # Lo que SIGUE conteniéndolo: el servicio corre como User=tracenium sin
+  # privilegios, así que los permisos Unix son la frontera real; y por
+  # arriba, el gate RBAC (ADMIN/OWNER) y el consentimiento del endpoint
+  # deciden quién puede abrir la sesión siquiera.
+  #
+  # Si se quiere confinamiento dentro del shell remoto, la vía correcta NO
+  # es cambiar esto a `ix`, sino un perfil hijo propio (`Cx -> rcp_shell`)
+  # con su propio conjunto de reglas. Es más trabajo y una decisión de
+  # postura de seguridad, no un detalle de empaquetado.
+  /bin/bash                                         Ux,
+  /usr/bin/bash                                     Ux,
+  /bin/sh                                           Ux,
+  /bin/zsh                                          Ux,
+  /usr/bin/zsh                                      Ux,
   # who/logname: sesion interactiva, para el widget de soporte.
   /usr/bin/who                                      ix,
   /usr/bin/logname                                  ix,
