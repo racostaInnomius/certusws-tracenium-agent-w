@@ -76,6 +76,17 @@ const DEFAULT_DOWNLOAD_TIMEOUT_S = 600;
 // report a healthy source as broken.
 const MIN_PER_SOURCE_TIMEOUT_S = 30;
 
+// How long curl may spend ESTABLISHING the connection to a distribution point.
+// A firewalled DP drops the SYN rather than refusing it, so without this the
+// attempt hangs on TCP retries and eats the whole download budget the origin
+// fallback needed. Bounds the CONNECT phase only — transfer time stays governed
+// by the per-source slice, so a slow-but-working DP is not cut off mid-download.
+//
+// Production, 2026-08-17: a target on 10.10.17.204 was handed a DP on
+// 10.130.130.5 (different VLAN, port closed). The install hung for half an hour
+// and reported nothing.
+const DP_CONNECT_TIMEOUT_S = 5;
+
 // Default install timeout. The plugin asks for 1740s (60s headroom
 // under the orchestrator's 30 min cap). Defensive cap here in case
 // a future plugin omits the field.
@@ -574,6 +585,7 @@ export async function handleSdpDownload(req: PrivSvcRequest): Promise<PrivSvcRes
       // spoofed DP can only make us fall through to cdn/origin.
       const idPaths = certPaths();
       curlArgs.push("--cert", idPaths.clientCert, "--key", idPaths.clientKey, "-k");
+      curlArgs.push("--connect-timeout", String(DP_CONNECT_TIMEOUT_S));
     }
     curlArgs.push(candidate.url);
 

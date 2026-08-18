@@ -101,3 +101,45 @@ describe("every privsvc splits the budget across sources", () => {
     }
   });
 });
+
+// ── DP connect timeout ────────────────────────────────────────────
+//
+// A firewalled DP does not refuse the connection, it DROPS the SYN. Without a
+// connect-specific bound the attempt hangs on OS/TCP retries and consumes the
+// download budget the origin fallback needed — the failure mode that cost half
+// an hour on 2026-08-17 when a target on 10.10.17.204 was handed a DP on
+// 10.130.130.5 across a VLAN boundary.
+//
+// The bound has to be on CONNECT only. Reusing the transfer timeout would cut
+// off a DP that is reachable but slow, which is the case the whole tier exists
+// to serve.
+
+describe("distribution point connect timeout", () => {
+  it("windows uses SocketsHttpHandler so ConnectTimeout can be set at all", () => {
+    // HttpClientHandler does not expose ConnectTimeout; switching handler is
+    // the reason this is possible, so pin it or the fix silently regresses.
+    const src = read("privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/Sdp.cs");
+    const at = src.indexOf("GetDpHttpClient");
+    const body = src.slice(at, at + 2500);
+    expect(body).toMatch(/new SocketsHttpHandler/);
+    expect(body).toMatch(/ConnectTimeout\s*=\s*TimeSpan\.FromSeconds\(DpConnectTimeoutSeconds\)/);
+  });
+
+  it.each(["macos", "linux"])("%s passes --connect-timeout on the dp tier", (platform) => {
+    const src = read(`privsvc/${platform}/src/sdp.ts`);
+    expect(src).toMatch(/DP_CONNECT_TIMEOUT_S\s*=\s*\d+/);
+    expect(src).toMatch(/"--connect-timeout",\s*String\(DP_CONNECT_TIMEOUT_S\)/);
+  });
+
+  it.each([
+    { name: "windows", file: "privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/Sdp.cs", re: /DpConnectTimeoutSeconds\s*=\s*(\d+)/ },
+    { name: "macos", file: "privsvc/macos/src/sdp.ts", re: /DP_CONNECT_TIMEOUT_S\s*=\s*(\d+)/ },
+    { name: "linux", file: "privsvc/linux/src/sdp.ts", re: /DP_CONNECT_TIMEOUT_S\s*=\s*(\d+)/ },
+  ])("$name keeps the connect bound far below the per-source floor", ({ file, re }) => {
+    // If the connect timeout ever approached the per-source slice it would stop
+    // being a fast fallback and start being just another way to wait.
+    const seconds = Number(read(file).match(re)![1]);
+    expect(seconds).toBeGreaterThan(0);
+    expect(seconds).toBeLessThan(30);
+  });
+});

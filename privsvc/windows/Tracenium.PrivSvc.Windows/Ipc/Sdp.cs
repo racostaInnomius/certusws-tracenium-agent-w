@@ -25,6 +25,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Net.Http;
+using System.Net.Security;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -56,6 +57,12 @@ public static class Sdp
     // attempt cannot say anything useful — it would expire during the TLS
     // handshake and report a healthy source as broken.
     private const int MinPerSourceTimeoutSeconds = 30;
+
+    // How long we wait to ESTABLISH a connection to a distribution point.
+    // A firewalled DP drops the SYN rather than refusing it, so without this
+    // the attempt hangs on OS retries and eats the whole download budget that
+    // the origin fallback needed. Generous for a LAN, trivial next to 600s.
+    private const int DpConnectTimeoutSeconds = 5;
     private const int DefaultInstallTimeoutSeconds = 1740;          // 29 min
     private const long StagingTtlMs = 24L * 60 * 60 * 1000;
 
@@ -98,13 +105,37 @@ public static class Sdp
                 var clientCert = matches[0];
                 if (!clientCert.HasPrivateKey) return null;
 
-                var handler = new HttpClientHandler
+                // SocketsHttpHandler, not HttpClientHandler, for ONE reason:
+                // it exposes ConnectTimeout. A DP on the far side of a firewall
+                // does not refuse the connection, it silently DROPS the SYN, so
+                // the connect attempt hangs for as long as the OS keeps
+                // retrying — and with only the download budget bounding it, the
+                // peer sat there instead of falling through to the origin.
+                //
+                // Production, 2026-08-17: a target on 10.10.17.204 was given a
+                // DP on 10.130.130.5 (different VLAN, port closed). The install
+                // hung for half an hour and reported nothing. With a short
+                // connect timeout the same mistake costs seconds and the
+                // download completes from origin.
+                //
+                // Only the CONNECT phase is bounded here. Transfer time stays
+                // governed by the per-source slice of the download budget, so a
+                // slow-but-working DP is not cut off mid-download.
+                var handler = new SocketsHttpHandler
                 {
                     AllowAutoRedirect = false, // a DP serves the blob directly
-                    ClientCertificateOptions = ClientCertificateOption.Manual,
-                    ServerCertificateCustomValidationCallback = (_, _, _, _) => true,
+                    ConnectTimeout = TimeSpan.FromSeconds(DpConnectTimeoutSeconds),
+                    SslOptions = new SslClientAuthenticationOptions
+                    {
+                        ClientCertificates = new X509Certificate2Collection(clientCert),
+                        // The DP's cert carries its deviceId as CN while peers
+                        // dial it by LAN IP, so hostname validation cannot pass.
+                        // Safe: the sha256 gate verifies the BYTES regardless of
+                        // transport, so a spoofed DP can only make us fall
+                        // through to cdn/origin — never install anything.
+                        RemoteCertificateValidationCallback = (_, _, _, _) => true,
+                    },
                 };
-                handler.ClientCertificates.Add(clientCert);
                 _dpClient = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
                 return _dpClient;
             }
