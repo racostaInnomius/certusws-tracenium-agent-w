@@ -398,6 +398,51 @@ for pkg in better-sqlite3 bindings file-uri-to-path node-pty node-datachannel; d
   fi
 done
 
+# ── Validación de node-pty ────────────────────────────────────────
+# better-sqlite3 se rebuildea Y se comprueba que el node empaquetado lo
+# carga (arriba). node-pty y node-datachannel viajaban con un `cp -r`
+# pelado y CERO comprobaciones, y así se colo el defecto que costó una
+# noche: el paquete desplegado tenía build/Release/pty.node pero NO
+# spawn-helper, que node-pty 1.1.0 exige en POSIX —
+# `helperPath = native.dir + "/spawn-helper"` en lib/unixTerminal.js.
+# Sin él, remote shell muere en cuanto se abre la sesión y el mensaje no
+# menciona ningún fichero que falte.
+#
+# Los prebuilds que SÍ trae node-pty son darwin-x64/darwin-arm64 (Mach-O),
+# inútiles aquí, así que no sirven de red de seguridad.
+PTY_DIR="$PKG_ROOT/agent/node_modules/node-pty"
+PTY_HELPER="$PTY_DIR/build/Release/spawn-helper"
+if [ ! -f "$PTY_DIR/build/Release/pty.node" ]; then
+  echo "ERROR: node-pty sin build/Release/pty.node en el payload." >&2
+  echo "       El agente no podrá abrir sesiones de remote shell." >&2
+  exit 1
+fi
+if [ ! -f "$PTY_HELPER" ]; then
+  echo "ERROR: falta $PTY_HELPER" >&2
+  echo "       node-pty lo exige en POSIX; sin él remote shell falla al" >&2
+  echo "       arrancar. Suele significar que npm ci resolvió node-pty sin" >&2
+  echo "       compilarlo: 'cd \$STAGING_DIR && npm rebuild node-pty" >&2
+  echo "       --build-from-source' y repite el build." >&2
+  exit 1
+fi
+# El bit de ejecución importa tanto como el fichero: node-pty lo exec-uta.
+chmod 0755 "$PTY_HELPER"
+
+# Prueba de humo de verdad: abrir un pty con el node empaquetado. Es la
+# única comprobación que distingue "los ficheros están" de "esto funciona".
+if ! "$PKG_ROOT/node" -e "
+  const pty = require('$PTY_DIR');
+  const p = pty.spawn('/bin/sh', ['-c', 'exit 0'], { cols: 80, rows: 24 });
+  if (!p.pid) { process.exit(1); }
+" >/dev/null 2>&1; then
+  echo "ERROR: el node empaquetado no puede abrir un pty con node-pty." >&2
+  echo "       Puede ser ABI mismatch (node-pty se compiló contra otro" >&2
+  echo "       node) o el spawn-helper. Reproduce el error con:" >&2
+  echo "         $PKG_ROOT/node -e \"require('$PTY_DIR').spawn('/bin/sh',[],{})\"" >&2
+  exit 1
+fi
+echo "→ node-pty OK (pty.node + spawn-helper + apertura de pty)"
+
 # ── Proto + assets ────────────────────────────────────────────────
 cp "$ROOT_DIR/proto/controlplane.proto" "$PKG_ROOT/proto/controlplane.proto"
 
