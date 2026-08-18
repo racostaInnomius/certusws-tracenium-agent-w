@@ -14,6 +14,12 @@
          build pasa PublishSingleFile y SelfContained=true. -->
     <SelfContained>false</SelfContained>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Sin comprimir, este helper self-contained pesa 73 MB y el MSI ya iba
+         por 131. Con compresion baja a ~30, que es lo mismo que hace el
+         AgentTray. Ojo: NO poner IncludeAllContentForSelfExtract=true, que
+         pisa esta opcion en silencio y devuelve el binario a su tamano
+         completo (esta el chequeo de tamano en distribute_exe por eso). -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Drawing.Common" Version="8.0.0" />

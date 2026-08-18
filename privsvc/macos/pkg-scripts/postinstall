@@ -112,8 +112,25 @@ chown -R root:wheel "$BASE"
 chmod 755 "$BASE"
 chmod 755 "$BASE/Runtime/node"
 chmod 700 "$AGENT_DIR"
-chmod 700 "$PRIVSVC_DIR"
+# PrivSvc a 755, NO 700. El secreto vive en certs/, que se queda en 700 justo
+# debajo — un 700 en el padre no protege nada que certs/ no proteja ya, y en
+# cambio rompe algo: el helper de captura (PrivSvc/macos/tracenium-screencap)
+# se lanza como el USUARIO de la consola, vía `launchctl asuser` + `sudo -u`,
+# porque el demonio corre fuera de la sesión gráfica. Con el directorio a 700
+# ese usuario no puede ni atravesarlo para llegar al binario, y sudo responde
+# "unable to execute ...: Permission denied" — un mensaje que parece falta de
+# bit de ejecución y manda a buscar al sitio equivocado.
+chmod 755 "$PRIVSVC_DIR"
 chmod 700 "$PRIVSVC_DIR/certs"
+# El helper y su directorio, explícitos: es la última oportunidad de arreglarlo
+# antes de que el usuario lo necesite, y este bit ya se ha perdido tres veces
+# (el spawn-helper de node-pty en macOS y en Linux fueron las otras dos).
+if [ -d "$PRIVSVC_DIR/macos" ]; then
+  chmod 755 "$PRIVSVC_DIR/macos"
+  if [ -f "$PRIVSVC_DIR/macos/tracenium-screencap" ]; then
+    chmod 755 "$PRIVSVC_DIR/macos/tracenium-screencap"
+  fi
+fi
 chmod 755 "$LOG_DIR"
 
 cat > "$ENV_FILE" <<EOF
