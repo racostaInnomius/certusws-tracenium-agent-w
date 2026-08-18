@@ -85,6 +85,17 @@ message Disconnect {
 message AgentUpdate {
   string jobId = 1;
   string version = 2;
+
+  // Ordered download tiers (dp -> cdn -> origin) as JSON:
+  //   [{"tier":"dp","url":"https://10.1.2.3:47821/sdp/blob/<sha256>"}, ...]
+  //
+  // Carried as JSON rather than a repeated message so this stays one additive
+  // field: agents that predate it ignore an unknown field and download from
+  // the internet exactly as before, which is also the correct fallback.
+  //
+  // Present only when the control plane resolved a distribution point for the
+  // device's subnet. Absent means "no DP applies" — not an error.
+  string sourcesJson = 3;
 }
 
 // ---------------- REMOTE CONTROL (RCP) SIGNALING ----------------

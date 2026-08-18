@@ -8,6 +8,8 @@ import type { Namespaces, DeviceFacts } from "../domain/device-facts";
 import type { PmpNamespace } from "../domain/pmp-types";
 import { updatePmpState, isRemediateInFlight } from "../plugins/pmp/state";
 import { runRemediation } from "../plugins/pmp/remediation";
+import { normalizeSources } from "../plugins/sdp";
+
 // SDP no longer imported here — `software_install` is dispatched via
 // ctx.plugins.run("sdp.install", ...) so it goes through the
 // PluginManager policy gate uniformly with the other plugins.
@@ -437,6 +439,23 @@ async function collectFactsSnapshot(
     modules: Object.keys(namespaces),
     softwareCount
   };
+}
+
+/**
+ * Parse the `sourcesJson` field of an AgentUpdate control message.
+ *
+ * Never throws: a control message we cannot parse must not take down the
+ * update path it was meant to speed up. Anything unusable degrades to
+ * "no distribution point", which is the pre-existing behaviour.
+ */
+function parseSourcesJson(raw: unknown): Array<{ tier: string; url: string }> | undefined {
+  if (typeof raw !== "string" || raw.trim() === "") return undefined;
+  try {
+    const list = normalizeSources(JSON.parse(raw));
+    return list.length > 0 ? list : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function sendControlAck(
@@ -1030,6 +1049,11 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
           targetVersion: version,
           downloadUrl,
           expectedHash,
+          // Ordered tiers from the control plane (dp → cdn → origin) when this
+          // device sits behind a distribution point. The updater pulls through
+          // privsvc so the LAN copy is used before the internet one; absent, it
+          // downloads exactly as before.
+          sources: normalizeSources((payload as any)?.sources),
           logger: ctx.logger
         });
 
@@ -1863,6 +1887,10 @@ stream = client.Connect();
       setImmediate(() => {
         runUpdateTask(ctx, {
           targetVersion: version,
+          // `sourcesJson` is a JSON string on the wire (one additive proto
+          // field instead of a repeated message). Malformed or absent → no
+          // sources, which means "download from the internet as before".
+          sources: parseSourcesJson((msg.agentUpdate as any)?.sourcesJson),
           logger: ctx.logger
         })
           .then(async (outcome: any) => {

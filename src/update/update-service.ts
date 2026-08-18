@@ -7,6 +7,9 @@ import http from "http";
 import https from "https";
 
 import type { AgentContext } from "../core/agent-context";
+// Same budget the SDP plugin uses, for the same reason: it must stay under
+// the IPC client's sdp.download ceiling. One constant, one invariant.
+import { DOWNLOAD_BUDGET_SECONDS } from "../plugins/sdp";
 import type {
   AgentBinaryFileMetadata,
   AgentMetadataResponse,
@@ -738,15 +741,147 @@ async function verifyWindowsUpdateSignatureOrThrow(
   console.log("[update] update signature verified (OS trust)", { path: filePath, version: latestVersion });
 }
 
+/**
+ * Reserved packageId for the agent's own update.
+ *
+ * `sdp.download` requires a positive integer because catalog packages have one
+ * and the staging filename is built from it (`pkg-<packageId>-<nonce>.<fmt>`).
+ * The self-update has no catalog row, so it gets a sentinel that cannot collide
+ * with a real package id and is obvious in a staging directory listing.
+ */
+export const SELF_UPDATE_PACKAGE_ID = 999_000_001;
+
+/**
+ * Download the update through privsvc's `sdp.download` so it can come from the
+ * site's distribution point instead of the internet.
+ *
+ * Why route the update through the SDP primitive at all: `downloadToFile` is a
+ * plain HTTP GET against a single URL from this process. It cannot present the
+ * enrollment client certificate a DP requires, has no notion of ordered
+ * fallback, and knows nothing about the download budget. Everything needed to
+ * pull from a DP already exists on the privsvc side and was proven in the field
+ * this week — ordered sources, the sha256 gate, per-source budget slicing, a 5s
+ * connect timeout so an unreachable DP costs seconds, and `servedBy` telemetry.
+ * Duplicating any of that in Node would be a second implementation to keep
+ * honest.
+ *
+ * Returns null when this route is not usable — no sources, or a privsvc too old
+ * to know the method. The caller then falls back to the direct download, so an
+ * endpoint whose privsvc has not been upgraded keeps updating exactly as today.
+ *
+ * A failure REPORTED by privsvc (every source exhausted) is different: it means
+ * the origin was in the list and also failed, so there is nothing left to try
+ * and the error propagates.
+ */
+export async function downloadUpdateViaSources(
+  ctx: AgentContext,
+  opts: {
+    version: string;
+    format: string;
+    expectedHash: string;
+    sources: Array<{ tier: string; url: string }>;
+    sizeBytes?: number;
+  }
+): Promise<{ filePath: string; sha256: string; size: number; servedBy?: string } | null> {
+  if (!opts.sources?.length || !opts.expectedHash) return null;
+
+  const resp = await ctx.priv.call({
+    v: 1,
+    id: `update-download-${Date.now()}`,
+    method: "sdp.download",
+    params: {
+      // `url` is the legacy single-source field privsvc falls back to when
+      // `sources` is absent; keep the origin there so an older privsvc that
+      // ignores `sources` still downloads the right bytes.
+      url: opts.sources[opts.sources.length - 1]?.url,
+      sources: opts.sources,
+      sha256: opts.expectedHash.toLowerCase(),
+      format: opts.format,
+      packageId: SELF_UPDATE_PACKAGE_ID,
+      timeoutSeconds: DOWNLOAD_BUDGET_SECONDS,
+      ...(opts.sizeBytes ? { sizeBytes: opts.sizeBytes } : {}),
+    },
+    meta: {
+      tenantId: ctx.enrollment?.tenantId,
+      deviceId: ctx.enrollment?.deviceId,
+    },
+  });
+
+  if (!resp?.ok) {
+    const code = String((resp as any)?.error?.code || "");
+    // Method missing / rejected outright → this privsvc predates the feature.
+    // Fall back rather than failing an update that would otherwise work.
+    if (code === "not_supported" || code === "bad_version") {
+      console.warn("[update] privsvc has no sdp.download; using direct download");
+      return null;
+    }
+    const msg = String((resp as any)?.error?.message || code || "download_failed");
+    throw new Error(`update_download_failed:${msg}`);
+  }
+
+  const result = (resp as any).result ?? {};
+  const filePath = String(result.stagingPath || "");
+  if (!filePath) return null;
+
+  console.log("[update] downloaded via privsvc", {
+    version: opts.version,
+    servedBy: result.servedBy,
+    sizeBytes: result.sizeBytes,
+  });
+
+  return {
+    filePath,
+    sha256: String(result.sha256 || opts.expectedHash).toLowerCase(),
+    size: Number(result.sizeBytes || 0),
+    servedBy: result.servedBy ? String(result.servedBy) : undefined,
+  };
+}
+
 export async function performWindowsMsiUpdate(
   ctx: AgentContext,
   latestVersion: string,
   expectedHash?: string,
-  downloadUrlOverride?: string
+  downloadUrlOverride?: string,
+  /**
+   * Ordered download sources (dp → cdn → origin) when the control plane knows
+   * this device sits behind a distribution point. Tried through privsvc first;
+   * absent or unusable → the direct download below, unchanged.
+   */
+  sources?: Array<{ tier: string; url: string }>
 ) {
   let downloaded;
 
-  if (downloadUrlOverride) {
+  // ── Distribution point first ────────────────────────────────────
+  // When the control plane tells us this device sits behind a DP, pull the
+  // update over the LAN instead of the internet. privsvc owns that path (it
+  // holds the enrollment cert the DP demands) and falls back through the
+  // ordered tiers on its own, so `origin` being last in the list IS the
+  // internet fallback. Returning null means the route is unavailable — no
+  // sources, or a privsvc too old — and we continue to the direct download.
+  if (sources?.length && expectedHash) {
+    const viaDp = await downloadUpdateViaSources(ctx, {
+      version: latestVersion,
+      format: "msi",
+      expectedHash,
+      sources,
+    });
+    if (viaDp) {
+      updateUpdateState({
+        lastDownloadedPath: viaDp.filePath,
+        lastDownloadedSha256: viaDp.sha256,
+        arch: getArch(),
+      });
+      downloaded = {
+        filePath: viaDp.filePath,
+        fileName: path.basename(viaDp.filePath),
+        sha256: viaDp.sha256,
+        size: viaDp.size,
+        latestVersion,
+      };
+    }
+  }
+
+  if (!downloaded && downloadUrlOverride) {
     const dir = path.join(resolveBaseDir(), "updates");
     ensureDir(dir);
 
@@ -783,7 +918,7 @@ export async function performWindowsMsiUpdate(
       arch: getArch()
     });
 
-  } else {
+  } else if (!downloaded) {
     downloaded = await downloadWindowsMsi(ctx, latestVersion, expectedHash);
   }
 
@@ -820,11 +955,47 @@ export async function performMacosPkgUpdate(
   ctx: AgentContext,
   latestVersion: string,
   expectedHash?: string,
-  downloadUrlOverride?: string
+  downloadUrlOverride?: string,
+  /**
+   * Ordered download sources (dp → cdn → origin) when the control plane knows
+   * this device sits behind a distribution point. Tried through privsvc first;
+   * absent or unusable → the direct download below, unchanged.
+   */
+  sources?: Array<{ tier: string; url: string }>
 ) {
   let downloaded;
 
-  if (downloadUrlOverride) {
+  // ── Distribution point first ────────────────────────────────────
+  // When the control plane tells us this device sits behind a DP, pull the
+  // update over the LAN instead of the internet. privsvc owns that path (it
+  // holds the enrollment cert the DP demands) and falls back through the
+  // ordered tiers on its own, so `origin` being last in the list IS the
+  // internet fallback. Returning null means the route is unavailable — no
+  // sources, or a privsvc too old — and we continue to the direct download.
+  if (sources?.length && expectedHash) {
+    const viaDp = await downloadUpdateViaSources(ctx, {
+      version: latestVersion,
+      format: "pkg",
+      expectedHash,
+      sources,
+    });
+    if (viaDp) {
+      updateUpdateState({
+        lastDownloadedPath: viaDp.filePath,
+        lastDownloadedSha256: viaDp.sha256,
+        arch: getArch(),
+      });
+      downloaded = {
+        filePath: viaDp.filePath,
+        fileName: path.basename(viaDp.filePath),
+        sha256: viaDp.sha256,
+        size: viaDp.size,
+        latestVersion,
+      };
+    }
+  }
+
+  if (!downloaded && downloadUrlOverride) {
     const dir = path.join(resolveBaseDir(), "updates");
     ensureDir(dir);
 
@@ -860,7 +1031,7 @@ export async function performMacosPkgUpdate(
       lastDownloadedSha256: sha256,
       arch: getArch()
     });
-  } else {
+  } else if (!downloaded) {
     downloaded = await downloadMacosPkg(ctx, latestVersion, expectedHash);
   }
 
@@ -973,11 +1144,47 @@ export async function performLinuxUpdate(
   ctx: AgentContext,
   latestVersion: string,
   expectedHash?: string,
-  downloadUrlOverride?: string
+  downloadUrlOverride?: string,
+  /**
+   * Ordered download sources (dp → cdn → origin) when the control plane knows
+   * this device sits behind a distribution point. Tried through privsvc first;
+   * absent or unusable → the direct download below, unchanged.
+   */
+  sources?: Array<{ tier: string; url: string }>
 ) {
   let downloaded;
 
-  if (downloadUrlOverride) {
+  // ── Distribution point first ────────────────────────────────────
+  // When the control plane tells us this device sits behind a DP, pull the
+  // update over the LAN instead of the internet. privsvc owns that path (it
+  // holds the enrollment cert the DP demands) and falls back through the
+  // ordered tiers on its own, so `origin` being last in the list IS the
+  // internet fallback. Returning null means the route is unavailable — no
+  // sources, or a privsvc too old — and we continue to the direct download.
+  if (sources?.length && expectedHash) {
+    const viaDp = await downloadUpdateViaSources(ctx, {
+      version: latestVersion,
+      format: getBinaryFormat(),
+      expectedHash,
+      sources,
+    });
+    if (viaDp) {
+      updateUpdateState({
+        lastDownloadedPath: viaDp.filePath,
+        lastDownloadedSha256: viaDp.sha256,
+        arch: getArch(),
+      });
+      downloaded = {
+        filePath: viaDp.filePath,
+        fileName: path.basename(viaDp.filePath),
+        sha256: viaDp.sha256,
+        size: viaDp.size,
+        latestVersion,
+      };
+    }
+  }
+
+  if (!downloaded && downloadUrlOverride) {
     const dir = path.join(resolveBaseDir(), "updates");
     ensureDir(dir);
 
@@ -1017,7 +1224,7 @@ export async function performLinuxUpdate(
       lastDownloadedSha256: sha256,
       arch: getArch(),
     });
-  } else {
+  } else if (!downloaded) {
     downloaded = await downloadLinuxPkg(ctx, latestVersion, expectedHash);
   }
 

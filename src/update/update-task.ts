@@ -107,12 +107,22 @@ export async function runUpdateTask(
     // without a hash is rejected upstream by performXxxUpdate.
     downloadUrl?: string;
     expectedHash?: string;
+    /**
+     * Ordered download sources (dp → cdn → origin) from the job payload, when
+     * the control plane knows this device sits behind a distribution point.
+     * Passed straight through to the per-OS updater, which tries them via
+     * privsvc before any direct download. Absent → today's behaviour.
+     */
+    sources?: Array<{ tier: string; url: string }>;
   }
 ): Promise<UpdateOutcome> {
   const logger = opts?.logger;
   const force = opts?.force === true;
   const targetVersion = opts?.targetVersion ? String(opts.targetVersion).trim() : undefined;
   const downloadUrlOverride = opts?.downloadUrl ? String(opts.downloadUrl).trim() : undefined;
+  // Ordered sources ride along untouched; the per-OS updater decides whether
+  // the DP tier is usable and falls through to the direct download if not.
+  const sources = Array.isArray(opts?.sources) ? opts!.sources : undefined;
   const expectedHashOverride = opts?.expectedHash
     ? String(opts.expectedHash).trim().toLowerCase()
     : undefined;
@@ -179,10 +189,10 @@ export async function runUpdateTask(
     });
 
     const run = isMacos
-      ? await performMacosPkgUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride)
+      ? await performMacosPkgUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride, sources)
       : isWindows
-        ? await performWindowsMsiUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride)
-        : await performLinuxUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride);
+        ? await performWindowsMsiUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride, sources)
+        : await performLinuxUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride, sources);
 
     logger?.warn?.("[update] update started (payload override)", {
       targetVersion,
@@ -313,10 +323,10 @@ export async function runUpdateTask(
     });
 
     const run = isMacos
-      ? await performMacosPkgUpdate(ctx, effectiveVersion, expectedHash)
+      ? await performMacosPkgUpdate(ctx, effectiveVersion, expectedHash, undefined, sources)
       : isWindows
-        ? await performWindowsMsiUpdate(ctx, effectiveVersion, expectedHash)
-        : await performLinuxUpdate(ctx, effectiveVersion, expectedHash);
+        ? await performWindowsMsiUpdate(ctx, effectiveVersion, expectedHash, undefined, sources)
+        : await performLinuxUpdate(ctx, effectiveVersion, expectedHash, undefined, sources);
 
     logger?.warn?.("[update] update started", {
       latestVersion: effectiveVersion,
