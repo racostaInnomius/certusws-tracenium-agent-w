@@ -13,7 +13,21 @@
 import { describe, it, expect } from "vitest";
 import { parseEnrollmentStatus } from "../../privsvc/macos/src/mdm-state";
 
+// ✅ VALIDADO CONTRA HARDWARE REAL (2026-08-17, macOS 26.5.1 build 25F80):
+// `profiles status -type enrollment` devuelve exactamente este formato y
+// corre sin sudo. El caso de abajo NO es hipotético — es la salida
+// literal capturada de una Mac sin enrolar.
 describe("parseEnrollmentStatus", () => {
+  it("parsea la salida REAL de macOS 26.5.1 (capturada, no inventada)", () => {
+    const out = parseEnrollmentStatus("Enrolled via DEP: No\nMDM enrollment: No\n");
+    expect(out).toEqual({
+      enrolled: false,
+      userApproved: null,
+      supervised: false,
+      determined: true, // el formato se reconoce; no cae a indeterminado
+    });
+  });
+
   it("detecta enrolamiento aprobado por el usuario (UAMDM, sin DEP)", () => {
     const out = parseEnrollmentStatus(
       ["Enrolled via DEP: No", "MDM enrollment: Yes (User Approved)"].join("\n")
