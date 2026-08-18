@@ -1556,7 +1556,7 @@ stream = client.Connect();
 
       try {
         if (jobType) {
-          ctx.trayStatus.markJobStarted(jobType);
+          ctx.trayStatus.markJobStarted(jobType, jobId || undefined);
         }
       } catch {}
 
@@ -1569,7 +1569,7 @@ stream = client.Connect();
                   result.status === 0 ? "success" :
                   result.status === 1 ? "retry" :
                   "failed";
-                ctx.trayStatus.markJobFinished(jobType, normalizedStatus);
+                ctx.trayStatus.markJobFinished(jobType, normalizedStatus, jobId || undefined);
               }
             } catch {}
             return sendControlAck(ctx, eventId, result.status, result.message);
@@ -1581,7 +1581,7 @@ stream = client.Connect();
             });
             try {
               if (jobType) {
-                ctx.trayStatus.markJobFinished(jobType, "failed");
+                ctx.trayStatus.markJobFinished(jobType, "failed", jobId || undefined);
               }
             } catch {}
             return sendControlAck(ctx, eventId, 2, err?.message || "job_failed");

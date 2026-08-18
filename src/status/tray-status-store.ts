@@ -296,26 +296,43 @@ export class TrayStatusStore {
     }));
   }
 
-  markJobStarted(jobType: string) {
+  markJobStarted(jobType: string, jobId?: string) {
     return this.update((current) => ({
       ...(current || this.emptySnapshot()),
       jobs: {
         ...(current?.jobs || {}),
         lastJobType: jobType,
         lastJobStatus: "in_progress",
-        lastJobAtUtc: new Date().toISOString()
+        lastJobAtUtc: new Date().toISOString(),
+        current: jobId
+          ? { jobId, jobType, startedAtUtc: new Date().toISOString() }
+          : (current?.jobs?.current ?? null)
       }
     }));
   }
 
-  markJobFinished(jobType: string, status: "success" | "retry" | "failed", patch?: Partial<TrayStatusSnapshot["patch"]>) {
+  markJobFinished(
+    jobType: string,
+    status: "success" | "retry" | "failed",
+    jobId?: string,
+    patch?: Partial<TrayStatusSnapshot["patch"]>
+  ) {
     return this.update((current) => ({
       ...(current || this.emptySnapshot()),
       jobs: {
         ...(current?.jobs || {}),
         lastJobType: jobType,
         lastJobStatus: status,
-        lastJobAtUtc: new Date().toISOString()
+        lastJobAtUtc: new Date().toISOString(),
+        // Only clear `current` if this finish is for the job we're
+        // actually tracking as active. runningJobIds already dedups
+        // concurrent same-id execution, but an out-of-order finish
+        // for an OLDER jobId must not stomp a newer job's in-progress
+        // state — hence the id match instead of an unconditional clear.
+        current:
+          !jobId || current?.jobs?.current?.jobId === jobId
+            ? null
+            : current?.jobs?.current
       },
       patch: {
         ...(current?.patch || {}),

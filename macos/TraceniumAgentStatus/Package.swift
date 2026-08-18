@@ -13,6 +13,11 @@ let package = Package(
         .executableTarget(
             name: "TraceniumAgentStatus",
             path: "Sources"
+        ),
+        .testTarget(
+            name: "TraceniumAgentStatusTests",
+            dependencies: ["TraceniumAgentStatus"],
+            path: "Tests/TraceniumAgentStatusTests"
         )
     ]
 )
