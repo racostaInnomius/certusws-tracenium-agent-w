@@ -211,8 +211,21 @@ export class FileSession {
         this.send({ op: "roots", roots: this.jail.listRoots() });
         break;
 
-      case "list":
-        this.handleList(String(msg.path ?? "/")).catch((err: any) => {
+      case "list": {
+        const listPath = String(msg.path ?? "/");
+        this.handleList(listPath).catch((err: any) => {
+          // Loguear, no solo responder. Un rechazo de la jaula sí quedaba
+          // registrado, pero un readdir fallido se iba en silencio al
+          // DataChannel — y readdir falla a menudo por motivos normales:
+          // TCC en macOS le niega ~/Downloads a un LaunchDaemon sin Full
+          // Disk Access, y en Linux el servicio no entra en los home de
+          // otros usuarios. Sin esta línea el fallo era invisible en los
+          // dos extremos a la vez, que es la peor combinación posible.
+          this.args.ctx.logger?.warn?.("[rcp.file] list failed", {
+            sessionId: this.args.sessionId,
+            path: listPath.slice(0, 256),
+            err: err?.message ?? String(err)
+          });
           this.send({
             op: "error",
             code: "LIST_FAILED",
@@ -220,6 +233,7 @@ export class FileSession {
           });
         });
         break;
+      }
 
       case "download": {
         const transferId = this.takeTransferId(msg);
