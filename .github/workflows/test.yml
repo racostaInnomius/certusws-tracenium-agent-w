@@ -31,3 +31,23 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # La cobertura de exec del perfil la comprueba un test de vitest
+      # (test/packaging/apparmor-exec-coverage.test.ts), que corre en el paso
+      # anterior y es multiplataforma. Lo que ese test NO puede hacer es
+      # decidir si el perfil es SINTÁCTICAMENTE válido: eso sólo lo sabe
+      # apparmor_parser, que es Linux-only — y por eso vive aquí.
+      #
+      # Importa porque el perfil lo instala nuestro propio .deb: un error de
+      # sintaxis no falla en el build, falla en el postinst del endpoint, y
+      # deja al host sin perfil o sin paquete.
+      #
+      # -Q parsea sin cargar en el kernel, así que no hace falta que el runner
+      # tenga AppArmor activo ni que el perfil aplique a nada de aquí.
+      - name: Validate AppArmor profile syntax
+        run: |
+          if ! command -v apparmor_parser >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq apparmor
+          fi
+          sudo apparmor_parser -Q -K packaging/linux/apparmor/usr.lib.tracenium.privsvc

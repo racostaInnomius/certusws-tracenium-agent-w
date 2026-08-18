@@ -120,6 +120,21 @@ profile tracenium-privsvc /usr/lib/tracenium/node {
   /usr/bin/dnf                                      Ux,
   /usr/bin/yum                                      Ux,
   /usr/bin/rpm                                      Ux,
+  # Los cuatro de abajo los destapo el test de cobertura de exec
+  # (test/packaging/apparmor-exec-coverage.test.ts): se invocaban desde el
+  # codigo sin regla, asi que en el endpoint fallaban con EACCES en silencio.
+  #
+  # Todos van Ux por el mismo motivo que sus hermanos de arriba: son gestores
+  # de paquetes (o los envuelven) y lanzan subprocesos propios. Con `ix`
+  # heredarian este perfil y moririan a deniegos por dentro.
+  #   apt-mark  — `showmanual`, script Python que usa las libs de apt
+  #   dnf5      — reemplazo de dnf en Fedora 41+
+  #   zypper    — gestor de openSUSE
+  #   dpkg-sig  — verifica la firma de un .deb; por dentro ejecuta gpg
+  /usr/bin/apt-mark                                 Ux,
+  /usr/bin/dnf5                                     Ux,
+  /usr/bin/zypper                                   Ux,
+  /usr/bin/dpkg-sig                                 Ux,
   /usr/bin/snap                                     ix,
   /usr/bin/flatpak                                  ix,
   /usr/bin/systemctl                                ix,
@@ -173,6 +188,11 @@ profile tracenium-privsvc /usr/lib/tracenium/node {
   # who/logname: sesion interactiva, para el widget de soporte.
   /usr/bin/who                                      ix,
   /usr/bin/logname                                  ix,
+  # whoami: mismo widget, en device-facts-builder. Faltaba.
+  /usr/bin/whoami                                   ix,
+  # testparm: vuelca la config efectiva de Samba para el check de compliance.
+  # Lectura acotada, sin subprocesos -> ix basta.
+  /usr/bin/testparm                                 ix,
   /usr/bin/journalctl                               ix,
   /usr/bin/firewall-cmd                             ix,
   /usr/bin/needs-restarting                         ix,
