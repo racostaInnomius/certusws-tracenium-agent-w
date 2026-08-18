@@ -782,6 +782,10 @@ function handleControlMessage(msg: any) {
     push("grpc.control.agentUpdate", {
       jobId: msg.agentUpdate.jobId || "",
       version: msg.agentUpdate.version || "",
+      // LAN bases of the site's distribution points. This bridge rebuilds the
+      // message field by field for the agent, so anything not copied here does
+      // not exist on the other side.
+      dpBaseUrlsJson: msg.agentUpdate.dpBaseUrlsJson || "",
       receivedAtUtc: new Date().toISOString()
     });
   }

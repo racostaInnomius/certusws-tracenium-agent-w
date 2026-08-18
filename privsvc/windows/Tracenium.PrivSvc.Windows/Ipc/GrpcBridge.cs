@@ -1234,8 +1234,14 @@ private const int MaxPendingPushEvents = 50;
                 {
                     var version = msg.AgentUpdate.Version ?? string.Empty;
                     var jobId = msg.AgentUpdate.JobId ?? string.Empty;
+                    // LAN base URLs of the site's distribution points. This
+                    // bridge rebuilds the message field by field for AgentCore,
+                    // so a field that is not copied here simply does not exist
+                    // on the other side — which is how the ACK message spent
+                    // months arriving as the literal "OK".
+                    var dpBaseUrlsJson = msg.AgentUpdate.DpBaseUrlsJson ?? string.Empty;
 
-                    Log($"AgentUpdate received version={version} jobId={jobId}");
+                    Log($"AgentUpdate received version={version} jobId={jobId} dpBaseUrls={(string.IsNullOrEmpty(dpBaseUrlsJson) ? "none" : dpBaseUrlsJson)}");
 
                     if (string.IsNullOrWhiteSpace(version))
                     {
@@ -1250,6 +1256,7 @@ private const int MaxPendingPushEvents = 50;
                         {
                             jobId,
                             version,
+                            dpBaseUrlsJson,
                             receivedAtUtc = DateTime.UtcNow.ToString("o")
                         }
                     });

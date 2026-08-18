@@ -1897,9 +1897,9 @@ stream = client.Connect();
       setImmediate(() => {
         runUpdateTask(ctx, {
           targetVersion: version,
-          // `sourcesJson` is a JSON string on the wire (one additive proto
+          // `dpBaseUrlsJson` is a JSON string on the wire (one additive proto
           // field instead of a repeated message). Malformed or absent → no
-          // sources, which means "download from the internet as before".
+          // distribution point, i.e. download from the internet as before.
           dpBaseUrls: parseDpBaseUrls((msg.agentUpdate as any)?.dpBaseUrlsJson),
           logger: ctx.logger
         })
