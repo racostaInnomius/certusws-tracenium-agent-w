@@ -896,10 +896,30 @@ public static class IpcGrpcHandlers
                 var forceFull =
                     string.Equals(fullStr, "true", StringComparison.OrdinalIgnoreCase) ||
                     fullStr == "1";
-                // M3.S1+ — DXGI Desktop Duplication (replaces GDI BitBlt
-                // that failed on every Session 0 service-side capture).
-                // See ScreenCaptureDxgi.cs for the full rationale.
-                return ScreenCaptureDxgi.Capture(req.Id, quality, forceFull);
+                // ADR-0006 — la captura ocurre en un helper que corre DENTRO
+                // de la sesión del usuario. Este servicio es LocalSystem, o
+                // sea Sesión 0, que no tiene escritorio interactivo por
+                // diseño: capturar desde aquí devuelve "no hay escritorio"
+                // haya o no usuario conectado. Comprobado en campo con la
+                // sonda de ADR-0006 — el MISMO código captura desde la
+                // sesión 1 y falla desde la 0.
+                var viaSession = SessionScreenCapture.Capture(req.Id, quality, forceFull);
+
+                // Reserva para la ventana de despliegue: si el MSI todavía no
+                // trae tracenium-screencap.exe, seguimos por el camino viejo.
+                // Fallará igual desde Sesión 0, pero con el error de siempre
+                // en vez de uno nuevo sobre un fichero que el operador no
+                // sabe que debería existir. En cuanto el helper está, esta
+                // rama deja de tocarse.
+                if (viaSession is { Ok: false } &&
+                    viaSession.Error?.Message?.Contains(
+                        "tracenium-screencap.exe not found",
+                        StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    return ScreenCaptureDxgi.Capture(req.Id, quality, forceFull);
+                }
+
+                return viaSession;
             }
             catch (Exception ex)
             {

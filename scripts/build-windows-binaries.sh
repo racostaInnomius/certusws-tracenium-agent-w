@@ -59,6 +59,10 @@ fi
 
 PRIVSVC_PROJECT="$AGENT_REPO_DIR/privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj"
 AGENTTRAY_PROJECT="$AGENT_REPO_DIR/windows/Tracenium.AgentTray/Tracenium.AgentTray.csproj"
+# ADR-0006 — helper de captura que corre en la sesión del usuario. Se publica
+# DENTRO del directorio del PrivSvc porque SessionScreenCapture.ResolveHelperPath
+# lo busca junto a su propio binario (AppContext.BaseDirectory).
+SCREENCAP_PROJECT="$AGENT_REPO_DIR/privsvc/windows/Tracenium.ScreenCap/Tracenium.ScreenCap.csproj"
 
 # ── Version resolution ───────────────────────────────────────────────
 # Pulled from package.json (single source of truth across all five
@@ -124,6 +128,10 @@ if [ ! -f "$PRIVSVC_PROJECT" ]; then
   echo "ERROR: PrivSvc csproj not found at: $PRIVSVC_PROJECT" >&2
   exit 1
 fi
+if [ ! -f "$SCREENCAP_PROJECT" ]; then
+  echo "ERROR: ScreenCap csproj not found at: $SCREENCAP_PROJECT" >&2
+  exit 1
+fi
 if [ ! -f "$AGENTTRAY_PROJECT" ]; then
   echo "ERROR: AgentTray csproj not found at: $AGENTTRAY_PROJECT" >&2
   exit 1
@@ -137,7 +145,7 @@ fi
 # Sanity-check that EnableWindowsTargeting is set in both csproj.
 # Without it, cross-compile from macOS dies with NETSDK1100. We grep
 # rather than parse XML to keep the script POSIX-portable.
-for proj in "$PRIVSVC_PROJECT" "$AGENTTRAY_PROJECT"; do
+for proj in "$PRIVSVC_PROJECT" "$SCREENCAP_PROJECT" "$AGENTTRAY_PROJECT"; do
   if ! grep -q "<EnableWindowsTargeting>true</EnableWindowsTargeting>" "$proj"; then
     echo "ERROR: $proj is missing <EnableWindowsTargeting>true</EnableWindowsTargeting>." >&2
     echo "       Add it inside <PropertyGroup> or this script will fail with NETSDK1100." >&2
@@ -347,6 +355,21 @@ if [ "$DO_X64" = "1" ]; then
   fi
 
   echo ""
+  echo "[x64] Publishing ScreenCap helper (ADR-0006)..."
+  X64_SCREENCAP_STAGE="$STAGE_BASE/ScreenCap-win-x64"
+  # self-contained ("true"): los endpoints no llevan runtime .NET. Publicarlo
+  # framework-dependent produce un EXE que no arranca y falla de una forma
+  # indistinguible de "screen share roto" — ya nos costó una ronda entera con
+  # la sonda de ADR-0006.
+  clean_and_publish "$SCREENCAP_PROJECT" "win-x64" "$X64_SCREENCAP_STAGE" "true"
+  if [ ! -f "$X64_SCREENCAP_STAGE/tracenium-screencap.exe" ]; then
+    echo "ERROR: ScreenCap x64 publish produced no EXE in $X64_SCREENCAP_STAGE" >&2
+    exit 1
+  fi
+  # Va al MISMO subdirectorio que el PrivSvc, que es donde lo busca.
+  distribute_exe "$X64_SCREENCAP_STAGE/tracenium-screencap.exe" "x64" "PrivSvc"
+
+  echo ""
   echo "[x64 3/4] Staging PrivSvc EXE → build/win-binaries/x64/..."
   distribute_exe "$X64_PRIVSVC_STAGE/Tracenium.PrivSvc.Windows.exe" "x64" "PrivSvc"
 
@@ -383,6 +406,21 @@ if [ "$DO_ARM64" = "1" ]; then
     echo "ERROR: AgentTray arm64 publish produced no EXE in $ARM64_AGENTTRAY_STAGE" >&2
     exit 1
   fi
+
+  echo ""
+  echo "[arm64] Publishing ScreenCap helper (ADR-0006)..."
+  ARM64_SCREENCAP_STAGE="$STAGE_BASE/ScreenCap-win-arm64"
+  # self-contained ("true"): los endpoints no llevan runtime .NET. Publicarlo
+  # framework-dependent produce un EXE que no arranca y falla de una forma
+  # indistinguible de "screen share roto" — ya nos costó una ronda entera con
+  # la sonda de ADR-0006.
+  clean_and_publish "$SCREENCAP_PROJECT" "win-arm64" "$ARM64_SCREENCAP_STAGE" "true"
+  if [ ! -f "$ARM64_SCREENCAP_STAGE/tracenium-screencap.exe" ]; then
+    echo "ERROR: ScreenCap arm64 publish produced no EXE in $ARM64_SCREENCAP_STAGE" >&2
+    exit 1
+  fi
+  # Va al MISMO subdirectorio que el PrivSvc, que es donde lo busca.
+  distribute_exe "$ARM64_SCREENCAP_STAGE/tracenium-screencap.exe" "arm64" "PrivSvc"
 
   echo ""
   echo "[arm64 3/4] Staging PrivSvc EXE → build/win-binaries/arm64/..."

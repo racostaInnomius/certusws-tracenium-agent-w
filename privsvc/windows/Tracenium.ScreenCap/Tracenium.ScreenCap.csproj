@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>tracenium-screencap</AssemblyName>
+    <!-- Publicar desde macOS/Linux, igual que el PrivSvc. Solo afecta al build. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- ⚠️ SIEMPRE self-contained al publicar: los endpoints no llevan el
+         runtime .NET. Una publicación framework-dependent no arranca y falla
+         de una forma indistinguible de "screen share roto" — nos costó una
+         ronda entera de diagnóstico con la sonda de ADR-0006. El script de
+         build pasa PublishSingleFile y SelfContained=true. -->
+    <SelfContained>false</SelfContained>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- El código de captura REAL del PrivSvc, incluido por referencia y no
+         copiado. Un fork divergiría en silencio: el bug del CharSet de
+         DXGI_OUTPUT_DESC habría que arreglarlo dos veces, y la segunda se
+         olvida. Mismo motivo por el que la sonda de ADR-0006 los incluye. -->
+    <Compile Include="../Tracenium.PrivSvc.Windows/Ipc/Protocol.cs" />
+    <Compile Include="../Tracenium.PrivSvc.Windows/Ipc/ScreenCaptureDxgi.cs" />
+    <Compile Include="../Tracenium.PrivSvc.Windows/Ipc/ScreenCapture.cs" />
+  </ItemGroup>
+</Project>
