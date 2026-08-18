@@ -78,17 +78,42 @@ type ScanItem = {
   source?: string;
 };
 
+/**
+ * Strips ANSI escape sequences from command output.
+ *
+ * apt 3.0 colourises its diagnostics even when stdout/stderr are pipes rather
+ * than a terminal. Two things break as a result:
+ *
+ *   1. The escape bytes end up verbatim in the scan `note`, which is rendered
+ *      to an operator in the dashboard — a diagnostic nobody can read is not a
+ *      diagnostic. A real one from the field read:
+ *        apt list failed: \x1b[1;33mWarning: \x1b[0m\x1b[1mUnable to read ...
+ *
+ *   2. More dangerous: the upgradable-package parser matches on line shape.
+ *      A colourised stdout would simply fail to match, yielding zero items —
+ *      indistinguishable from a machine with nothing to upgrade. That is the
+ *      exact silent-failure mode this plugin has already been bitten by.
+ *
+ * Colour carries no information for a machine reader, so it is removed from
+ * both streams at the point of capture rather than at each use site.
+ */
+export function stripAnsi(text: string): string {
+  // CSI sequences (colour, cursor moves) plus stray OSC strings.
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+}
+
 async function runCmd(bin: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number | null }> {
   try {
     const { stdout, stderr } = await execFileAsync(bin, args, {
       timeout: SCAN_TIMEOUT_MS,
       maxBuffer: 16 * 1024 * 1024, // 16 MB — `dnf updateinfo --list` on RHEL with 800 advisories ~3 MB
     });
-    return { stdout: stdout || "", stderr: stderr || "", code: 0 };
+    return { stdout: stripAnsi(stdout || ""), stderr: stripAnsi(stderr || ""), code: 0 };
   } catch (err: any) {
     return {
-      stdout: err?.stdout || "",
-      stderr: err?.stderr || "",
+      stdout: stripAnsi(err?.stdout || ""),
+      stderr: stripAnsi(err?.stderr || ""),
       code: typeof err?.code === "number" ? err.code : null,
     };
   }
@@ -433,11 +458,11 @@ async function runInstall(
       maxBuffer: 32 * 1024 * 1024, // 32 MB — verbose apt-get on 500-pkg upgrade can hit ~10 MB
       env: env ? { ...process.env, ...env } : process.env,
     });
-    return { stdout: stdout || "", stderr: stderr || "", code: 0 };
+    return { stdout: stripAnsi(stdout || ""), stderr: stripAnsi(stderr || ""), code: 0 };
   } catch (err: any) {
     return {
-      stdout: err?.stdout || "",
-      stderr: err?.stderr || "",
+      stdout: stripAnsi(err?.stdout || ""),
+      stderr: stripAnsi(err?.stderr || ""),
       code: typeof err?.code === "number" ? err.code : null,
     };
   }
