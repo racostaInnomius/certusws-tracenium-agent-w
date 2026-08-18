@@ -417,16 +417,17 @@ if [ ! -f "$PTY_DIR/build/Release/pty.node" ]; then
   echo "       El agente no podrá abrir sesiones de remote shell." >&2
   exit 1
 fi
-if [ ! -f "$PTY_HELPER" ]; then
-  echo "ERROR: falta $PTY_HELPER" >&2
-  echo "       node-pty lo exige en POSIX; sin él remote shell falla al" >&2
-  echo "       arrancar. Suele significar que npm ci resolvió node-pty sin" >&2
-  echo "       compilarlo: 'cd \$STAGING_DIR && npm rebuild node-pty" >&2
-  echo "       --build-from-source' y repite el build." >&2
-  exit 1
+# spawn-helper: node-pty calcula helperPath = native.dir + "/spawn-helper"
+# y se lo pasa a pty.fork, pero MEDIDO EN CAMPO el fork funciona sin él en
+# Linux — así que su ausencia NO es motivo para abortar el build. (Primera
+# versión de este bloque sí abortaba; habría roto builds sanos. La causa
+# real del "forkpty(3) failed" en el endpoint era AppArmor, no este
+# fichero.) Si está, nos aseguramos de que pueda ejecutarse.
+if [ -f "$PTY_HELPER" ]; then
+  chmod 0755 "$PTY_HELPER"
+else
+  echo "→ nota: node-pty sin spawn-helper; el fork no lo necesita en Linux"
 fi
-# El bit de ejecución importa tanto como el fichero: node-pty lo exec-uta.
-chmod 0755 "$PTY_HELPER"
 
 # Prueba de humo de verdad: abrir un pty con el node empaquetado. Es la
 # única comprobación que distingue "los ficheros están" de "esto funciona".

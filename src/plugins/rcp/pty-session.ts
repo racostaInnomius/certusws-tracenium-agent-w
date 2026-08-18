@@ -40,9 +40,11 @@
 // node-pty/typings but the require keeps interop predictable.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const nodePty = require("node-pty");
+import * as fs from "node:fs";
 import type { AgentContext } from "../../core/agent-context";
 
 const IS_WINDOWS = process.platform === "win32";
+const IS_MACOS = process.platform === "darwin";
 
 // Sane defaults — overridden by the first resize message from the
 // browser within milliseconds of channel open. 80x24 was the
@@ -66,12 +68,23 @@ function pickShell(): { file: string; args: string[] } {
     const file = process.env.ComSpec || "cmd.exe";
     return { file, args: [] };
   }
-  // macOS + Linux. SHELL is set on interactive logins; fall back to
-  // /bin/bash which exists on every base install we care about.
-  // We don't try /bin/zsh on macOS even though that's the default
-  // since 10.15 — auditors and ops tooling are written for bash
-  // semantics and the difference doesn't matter for M1.
-  return { file: process.env.SHELL || "/bin/bash", args: [] };
+  // macOS + Linux. SHELL viene del login interactivo, que un demonio no
+  // tiene: LaunchDaemon y systemd arrancan sin él, así que en la práctica
+  // manda el fallback.
+  if (process.env.SHELL) return { file: process.env.SHELL, args: [] };
+
+  // En macOS el fallback histórico a /bin/bash hacía que cada sesión
+  // empezara con el aviso de deprecación de Apple ("The default
+  // interactive shell is now zsh…"), porque macOS congeló bash en la 3.2
+  // de 2007 por la licencia GPLv3. Ruido en el primer renglón de cada
+  // sesión de soporte, y encima invita al operador a correr un `chsh`
+  // que cambiaría el shell de la cuenta en la máquina remota.
+  // zsh es el shell por defecto desde 10.15 y está en todas las que
+  // soportamos; comprobamos que exista igual, porque este fallback no es
+  // sitio para dar por hecho nada.
+  if (IS_MACOS && fs.existsSync("/bin/zsh")) return { file: "/bin/zsh", args: [] };
+
+  return { file: "/bin/bash", args: [] };
 }
 
 export type PtySessionArgs = {
