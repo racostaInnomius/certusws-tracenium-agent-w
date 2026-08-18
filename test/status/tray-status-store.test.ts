@@ -119,3 +119,50 @@ describe("TrayStatusStore — active job tracking", () => {
     );
   });
 });
+
+describe("TrayStatusStore — self-service Software Catalog", () => {
+  const item = { packageId: "1", name: "Zoom", version: "6.1.0" };
+
+  it("updateCatalog writes items + catalogVersion", () => {
+    const store = new TrayStatusStore();
+    const snapshot = store.updateCatalog([item], "abc123");
+
+    expect(snapshot.catalog?.catalogVersion).toBe("abc123");
+    expect(snapshot.catalog?.items).toEqual([item]);
+    expect(snapshot.catalog?.updatedAtUtc).toBeTruthy();
+  });
+
+  it("is a no-op when catalogVersion matches what's already on disk", () => {
+    const store = new TrayStatusStore();
+    const first = store.updateCatalog([item], "abc123");
+    const firstUpdatedAt = first.catalog?.updatedAtUtc;
+
+    const second = store.updateCatalog(
+      [{ ...item, name: "Zoom (renamed, but same version hash)" }],
+      "abc123"
+    );
+
+    // Same version — the store must not have rewritten the block (or
+    // the top-level updatedAtUtc), even though the payload differs.
+    expect(second.catalog?.updatedAtUtc).toBe(firstUpdatedAt);
+    expect(second.catalog?.items).toEqual([item]);
+  });
+
+  it("rewrites when catalogVersion changes", () => {
+    const store = new TrayStatusStore();
+    store.updateCatalog([item], "abc123");
+    const second = store.updateCatalog([], "def456");
+
+    expect(second.catalog?.catalogVersion).toBe("def456");
+    expect(second.catalog?.items).toEqual([]);
+  });
+
+  it("persists across a save/load round trip", () => {
+    const store = new TrayStatusStore();
+    store.updateCatalog([item], "abc123");
+
+    const reloaded = store.load();
+    expect(reloaded?.catalog?.items).toEqual([item]);
+    expect(reloaded?.catalog?.catalogVersion).toBe("abc123");
+  });
+});

@@ -256,6 +256,73 @@ message RemoteScreenAudit {
   string errorMessage = 6;
 }
 
+// ---------------- SOFTWARE CATALOG (self-service) ----------------
+//
+// Every other job dispatch in this system is admin-push (see RunJob) —
+// an operator picks devices in the web UI and the backend fans out.
+// This pair of message types is the one deliberate exception: the
+// device itself asks "what can I self-install" and "please install
+// this", driving the macOS tray's "Software Catalog" tab. To keep the
+// blast radius of that exception small, the backend only ever returns
+// / accepts packages an admin explicitly flagged
+// software_packages.self_service_enabled = true (see
+// modules/software-delivery). Once a SelfInstallRequest is accepted,
+// the install itself still flows down as an ordinary
+// RunJob{jobType:"software_install"} on the SAME connection — these
+// messages exist only to negotiate catalog + consent, not to carry
+// the install.
+
+// Agent -> Server. Device asks for its tenant's self-service catalog,
+// filtered server-side to items compatible with this device's
+// platform/arch (see modules/software-delivery for the compatibility
+// rule already used by admin dispatch's per-device evaluation).
+message CatalogRequest {
+  string eventId = 1;
+}
+
+message SoftwareCatalogItem {
+  string packageId = 1;
+  string name = 2;
+  string vendor = 3;
+  string version = 4;
+  string description = 5;
+  bool requiresReboot = 6;
+}
+
+// Server -> Agent.
+message CatalogResponse {
+  string eventId = 1;
+  // Hash of the filtered result set. The agent stores this and
+  // compares next time, so a tray-status write only fires when the
+  // eligible catalog actually changed — same "compute → compare →
+  // only push/write if different" shape as PolicyUpdate/policyVersion.
+  string catalogVersion = 2;
+  repeated SoftwareCatalogItem items = 3;
+}
+
+// Agent -> Server. The end user clicked "Install" on one catalog item
+// in the tray. packageId MUST be one the most recent CatalogResponse
+// offered — the backend re-validates self_service_enabled + platform/
+// arch fit server-side regardless (never trust the client's filtering).
+message SelfInstallRequest {
+  string eventId = 1;
+  string packageId = 2;
+}
+
+// Server -> Agent.
+message SelfInstallAck {
+  string eventId = 1;
+  bool accepted = 2;
+  // Set when accepted — the jobId of the RunJob{software_install} the
+  // backend just dispatched (or will dispatch momentarily) on this
+  // same device/connection. Empty when accepted = false.
+  string jobId = 3;
+  // Set when accepted = false, e.g. "not_self_service", "platform_mismatch",
+  // "package_not_found", "job_already_running".
+  string errorCode = 4;
+  string errorMessage = 5;
+}
+
 // ---------------- CONTROL PLANE MESSAGE ----------------
 
 message ControlMessage {
@@ -291,5 +358,12 @@ message ControlMessage {
     RemoteSessionTranscript remoteSessionTranscript = 25; // agent -> server (M1.S3)
     RemoteFileTransferAudit remoteFileTransferAudit  = 26; // agent -> server (M2.S1)
     RemoteScreenAudit       remoteScreenAudit        = 27; // agent -> server (M3.S1)
+
+    // Software Catalog self-service (see message docs above).
+    // Field numbers 30-33 — next free block after RCP's 20-29.
+    CatalogRequest catalogRequest         = 30; // agent -> server
+    CatalogResponse catalogResponse       = 31; // server -> agent
+    SelfInstallRequest selfInstallRequest = 32; // agent -> server
+    SelfInstallAck selfInstallAck         = 33; // server -> agent
   }
 }
