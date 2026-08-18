@@ -10,7 +10,13 @@ public static class PatchManagement
     // 5-15s on a healthy host; 60s covers a slow WSUS round-trip
     // or a host that hasn't pinged Microsoft in months and needs to
     // refresh the metadata catalog before searching.
-    private const int ScanTimeoutMs = 60_000;
+    // 150s, raised from 60s on 2026-08-18. Four servers in one tenant hit the
+    // 60s ceiling on the very first scan that PowerShell was able to run: a
+    // WSUS-backed search on a domain controller routinely needs minutes, not
+    // seconds. Kept well under the client's budget because the Windows IPC
+    // lane is strictly serial — a scan holding the lane blocks everything
+    // behind it, so this is a ceiling, not a target.
+    private const int ScanTimeoutMs = 150_000;
 
     // Install timeout: 90 min. Covers the worst common case (kernel
     // + .NET runtime + servicing-stack update in a single batch,

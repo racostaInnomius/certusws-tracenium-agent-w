@@ -74,11 +74,11 @@ export function getTimeoutForMethod(method: string): number {
     //
     // privsvc ceilings these must stay above:
     //   patch.install — Windows 90min (WUA), macOS/Linux 60min
-    //   patch.scan    — macOS 120s (softwareupdate --list), Windows 60s
+    //   patch.scan    — macOS 120s (softwareupdate --list), Windows 150s
     case "patch.install":
       return 95 * 60 * 1000; // privsvc: 90min (Windows) + 5min margin
     case "patch.scan":
-      return 180 * 1000; // privsvc: 120s (macOS) + margin
+      return 240 * 1000; // privsvc: 150s (Windows) + 90s for the serial lane queue
     // ── SDP + self-update ────────────────────────────────────────────
     //
     // These were falling through to the 8s default while the privsvc side

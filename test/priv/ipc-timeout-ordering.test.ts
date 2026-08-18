@@ -49,8 +49,8 @@ const PRIVSVC_CEILING_MS: Record<string, { windows?: number; macos?: number; lin
   "security.compliance": { windows: 240_000, macos: 45_000, linux: 60_000 },
   // Windows WUA install; macOS/Linux softwareupdate/apt-dnf.
   "patch.install": { windows: 90 * 60_000, macos: 60 * 60_000, linux: 60 * 60_000 },
-  // macOS `softwareupdate --list` 120s; Windows scan 60s.
-  "patch.scan": { windows: 60_000, macos: 120_000 },
+  // macOS `softwareupdate --list` 120s; Windows WSUS scan 150s.
+  "patch.scan": { windows: 150_000, macos: 120_000 },
   "sdp.download": { windows: 600_000, macos: 600_000, linux: 600_000 },
   "sdp.install": { windows: 1_740_000, macos: 1_740_000, linux: 1_740_000 },
   "sdp.uninstall": { windows: 1_740_000, macos: 1_740_000, linux: 1_740_000 },
@@ -88,7 +88,7 @@ describe("IPC client budgets outwait the privsvc handler", () => {
 
   it("patch.scan no longer falls into the 8s default", () => {
     for (const t of Object.values(CLIENTS)) {
-      expect(t("patch.scan")).toBeGreaterThanOrEqual(180_000);
+      expect(t("patch.scan")).toBeGreaterThanOrEqual(240_000);
     }
   });
 
