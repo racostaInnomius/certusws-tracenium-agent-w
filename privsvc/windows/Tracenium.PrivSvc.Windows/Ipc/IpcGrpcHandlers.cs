@@ -625,6 +625,28 @@ public static class IpcGrpcHandlers
             var eventId = GetString(p, "eventId");
             var statusStr = GetString(p, "status");
 
+            // The agent's ACK message carries every structured detail the
+            // backend has about how a job went. This handler used to read only
+            // eventId + status and call SendAck without it, so `message ?? "OK"`
+            // in SendAck replaced the whole payload with the literal "OK" —
+            // on EVERY Windows ACK, for every job type.
+            //
+            // What that silently discarded:
+            //   * SDP — `software_install:<outcome>;exit=..;servedBy=..;reason=..`
+            //     is the sole source for software_install_results.exit_code,
+            //     served_by and stderr_excerpt. parseAckMessage could never
+            //     match "OK", so the backend fell back to inferring the outcome
+            //     from the numeric status alone and every Windows install
+            //     landed with served_by NULL — which is exactly what made a
+            //     distribution point test look like the DP had not served the
+            //     package when the field simply never arrived.
+            //   * agent_update — update_started / update_skipped / update_failed
+            //     all reached the operator as "OK".
+            //
+            // macOS and Linux were unaffected: their privsvc forwards the
+            // message, which is why only Windows rows looked empty.
+            var message = GetString(p, "message");
+
             if (string.IsNullOrWhiteSpace(eventId))
                 throw new Exception("eventId required");
 
@@ -634,7 +656,7 @@ public static class IpcGrpcHandlers
 
             Console.WriteLine($"[IpcGrpcHandlers] ACK forwarding eventId={eventId} status={status}");
 
-            await GrpcBridgeSingleton.Instance.SendAck(eventId, status);
+            await GrpcBridgeSingleton.Instance.SendAck(eventId, status, message);
             return PrivSvcResponse.Success(req.Id, new { ok = true });
         }
         catch (Exception ex)
