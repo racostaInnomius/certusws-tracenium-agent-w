@@ -618,11 +618,16 @@ final class StatusPopoverViewController: NSViewController {
         }
 
         if items.isEmpty {
+            // Deliberately NOT merged — NSGridView refuses to removeRow(at:)
+            // a row containing a merged cell (NSGridView.m:865: "contains a
+            // merged cell and cannot be removed"), which crashed the app on
+            // the very next 5s render tick after this row appeared. Column 1
+            // just stays blank instead; visually near-identical since it's
+            // only 90pt wide anyway.
             let emptyField = NSTextField(labelWithString: "Nothing available right now.")
             emptyField.font = NSFont.systemFont(ofSize: 12)
             emptyField.textColor = NSColor.secondaryLabelColor
             let row = catalogGrid.addRow(with: [emptyField, NSGridCell.emptyContentView])
-            row.mergeCells(in: NSRange(location: 0, length: 2))
             row.topPadding = 6
             return
         }
@@ -661,9 +666,12 @@ final class StatusPopoverViewController: NSViewController {
                 detailField.textColor = NSColor.secondaryLabelColor
                 detailField.lineBreakMode = .byWordWrapping
                 detailField.maximumNumberOfLines = 2
-                detailField.preferredMaxLayoutWidth = 320
+                // Narrower than before (320) since this cell no longer spans
+                // column 1's ~90pt — deliberately NOT merged, see the
+                // isEmpty branch above for why (removeRow(at:) crashes on a
+                // merged row; this row gets rebuilt on every 5s tick).
+                detailField.preferredMaxLayoutWidth = 300
                 let detailRow = catalogGrid.addRow(with: [detailField, NSGridCell.emptyContentView])
-                detailRow.mergeCells(in: NSRange(location: 0, length: 2))
                 detailRow.bottomPadding = 2
             }
         }
