@@ -8,8 +8,6 @@ import type { Namespaces, DeviceFacts } from "../domain/device-facts";
 import type { PmpNamespace } from "../domain/pmp-types";
 import { updatePmpState, isRemediateInFlight } from "../plugins/pmp/state";
 import { runRemediation } from "../plugins/pmp/remediation";
-import { normalizeSources } from "../plugins/sdp";
-
 // SDP no longer imported here — `software_install` is dispatched via
 // ctx.plugins.run("sdp.install", ...) so it goes through the
 // PluginManager policy gate uniformly with the other plugins.
@@ -442,17 +440,25 @@ async function collectFactsSnapshot(
 }
 
 /**
- * Parse the `sourcesJson` field of an AgentUpdate control message.
+ * Parse the `dpBaseUrlsJson` field of an AgentUpdate control message: the LAN
+ * base URLs of the distribution points serving this device's site.
+ *
+ * Bases only — the agent composes /sdp/blob/<sha256> itself, because the blob
+ * depends on the device's arch and the control plane does not record it.
  *
  * Never throws: a control message we cannot parse must not take down the
- * update path it was meant to speed up. Anything unusable degrades to
- * "no distribution point", which is the pre-existing behaviour.
+ * update path it was meant to speed up. Anything unusable degrades to "no
+ * distribution point", which is the pre-existing behaviour.
  */
-function parseSourcesJson(raw: unknown): Array<{ tier: string; url: string }> | undefined {
+function parseDpBaseUrls(raw: unknown): string[] | undefined {
   if (typeof raw !== "string" || raw.trim() === "") return undefined;
   try {
-    const list = normalizeSources(JSON.parse(raw));
-    return list.length > 0 ? list : undefined;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return undefined;
+    const out = parsed
+      .filter((u): u is string => typeof u === "string" && /^https:\/\//i.test(u))
+      .map((u) => u.replace(/\/+$/, ""));
+    return out.length > 0 ? out : undefined;
   } catch {
     return undefined;
   }
@@ -1053,7 +1059,11 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
           // device sits behind a distribution point. The updater pulls through
           // privsvc so the LAN copy is used before the internet one; absent, it
           // downloads exactly as before.
-          sources: normalizeSources((payload as any)?.sources),
+          dpBaseUrls: parseDpBaseUrls(
+            typeof (payload as any)?.dpBaseUrls === "string"
+              ? (payload as any).dpBaseUrls
+              : JSON.stringify((payload as any)?.dpBaseUrls ?? null)
+          ),
           logger: ctx.logger
         });
 
@@ -1890,7 +1900,7 @@ stream = client.Connect();
           // `sourcesJson` is a JSON string on the wire (one additive proto
           // field instead of a repeated message). Malformed or absent → no
           // sources, which means "download from the internet as before".
-          sources: parseSourcesJson((msg.agentUpdate as any)?.sourcesJson),
+          dpBaseUrls: parseDpBaseUrls((msg.agentUpdate as any)?.dpBaseUrlsJson),
           logger: ctx.logger
         })
           .then(async (outcome: any) => {

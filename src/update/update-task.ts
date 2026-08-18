@@ -108,21 +108,22 @@ export async function runUpdateTask(
     downloadUrl?: string;
     expectedHash?: string;
     /**
-     * Ordered download sources (dp → cdn → origin) from the job payload, when
-     * the control plane knows this device sits behind a distribution point.
-     * Passed straight through to the per-OS updater, which tries them via
-     * privsvc before any direct download. Absent → today's behaviour.
+     * LAN base URLs of the distribution points serving this device's site.
+     * The per-OS updater composes /sdp/blob/<expectedHash> from each and tries
+     * them through privsvc before any direct download. Absent → today's
+     * behaviour, straight from the internet.
      */
-    sources?: Array<{ tier: string; url: string }>;
+    dpBaseUrls?: string[];
   }
 ): Promise<UpdateOutcome> {
   const logger = opts?.logger;
   const force = opts?.force === true;
   const targetVersion = opts?.targetVersion ? String(opts.targetVersion).trim() : undefined;
   const downloadUrlOverride = opts?.downloadUrl ? String(opts.downloadUrl).trim() : undefined;
-  // Ordered sources ride along untouched; the per-OS updater decides whether
-  // the DP tier is usable and falls through to the direct download if not.
-  const sources = Array.isArray(opts?.sources) ? opts!.sources : undefined;
+  // DP bases ride along untouched; the per-OS updater composes the blob URLs
+  // (it owns the hash) and falls through to the direct download if the LAN
+  // copy is unusable.
+  const dpBaseUrls = Array.isArray(opts?.dpBaseUrls) ? opts!.dpBaseUrls : undefined;
   const expectedHashOverride = opts?.expectedHash
     ? String(opts.expectedHash).trim().toLowerCase()
     : undefined;
@@ -189,10 +190,10 @@ export async function runUpdateTask(
     });
 
     const run = isMacos
-      ? await performMacosPkgUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride, sources)
+      ? await performMacosPkgUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride, dpBaseUrls)
       : isWindows
-        ? await performWindowsMsiUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride, sources)
-        : await performLinuxUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride, sources);
+        ? await performWindowsMsiUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride, dpBaseUrls)
+        : await performLinuxUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride, dpBaseUrls);
 
     logger?.warn?.("[update] update started (payload override)", {
       targetVersion,
@@ -323,10 +324,10 @@ export async function runUpdateTask(
     });
 
     const run = isMacos
-      ? await performMacosPkgUpdate(ctx, effectiveVersion, expectedHash, undefined, sources)
+      ? await performMacosPkgUpdate(ctx, effectiveVersion, expectedHash, undefined, dpBaseUrls)
       : isWindows
-        ? await performWindowsMsiUpdate(ctx, effectiveVersion, expectedHash, undefined, sources)
-        : await performLinuxUpdate(ctx, effectiveVersion, expectedHash, undefined, sources);
+        ? await performWindowsMsiUpdate(ctx, effectiveVersion, expectedHash, undefined, dpBaseUrls)
+        : await performLinuxUpdate(ctx, effectiveVersion, expectedHash, undefined, dpBaseUrls);
 
     logger?.warn?.("[update] update started", {
       latestVersion: effectiveVersion,

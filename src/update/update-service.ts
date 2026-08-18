@@ -843,11 +843,13 @@ export async function performWindowsMsiUpdate(
   expectedHash?: string,
   downloadUrlOverride?: string,
   /**
-   * Ordered download sources (dp → cdn → origin) when the control plane knows
-   * this device sits behind a distribution point. Tried through privsvc first;
-   * absent or unusable → the direct download below, unchanged.
+   * LAN base URLs of the distribution points serving this device's site, e.g.
+   * ["https://10.1.2.3:47821"]. We compose /sdp/blob/<expectedHash> from each:
+   * the control plane cannot, because the blob depends on this device's arch
+   * and it does not record one. Tried through privsvc first; absent or
+   * unusable → the direct download below, unchanged.
    */
-  sources?: Array<{ tier: string; url: string }>
+  dpBaseUrls?: string[]
 ) {
   let downloaded;
 
@@ -858,13 +860,33 @@ export async function performWindowsMsiUpdate(
   // ordered tiers on its own, so `origin` being last in the list IS the
   // internet fallback. Returning null means the route is unavailable — no
   // sources, or a privsvc too old — and we continue to the direct download.
-  if (sources?.length && expectedHash) {
-    const viaDp = await downloadUpdateViaSources(ctx, {
-      version: latestVersion,
-      format: "msi",
-      expectedHash,
-      sources,
-    });
+  if (dpBaseUrls?.length && expectedHash) {
+    // Compose the blob URLs ourselves: the path is content-addressed by the
+    // hash we already hold and verify against. `origin` is intentionally NOT
+    // in this list — if every DP fails we fall through to the normal download
+    // below, which is the real internet fallback and knows how to obtain a
+    // fresh signed URL.
+    const dpSources = dpBaseUrls.map((base) => ({
+      tier: "dp",
+      url: `${base}/sdp/blob/${expectedHash.toLowerCase()}`,
+    }));
+    // Never fatal: with origin absent from the list, "all sources exhausted"
+    // just means the LAN copy was unusable, and the direct download below is
+    // exactly the fallback for that.
+    let viaDp = null;
+    try {
+      viaDp = await downloadUpdateViaSources(ctx, {
+        version: latestVersion,
+        format: "msi",
+        expectedHash,
+        sources: dpSources,
+      });
+    } catch (err: any) {
+      console.warn("[update] distribution point unusable; downloading directly", {
+        error: err?.message || String(err),
+        dpCount: dpSources.length,
+      });
+    }
     if (viaDp) {
       updateUpdateState({
         lastDownloadedPath: viaDp.filePath,
@@ -957,11 +979,13 @@ export async function performMacosPkgUpdate(
   expectedHash?: string,
   downloadUrlOverride?: string,
   /**
-   * Ordered download sources (dp → cdn → origin) when the control plane knows
-   * this device sits behind a distribution point. Tried through privsvc first;
-   * absent or unusable → the direct download below, unchanged.
+   * LAN base URLs of the distribution points serving this device's site, e.g.
+   * ["https://10.1.2.3:47821"]. We compose /sdp/blob/<expectedHash> from each:
+   * the control plane cannot, because the blob depends on this device's arch
+   * and it does not record one. Tried through privsvc first; absent or
+   * unusable → the direct download below, unchanged.
    */
-  sources?: Array<{ tier: string; url: string }>
+  dpBaseUrls?: string[]
 ) {
   let downloaded;
 
@@ -972,13 +996,33 @@ export async function performMacosPkgUpdate(
   // ordered tiers on its own, so `origin` being last in the list IS the
   // internet fallback. Returning null means the route is unavailable — no
   // sources, or a privsvc too old — and we continue to the direct download.
-  if (sources?.length && expectedHash) {
-    const viaDp = await downloadUpdateViaSources(ctx, {
-      version: latestVersion,
-      format: "pkg",
-      expectedHash,
-      sources,
-    });
+  if (dpBaseUrls?.length && expectedHash) {
+    // Compose the blob URLs ourselves: the path is content-addressed by the
+    // hash we already hold and verify against. `origin` is intentionally NOT
+    // in this list — if every DP fails we fall through to the normal download
+    // below, which is the real internet fallback and knows how to obtain a
+    // fresh signed URL.
+    const dpSources = dpBaseUrls.map((base) => ({
+      tier: "dp",
+      url: `${base}/sdp/blob/${expectedHash.toLowerCase()}`,
+    }));
+    // Never fatal: with origin absent from the list, "all sources exhausted"
+    // just means the LAN copy was unusable, and the direct download below is
+    // exactly the fallback for that.
+    let viaDp = null;
+    try {
+      viaDp = await downloadUpdateViaSources(ctx, {
+        version: latestVersion,
+        format: "pkg",
+        expectedHash,
+        sources: dpSources,
+      });
+    } catch (err: any) {
+      console.warn("[update] distribution point unusable; downloading directly", {
+        error: err?.message || String(err),
+        dpCount: dpSources.length,
+      });
+    }
     if (viaDp) {
       updateUpdateState({
         lastDownloadedPath: viaDp.filePath,
@@ -1146,11 +1190,13 @@ export async function performLinuxUpdate(
   expectedHash?: string,
   downloadUrlOverride?: string,
   /**
-   * Ordered download sources (dp → cdn → origin) when the control plane knows
-   * this device sits behind a distribution point. Tried through privsvc first;
-   * absent or unusable → the direct download below, unchanged.
+   * LAN base URLs of the distribution points serving this device's site, e.g.
+   * ["https://10.1.2.3:47821"]. We compose /sdp/blob/<expectedHash> from each:
+   * the control plane cannot, because the blob depends on this device's arch
+   * and it does not record one. Tried through privsvc first; absent or
+   * unusable → the direct download below, unchanged.
    */
-  sources?: Array<{ tier: string; url: string }>
+  dpBaseUrls?: string[]
 ) {
   let downloaded;
 
@@ -1161,13 +1207,33 @@ export async function performLinuxUpdate(
   // ordered tiers on its own, so `origin` being last in the list IS the
   // internet fallback. Returning null means the route is unavailable — no
   // sources, or a privsvc too old — and we continue to the direct download.
-  if (sources?.length && expectedHash) {
-    const viaDp = await downloadUpdateViaSources(ctx, {
-      version: latestVersion,
-      format: getBinaryFormat(),
-      expectedHash,
-      sources,
-    });
+  if (dpBaseUrls?.length && expectedHash) {
+    // Compose the blob URLs ourselves: the path is content-addressed by the
+    // hash we already hold and verify against. `origin` is intentionally NOT
+    // in this list — if every DP fails we fall through to the normal download
+    // below, which is the real internet fallback and knows how to obtain a
+    // fresh signed URL.
+    const dpSources = dpBaseUrls.map((base) => ({
+      tier: "dp",
+      url: `${base}/sdp/blob/${expectedHash.toLowerCase()}`,
+    }));
+    // Never fatal: with origin absent from the list, "all sources exhausted"
+    // just means the LAN copy was unusable, and the direct download below is
+    // exactly the fallback for that.
+    let viaDp = null;
+    try {
+      viaDp = await downloadUpdateViaSources(ctx, {
+        version: latestVersion,
+        format: getBinaryFormat(),
+        expectedHash,
+        sources: dpSources,
+      });
+    } catch (err: any) {
+      console.warn("[update] distribution point unusable; downloading directly", {
+        error: err?.message || String(err),
+        dpCount: dpSources.length,
+      });
+    }
     if (viaDp) {
       updateUpdateState({
         lastDownloadedPath: viaDp.filePath,

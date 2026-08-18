@@ -86,16 +86,18 @@ message AgentUpdate {
   string jobId = 1;
   string version = 2;
 
-  // Ordered download tiers (dp -> cdn -> origin) as JSON:
-  //   [{"tier":"dp","url":"https://10.1.2.3:47821/sdp/blob/<sha256>"}, ...]
+// LAN base URLs of the distribution points serving this device's site, as a
+  // JSON array of strings: ["https://10.1.2.3:47821", ...]
   //
-  // Carried as JSON rather than a repeated message so this stays one additive
-  // field: agents that predate it ignore an unknown field and download from
-  // the internet exactly as before, which is also the correct fallback.
+  // BASES, not full blob URLs, and deliberately so: the blob path is
+  // /sdp/blob/<sha256> of the binary for the device's platform AND ARCH, and
+  // the control plane does not know the arch — host_current_status records
+  // os_platform but no architecture. The agent knows both, and already holds
+  // the expected hash it verifies against, so it composes the final URL.
   //
-  // Present only when the control plane resolved a distribution point for the
-  // device's subnet. Absent means "no DP applies" — not an error.
-  string sourcesJson = 3;
+  // Empty or absent means no DP applies; the agent downloads from the internet
+  // exactly as before. Agents predating this field ignore it, same result.
+  string dpBaseUrlsJson = 3;
 }
 
 // ---------------- REMOTE CONTROL (RCP) SIGNALING ----------------
