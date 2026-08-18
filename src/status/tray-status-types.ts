@@ -67,6 +67,28 @@ export type TrayJobStatus = {
   current?: TrayCurrentJob | null;
 };
 
+// One entry in the self-service Software Catalog tray tab. Mirrors
+// proto SoftwareCatalogItem — see controlplane.proto's "SOFTWARE
+// CATALOG (self-service)" doc block for why this is the one
+// agent-initiated exception to the admin-push job model.
+export type TrayCatalogItem = {
+  packageId: string;
+  name: string;
+  vendor?: string;
+  version: string;
+  description?: string;
+  requiresReboot?: boolean;
+};
+
+export type TrayCatalogStatus = {
+  updatedAtUtc?: string;
+  // Hash from the last CatalogResponse. Lets the tray (and this
+  // store's update()) short-circuit when the eligible set hasn't
+  // actually changed since the last write.
+  catalogVersion?: string;
+  items: TrayCatalogItem[];
+};
+
 export type TrayUpdateStatus = {
   status?: string;
   lastCheckedAtUtc?: string;
@@ -94,4 +116,7 @@ export type TrayStatusSnapshot = {
   update: TrayUpdateStatus;
   patch: TrayPatchStatus;
   device?: TrayDeviceInfo;
+  // Absent on older snapshots (pre self-service catalog) — the tray
+  // treats a missing block the same as an empty catalog.
+  catalog?: TrayCatalogStatus;
 };

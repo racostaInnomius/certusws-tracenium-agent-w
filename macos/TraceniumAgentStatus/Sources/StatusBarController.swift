@@ -38,6 +38,9 @@ final class StatusBarController {
         contentController.onEnableLocation = { [weak self] in
             self?.locationProvider.requestConsentFromUser()
         }
+        contentController.onInstallRequested = { packageId in
+            CatalogInstallSink.write(packageId: packageId)
+        }
         // Forzar el tamaño del popover ANTES del primer show. NSPopover
         // por default se reduce al tamaño intrínseco del contentVC view,
         // y `preferredContentSize` se aplica DESPUÉS del primer render

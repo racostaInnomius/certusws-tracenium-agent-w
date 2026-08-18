@@ -305,7 +305,7 @@ export function parseConsoleUser(stdout: unknown): string | null {
  * mobile accounts can live anywhere. dscl is the supported way to ask, and the
  * hard-coded guess stays as the fallback.
  */
-async function resolveHomeDirectory(user: string): Promise<string> {
+export async function resolveHomeDirectory(user: string): Promise<string> {
   try {
     const { stdout } = await execFileAsync(
       "/usr/bin/dscl",

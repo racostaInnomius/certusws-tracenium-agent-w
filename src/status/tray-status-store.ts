@@ -10,7 +10,7 @@ import {
 } from "../bootstrap/paths";
 import { loadPmpState } from "../plugins/pmp/state";
 import { loadUpdateState } from "../update/update-state";
-import type { TrayDeviceInfo, TrayStatusSnapshot } from "./tray-status-types";
+import type { TrayCatalogItem, TrayDeviceInfo, TrayStatusSnapshot } from "./tray-status-types";
 
 const TRAY_STATUS_FILE_NAME = "tray-status.json";
 
@@ -337,6 +337,28 @@ export class TrayStatusStore {
       patch: {
         ...(current?.patch || {}),
         ...(patch || {})
+      }
+    }));
+  }
+
+  /**
+   * Self-service Software Catalog tab. Called on every CatalogResponse
+   * (see grpc-stream.ts) — short-circuits to a no-op write when
+   * catalogVersion matches what's already on disk, same "compute →
+   * compare → only write if different" discipline as markPolicyApplied
+   * relies on server-side via policyVersion.
+   */
+  updateCatalog(items: TrayCatalogItem[], catalogVersion: string) {
+    const current = this.load();
+    if (current?.catalog?.catalogVersion === catalogVersion) {
+      return current;
+    }
+    return this.update((current) => ({
+      ...(current || this.emptySnapshot()),
+      catalog: {
+        updatedAtUtc: new Date().toISOString(),
+        catalogVersion,
+        items
       }
     }));
   }
