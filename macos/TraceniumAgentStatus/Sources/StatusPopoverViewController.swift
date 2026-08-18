@@ -586,6 +586,21 @@ final class StatusPopoverViewController: NSViewController {
         let items = status?.catalog?.items ?? []
         lastCatalogItems = items
 
+        // render() fires every 5s from StatusBarController.start(), starting
+        // BEFORE the user ever opens the popover for the first time — AppKit
+        // doesn't call loadView()/configureBody() until the view is actually
+        // needed. Every other tab tolerates that because it only writes into
+        // a dictionary of already-instantiated fields (a no-op miss while
+        // the dictionary is still empty). This tab is the one that mutates
+        // catalogGrid's row STRUCTURE directly, so running it pre-load would
+        // build up rows with no floor to trim back to — then configureBody()
+        // appends the real title/intro rows AFTER that pile once the view
+        // finally loads, corrupting the tab for the rest of the process's
+        // life. Skip the grid mutation entirely until there's a grid to
+        // mutate; installButtonPressed can't fire before then anyway since
+        // there's no button yet to click.
+        guard isViewLoaded else { return }
+
         // Drop any optimistic "Installing…" state whose grace window
         // has lapsed — covers a SelfInstallRequest that got rejected
         // (no RunJob ever follows, so jobs.current would otherwise
