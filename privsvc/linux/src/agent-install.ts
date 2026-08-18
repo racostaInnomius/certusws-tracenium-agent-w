@@ -182,7 +182,122 @@ export async function handleAgentInstall(req: PrivSvcRequest): Promise<PrivSvcRe
   // Ademas esperamos al evento 'spawn' antes de responder: devolver
   // `started: true` cuando el proceso ni siquiera arranco le hacia creer al
   // agente que la instalacion iba en marcha.
-  const child = spawn("/usr/bin/systemd-run", systemdRunArgs, {
+  const viaScope = await trySpawnDetached("/usr/bin/systemd-run", systemdRunArgs);
+
+  if (viaScope.ok) {
+    logger.info("agent_install_dispatched", {
+      targetVersion,
+      pid: viaScope.pid,
+      scopeUnit,
+    });
+
+    return success(req.id, {
+      started: true,
+      command: installCmd,
+      args: installArgs,
+      scopeUnit,
+      detached: "systemd-run",
+    });
+  }
+
+  // ── Fallback: lanzar el instalador DIRECTAMENTE ──────────────────
+  //
+  // Solo se llega aqui si systemd-run no se pudo EJECUTAR (EACCES de un
+  // perfil AppArmor/SELinux, ENOENT en una distro sin systemd-run). No es
+  // un fallo del paquete ni de dpkg.
+  //
+  // ⚠️ POR QUE ESTO EXISTE, aunque sea peor que el scope:
+  //
+  // El perfil de AppArmor lo instala NUESTRO PROPIO .deb y es un allowlist.
+  // Cuando en 1.1.35 le falto la regla de systemd-run, el host quedo
+  // ATRAPADO: el arreglo del perfil viajaba dentro del update que el propio
+  // perfil bloqueaba. SRVOC-MainAgent estuvo cuatro dias congelado bajando
+  // nueve versiones (1.1.36→1.1.42, 730 MB) sin instalar ninguna, y solo
+  // salio con un `dpkg -i` manual por SSH. Un hueco en el allowlist no
+  // puede volver a ser capaz de inutilizar el mecanismo que entrega su
+  // propia correccion.
+  //
+  // ⚠️ EN QUE ES PEOR: sin el scope, el instalador queda en el cgroup de
+  // privsvc. El postinst pide `systemctl restart tracenium-privsvc`, y
+  // KillMode=control-group mata al dpkg en ese punto — cerca del final,
+  // con el unpack ya hecho. El paquete puede quedar half-configured, que se
+  // recupera con `dpkg --configure -a`. Es un resultado malo; quedarse sin
+  // poder actualizar nunca es peor.
+  //
+  // `detached` abre sesion propia (setsid), lo que aisla de señales
+  // dirigidas al grupo de procesos. NO escapa del cgroup: eso solo lo hace
+  // el scope, y es justo lo que no tenemos aqui.
+  logger.warn("agent_install_scope_unavailable", {
+    error: viaScope.error,
+    targetVersion,
+    scopeUnit,
+    hint:
+      "no se pudo ejecutar /usr/bin/systemd-run; revisar AppArmor/SELinux " +
+      "en el host (aa-status, dmesg | grep DENIED) y que el binario exista. " +
+      "Se intenta el instalador directo (degradado): si el postinst muere al " +
+      "reiniciar el servicio, recuperar con `dpkg --configure -a`",
+  });
+
+  const direct = await trySpawnDetached(installCmd, installArgs);
+
+  if (!direct.ok) {
+    logger.error("agent_install_spawn_failed", {
+      scopeError: viaScope.error,
+      directError: direct.error,
+      targetVersion,
+      hint:
+        "fallaron AMBOS caminos (systemd-run y el instalador directo). El " +
+        "host bloquea la ejecucion de binarios de sistema desde privsvc: " +
+        "revisar el perfil de AppArmor/SELinux",
+    });
+    return fail(req.id, "install_failed", direct.error);
+  }
+
+  logger.warn("agent_install_dispatched_degraded", {
+    targetVersion,
+    pid: direct.pid,
+    command: installCmd,
+  });
+
+  return success(req.id, {
+    started: true,
+    command: installCmd,
+    args: installArgs,
+    scopeUnit: null,
+    // Viaja hasta el agente para que el resultado sea visible en el control
+    // plane: "se instalo, pero por el camino degradado" merece un ticket,
+    // no el silencio de un exito normal.
+    detached: "direct",
+    degraded: true,
+    degradedReason: viaScope.error,
+  });
+}
+
+/**
+ * Lanzar un proceso desacoplado y confirmar que ARRANCO de verdad.
+ *
+ * `spawn` no lanza de forma sincrona cuando el binario no se puede ejecutar:
+ * emite un evento 'error' ASINCRONO. Un try/catch alrededor de la llamada no
+ * lo captura nunca, y sin listener de 'error' Node lo trata como excepcion no
+ * capturada y MATA EL PROCESO.
+ *
+ * Eso es exactamente lo que ocurrio en produccion (2026-08-15): un perfil de
+ * AppArmor sin regla para systemd-run hacia que el spawn fallara con EACCES;
+ * privsvc moria entero, se llevaba por delante el socket IPC —tirando
+ * compliance, inventario y CDP, que no tienen nada que ver con actualizar— y
+ * systemd lo reiniciaba. 364 reinicios acumulados antes de detectarlo, y el
+ * agente sin actualizarse desde 1.1.21.
+ *
+ * Esperar al evento 'spawn' antes de responder es lo que permite ENCADENAR un
+ * fallback: sin esa confirmacion no habria forma de saber que el primer
+ * camino no arranco, y devolver `started: true` a ciegas le hacia creer al
+ * agente que la instalacion iba en marcha.
+ */
+export async function trySpawnDetached(
+  command: string,
+  args: string[]
+): Promise<{ ok: true; pid?: number } | { ok: false; error: string }> {
+  const child = spawn(command, args, {
     detached: true,
     stdio: "ignore",
     env: {
@@ -193,60 +308,37 @@ export async function handleAgentInstall(req: PrivSvcRequest): Promise<PrivSvcRe
     },
   });
 
-  const spawned = await new Promise<{ ok: true } | { ok: false; error: string }>(
-    (resolve) => {
-      let settled = false;
-      const done = (r: { ok: true } | { ok: false; error: string }) => {
-        if (settled) return;
-        settled = true;
-        resolve(r);
-      };
+  const result = await new Promise<
+    { ok: true; pid?: number } | { ok: false; error: string }
+  >((resolve) => {
+    let settled = false;
+    const done = (r: { ok: true; pid?: number } | { ok: false; error: string }) => {
+      if (settled) return;
+      settled = true;
+      resolve(r);
+    };
 
-      // 'error' cubre EACCES, ENOENT y demas fallos de exec. Registrarlo es
-      // lo que impide que Node tumbe el proceso.
-      child.on("error", (err: any) =>
-        done({ ok: false, error: err?.message || String(err) })
-      );
-      // 'spawn' confirma que el proceso arranco de verdad.
-      child.on("spawn", () => done({ ok: true }));
+    // 'error' cubre EACCES, ENOENT y demas fallos de exec. Registrarlo es lo
+    // que impide que Node tumbe el proceso.
+    child.on("error", (err: any) =>
+      done({ ok: false, error: err?.message || String(err) })
+    );
+    // 'spawn' confirma que el proceso arranco de verdad.
+    child.on("spawn", () => done({ ok: true, pid: child.pid }));
 
-      // Red de seguridad: si ninguno de los dos llega, no bloqueamos el
-      // broker. Se asume arrancado — el resultado real se vera en el
-      // siguiente HELLO del agente con su nueva version.
-      setTimeout(() => done({ ok: true }), SPAWN_CONFIRM_TIMEOUT_MS).unref();
-    }
-  );
-
-  if (!spawned.ok) {
-    logger.error("agent_install_spawn_failed", {
-      error: spawned.error,
-      targetVersion,
-      scopeUnit,
-      // Pista accionable: este fallo casi siempre es de politica del host,
-      // no del paquete.
-      hint:
-        "no se pudo ejecutar /usr/bin/systemd-run; revisar AppArmor/SELinux " +
-        "en el host (aa-status, dmesg | grep DENIED) y que el binario exista",
-    });
-    return fail(req.id, "install_failed", spawned.error);
-  }
-
-  // unref so this process won't keep the event loop alive waiting
-  // for the scope. We're "fire and forget" from privsvc's POV —
-  // success/failure shows up via the agent's next HELLO carrying the
-  // new agentVersion (or failing to, if the install died).
-  child.unref();
-
-  logger.info("agent_install_dispatched", {
-    targetVersion,
-    pid: child.pid,
-    scopeUnit,
+    // Red de seguridad: si ninguno de los dos llega, no bloqueamos el broker.
+    // Se asume arrancado — el resultado real se vera en el siguiente HELLO
+    // del agente con su nueva version.
+    setTimeout(
+      () => done({ ok: true, pid: child.pid }),
+      SPAWN_CONFIRM_TIMEOUT_MS
+    ).unref();
   });
 
-  return success(req.id, {
-    started: true,
-    command: installCmd,
-    args: installArgs,
-    scopeUnit,
-  });
+  // unref so this process won't keep the event loop alive waiting for the
+  // installer. Fire and forget from privsvc's POV — success/failure shows up
+  // via the agent's next HELLO carrying the new agentVersion (or failing to).
+  if (result.ok) child.unref();
+
+  return result;
 }
