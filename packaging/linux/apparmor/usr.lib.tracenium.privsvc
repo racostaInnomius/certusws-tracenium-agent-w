@@ -100,6 +100,13 @@ profile tracenium-privsvc /usr/lib/tracenium/node {
   # solo el exec no basta: la llamada falla igualmente.
   /run/systemd/private                              rw,
 
+  # NO hay regla para /run/snapd.socket a proposito, aunque el journal se
+  # llene de `DENIED operation="connect" name="/run/snapd.socket"`. Esa
+  # denegacion es un sintoma de snap corriendo confinado, no la causa:
+  # concederla sola no arregla nada porque snap falla antes, leyendo
+  # /snap/snapd/current/**. La solucion esta abajo, en la seccion de execs —
+  # snap va `Ux`, como el resto de los gestores de paquetes.
+
   # ── Subprocess execs ─────────────────────────────────────────────
   # Every binary the privsvc invokes via execFile in any phase.
   #
@@ -135,8 +142,26 @@ profile tracenium-privsvc /usr/lib/tracenium/node {
   /usr/bin/dnf5                                     Ux,
   /usr/bin/zypper                                   Ux,
   /usr/bin/dpkg-sig                                 Ux,
-  /usr/bin/snap                                     ix,
-  /usr/bin/flatpak                                  ix,
+  # snap y flatpak eran los DOS UNICOS gestores de paquetes con `ix` en toda
+  # esta lista, y esa inconsistencia los tenia rotos. Medido en SRVOC-MainAgent
+  # (Ubuntu 26.04), `snap list` bajo el perfil:
+  #
+  #   cannot open snapd info file "/snap/snapd/current/usr/lib/snapd/info":
+  #   permission denied
+  #
+  # El sintoma que se veia en el journal era otro —una tormenta de
+  # `DENIED operation="connect" name="/run/snapd.socket"` cada 250ms— y invita
+  # a "arreglarlo" añadiendo esa unica ruta. No basta: el socket es apenas el
+  # segundo obstaculo. snap monta squashfs, lee /snap/**, habla con snapd y
+  # reintenta en bucle en vez de fallar; perseguir sus rutas de una en una es
+  # la misma superficie enorme que este archivo ya declaro fuera de alcance
+  # para apt/dnf/dpkg.
+  #
+  # Consecuencia de tenerlos confinados: el inventario de snaps/flatpaks volvia
+  # VACIO y sin error — el endpoint reportaba que no habia ninguno instalado,
+  # que es peor que reportar un fallo.
+  /usr/bin/snap                                     Ux,
+  /usr/bin/flatpak                                  Ux,
   /usr/bin/systemctl                                ix,
   # systemd-run: lanza el dpkg del auto-update en un scope propio, para que
   # sobreviva al reinicio del servicio que provoca su propia instalacion.
