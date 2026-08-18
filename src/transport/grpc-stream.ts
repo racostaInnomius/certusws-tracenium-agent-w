@@ -12,10 +12,16 @@ import { runRemediation } from "../plugins/pmp/remediation";
 // ctx.plugins.run("sdp.install", ...) so it goes through the
 // PluginManager policy gate uniformly with the other plugins.
 import { runUpdateTask } from "../update/update-task";
+import { consumePendingCatalogInstallRequest } from "../status/catalog-install-request-watcher";
 
 const ACK_TIMEOUT_MS = 60_000;
 const MAX_IN_FLIGHT = 3;
 const HEARTBEAT_INTERVAL_MS = 60_000;
+// How often to check for a pending self-install request the tray left
+// on disk. 5s keeps a user's "Install" click feeling responsive without
+// polling hard enough to matter at fleet scale (a stat + a JSON read,
+// only when a request file is actually present).
+const CATALOG_INSTALL_WATCH_INTERVAL_MS = 5_000;
 
 // Server-silence watchdog. When a backend instance dies ungracefully
 // (SIGKILL, OOM, network change, sleep/wake), the bridge layer often
@@ -1130,6 +1136,11 @@ export function startGrpcStream(ctx: AgentContext) {
   // Server-silence watchdog. setInterval is fine here — we want a
   // fixed cadence regardless of stream state. Cleared in stop().
   let watchdogTimer: NodeJS.Timeout | null = null;
+  // Polls for a pending self-install request the tray left on disk (see
+  // catalog-install-request-watcher.ts). setInterval, same reasoning as
+  // the watchdog: fixed cadence independent of stream state. Cleared in
+  // stop().
+  let catalogInstallWatcherTimer: NodeJS.Timeout | null = null;
   let unsubscribeOutbox: (() => void) | null = null;
   let draining = false;
   let drainScheduled = false;
@@ -1168,6 +1179,8 @@ stream = client.Connect();
     heartbeatTimer = null;
     try { if (watchdogTimer) clearInterval(watchdogTimer); } catch {}
     watchdogTimer = null;
+    try { if (catalogInstallWatcherTimer) clearInterval(catalogInstallWatcherTimer); } catch {}
+    catalogInstallWatcherTimer = null;
     try { stream.removeAllListeners(); } catch {}
 
     try { unsubscribeOutbox?.(); } catch {}
@@ -1330,6 +1343,49 @@ stream = client.Connect();
       }
     }, WATCHDOG_TICK_MS);
     (watchdogTimer as any)?.unref?.();
+  };
+
+  // Polls for a self-install request the tray app dropped on disk (see
+  // catalog-install-request-watcher.ts) and, when one's found, forwards
+  // it as a SelfInstallRequest on this stream. The tray has no other way
+  // to reach the control plane — it isn't the gRPC client, doesn't hold
+  // credentials, and can't write to this stream directly.
+  const armCatalogInstallWatcher = () => {
+    if (stopped) return;
+    if (catalogInstallWatcherTimer) {
+      clearInterval(catalogInstallWatcherTimer);
+      catalogInstallWatcherTimer = null;
+    }
+    catalogInstallWatcherTimer = setInterval(() => {
+      if (stopped) return;
+      // Leave the request file in place if we can't send right now —
+      // the next tick (or the next reconnect's READY) will retry it
+      // instead of silently dropping the user's click.
+      if (!client.isConnected?.()) return;
+
+      consumePendingCatalogInstallRequest()
+        .then((request) => {
+          if (!request) return;
+          try {
+            stream.write({
+              selfInstallRequest: {
+                eventId: `self-install-${request.packageId}-${Date.now()}`,
+                packageId: request.packageId
+              }
+            });
+            ctx.logger?.info?.("[catalog] selfInstallRequest sent", { packageId: request.packageId });
+          } catch (err: any) {
+            ctx.logger?.error?.("[catalog] selfInstallRequest write failed", {
+              packageId: request.packageId,
+              err: err?.message || err
+            });
+          }
+        })
+        .catch((err: any) => {
+          ctx.logger?.warn?.("[catalog] install-request watcher tick failed", { err: err?.message || err });
+        });
+    }, CATALOG_INSTALL_WATCH_INTERVAL_MS);
+    (catalogInstallWatcherTimer as any)?.unref?.();
   };
 
   const scheduleReconnect = (reason: string) => {
@@ -1514,6 +1570,19 @@ stream = client.Connect();
       // Same one-shot arming: watches for a wedged reconnect and recycles
       // the process if we stay disconnected past the threshold.
       armConnectivitySupervisor(ctx);
+      // Self-service Software Catalog: pull a fresh catalog on every
+      // READY (covers both first-connect and any reconnect — cheap
+      // enough that there's no reason to special-case "first" vs
+      // "reconnect"), and start polling for tray-initiated install
+      // requests now that the stream can actually carry one.
+      try {
+        stream.write({
+          catalogRequest: { eventId: `catalog-${ctx.enrollment.deviceId}-${Date.now()}` }
+        });
+      } catch (err: any) {
+        ctx.logger?.warn?.("[catalog] initial catalogRequest write failed", { err: err?.message || err });
+      }
+      armCatalogInstallWatcher();
       return;
     }
     // ACK
@@ -1556,7 +1625,7 @@ stream = client.Connect();
 
       try {
         if (jobType) {
-          ctx.trayStatus.markJobStarted(jobType);
+          ctx.trayStatus.markJobStarted(jobType, jobId || undefined);
         }
       } catch {}
 
@@ -1569,7 +1638,7 @@ stream = client.Connect();
                   result.status === 0 ? "success" :
                   result.status === 1 ? "retry" :
                   "failed";
-                ctx.trayStatus.markJobFinished(jobType, normalizedStatus);
+                ctx.trayStatus.markJobFinished(jobType, normalizedStatus, jobId || undefined);
               }
             } catch {}
             return sendControlAck(ctx, eventId, result.status, result.message);
@@ -1581,7 +1650,7 @@ stream = client.Connect();
             });
             try {
               if (jobType) {
-                ctx.trayStatus.markJobFinished(jobType, "failed");
+                ctx.trayStatus.markJobFinished(jobType, "failed", jobId || undefined);
               }
             } catch {}
             return sendControlAck(ctx, eventId, 2, err?.message || "job_failed");
@@ -1595,6 +1664,57 @@ stream = client.Connect();
 
       return;
     }
+
+    // Self-service Software Catalog — see the message docs in
+    // controlplane.proto. Just a status-store write; the actual install
+    // (once accepted) arrives as an ordinary msg.runJob above and is
+    // tracked exactly like every other job.
+    if (msg.catalogResponse) {
+      try {
+        const items = Array.isArray(msg.catalogResponse.items) ? msg.catalogResponse.items : [];
+        const catalogVersion = String(msg.catalogResponse.catalogVersion || "");
+        ctx.trayStatus.updateCatalog(
+          items.map((item: any) => ({
+            packageId: String(item?.packageId || ""),
+            name: String(item?.name || ""),
+            vendor: item?.vendor ? String(item.vendor) : undefined,
+            version: String(item?.version || ""),
+            description: item?.description ? String(item.description) : undefined,
+            requiresReboot: Boolean(item?.requiresReboot)
+          })),
+          catalogVersion
+        );
+        ctx.logger?.info?.("[catalog] catalogResponse applied", {
+          itemCount: items.length,
+          catalogVersion
+        });
+      } catch (err: any) {
+        ctx.logger?.warn?.("[catalog] failed to apply catalogResponse", { err: err?.message || err });
+      }
+      return;
+    }
+
+    if (msg.selfInstallAck) {
+      const ack = msg.selfInstallAck;
+      if (ack?.accepted) {
+        ctx.logger?.info?.("[catalog] selfInstallRequest accepted", { jobId: ack.jobId });
+      } else {
+        // Rejected — there is no RunJob coming for this one, so nothing
+        // else will ever tell the tray it didn't happen. Surface it the
+        // same way a failed job would: a terminal jobs.lastJobStatus the
+        // Active Job tab already knows how to render.
+        ctx.logger?.warn?.("[catalog] selfInstallRequest rejected", {
+          errorCode: ack?.errorCode,
+          errorMessage: ack?.errorMessage
+        });
+        try {
+          ctx.trayStatus.markJobStarted("software_install");
+          ctx.trayStatus.markJobFinished("software_install", "failed");
+        } catch {}
+      }
+      return;
+    }
+
     if (msg.rotateCert) {
       ctx.logger?.warn?.("gRPC control message: rotateCert received, pausing sender loop");
       rotationInProgress = true;

@@ -35,8 +35,12 @@ final class StatusPopoverViewController: NSViewController {
     private let subtitleLabel = NSTextField(labelWithString: "Waiting for local status snapshot...")
     private let badgeLabel = NSTextField(labelWithString: "UNKNOWN")
 
-    // Tab strip — Device Info (support widget) | Agent Info (estado clásico)
-    private let tabControl = NSSegmentedControl(labels: ["Device Info", "Agent Info"], trackingMode: .selectOne, target: nil, action: nil)
+    // Tab strip — Device Info (support widget) | Agent Info (estado clásico) | Active Job | Catalog (self-service installs)
+    //
+    // "Catalog" not "Software Catalog" in the strip itself — four
+    // segments plus the Copy button is already tight at 480pt; the
+    // section header inside the tab spells the name out in full.
+    private let tabControl = NSSegmentedControl(labels: ["Device Info", "Agent Info", "Active Job", "Catalog"], trackingMode: .selectOne, target: nil, action: nil)
     private let copyButton = NSButton(title: "Copy all", target: nil, action: nil)
 
     /// Shown only while location is switched on by policy and still ungranted.
@@ -52,13 +56,39 @@ final class StatusPopoverViewController: NSViewController {
     /// Set by the controller so the button can reach the provider.
     var onEnableLocation: (() -> Void)?
 
+    /// Set by StatusBarController. Fires when the user clicks Install
+    /// on a catalog row — writes the request file the daemon polls for
+    /// (see CatalogInstallSink).
+    var onInstallRequested: ((String) -> Void)?
+
     // Body — un scrollview por tab; se alterna con isHidden.
     private let agentScroll = NSScrollView()
     private let deviceScroll = NSScrollView()
+    private let jobScroll = NSScrollView()
+    private let catalogScroll = NSScrollView()
     private let grid = NSGridView()          // Agent Info (grid clásico)
     private let deviceGrid = NSGridView()    // Device Info
+    private let jobGrid = NSGridView()       // Active Job
+    private let catalogGrid = NSGridView()   // Software Catalog (self-service)
     private var valueCells: [String: NSTextField] = [:]
     private var deviceCells: [String: NSTextField] = [:]
+    private var jobCells: [String: NSTextField] = [:]
+    // Indeterminate — the agent has no step/percentage signal to report
+    // for a running job (see TrayCurrentJob), so this communicates
+    // "something is happening" rather than fabricating a completion %.
+    private let jobProgress = NSProgressIndicator()
+
+    // Catalog tab state. Rebuilt on every render() — item counts are
+    // small (a handful of admin-opted-in packages), so a full
+    // clear-and-rebuild of catalogGrid's rows is simpler than diffing
+    // and cheap enough at this scale.
+    private var lastCatalogItems: [TrayCatalogItem] = []
+    // packageId -> the moment its Install button was clicked. Drives an
+    // optimistic "Installing…" state until either jobs.current confirms
+    // it started or the grace window lapses (covers a SelfInstallAck
+    // rejection, which never sets jobs.current at all).
+    private var pendingInstallClicks: [String: Date] = [:]
+    private static let installRequestGraceSeconds: TimeInterval = 20
 
     // Último status renderizado — fuente del Copy all.
     private var lastStatus: TrayStatus?
@@ -204,6 +234,8 @@ final class StatusPopoverViewController: NSViewController {
         // se alterna visibilidad en tabChanged.
         configureScroll(agentScroll, in: bodyContainer, grid: grid)
         configureScroll(deviceScroll, in: bodyContainer, grid: deviceGrid)
+        configureScroll(jobScroll, in: bodyContainer, grid: jobGrid)
+        configureScroll(catalogScroll, in: bodyContainer, grid: catalogGrid)
 
         // ── Agent Info (grid clásico, intacto) ──
         addSection(grid, "Connectivity")
@@ -254,7 +286,51 @@ final class StatusPopoverViewController: NSViewController {
         addSection(deviceGrid, "Tracenium")
         addRow(deviceGrid, into: &deviceCells, "Device ID", key: "devDeviceId")
 
-        for g in [grid, deviceGrid] {
+        // ── Active Job ──
+        addSection(jobGrid, "Active Job")
+        addRow(jobGrid, into: &jobCells, "Status", key: "jobActiveStatus")
+        addRow(jobGrid, into: &jobCells, "Job type", key: "jobActiveType")
+        addRow(jobGrid, into: &jobCells, "Job ID", key: "jobActiveId")
+        addRow(jobGrid, into: &jobCells, "Started at", key: "jobActiveStarted")
+        addRow(jobGrid, into: &jobCells, "Elapsed", key: "jobActiveElapsed")
+
+        jobProgress.style = .bar
+        jobProgress.isIndeterminate = true
+        jobProgress.isDisplayedWhenStopped = false
+        jobProgress.translatesAutoresizingMaskIntoConstraints = false
+        let progressRow = jobGrid.addRow(with: [jobProgress, NSGridCell.emptyContentView])
+        progressRow.mergeCells(in: NSRange(location: 0, length: 2))
+        progressRow.topPadding = 4
+        jobProgress.widthAnchor.constraint(equalToConstant: 320).isActive = true
+
+        let progressNoteField = NSTextField(labelWithString:
+            "The agent doesn't report a completion percentage — this spinner just confirms a job is in flight, and the elapsed time above is live.")
+        progressNoteField.font = NSFont.systemFont(ofSize: 10.5)
+        progressNoteField.textColor = NSColor.tertiaryLabelColor
+        progressNoteField.lineBreakMode = .byWordWrapping
+        progressNoteField.maximumNumberOfLines = 3
+        progressNoteField.preferredMaxLayoutWidth = 320
+        jobCells["jobActiveNote"] = progressNoteField
+        let noteRow = jobGrid.addRow(with: [progressNoteField, NSGridCell.emptyContentView])
+        noteRow.mergeCells(in: NSRange(location: 0, length: 2))
+        noteRow.topPadding = 4
+
+        // ── Software Catalog (self-service) ──
+        // Static intro row; the actual package rows are rebuilt on
+        // every render() in renderCatalog() since the list is dynamic.
+        addSection(catalogGrid, "Software Catalog")
+        let catalogIntro = NSTextField(labelWithString:
+            "Software your admin has made available to install yourself, no ticket needed.")
+        catalogIntro.font = NSFont.systemFont(ofSize: 10.5)
+        catalogIntro.textColor = NSColor.tertiaryLabelColor
+        catalogIntro.lineBreakMode = .byWordWrapping
+        catalogIntro.maximumNumberOfLines = 2
+        catalogIntro.preferredMaxLayoutWidth = 400
+        let catalogIntroRow = catalogGrid.addRow(with: [catalogIntro, NSGridCell.emptyContentView])
+        catalogIntroRow.mergeCells(in: NSRange(location: 0, length: 2))
+        catalogIntroRow.bottomPadding = 4
+
+        for g in [grid, deviceGrid, jobGrid] {
             if g.numberOfColumns >= 1 {
                 g.column(at: 0).xPlacement = .leading
                 g.column(at: 0).width = 140
@@ -264,8 +340,21 @@ final class StatusPopoverViewController: NSViewController {
             }
         }
 
+        // catalogGrid's columns hold item text + an Install button, not
+        // the label/value pairing the loop above assumes — sized on its
+        // own instead.
+        if catalogGrid.numberOfColumns >= 1 {
+            catalogGrid.column(at: 0).xPlacement = .leading
+        }
+        if catalogGrid.numberOfColumns >= 2 {
+            catalogGrid.column(at: 1).xPlacement = .trailing
+            catalogGrid.column(at: 1).width = 90
+        }
+
         deviceScroll.isHidden = false
         agentScroll.isHidden = true
+        jobScroll.isHidden = true
+        catalogScroll.isHidden = true
     }
 
     /// Monta un scrollview a pantalla completa del body con un grid
@@ -302,9 +391,10 @@ final class StatusPopoverViewController: NSViewController {
     }
 
     @objc private func tabChanged(_ sender: NSSegmentedControl) {
-        let deviceSelected = sender.selectedSegment == 0
-        deviceScroll.isHidden = !deviceSelected
-        agentScroll.isHidden = deviceSelected
+        deviceScroll.isHidden = sender.selectedSegment != 0
+        agentScroll.isHidden = sender.selectedSegment != 1
+        jobScroll.isHidden = sender.selectedSegment != 2
+        catalogScroll.isHidden = sender.selectedSegment != 3
     }
 
     private func addSection(_ targetGrid: NSGridView, _ title: String) {
@@ -352,6 +442,8 @@ final class StatusPopoverViewController: NSViewController {
     func render(_ status: TrayStatus?) {
         lastStatus = status
         renderDeviceInfo(status)
+        renderActiveJob(status?.jobs.current)
+        renderCatalog(status)
         guard let status else {
             applyHeader(
                 online: false,
@@ -449,6 +541,150 @@ final class StatusPopoverViewController: NSViewController {
 
     private func setDevice(_ key: String, _ value: String) {
         deviceCells[key]?.stringValue = value
+    }
+
+    // MARK: - Active Job tab
+
+    /// No live progress percentage — see JobElapsedFormatter and the
+    /// TrayCurrentJob doc comment for why. Toggles the segmented
+    /// control's own label with a bullet so the badge signal is
+    /// visible even while the popover is open on a different tab, not
+    /// just from the menu-bar icon (see StatusBarController).
+    private func renderActiveJob(_ job: TrayCurrentJob?) {
+        guard let job else {
+            setJob("jobActiveStatus", "Idle — no job currently running")
+            setJob("jobActiveType", "—")
+            setJob("jobActiveId", "—")
+            setJob("jobActiveStarted", "—")
+            setJob("jobActiveElapsed", "—")
+            jobProgress.stopAnimation(nil)
+            jobCells["jobActiveNote"]?.isHidden = true
+            tabControl.setLabel("Active Job", forSegment: 2)
+            return
+        }
+
+        setJob("jobActiveStatus", "Running")
+        setJob("jobActiveType", job.jobType.isEmpty ? "—" : job.jobType)
+        setJob("jobActiveId", job.jobId.isEmpty ? "—" : job.jobId)
+        setJob("jobActiveStarted", format(job.startedAtUtc))
+        setJob("jobActiveElapsed", JobElapsedFormatter.format(startedAtUtc: job.startedAtUtc))
+        jobProgress.startAnimation(nil)
+        jobCells["jobActiveNote"]?.isHidden = false
+        tabControl.setLabel("Active Job ●", forSegment: 2)
+    }
+
+    private func setJob(_ key: String, _ value: String) {
+        jobCells[key]?.stringValue = value
+    }
+
+    // MARK: - Software Catalog tab (self-service)
+
+    /// Rebuilds the catalog rows from scratch on every render() — the
+    /// list only ever holds a handful of admin-opted-in packages, so a
+    /// full clear beats hand-diffing NSGridView rows.
+    private func renderCatalog(_ status: TrayStatus?) {
+        let items = status?.catalog?.items ?? []
+        lastCatalogItems = items
+
+        // render() fires every 5s from StatusBarController.start(), starting
+        // BEFORE the user ever opens the popover for the first time — AppKit
+        // doesn't call loadView()/configureBody() until the view is actually
+        // needed. Every other tab tolerates that because it only writes into
+        // a dictionary of already-instantiated fields (a no-op miss while
+        // the dictionary is still empty). This tab is the one that mutates
+        // catalogGrid's row STRUCTURE directly, so running it pre-load would
+        // build up rows with no floor to trim back to — then configureBody()
+        // appends the real title/intro rows AFTER that pile once the view
+        // finally loads, corrupting the tab for the rest of the process's
+        // life. Skip the grid mutation entirely until there's a grid to
+        // mutate; installButtonPressed can't fire before then anyway since
+        // there's no button yet to click.
+        guard isViewLoaded else { return }
+
+        // Drop any optimistic "Installing…" state whose grace window
+        // has lapsed — covers a SelfInstallRequest that got rejected
+        // (no RunJob ever follows, so jobs.current would otherwise
+        // never clear it) as well as one that silently never arrived.
+        let now = Date()
+        pendingInstallClicks = pendingInstallClicks.filter {
+            now.timeIntervalSince($0.value) < Self.installRequestGraceSeconds
+        }
+
+        while catalogGrid.numberOfRows > 2 {
+            // Rows 0-1 are the static section title + intro line added
+            // in configureBody — leave those, clear everything rebuilt
+            // per-render below them.
+            catalogGrid.removeRow(at: 2)
+        }
+
+        if items.isEmpty {
+            // Deliberately NOT merged — NSGridView refuses to removeRow(at:)
+            // a row containing a merged cell (NSGridView.m:865: "contains a
+            // merged cell and cannot be removed"), which crashed the app on
+            // the very next 5s render tick after this row appeared. Column 1
+            // just stays blank instead; visually near-identical since it's
+            // only 90pt wide anyway.
+            let emptyField = NSTextField(labelWithString: "Nothing available right now.")
+            emptyField.font = NSFont.systemFont(ofSize: 12)
+            emptyField.textColor = NSColor.secondaryLabelColor
+            let row = catalogGrid.addRow(with: [emptyField, NSGridCell.emptyContentView])
+            row.topPadding = 6
+            return
+        }
+
+        // Any job running — self-install or otherwise — blocks new
+        // Installs. PrivSvc runs one privileged operation at a time, so
+        // a second click before the first finishes could only fail;
+        // better to make that visible than let the user click into it.
+        let jobRunning = status?.jobs.current != nil
+
+        for (index, item) in items.enumerated() {
+            let vendorSuffix = (item.vendor?.isEmpty == false) ? "  ·  \(item.vendor!)" : ""
+            let nameField = NSTextField(labelWithString: "\(item.name) \(item.version)\(vendorSuffix)")
+            nameField.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            nameField.lineBreakMode = .byTruncatingTail
+            nameField.maximumNumberOfLines = 1
+
+            let button = NSButton(title: "Install", target: self, action: #selector(installButtonPressed(_:)))
+            button.tag = index
+            button.bezelStyle = .rounded
+            button.controlSize = .small
+
+            let isPending = pendingInstallClicks[item.packageId] != nil
+            button.title = isPending ? "Installing…" : "Install"
+            button.isEnabled = !isPending && !jobRunning
+
+            let row = catalogGrid.addRow(with: [nameField, button])
+            row.topPadding = 6
+
+            var detailParts: [String] = []
+            if let description = item.description, !description.isEmpty { detailParts.append(description) }
+            if item.requiresReboot == true { detailParts.append("Requires a restart") }
+            if !detailParts.isEmpty {
+                let detailField = NSTextField(labelWithString: detailParts.joined(separator: "  ·  "))
+                detailField.font = NSFont.systemFont(ofSize: 10.5)
+                detailField.textColor = NSColor.secondaryLabelColor
+                detailField.lineBreakMode = .byWordWrapping
+                detailField.maximumNumberOfLines = 2
+                // Narrower than before (320) since this cell no longer spans
+                // column 1's ~90pt — deliberately NOT merged, see the
+                // isEmpty branch above for why (removeRow(at:) crashes on a
+                // merged row; this row gets rebuilt on every 5s tick).
+                detailField.preferredMaxLayoutWidth = 300
+                let detailRow = catalogGrid.addRow(with: [detailField, NSGridCell.emptyContentView])
+                detailRow.bottomPadding = 2
+            }
+        }
+    }
+
+    @objc private func installButtonPressed(_ sender: NSButton) {
+        guard sender.tag >= 0, sender.tag < lastCatalogItems.count else { return }
+        let item = lastCatalogItems[sender.tag]
+        pendingInstallClicks[item.packageId] = Date()
+        onInstallRequested?(item.packageId)
+        // Optimistic — reflect "Installing…" immediately rather than
+        // waiting for the next poll tick to re-render.
+        renderCatalog(lastStatus)
     }
 
     private func resolveLocalHostname(_ status: TrayStatus?) -> String {

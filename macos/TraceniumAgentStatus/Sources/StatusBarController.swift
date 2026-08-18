@@ -11,6 +11,7 @@ final class StatusBarController {
     private let locationProvider = LocationProvider()
     private var lastPresenceState: Bool?
     private var lastConnectivityState: Bool?
+    private var lastJobBadgeState: Bool?
     private lazy var statusImage: NSImage? = {
         guard let url = Bundle.main.url(forResource: "Tracenium_tryicon", withExtension: "png"),
               let image = NSImage(contentsOf: url) else {
@@ -20,12 +21,25 @@ final class StatusBarController {
         image.isTemplate = false
         return image
     }()
+    /// statusImage with a small dot composited onto the bottom-right
+    /// corner — shown in place of the plain icon while a job is
+    /// running (see TrayCurrentJob). Built once from statusImage
+    /// rather than every refresh() tick; NSImage drawing is cheap but
+    /// there's no reason to redo it every 5s when the base icon never
+    /// changes at runtime.
+    private lazy var statusImageWithJobBadge: NSImage? = {
+        guard let base = statusImage else { return nil }
+        return StatusBarController.badgedImage(base)
+    }()
 
     func start() {
         popover.behavior = .transient
         popover.contentViewController = contentController
         contentController.onEnableLocation = { [weak self] in
             self?.locationProvider.requestConsentFromUser()
+        }
+        contentController.onInstallRequested = { packageId in
+            CatalogInstallSink.write(packageId: packageId)
         }
         // Forzar el tamaño del popover ANTES del primer show. NSPopover
         // por default se reduce al tamaño intrínseco del contentVC view,
@@ -104,10 +118,56 @@ final class StatusBarController {
             }
             // Sin texto en el menubar — solo icono. El detalle online/offline
             // se ve en el popover. Mantenemos toolTip (hover) con info útil.
-            button.toolTip = "\(status.hostname.isEmpty ? "Tracenium Agent" : status.hostname) · \(status.agentVersion) · \(status.grpc.connected ? "Online" : "Offline")"
+            let jobRunning = status.jobs.current != nil
+            var tooltip = "\(status.hostname.isEmpty ? "Tracenium Agent" : status.hostname) · \(status.agentVersion) · \(status.grpc.connected ? "Online" : "Offline")"
+            if let job = status.jobs.current {
+                tooltip += " · Running \(job.jobType)"
+            }
+            button.toolTip = tooltip
+
+            if lastJobBadgeState != jobRunning {
+                Logger.shared.info(jobRunning ? "Job badge shown (job in progress)" : "Job badge cleared")
+                lastJobBadgeState = jobRunning
+            }
+            button.image = jobRunning ? (statusImageWithJobBadge ?? statusImage) : statusImage
         } else {
             lastConnectivityState = nil
+            lastJobBadgeState = nil
             button.toolTip = "Tracenium Agent · No local status snapshot found"
+            button.image = statusImage
         }
+    }
+
+    /// Composites a small teal dot onto the bottom-right corner of the
+    /// base menu-bar icon — the "badge" shown while a job is running.
+    /// A plain dot rather than a count: the agent only ever tracks one
+    /// active job at a time (see TrayCurrentJob), so there's nothing
+    /// to count.
+    private static func badgedImage(_ base: NSImage) -> NSImage {
+        let size = base.size
+        let badged = NSImage(size: size)
+        badged.lockFocus()
+        base.draw(in: NSRect(origin: .zero, size: size))
+
+        let diameter = max(6, size.width * 0.4)
+        let inset: CGFloat = 0.5
+        let badgeRect = NSRect(
+            x: size.width - diameter - inset,
+            y: inset,
+            width: diameter,
+            height: diameter
+        )
+        let path = NSBezierPath(ovalIn: badgeRect)
+        // White ring so the dot reads clearly against a light or dark
+        // menu bar and against the icon's own artwork.
+        NSColor.white.setStroke()
+        path.lineWidth = 1.2
+        NSColor.systemTeal.setFill()
+        path.fill()
+        path.stroke()
+
+        badged.unlockFocus()
+        badged.isTemplate = false
+        return badged
     }
 }

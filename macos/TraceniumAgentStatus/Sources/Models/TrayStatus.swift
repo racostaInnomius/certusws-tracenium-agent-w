@@ -32,10 +32,14 @@ struct TrayStatus: Decodable {
     // Device Info tab (support widget). Optional — older agents don't
     // write this block; the tab shows placeholders in that case.
     var device: TrayDeviceInfo?
+    // Software Catalog tab (self-service installs). Optional for the
+    // same reason as device: absent on snapshots from an agent that
+    // predates this feature.
+    var catalog: TrayCatalogStatus?
 
     private enum CodingKeys: String, CodingKey {
         case updatedAtUtc, agentVersion, coreVersion, deviceId, tenantId
-        case hostname, grpc, policy, jobs, update, patch, device
+        case hostname, grpc, policy, jobs, update, patch, device, catalog
     }
 
     init(from decoder: Decoder) throws {
@@ -57,6 +61,7 @@ struct TrayStatus: Decodable {
         update = ((try? c.decodeIfPresent(TrayUpdateStatus.self, forKey: .update)) ?? nil) ?? TrayUpdateStatus()
         patch  = ((try? c.decodeIfPresent(TrayPatchStatus.self, forKey: .patch)) ?? nil) ?? TrayPatchStatus()
         device = (try? c.decodeIfPresent(TrayDeviceInfo.self, forKey: .device)) ?? nil
+        catalog = (try? c.decodeIfPresent(TrayCatalogStatus.self, forKey: .catalog)) ?? nil
     }
 }
 
@@ -144,10 +149,99 @@ struct TrayPolicyFeatures: Decodable {
     var locationTracking: Bool?
 }
 
+/// Lenient like TrayStatus, and for the same reason: a malformed
+/// `current` block (e.g. a future agent version adding a field this
+/// app doesn't know about yet, or a genuinely corrupt write) must not
+/// take lastJobType/lastJobStatus/lastJobAtUtc down with it.
 struct TrayJobStatus: Decodable {
     var lastJobType: String?
     var lastJobStatus: String?
     var lastJobAtUtc: Date?
+    /// The job actively executing right now, if any — present only
+    /// between markJobStarted() and its matching markJobFinished() on
+    /// the agent side. Drives the "Active Job" tab and the menu-bar
+    /// badge. Optional so snapshots from older agents (no `current`
+    /// key at all) still decode.
+    var current: TrayCurrentJob?
+
+    private enum CodingKeys: String, CodingKey { case lastJobType, lastJobStatus, lastJobAtUtc, current }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        lastJobType = (try? c.decodeIfPresent(String.self, forKey: .lastJobType)) ?? nil
+        lastJobStatus = (try? c.decodeIfPresent(String.self, forKey: .lastJobStatus)) ?? nil
+        lastJobAtUtc = (try? c.decodeIfPresent(Date.self, forKey: .lastJobAtUtc)) ?? nil
+        current = (try? c.decodeIfPresent(TrayCurrentJob.self, forKey: .current)) ?? nil
+    }
+
+    init(
+        lastJobType: String? = nil,
+        lastJobStatus: String? = nil,
+        lastJobAtUtc: Date? = nil,
+        current: TrayCurrentJob? = nil
+    ) {
+        self.lastJobType = lastJobType
+        self.lastJobStatus = lastJobStatus
+        self.lastJobAtUtc = lastJobAtUtc
+        self.current = current
+    }
+}
+
+/// No progress percentage here on purpose: RunJob over gRPC carries
+/// only jobId/jobType/payload (see proto/controlplane.proto) — the
+/// agent itself has no timeout or step-count signal to report. The UI
+/// shows elapsed time (real, computed from startedAtUtc) plus an
+/// indeterminate spinner instead of fabricating a percentage.
+struct TrayCurrentJob: Decodable {
+    var jobId: String
+    var jobType: String
+    var startedAtUtc: Date?
+}
+
+/// One entry in the self-service Software Catalog tab. Mirrors proto
+/// SoftwareCatalogItem — see controlplane.proto's "SOFTWARE CATALOG
+/// (self-service)" doc block for why the agent (not the tray) is the
+/// one that asks the backend for this list.
+struct TrayCatalogItem: Decodable {
+    var packageId: String
+    var name: String
+    var vendor: String?
+    var version: String
+    var description: String?
+    var requiresReboot: Bool?
+}
+
+/// Lenient like TrayJobStatus: a malformed entry in `items` degrading
+/// the WHOLE catalog block would take every other, perfectly good,
+/// package with it — worse than just dropping the one bad row.
+struct TrayCatalogStatus: Decodable {
+    var updatedAtUtc: Date?
+    var catalogVersion: String?
+    var items: [TrayCatalogItem]
+
+    private enum CodingKeys: String, CodingKey { case updatedAtUtc, catalogVersion, items }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        updatedAtUtc = (try? c.decodeIfPresent(Date.self, forKey: .updatedAtUtc)) ?? nil
+        catalogVersion = (try? c.decodeIfPresent(String.self, forKey: .catalogVersion)) ?? nil
+
+        if let rawItems = try? c.decodeIfPresent([TrayCatalogItem].self, forKey: .items) {
+            items = rawItems
+        } else {
+            // One malformed item throws for the whole array (Swift's
+            // Decodable doesn't skip-and-continue on a heterogeneous
+            // JSON array) — degrade to empty rather than losing the
+            // rest of the snapshot over one bad catalog row.
+            items = []
+        }
+    }
+
+    init(updatedAtUtc: Date? = nil, catalogVersion: String? = nil, items: [TrayCatalogItem] = []) {
+        self.updatedAtUtc = updatedAtUtc
+        self.catalogVersion = catalogVersion
+        self.items = items
+    }
 }
 
 struct TrayUpdateStatus: Decodable {

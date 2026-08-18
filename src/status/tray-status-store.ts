@@ -10,7 +10,7 @@ import {
 } from "../bootstrap/paths";
 import { loadPmpState } from "../plugins/pmp/state";
 import { loadUpdateState } from "../update/update-state";
-import type { TrayDeviceInfo, TrayStatusSnapshot } from "./tray-status-types";
+import type { TrayCatalogItem, TrayDeviceInfo, TrayStatusSnapshot } from "./tray-status-types";
 
 const TRAY_STATUS_FILE_NAME = "tray-status.json";
 
@@ -296,30 +296,69 @@ export class TrayStatusStore {
     }));
   }
 
-  markJobStarted(jobType: string) {
+  markJobStarted(jobType: string, jobId?: string) {
     return this.update((current) => ({
       ...(current || this.emptySnapshot()),
       jobs: {
         ...(current?.jobs || {}),
         lastJobType: jobType,
         lastJobStatus: "in_progress",
-        lastJobAtUtc: new Date().toISOString()
+        lastJobAtUtc: new Date().toISOString(),
+        current: jobId
+          ? { jobId, jobType, startedAtUtc: new Date().toISOString() }
+          : (current?.jobs?.current ?? null)
       }
     }));
   }
 
-  markJobFinished(jobType: string, status: "success" | "retry" | "failed", patch?: Partial<TrayStatusSnapshot["patch"]>) {
+  markJobFinished(
+    jobType: string,
+    status: "success" | "retry" | "failed",
+    jobId?: string,
+    patch?: Partial<TrayStatusSnapshot["patch"]>
+  ) {
     return this.update((current) => ({
       ...(current || this.emptySnapshot()),
       jobs: {
         ...(current?.jobs || {}),
         lastJobType: jobType,
         lastJobStatus: status,
-        lastJobAtUtc: new Date().toISOString()
+        lastJobAtUtc: new Date().toISOString(),
+        // Only clear `current` if this finish is for the job we're
+        // actually tracking as active. runningJobIds already dedups
+        // concurrent same-id execution, but an out-of-order finish
+        // for an OLDER jobId must not stomp a newer job's in-progress
+        // state — hence the id match instead of an unconditional clear.
+        current:
+          !jobId || current?.jobs?.current?.jobId === jobId
+            ? null
+            : current?.jobs?.current
       },
       patch: {
         ...(current?.patch || {}),
         ...(patch || {})
+      }
+    }));
+  }
+
+  /**
+   * Self-service Software Catalog tab. Called on every CatalogResponse
+   * (see grpc-stream.ts) — short-circuits to a no-op write when
+   * catalogVersion matches what's already on disk, same "compute →
+   * compare → only write if different" discipline as markPolicyApplied
+   * relies on server-side via policyVersion.
+   */
+  updateCatalog(items: TrayCatalogItem[], catalogVersion: string) {
+    const current = this.load();
+    if (current?.catalog?.catalogVersion === catalogVersion) {
+      return current;
+    }
+    return this.update((current) => ({
+      ...(current || this.emptySnapshot()),
+      catalog: {
+        updatedAtUtc: new Date().toISOString(),
+        catalogVersion,
+        items
       }
     }));
   }
