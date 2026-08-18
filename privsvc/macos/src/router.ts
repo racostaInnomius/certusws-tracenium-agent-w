@@ -25,6 +25,7 @@ import {
 import { handlePatchInstall, handlePatchScan } from "./patch-management";
 import { handlePmpReadCheckState, handlePmpRemediate } from "./pmp-remediation";
 import { handleSecurityPosture } from "./security-posture";
+import { handleMdmEnrollmentState, handleMdmObserveSettings } from "./mdm-state";
 import { handleScreenCapture } from "./screen-capture";
 import {
   handleSdpDetect,
@@ -55,6 +56,10 @@ function requiresRoot(method: string) {
       || method.startsWith("grpc.")
       || method.startsWith("sdp.")
       || method.startsWith("pmp.")
+      // mdm.* es solo lectura, pero lee /Library/Managed Preferences y
+      // consulta `profiles`. Se exige root por consistencia: el repo
+      // evita a propósito una superficie de privilegio parcial.
+      || method.startsWith("mdm.")
       || method === "patch.install"
       // RCP M3.S1 — screen.capture spawns the capture helper into the
       // console user's GUI session via `launchctl asuser` + `sudo`,
@@ -213,6 +218,15 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     // screen lock, SIP).
     case "pmp.read_check_state":
       return handlePmpReadCheckState(req);
+
+    // MDM — SOLO LECTURA. No hay handler de escritura a propósito: la
+    // entrega la hará el perfil MDM, y una escritura del agente sería
+    // redundante y conflictiva (ADR-0002).
+    case "mdm.enrollment_state":
+      return handleMdmEnrollmentState(req);
+
+    case "mdm.observe_settings":
+      return handleMdmObserveSettings(req);
 
     case "pmp.remediate":
       return handlePmpRemediate(req);
