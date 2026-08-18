@@ -144,10 +144,53 @@ struct TrayPolicyFeatures: Decodable {
     var locationTracking: Bool?
 }
 
+/// Lenient like TrayStatus, and for the same reason: a malformed
+/// `current` block (e.g. a future agent version adding a field this
+/// app doesn't know about yet, or a genuinely corrupt write) must not
+/// take lastJobType/lastJobStatus/lastJobAtUtc down with it.
 struct TrayJobStatus: Decodable {
     var lastJobType: String?
     var lastJobStatus: String?
     var lastJobAtUtc: Date?
+    /// The job actively executing right now, if any — present only
+    /// between markJobStarted() and its matching markJobFinished() on
+    /// the agent side. Drives the "Active Job" tab and the menu-bar
+    /// badge. Optional so snapshots from older agents (no `current`
+    /// key at all) still decode.
+    var current: TrayCurrentJob?
+
+    private enum CodingKeys: String, CodingKey { case lastJobType, lastJobStatus, lastJobAtUtc, current }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        lastJobType = (try? c.decodeIfPresent(String.self, forKey: .lastJobType)) ?? nil
+        lastJobStatus = (try? c.decodeIfPresent(String.self, forKey: .lastJobStatus)) ?? nil
+        lastJobAtUtc = (try? c.decodeIfPresent(Date.self, forKey: .lastJobAtUtc)) ?? nil
+        current = (try? c.decodeIfPresent(TrayCurrentJob.self, forKey: .current)) ?? nil
+    }
+
+    init(
+        lastJobType: String? = nil,
+        lastJobStatus: String? = nil,
+        lastJobAtUtc: Date? = nil,
+        current: TrayCurrentJob? = nil
+    ) {
+        self.lastJobType = lastJobType
+        self.lastJobStatus = lastJobStatus
+        self.lastJobAtUtc = lastJobAtUtc
+        self.current = current
+    }
+}
+
+/// No progress percentage here on purpose: RunJob over gRPC carries
+/// only jobId/jobType/payload (see proto/controlplane.proto) — the
+/// agent itself has no timeout or step-count signal to report. The UI
+/// shows elapsed time (real, computed from startedAtUtc) plus an
+/// indeterminate spinner instead of fabricating a percentage.
+struct TrayCurrentJob: Decodable {
+    var jobId: String
+    var jobType: String
+    var startedAtUtc: Date?
 }
 
 struct TrayUpdateStatus: Decodable {

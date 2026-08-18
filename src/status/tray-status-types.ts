@@ -46,10 +46,25 @@ export type TrayDeviceInfo = {
   memoryGb?: number;    // total physical RAM in GB, 1 decimal
 };
 
+// The job actively executing right now, if any. Present only between
+// markJobStarted() and the matching markJobFinished() — absent/null
+// otherwise. Drives the tray apps' "Active Job" tab and the menu bar /
+// status-bar badge. Deliberately minimal: the agent has no notion of
+// job progress (RunJob over gRPC carries only jobId/jobType/payload —
+// see proto/controlplane.proto — no timeout or step count), so the UI
+// side can only show elapsed time and an indeterminate spinner, not a
+// real percentage.
+export type TrayCurrentJob = {
+  jobId: string;
+  jobType: string;
+  startedAtUtc: string;
+};
+
 export type TrayJobStatus = {
   lastJobType?: string;
   lastJobStatus?: string;
   lastJobAtUtc?: string;
+  current?: TrayCurrentJob | null;
 };
 
 export type TrayUpdateStatus = {

@@ -35,8 +35,8 @@ final class StatusPopoverViewController: NSViewController {
     private let subtitleLabel = NSTextField(labelWithString: "Waiting for local status snapshot...")
     private let badgeLabel = NSTextField(labelWithString: "UNKNOWN")
 
-    // Tab strip — Device Info (support widget) | Agent Info (estado clásico)
-    private let tabControl = NSSegmentedControl(labels: ["Device Info", "Agent Info"], trackingMode: .selectOne, target: nil, action: nil)
+    // Tab strip — Device Info (support widget) | Agent Info (estado clásico) | Active Job
+    private let tabControl = NSSegmentedControl(labels: ["Device Info", "Agent Info", "Active Job"], trackingMode: .selectOne, target: nil, action: nil)
     private let copyButton = NSButton(title: "Copy all", target: nil, action: nil)
 
     /// Shown only while location is switched on by policy and still ungranted.
@@ -55,10 +55,17 @@ final class StatusPopoverViewController: NSViewController {
     // Body — un scrollview por tab; se alterna con isHidden.
     private let agentScroll = NSScrollView()
     private let deviceScroll = NSScrollView()
+    private let jobScroll = NSScrollView()
     private let grid = NSGridView()          // Agent Info (grid clásico)
     private let deviceGrid = NSGridView()    // Device Info
+    private let jobGrid = NSGridView()       // Active Job
     private var valueCells: [String: NSTextField] = [:]
     private var deviceCells: [String: NSTextField] = [:]
+    private var jobCells: [String: NSTextField] = [:]
+    // Indeterminate — the agent has no step/percentage signal to report
+    // for a running job (see TrayCurrentJob), so this communicates
+    // "something is happening" rather than fabricating a completion %.
+    private let jobProgress = NSProgressIndicator()
 
     // Último status renderizado — fuente del Copy all.
     private var lastStatus: TrayStatus?
@@ -204,6 +211,7 @@ final class StatusPopoverViewController: NSViewController {
         // se alterna visibilidad en tabChanged.
         configureScroll(agentScroll, in: bodyContainer, grid: grid)
         configureScroll(deviceScroll, in: bodyContainer, grid: deviceGrid)
+        configureScroll(jobScroll, in: bodyContainer, grid: jobGrid)
 
         // ── Agent Info (grid clásico, intacto) ──
         addSection(grid, "Connectivity")
@@ -254,7 +262,36 @@ final class StatusPopoverViewController: NSViewController {
         addSection(deviceGrid, "Tracenium")
         addRow(deviceGrid, into: &deviceCells, "Device ID", key: "devDeviceId")
 
-        for g in [grid, deviceGrid] {
+        // ── Active Job ──
+        addSection(jobGrid, "Active Job")
+        addRow(jobGrid, into: &jobCells, "Status", key: "jobActiveStatus")
+        addRow(jobGrid, into: &jobCells, "Job type", key: "jobActiveType")
+        addRow(jobGrid, into: &jobCells, "Job ID", key: "jobActiveId")
+        addRow(jobGrid, into: &jobCells, "Started at", key: "jobActiveStarted")
+        addRow(jobGrid, into: &jobCells, "Elapsed", key: "jobActiveElapsed")
+
+        jobProgress.style = .bar
+        jobProgress.isIndeterminate = true
+        jobProgress.isDisplayedWhenStopped = false
+        jobProgress.translatesAutoresizingMaskIntoConstraints = false
+        let progressRow = jobGrid.addRow(with: [jobProgress, NSGridCell.emptyContentView])
+        progressRow.mergeCells(in: NSRange(location: 0, length: 2))
+        progressRow.topPadding = 4
+        jobProgress.widthAnchor.constraint(equalToConstant: 320).isActive = true
+
+        let progressNoteField = NSTextField(labelWithString:
+            "The agent doesn't report a completion percentage — this spinner just confirms a job is in flight, and the elapsed time above is live.")
+        progressNoteField.font = NSFont.systemFont(ofSize: 10.5)
+        progressNoteField.textColor = NSColor.tertiaryLabelColor
+        progressNoteField.lineBreakMode = .byWordWrapping
+        progressNoteField.maximumNumberOfLines = 3
+        progressNoteField.preferredMaxLayoutWidth = 320
+        jobCells["jobActiveNote"] = progressNoteField
+        let noteRow = jobGrid.addRow(with: [progressNoteField, NSGridCell.emptyContentView])
+        noteRow.mergeCells(in: NSRange(location: 0, length: 2))
+        noteRow.topPadding = 4
+
+        for g in [grid, deviceGrid, jobGrid] {
             if g.numberOfColumns >= 1 {
                 g.column(at: 0).xPlacement = .leading
                 g.column(at: 0).width = 140
@@ -266,6 +303,7 @@ final class StatusPopoverViewController: NSViewController {
 
         deviceScroll.isHidden = false
         agentScroll.isHidden = true
+        jobScroll.isHidden = true
     }
 
     /// Monta un scrollview a pantalla completa del body con un grid
@@ -302,9 +340,9 @@ final class StatusPopoverViewController: NSViewController {
     }
 
     @objc private func tabChanged(_ sender: NSSegmentedControl) {
-        let deviceSelected = sender.selectedSegment == 0
-        deviceScroll.isHidden = !deviceSelected
-        agentScroll.isHidden = deviceSelected
+        deviceScroll.isHidden = sender.selectedSegment != 0
+        agentScroll.isHidden = sender.selectedSegment != 1
+        jobScroll.isHidden = sender.selectedSegment != 2
     }
 
     private func addSection(_ targetGrid: NSGridView, _ title: String) {
@@ -352,6 +390,7 @@ final class StatusPopoverViewController: NSViewController {
     func render(_ status: TrayStatus?) {
         lastStatus = status
         renderDeviceInfo(status)
+        renderActiveJob(status?.jobs.current)
         guard let status else {
             applyHeader(
                 online: false,
@@ -449,6 +488,40 @@ final class StatusPopoverViewController: NSViewController {
 
     private func setDevice(_ key: String, _ value: String) {
         deviceCells[key]?.stringValue = value
+    }
+
+    // MARK: - Active Job tab
+
+    /// No live progress percentage — see JobElapsedFormatter and the
+    /// TrayCurrentJob doc comment for why. Toggles the segmented
+    /// control's own label with a bullet so the badge signal is
+    /// visible even while the popover is open on a different tab, not
+    /// just from the menu-bar icon (see StatusBarController).
+    private func renderActiveJob(_ job: TrayCurrentJob?) {
+        guard let job else {
+            setJob("jobActiveStatus", "Idle — no job currently running")
+            setJob("jobActiveType", "—")
+            setJob("jobActiveId", "—")
+            setJob("jobActiveStarted", "—")
+            setJob("jobActiveElapsed", "—")
+            jobProgress.stopAnimation(nil)
+            jobCells["jobActiveNote"]?.isHidden = true
+            tabControl.setLabel("Active Job", forSegment: 2)
+            return
+        }
+
+        setJob("jobActiveStatus", "Running")
+        setJob("jobActiveType", job.jobType.isEmpty ? "—" : job.jobType)
+        setJob("jobActiveId", job.jobId.isEmpty ? "—" : job.jobId)
+        setJob("jobActiveStarted", format(job.startedAtUtc))
+        setJob("jobActiveElapsed", JobElapsedFormatter.format(startedAtUtc: job.startedAtUtc))
+        jobProgress.startAnimation(nil)
+        jobCells["jobActiveNote"]?.isHidden = false
+        tabControl.setLabel("Active Job ●", forSegment: 2)
+    }
+
+    private func setJob(_ key: String, _ value: String) {
+        jobCells[key]?.stringValue = value
     }
 
     private func resolveLocalHostname(_ status: TrayStatus?) -> String {
