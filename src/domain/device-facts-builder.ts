@@ -17,6 +17,7 @@ import type {
 import type { ScpNamespace } from "./scp-types";
 import type { PmpNamespace } from "./pmp-types";
 import type { CdpNamespace } from "./cdp-types";
+import { readOsRelease, isUnknown } from "./os-release";
 
 import {
   normalizeCpu,
@@ -392,6 +393,9 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
   const normalizedUsers = await buildLoggedInUsers(users);
   const networkInterfaces = normalizeNetworkInterfaces(net, defaultNetworkInterface);
 
+  // Read once per snapshot; only consulted when si could not identify the OS.
+  const osRelease = readOsRelease();
+
   const staticPart: HardwareStatic = {
     system: {
       manufacturer: system.manufacturer,
@@ -410,8 +414,13 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
         const p = os.platform();
         return p === "win32" ? "windows" : p === "darwin" ? "macos" : "linux";
       })(),
-      distro: osInfo.distro,
-      release: osInfo.release,
+      // si obtains distro/release by shelling out; on both Linux servers in
+      // the fleet that came back empty and every device reported "unknown"
+      // while the kernel (which si takes from Node) was correct. os-release
+      // is a plain file read — no shell, no PATH, no privileges. si still
+      // wins whenever it answers, so working machines are unaffected.
+      distro: isUnknown(osInfo.distro) ? osRelease.distro ?? osInfo.distro : osInfo.distro,
+      release: isUnknown(osInfo.release) ? osRelease.release ?? osInfo.release : osInfo.release,
       kernel: osInfo.kernel
     },
     uuid: system.uuid,
