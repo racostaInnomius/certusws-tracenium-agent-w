@@ -96,6 +96,50 @@ export type SoftwareInstallAck = {
  */
 export const DOWNLOAD_BUDGET_SECONDS = 600;
 
+/**
+ * Is this package the agent installing itself?
+ *
+ * Distributing the agent through SDP is the one case where the installer kills
+ * the process that has to report the result: msiexec stops AgentCore, so the
+ * ACK for `sdp.install` never leaves the machine. The job then sits in `sent`
+ * until the orchestrator retries it ~32 minutes later, and only that retry —
+ * which finds the software already installed — closes it. Observed on every
+ * self-deployment so far: `attempts: 2`, half an hour of nothing.
+ *
+ * Recognising the case lets us ACK before handing off to the installer. See
+ * SELF_INSTALL_ACK_REASON for what that ACK does and does not claim.
+ *
+ * Name matching is deliberate rather than clever: the MSI's ProductCode is not
+ * in the catalog snapshot, so there is nothing stronger available here. A
+ * mismatch is safe in both directions — a false negative just restores today's
+ * retry behaviour, and a false positive would need a third-party package
+ * literally named "Tracenium Agent" from this vendor.
+ */
+export function isSelfPackage(snapshot: any): boolean {
+  const name = String(snapshot?.name ?? "").trim().toLowerCase();
+  if (!name) return false;
+  const vendor = String(snapshot?.vendor ?? "").trim().toLowerCase();
+  const looksLikeAgent = name === "tracenium agent" || name.startsWith("tracenium agent");
+  const looksLikeUs = vendor === "" || vendor.includes("certus");
+  return looksLikeAgent && looksLikeUs;
+}
+
+/**
+ * Why the early ACK is honest, and what it deliberately does not say.
+ *
+ * By the time we send it the agent has: downloaded the package, verified its
+ * sha256 against the catalog, and passed the signature gate. What it cannot
+ * know is the installer's exit code, because it is about to be terminated by
+ * that installer — the same limit that made `agent_update` ACK `update_started`
+ * rather than `update_completed`.
+ *
+ * So the message carries no `exit=`: claiming an exit code we never read is
+ * exactly the class of lie that made failed updates report as completed. The
+ * reason field marks the row as launched-not-confirmed, and the real
+ * confirmation is the version the device reports when it comes back.
+ */
+export const SELF_INSTALL_ACK_REASON = "self_install_launched";
+
 // Distribution Phase A — ordered download sources from the backend
 // (dp → cdn → origin). Passed through to privsvc, which tries them in order
 // with the sha256 gate deciding per-source. Malformed entries are dropped;
@@ -210,7 +254,14 @@ function trimStderr(stderr: unknown): string | undefined {
 export async function runSoftwareInstall(
   ctx: AgentContext,
   jobId: string,
-  payload: any
+  payload: any,
+  /**
+   * Sends an ACK for this job WITHOUT waiting for the handler to return.
+   * Supplied by the transport (which owns the gRPC stream); optional so the
+   * plugin stays callable from tests and from any caller that has no stream.
+   * Used only for the self-install case — see isSelfPackage.
+   */
+  sendEarlyAck?: (message: string) => Promise<void>
 ): Promise<SoftwareInstallAck> {
   const deploymentId = Number(payload?.deploymentId);
   const snapshot = payload?.packageSnapshot as PackageSnapshot | undefined;
@@ -545,6 +596,50 @@ export async function runSoftwareInstall(
           jobId,
           packageId: snapshot.id,
         });
+      }
+
+      // ── Early ACK for self-installs ─────────────────────────────
+      // We are about to hand our own MSI to msiexec, which stops AgentCore.
+      // The ACK for sdp.install would die with the process, leaving the job
+      // in `sent` until the orchestrator's retry closes it half an hour later.
+      //
+      // Everything verifiable HAS been verified at this point: bytes match the
+      // catalog sha256 and the signature gate passed. The exit code is the only
+      // thing we cannot know, so the message carries no `exit=` — see
+      // SELF_INSTALL_ACK_REASON. The device reporting its new version is what
+      // actually confirms the install.
+      //
+      // Best-effort: if the ACK cannot be sent we simply proceed and fall back
+      // to today's retry behaviour. Failing the install because a status
+      // message did not go out would be worse than the delay it avoids.
+      //
+      // The normal ACK below is still sent when we survive the install. That is
+      // deliberate: on the happy path the backend ignores it (the result row is
+      // already terminal and idempotent), and on the unhappy path — installer
+      // failed but did not replace us — it is the only way the operator hears
+      // about the failure at all. Better a job that disagrees with its result
+      // row than a silent success.
+      if (sendEarlyAck && isSelfPackage(snapshot)) {
+        const earlyMessage = encodeAckMessage("success", deploymentId, {
+          reason: SELF_INSTALL_ACK_REASON,
+          // `src` is the key the backend parses into served_by — same one the
+          // final ACK uses. Naming it servedBy here would ship a field nobody
+          // reads.
+          ...(servedBy ? { src: servedBy } : {}),
+        });
+        try {
+          await sendEarlyAck(earlyMessage);
+          ctx.logger?.info?.("[sdp.install] self-install: acked before handing off to the installer", {
+            jobId,
+            deploymentId,
+            version: snapshot.version,
+          });
+        } catch (err: any) {
+          ctx.logger?.warn?.("[sdp.install] early ack failed; falling back to the orchestrator retry", {
+            jobId,
+            error: err?.message || String(err),
+          });
+        }
       }
 
       // ── Install ─────────────────────────────────────────────────

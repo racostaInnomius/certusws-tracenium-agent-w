@@ -757,7 +757,15 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       // backend's P1-G ack handler can update software_install_results
       // without needing a new gRPC field.
       try {
-        const ack = await ctx.plugins.run("sdp.install", { jobId, payload });
+        const ack = await ctx.plugins.run("sdp.install", {
+          jobId,
+          payload,
+          // Lets the plugin close the job BEFORE handing our own MSI to
+          // msiexec, which stops this very process. Without it a self-install
+          // leaves the job in `sent` until the orchestrator retries ~32 min
+          // later. Only used when the package is the agent itself.
+          sendEarlyAck: (message: string) => sendControlAck(ctx, jobId, 0, message),
+        });
         if (!ack) {
           // pluginMgr.run returns null when the plugin is disabled by
           // policy. Surface as a permanent rejection so the deployment

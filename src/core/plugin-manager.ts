@@ -119,7 +119,11 @@ export class PluginManager {
           install: async (ctx: AgentContext, params?: any) => {
             const jobId = String(params?.jobId ?? "");
             const payload = params?.payload ?? {};
-            return runSoftwareInstall(ctx, jobId, payload);
+            // `sendEarlyAck` is supplied by the transport for the self-install
+            // case (the agent updating itself), where the installer terminates
+            // the process before the normal ACK can leave. Absent for any
+            // caller without a stream — the plugin treats it as optional.
+            return runSoftwareInstall(ctx, jobId, payload, params?.sendEarlyAck);
           },
           // Distribution Phase B — warm this agent's DP cache for its site.
           // Same policy gate as install: a tenant that disables sdp also
