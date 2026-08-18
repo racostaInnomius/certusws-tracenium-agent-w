@@ -290,6 +290,36 @@ async function detectPackageManagers() {
 // caller falls back to "no manual filter" mode and ships the full
 // dpkg list (with HARD_NOISE_PATTERNS still applied). Better to
 // over-report than to ship zero apps if apt-mark glitches.
+/**
+ * Packages that must survive the manual-only filter.
+ *
+ * The filter exists to hide the transitive-dependency graph, and it is
+ * right about almost everything. But the TLS library is precisely a
+ * transitive dependency — `libssl3` is pulled in by whatever needs it and
+ * is therefore ALWAYS marked auto, so it was always dropped. The one
+ * package that survived was the `openssl` CLI, which measures the command
+ * line rather than the library the services actually link: the wrong
+ * number, reported confidently.
+ *
+ * That mattered because the PQC agility check reads exactly this to
+ * answer "can this machine do ML-KEM" (OpenSSL 3.5+). With libssl
+ * filtered out, the check had nothing to judge on Linux.
+ *
+ * Deliberately narrow. Every name here is a cryptographic runtime whose
+ * version is a migration fact, not a general-purpose escape hatch for
+ * things someone finds interesting.
+ *
+ * The `t64` suffix is not optional trivia: Ubuntu 24.04's 64-bit time_t
+ * transition renamed the package to `libssl3t64`, and 24.04 is in the
+ * fleet. A pattern without it would have missed the exact distro this
+ * was written for.
+ */
+const CRYPTO_RUNTIME_RE = /^(libssl[0-9.]*(t64)?|openssl|libgnutls[0-9.-]*(t64)?|gnutls-bin|libnss3|libgcrypt[0-9]*(t64)?)$/i;
+
+function isCryptoRuntime(name: string): boolean {
+  return CRYPTO_RUNTIME_RE.test(String(name ?? "").trim());
+}
+
 async function getDebianManualPackages(): Promise<Set<string> | null> {
   const r = await run("/usr/bin/apt-mark", ["showmanual"]);
   if (!r) return null;
@@ -366,7 +396,7 @@ async function collectDpkg(manualSet: Set<string> | null): Promise<SoftwareAppli
     // If manualSet is null (apt-mark unavailable), fall through to
     // ship everything that survived the hard-noise filter — better
     // to over-report than ship a half-empty inventory.
-    if (manualSet && !manualSet.has(name)) continue;
+    if (manualSet && !manualSet.has(name) && !isCryptoRuntime(name)) continue;
 
     const n = normalizeApp({
       name,

@@ -30,6 +30,35 @@ import {
 // crafted .app directory name is not possible.
 const execFileAsync = promisify(execFile);
 
+/**
+ * Order two Homebrew version directory names.
+ *
+ * Homebrew versions are dotted numbers with an optional `_N` revision
+ * (`3.6.3`, `21.0.9`, `1.2.3_1`) and occasionally a non-numeric suffix.
+ * A plain string sort puts "10" before "9", which would report the wrong
+ * version as newest — so compare component by component, numerically
+ * where both sides are numbers.
+ */
+export function compareBrewVersions(a: string, b: string): number {
+  const parts = (v: string) => v.split(/[._-]/);
+  const pa = parts(a);
+  const pb = parts(b);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = Number(pa[i]);
+    const nb = Number(pb[i]);
+    if (Number.isFinite(na) && Number.isFinite(nb)) {
+      if (na !== nb) return na - nb;
+      continue;
+    }
+    const sa = pa[i] ?? "";
+    const sb = pb[i] ?? "";
+    if (sa !== sb) return sa < sb ? -1 : 1;
+  }
+  return 0;
+}
+
+
+
 type RawMacApp = {
   name?: string | null;
   version?: string | null;
@@ -222,41 +251,69 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
     }
 
     // --- Homebrew packages ---
-    try {
-      // Try both common brew locations (Apple Silicon vs Intel).
-      // execFile requires an absolute path; we resolve it lazily.
-      const brewBin =
-        (fs.existsSync("/opt/homebrew/bin/brew") && "/opt/homebrew/bin/brew") ||
-        (fs.existsSync("/usr/local/bin/brew") && "/usr/local/bin/brew") ||
-        null;
+    //
+    // Read the Cellar off disk instead of shelling out to `brew`.
+    //
+    // WHY. This used to run `brew list --versions` with a 5s timeout and
+    // swallow every failure under a `catch {}` commented "brew not
+    // installed" — a comment that asserted a cause nobody had checked.
+    // The agent runs as a LaunchDaemon (root), and Homebrew refuses to
+    // run as root against a prefix it does not own, which is the normal
+    // install. Measured 2026-08-18: not one row with `source=homebrew`
+    // in ANY tenant, across a fleet with several Macs — while CDP's Java
+    // collector was happily reading `/opt/homebrew/Cellar/openjdk@21/...`
+    // off the very same disks. So brew WAS installed and readable; only
+    // the subprocess was failing, silently, for everyone.
+    //
+    // The Cellar is the same information in a form we can just read:
+    // `<prefix>/Cellar/<formula>/<version>`. No subprocess, so no root
+    // refusal, no timeout, and no shell to get wrong.
+    //
+    // Formulae only, deliberately. Casks install .app bundles that the
+    // bundle collector above already reports; adding Caskroom here would
+    // list them twice.
+    for (const prefix of ["/opt/homebrew", "/usr/local"]) {
+      const cellar = `${prefix}/Cellar`;
+      let formulae: string[];
+      try {
+        formulae = await fs.promises.readdir(cellar);
+      } catch {
+        continue; // this prefix simply has no Homebrew
+      }
 
-      if (!brewBin) throw new Error("brew_not_installed");
+      let unreadable = 0;
+      for (const formula of formulae) {
+        if (formula.startsWith(".")) continue;
+        try {
+          const versions = (await fs.promises.readdir(`${cellar}/${formula}`))
+            .filter((v) => !v.startsWith("."))
+            .sort(compareBrewVersions);
+          // A formula can keep several versions side by side. The newest
+          // is the one on PATH, and the one an agility rule should judge.
+          const version = versions[versions.length - 1];
+          if (!version) continue;
 
-      const { stdout } = await execFileAsync(brewBin, ["list", "--versions"], {
-        maxBuffer: 1024 * 1024 * 5,
-        timeout: 5000
-      });
-
-      const lines = stdout.split("\n").map(l => l.trim()).filter(Boolean);
-
-      for (const line of lines) {
-        const [name, version] = line.split(" ");
-
-        const normalized = normalizeApp({
-          name,
-          version,
-          publisher: "homebrew",
-          installLocation: "/opt/homebrew",
-          packageFamilyName: name,
-          source: "homebrew"
-        });
-
-        if (normalized && normalized.name) {
-          results.push(normalized as SoftwareApplication);
+          const normalized = normalizeApp({
+            name: formula,
+            version,
+            publisher: "homebrew",
+            installLocation: `${cellar}/${formula}/${version}`,
+            packageFamilyName: formula,
+            source: "homebrew"
+          });
+          if (normalized && normalized.name) {
+            results.push(normalized as SoftwareApplication);
+          }
+        } catch {
+          unreadable += 1;
         }
       }
-    } catch {
-      // brew not installed
+
+      // Say it out loud. The whole reason this was invisible for months
+      // is that the previous version had nowhere to report a problem.
+      if (unreadable > 0) {
+        console.warn(`[MACOS] ${unreadable} unreadable Homebrew formula dir(s) under ${cellar}`);
+      }
     }
 
     // --- pkgutil packages ---
