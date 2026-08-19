@@ -41,6 +41,7 @@ import {
   identityForUninstall,
 } from "./mode";
 import { evaluateSignatureGate, normalizeVerifyResponse } from "./signature-gate";
+import { decideReboot, shouldSkipPostDetect, withRebootExitCodes } from "./reboot";
 
 // Mirror of the backend's `InstallOutcome` enum. Keep in lockstep.
 export type InstallOutcome =
@@ -392,11 +393,31 @@ export async function runSoftwareInstall(
     if (rule) {
       preDetect = await evaluate(ctx, rule, jobId);
       preDetectEval = preDetect;
-      const decision = preDetectDecision(mode, preDetect.matched);
+      // `skipped` rides along because "we did not look" must not be read as
+      // "it is absent" — for an uninstall those are opposite conclusions. See
+      // preDetectDecision.
+      const decision = preDetectDecision(
+        mode,
+        preDetect.matched,
+        preDetect.skipped === true,
+        preDetect.skipReason
+      );
       if (decision.shortCircuit) {
-        outcome = decision.outcome!; // "already_installed"
+        outcome = decision.outcome!; // already_installed | rejected | failed
+        if (outcome !== "already_installed") {
+          ctx.logger?.warn?.("[sdp.install] pre-detect inconclusive — refusing to guess", {
+            jobId,
+            packageId: snapshot.id,
+            mode,
+            ruleType: (snapshot.detectionRule as any)?.type ?? null,
+            skipReason: preDetect.skipReason ?? null,
+            outcome,
+          });
+        }
         return {
-          ackStatus: 0,
+          // `rejected` is permanent (the catalog entry needs fixing); `failed`
+          // here means privsvc could not answer, which is worth another attempt.
+          ackStatus: outcome === "rejected" ? 2 : outcome === "failed" ? 1 : 0,
           ackMessage: encodeAckMessage(
             outcome,
             deploymentId,
@@ -408,10 +429,16 @@ export async function runSoftwareInstall(
       }
     }
 
-    const expectedExitCodes =
+    // The operator's list, widened with the platform's reboot codes. Without
+    // the widening a Windows installer that returns 1641 (reboot already
+    // initiated — a documented SUCCESS code) falls outside the expected set and
+    // is graded a permanent `failed`. See ./reboot.
+    const expectedExitCodes = withRebootExitCodes(
       Array.isArray(snapshot.expectedExitCodes) && snapshot.expectedExitCodes.length > 0
         ? snapshot.expectedExitCodes
-        : [0, 3010];
+        : [0, 3010],
+      localPlatform
+    );
 
     // `runResp` is the terminal runner response — from sdp.install for
     // install/reinstall, or sdp.uninstall for uninstall. Both share the
@@ -693,7 +720,15 @@ export async function runSoftwareInstall(
     const stderrExcerpt = trimStderr(installResult.stderrExcerpt);
     durationMs = Number(installResult.durationMs ?? Date.now() - installStart);
     const isExpected = Number.isFinite(exitCode) && expectedExitCodes.includes(exitCode);
-    const isReboot = exitCode === 3010;
+    // Reboot comes from two places: what the installer just reported, and what
+    // the catalog declares about the package. Observed beats declared. See
+    // ./reboot for why 3010 alone was not enough.
+    const reboot = decideReboot({
+      platform: localPlatform,
+      exitCode,
+      packageRequiresReboot: snapshot.requiresReboot,
+      mode,
+    });
 
     if (!isExpected) {
       // Installer ran to completion but exit code says it failed.
@@ -720,7 +755,18 @@ export async function runSoftwareInstall(
     //   install/reinstall → rule must MATCH (software present).
     //   uninstall         → rule must NOT match (software gone).
     // A violation is a failure regardless of exit code.
-    if (rule) {
+    //
+    // Skipped when the installer has already started the restart: probing a
+    // machine that is tearing down services would grade a shutdown artifact as
+    // `post_detect_mismatch` and turn a successful install into a permanent
+    // failure. See shouldSkipPostDetect.
+    if (rule && shouldSkipPostDetect(reboot)) {
+      ctx.logger?.info?.("[sdp.install] skipping post-detect — reboot already initiated", {
+        jobId,
+        packageId: snapshot.id,
+        exitCode,
+      });
+    } else if (rule) {
       const postDetect = await evaluate(ctx, rule, jobId);
       postDetectEval = postDetect;
       if (!postDetect.skipped && postDetectIsFailure(mode, postDetect.matched)) {
@@ -745,7 +791,10 @@ export async function runSoftwareInstall(
     }
 
     // ── Success path ────────────────────────────────────────────
-    outcome = isReboot ? "reboot_required" : "success";
+    // `reason` names WHICH signal produced reboot_required — the exit code or
+    // the catalog flag — so an operator looking at a pending-reboot row can
+    // tell "the installer told us" from "someone ticked the box".
+    outcome = reboot.rebootRequired ? "reboot_required" : "success";
     return {
       ackStatus: 0,
       ackMessage: encodeAckMessage(
@@ -755,6 +804,7 @@ export async function runSoftwareInstall(
           exit: exitCode,
           duration: durationMs,
           src: servedBy,
+          reason: reboot.reason,
         },
         buildForensics()
       ),

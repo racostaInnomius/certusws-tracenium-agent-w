@@ -24,12 +24,30 @@ export function parseMode(raw: unknown): DeploymentMode {
 }
 
 export interface PreDetectDecision {
-  /** Skip download+run and ACK immediately (already in desired state). */
+  /** Stop here and ACK immediately, without downloading or running anything. */
   shortCircuit: boolean;
   /** Outcome to report when short-circuiting. */
-  outcome?: "already_installed";
+  outcome?: "already_installed" | "rejected" | "failed";
   /** Short reason tag for the ACK. */
   reason?: string;
+}
+
+/**
+ * Of the ways detection can come back inconclusive, which are worth retrying?
+ *
+ * detection.ts sets `skipped` for three different situations and they do not
+ * deserve the same answer: `rule_type_not_applicable_on_<platform>` is a
+ * catalog entry that will never fit this device, while `privsvc_error:*` and
+ * `privsvc_threw:*` are the privileged service failing or timing out — which in
+ * this agent is a recurring, transient condition, not a statement about the
+ * software. Retrying the first would loop forever on the same non-answer;
+ * refusing to retry the second turns an IPC blip into a permanent failure.
+ */
+export function skipIsTransient(skipReason?: string): boolean {
+  return (
+    typeof skipReason === "string" &&
+    (skipReason.startsWith("privsvc_error:") || skipReason.startsWith("privsvc_threw:"))
+  );
 }
 
 /**
@@ -39,10 +57,44 @@ export interface PreDetectDecision {
  *   uninstall: already absent (not matched) → already in desired state, skip.
  *              (We reuse the `already_installed` outcome to mean "already in the
  *              target state" so the backend enum/reducer need no new value.)
+ *
+ * ⚠️ `skipped` is NOT the same as "not matched", and conflating them was a bug.
+ * detection.ts returns `{matched:false, skipped:true}` when the rule type can't
+ * apply to this device — a macOS package carrying a `dpkg_installed` rule, say.
+ * That is "we did not look", not "it is absent". For an UNINSTALL those two
+ * readings are opposites: treating the non-answer as absence made the agent
+ * report `already_installed` — the desired end state — for a device it never
+ * probed, leaving the software installed and the deployment green. The post-
+ * detect path had always guarded on `skipped`; only this one didn't.
+ *
+ * An inconclusive uninstall therefore stops here rather than either claiming the
+ * end state or attempting the removal. Attempting it would mean deriving the
+ * removal identity from the very rule we just failed to evaluate, and running a
+ * privileged removal off it.
+ *
+ * WHICH stop depends on why we couldn't tell (see skipIsTransient): a privsvc
+ * failure is reported as `failed` so the orchestrator retries, while a rule that
+ * cannot apply to this platform is `rejected` — permanent, because every retry
+ * would reach the same rule and the same non-answer, and what needs fixing is
+ * the catalog entry.
+ *
+ * install/reinstall are deliberately unchanged: there, an inconclusive
+ * pre-detect already falls through to doing the work, which is the safe
+ * direction.
  */
-export function preDetectDecision(mode: DeploymentMode, matched: boolean): PreDetectDecision {
+export function preDetectDecision(
+  mode: DeploymentMode,
+  matched: boolean,
+  skipped = false,
+  skipReason?: string
+): PreDetectDecision {
   if (mode === "reinstall") return { shortCircuit: false };
   if (mode === "uninstall") {
+    if (skipped) {
+      return skipIsTransient(skipReason)
+        ? { shortCircuit: true, outcome: "failed", reason: "pre_detect_unavailable" }
+        : { shortCircuit: true, outcome: "rejected", reason: "pre_detect_inconclusive" };
+    }
     return matched
       ? { shortCircuit: false }
       : { shortCircuit: true, outcome: "already_installed", reason: "pre_detect_absent" };

@@ -723,10 +723,10 @@ public static class Sdp
                 return PrivSvcResponse.Fail(req.Id, "install_failed", ex.Message);
             }
 
-            // Eager cleanup on success / reboot-required (3010).
+            // Eager cleanup on any Windows Installer SUCCESS code.
             // Failed installers leave the file in place for forensics;
             // the staging-dir TTL sweeper picks them up later.
-            if (result.ExitCode == 0 || result.ExitCode == 3010)
+            if (IsInstallerSuccessExitCode(result.ExitCode))
             {
                 TryDeleteFile(absStaging);
             }
@@ -813,6 +813,21 @@ public static class Sdp
             return PrivSvcResponse.Fail(req.Id, "install_failed", ex.Message);
         }
     }
+
+    /// <summary>
+    /// Did the installer succeed, as Windows Installer defines success?
+    ///
+    /// Three codes mean the work was done: 0, 3010 (ERROR_SUCCESS_REBOOT_REQUIRED
+    /// — finished, needs a restart) and 1641 (ERROR_SUCCESS_REBOOT_INITIATED —
+    /// finished, restart already under way). This gate governs only whether we
+    /// delete the staged installer; the outcome itself is graded agent-side in
+    /// src/plugins/sdp/reboot.ts, which recognises the same three codes.
+    ///
+    /// 1641 was missing here, so a successful install that restarted the machine
+    /// left its installer in the staging directory until the TTL sweeper ran.
+    /// </summary>
+    private static bool IsInstallerSuccessExitCode(int exitCode) =>
+        exitCode == 0 || exitCode == 3010 || exitCode == 1641;
 
     private sealed class UninstallIdentityException : Exception
     {

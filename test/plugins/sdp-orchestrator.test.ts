@@ -26,6 +26,21 @@ function formatFor(platform: string): string {
   return platform === "windows" ? "msi" : platform === "macos" ? "pkg" : "deb";
 }
 
+// A detection rule that is BOTH applicable on this host and carries a removable
+// identity — the two things an uninstall needs. `file_exists` (the default in
+// snap()) is applicable everywhere but has no identity, and a rule from another
+// platform is skipped by detection.ts as not-applicable.
+function uninstallableRule(): Record<string, unknown> {
+  switch (hostPlatform()) {
+    case "windows":
+      return { type: "registry_uninstall", displayNameLike: "TestApp%" };
+    case "macos":
+      return { type: "bundle_version", bundleId: "com.example.testapp" };
+    default:
+      return { type: "dpkg_installed", packageName: "testapp" };
+  }
+}
+
 // ── Scripted privsvc ──────────────────────────────────────────────
 //
 // Each method maps to a response, or an ARRAY of responses consumed in order
@@ -233,7 +248,12 @@ describe("runSoftwareInstall — install pipeline", () => {
     expect(methodsCalled(calls)).toEqual(["sdp.detect", "sdp.download", "sdp.install", "sdp.detect"]);
   });
 
-  it("reports reboot_required on exit 3010", async () => {
+  // 3010 is a Windows Installer code. This test used to assert reboot_required
+  // on every host, which was the bug: on a .pkg or a .deb, 3010 is whatever
+  // number the maintainer picked, and reading reboot intent into it invents a
+  // meaning the package never assigned. The per-platform assertion keeps the
+  // Windows contract pinned while documenting the deliberate change elsewhere.
+  it("reads exit 3010 as reboot_required on Windows, and as a plain success elsewhere", async () => {
     const { ctx } = makeCtx({
       "sdp.detect": [DETECT(false), DETECT(true)],
       "sdp.download": OK_DOWNLOAD,
@@ -241,9 +261,128 @@ describe("runSoftwareInstall — install pipeline", () => {
     });
     const ack = await runSoftwareInstall(ctx, "job-11", { deploymentId: 7, packageSnapshot: snap() });
     expect(ack.ackStatus).toBe(0);
-    expect(ack.outcome).toBe("reboot_required");
+    expect(ack.outcome).toBe(hostPlatform() === "windows" ? "reboot_required" : "success");
     expect(parseAck(ack.ackMessage).fields.exit).toBe("3010");
   });
+});
+
+describe("runSoftwareInstall — pre-detect that could not answer", () => {
+  // A rule type from another platform: detection.ts refuses it before ever
+  // reaching privsvc. Reading that non-answer as "absent" used to make an
+  // uninstall report already_installed for a machine it never probed.
+  function foreignRule(): Record<string, unknown> {
+    return hostPlatform() === "windows"
+      ? { type: "dpkg_installed", packageName: "testapp" }
+      : { type: "registry_uninstall", displayNameLike: "TestApp%" };
+  }
+
+  it("rejects an uninstall whose rule cannot apply to this device", async () => {
+    const { ctx, calls } = makeCtx();
+    const ack = await runSoftwareInstall(ctx, "job-inconclusive-1", {
+      deploymentId: 7,
+      mode: "uninstall",
+      packageSnapshot: snap({ detectionRule: foreignRule() }),
+    });
+    expect(ack.outcome).toBe("rejected");
+    expect(ack.ackStatus).toBe(2); // permanent — the catalog entry needs fixing
+    expect(parseAck(ack.ackMessage).fields.reason).toBe("pre_detect_inconclusive");
+    // Nothing privileged ran: no detect (refused before IPC), no uninstall.
+    expect(calls).toHaveLength(0);
+  });
+
+  // The likelier trigger: privsvc times out mid pre-detect. That says nothing
+  // about the software, so it must stay retryable rather than become a verdict.
+  it("treats a privsvc failure during an uninstall's pre-detect as transient", async () => {
+    const { ctx, calls } = makeCtx({
+      "sdp.detect": { ok: false, error: { code: "ipc_timeout" } },
+    });
+    const ack = await runSoftwareInstall(ctx, "job-inconclusive-2", {
+      deploymentId: 7,
+      mode: "uninstall",
+      packageSnapshot: snap({ detectionRule: uninstallableRule() }),
+    });
+    expect(ack.outcome).toBe("failed");
+    expect(ack.ackStatus).toBe(1); // retry — the IPC lane may recover
+    expect(parseAck(ack.ackMessage).fields.reason).toBe("pre_detect_unavailable");
+    expect(methodsCalled(calls)).toEqual(["sdp.detect"]);
+    expect(methodsCalled(calls)).not.toContain("sdp.uninstall");
+  });
+
+  // Same non-answer, opposite mode: an install still proceeds, because doing
+  // the work is the safe direction when we cannot tell.
+  it("still proceeds with an install when pre-detect could not answer", async () => {
+    const { ctx, calls } = makeCtx({
+      "sdp.detect": { ok: false, error: { code: "ipc_timeout" } },
+      "sdp.download": OK_DOWNLOAD,
+      "sdp.install": OK_INSTALL,
+    });
+    const ack = await runSoftwareInstall(ctx, "job-inconclusive-3", {
+      deploymentId: 7,
+      packageSnapshot: snap(),
+    });
+    expect(ack.ackStatus).toBe(0);
+    expect(ack.outcome).toBe("success");
+    expect(methodsCalled(calls)).toContain("sdp.install");
+  });
+});
+
+describe("runSoftwareInstall — reboot signalling", () => {
+  // The headline fix: `requires_reboot` is edited in the UI, persisted, and
+  // shipped to the agent inside the package snapshot on every dispatch — and
+  // was read by nobody. A package that needs a restart but exits 0 (the norm
+  // for .pkg and .deb) reported a clean success and the endpoint silently never
+  // got rebooted. This path is platform-independent, so it runs on any host.
+  it("reports reboot_required when the catalog declares it, even on exit 0", async () => {
+    const { ctx } = makeCtx({
+      "sdp.detect": [DETECT(false), DETECT(true)],
+      "sdp.download": OK_DOWNLOAD,
+      "sdp.install": OK_INSTALL,
+    });
+    const ack = await runSoftwareInstall(ctx, "job-reboot-1", {
+      deploymentId: 7,
+      packageSnapshot: snap({ requiresReboot: true }),
+    });
+    expect(ack.ackStatus).toBe(0);
+    expect(ack.outcome).toBe("reboot_required");
+    const p = parseAck(ack.ackMessage);
+    expect(p.fields.exit).toBe("0");
+    expect(p.fields.reason).toBe("package_requires_reboot");
+  });
+
+  it("reports a plain success when the catalog does not declare a reboot", async () => {
+    const { ctx } = makeCtx({
+      "sdp.detect": [DETECT(false), DETECT(true)],
+      "sdp.download": OK_DOWNLOAD,
+      "sdp.install": OK_INSTALL,
+    });
+    const ack = await runSoftwareInstall(ctx, "job-reboot-2", {
+      deploymentId: 7,
+      packageSnapshot: snap({ requiresReboot: false }),
+    });
+    expect(ack.outcome).toBe("success");
+    expect(parseAck(ack.ackMessage).fields.reason).toBeUndefined();
+  });
+
+  // requires_reboot is a claim about INSTALLING the package. Applying it to a
+  // removal would mark every uninstall reboot-pending whether or not one is
+  // needed. Windows uninstalls that genuinely need one still say so via 3010.
+  it("does not apply the catalog flag to an uninstall", async () => {
+    const { ctx } = makeCtx({
+      "sdp.detect": [DETECT(true), DETECT(false)], // pre: present → proceed; post: gone → ok
+      "sdp.uninstall": OK_INSTALL,
+    });
+    const ack = await runSoftwareInstall(ctx, "job-reboot-3", {
+      deploymentId: 7,
+      mode: "uninstall",
+      packageSnapshot: snap({ requiresReboot: true, detectionRule: uninstallableRule() }),
+    });
+    expect(ack.ackStatus).toBe(0);
+    expect(ack.outcome).toBe("success");
+  });
+
+  // The Windows exit-code paths (3010 / 1641) live in
+  // sdp-reboot-windows.test.ts, which stubs os.platform(). Gating them on the
+  // real host here would mean they never run at all: CI is ubuntu-latest.
 });
 
 describe("runSoftwareInstall — distribution sources (Phase A)", () => {
