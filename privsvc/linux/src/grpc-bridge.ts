@@ -31,6 +31,7 @@ import { loadInstalledIdentity } from "./crypto-store";
 import type { PrivSvcRequest, PrivSvcResponse, PushSink } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
+import { makeCheckServerIdentity, readServerKeyPins } from "./server-pin";
 
 // Resolve the controlplane.proto. Order of preference:
 //   1. TRACENIUM_PROTO_PATH env override — escape hatch for unusual
@@ -950,10 +951,27 @@ async function startConnection(params: Record<string, any>, pushSink: PushSink) 
 
   try {
     const identity = loadInstalledIdentity();
+
+    // Pinning de la clave pública del control plane. Ver server-pin.ts:
+    // validar sólo contra la CA significa aceptar CUALQUIER certificado que
+    // ella firme, y esa clave llegó a estar publicada. Con la lista vacía el
+    // comportamiento no cambia y sólo se REGISTRA el pin observado — que es
+    // como se averigua el valor a configurar sin arriesgar la flota.
+    const pins = readServerKeyPins(params);
     const creds = grpc.credentials.createSsl(
       identity.caBundle,
       identity.clientKey,
-      identity.clientCert
+      identity.clientCert,
+      {
+        checkServerIdentity: makeCheckServerIdentity(pins, (pin, hostname) => {
+          if (pins.length === 0) {
+            logger.info?.("[grpc-bridge] pin de servidor observado (sin exigir)", {
+              hostname,
+              pin,
+            });
+          }
+        }),
+      }
     );
 
     const ControlPlane = loadControlPlaneClient();
