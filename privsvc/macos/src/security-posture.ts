@@ -3,6 +3,7 @@ import { promisify } from "util";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { success } from "./protocol";
 import { parseSshdConfig } from "./ssh-parse";
+import { boolFromDefaultsRead } from "./defaults-parse";
 
 const execFileAsync = promisify(execFile);
 
@@ -50,9 +51,37 @@ async function runJson<T>(command: string, args: string[], timeout = 10000): Pro
   }
 }
 
+// Sprint 4 — macOS hardening helpers.
+// Cap raw command output before it ships in the evidence block. Linux has
+// done this since day one (4 KB); Windows and macOS shipped unbounded raw
+// (gpresult with usernames + OU topology, `sharing -l`, full
+// system_profiler JSON). The catalog rules read parsed fields, never raw
+// — raw is diagnostics, and 4 KB of diagnostics is plenty.
+const RAW_MAX_BYTES = 4 * 1024;
+function truncate(s: string | undefined, max = RAW_MAX_BYTES): string | undefined {
+  if (!s) return s;
+  if (s.length <= max) return s;
+  return s.slice(0, max) + "\n...[truncated]";
+}
+
+// Console (GUI) user, or null at the login window / for system accounts.
+// `/dev/console` is owned by the logged-in user; `stat -f "%u %Su"` gives
+// uid + name in one call. Same technique screen-capture.ts uses.
+const MIN_INTERACTIVE_UID = 500;
+async function activeConsoleUser(): Promise<{ uid: number; name: string } | null> {
+  const r = await run("/usr/bin/stat", ["-f", "%u %Su", "/dev/console"], 2000);
+  if (!r.ok) return null;
+  const m = /^(\d+)\s+(\S+)$/.exec(r.stdout);
+  if (!m) return null;
+  const uid = Number(m[1]);
+  const name = m[2];
+  if (!Number.isInteger(uid) || uid < MIN_INTERACTIVE_UID || name === "root") return null;
+  return { uid, name };
+}
+
 // Test-only surface for the exec plumbing (see test/privsvc/
 // macos-exec.test.ts). Not for production imports.
-export const __test__ = { run, runJson };
+export const __test__ = { run, runJson, truncate };
 
 function parseDate(value: unknown): string | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
@@ -69,7 +98,7 @@ async function collectFileVault() {
 
   return {
     status: enabled ? "enabled" : disabled ? "disabled" : "unknown",
-    raw: output || undefined
+    raw: truncate(output) || undefined
   };
 }
 
@@ -106,8 +135,8 @@ async function collectFirewall() {
   return {
     status: enabled ? "enabled" : disabled ? "disabled" : "unknown",
     stealthMode,
-    raw: globalOutput || undefined,
-    stealthRaw: stealthOutput || undefined
+    raw: truncate(globalOutput) || undefined,
+    stealthRaw: truncate(stealthOutput) || undefined
   };
 }
 
@@ -119,7 +148,7 @@ async function collectGatekeeper() {
 
   return {
     status: enabled ? "enabled" : disabled ? "disabled" : "unknown",
-    raw: output || undefined
+    raw: truncate(output) || undefined
   };
 }
 
@@ -131,7 +160,7 @@ async function collectSip() {
 
   return {
     status: enabled ? "enabled" : disabled ? "disabled" : "unknown",
-    raw: output || undefined
+    raw: truncate(output) || undefined
   };
 }
 
@@ -199,7 +228,7 @@ async function readPkgInfo(packageId: string) {
     installedAtUtc: installTime && Number.isFinite(Number(installTime))
       ? new Date(Number(installTime) * 1000).toISOString()
       : undefined,
-    raw: output || undefined
+    raw: truncate(output) || undefined
   };
 }
 
@@ -298,7 +327,7 @@ async function inspectShareRisk(path: string) {
     path,
     hasEveryoneWriteAcl,
     worldWritable,
-    raw: output || undefined
+    raw: truncate(output) || undefined
   };
 }
 
@@ -325,7 +354,7 @@ async function collectShares() {
     count: detailed.length,
     riskyCount: riskyItems.length,
     items: detailed,
-    raw: result.output || undefined,
+    raw: truncate(result.output) || undefined,
     smbEnabled
   };
 }
@@ -378,7 +407,7 @@ async function collectSmb(shares: { smbEnabled?: boolean; raw?: string }) {
       nsmbOptIn: nsmbSmb1,
       defaultsProtocolVersionMap: Number.isFinite(protocolMapValue) ? protocolMapValue : undefined
     },
-    raw: launchctl.output || shares.raw,
+    raw: truncate(launchctl.output || shares.raw),
     nsmbRaw: nsmbConf.ok ? nsmbConf.output || undefined : undefined
   };
 }
@@ -392,28 +421,54 @@ async function collectSmb(shares: { smbEnabled?: boolean; raw?: string }) {
  * so the evaluator marks the check not_applicable rather than failing.
  */
 async function collectScreenLock() {
-  const [currentHost, global] = await Promise.all([
-    run("/usr/bin/defaults", ["-currentHost", "read", "com.apple.screensaver", "askForPassword"], 5000),
-    run("/usr/bin/defaults", ["read", "com.apple.screensaver", "askForPassword"], 5000)
+  // ⚠️ privsvc runs as root. A bare `defaults -currentHost read` here
+  // reads ROOT's ByHost preferences — not the console user's — so until
+  // 2026-08-16 this collector answered for the wrong account on every
+  // workstation (root has no screensaver prefs → undefined →
+  // not_applicable, or stale ones → wrong verdict). Resolve the console
+  // user and read in THEIR context via `launchctl asuser <uid> sudo -u
+  // <name> defaults …`, the same technique the screen-capture helper
+  // uses to reach the GUI session. At the login window (no console
+  // user) there is no per-user value to read: report the system-wide
+  // /Library/Preferences fallback only and say so in `source`.
+  const user = await activeConsoleUser();
+
+  const readAs = (args: string[]) =>
+    user
+      ? run(
+          "/bin/launchctl",
+          ["asuser", String(user.uid), "/usr/bin/sudo", "-u", user.name, "/usr/bin/defaults", ...args],
+          6000
+        )
+      : run("/usr/bin/defaults", args, 5000);
+
+  const [currentHost, userGlobal, systemGlobal] = await Promise.all([
+    readAs(["-currentHost", "read", "com.apple.screensaver", "askForPassword"]),
+    readAs(["read", "com.apple.screensaver", "askForPassword"]),
+    // MDM profiles land system-wide; this is the managed-fleet answer.
+    run("/usr/bin/defaults", ["read", "/Library/Preferences/com.apple.screensaver", "askForPassword"], 5000)
   ]);
 
-  const pickValue = (output: string): boolean | undefined => {
-    const trimmed = output.trim();
-    if (trimmed === "1") return true;
-    if (trimmed === "0") return false;
-    return undefined;
-  };
-
+  // Absent is NOT a verdict here: macOS' default for askForPassword is
+  // on in recent releases but varies by version and is overridden by
+  // profiles, so "not set" stays undefined → not_applicable.
   const resolved =
-    (currentHost.ok ? pickValue(currentHost.output) : undefined) ??
-    (global.ok ? pickValue(global.output) : undefined);
+    boolFromDefaultsRead(currentHost, undefined) ??
+    boolFromDefaultsRead(userGlobal, undefined) ??
+    boolFromDefaultsRead(systemGlobal, undefined);
+
+  const source = user
+    ? currentHost.ok ? "user.currentHost" : userGlobal.ok ? "user.global" : systemGlobal.ok ? "system" : "unavailable"
+    : systemGlobal.ok ? "system" : "no_console_user";
 
   return {
     passwordRequired: resolved,
-    source: currentHost.ok ? "currentHost" : global.ok ? "global" : "unavailable",
+    consoleUser: user?.name,
+    source,
     raw: {
-      currentHost: currentHost.ok ? currentHost.output : undefined,
-      global: global.ok ? global.output : undefined
+      currentHost: currentHost.ok ? truncate(currentHost.output) : undefined,
+      global: userGlobal.ok ? truncate(userGlobal.output) : undefined,
+      system: systemGlobal.ok ? truncate(systemGlobal.output) : undefined
     }
   };
 }
@@ -441,8 +496,8 @@ async function collectServices() {
     remoteLogin: parseOnOff(remoteLogin.output),
     remoteAppleEvents: parseOnOff(remoteAppleEvents.output),
     raw: {
-      remoteLogin: remoteLogin.output || undefined,
-      remoteAppleEvents: remoteAppleEvents.output || undefined
+      remoteLogin: truncate(remoteLogin.output) || undefined,
+      remoteAppleEvents: truncate(remoteAppleEvents.output) || undefined
     }
   };
 }
@@ -473,14 +528,10 @@ async function collectSoftwareUpdate() {
     )
   );
 
-  const pick = (idx: number): boolean | undefined => {
-    const r = reads[idx];
-    if (!r.ok) return undefined;
-    const v = r.output.trim();
-    if (v === "1") return true;
-    if (v === "0") return false;
-    return undefined;
-  };
+  // MDM profiles write these as booleans (`true`/`false`), the GUI as
+  // ints (`1`/`0`) — parseDefaultsBool accepts both. Absent stays
+  // undefined: Apple's defaults for these keys differ by release.
+  const pick = (idx: number): boolean | undefined => boolFromDefaultsRead(reads[idx], undefined);
 
   return {
     autoCheck: pick(0),
@@ -506,19 +557,17 @@ async function collectAccounts() {
     5000
   );
 
-  let guestEnabled: boolean | undefined;
-  if (guest.ok) {
-    const v = guest.output.trim();
-    if (v === "1") guestEnabled = true;
-    else if (v === "0") guestEnabled = false;
-  } else {
-    // Key-not-present in loginwindow prefs → guest is off (macOS default).
-    guestEnabled = false;
-  }
+  // Absent key → false: guest IS off by default on macOS, and the key
+  // only appears once someone turns it on, so absence is informative.
+  // But a FAILED read (sandbox denial, corrupt plist) must not become a
+  // PASS — classifyDefaultsRead tells "does not exist" from everything
+  // else, and only the former maps to false. Until 2026-08-16 any
+  // non-zero exit was treated as "off" (fail-open on a security control).
+  const guestEnabled = boolFromDefaultsRead(guest, false);
 
   return {
     guestEnabled,
-    raw: guest.ok ? guest.output : undefined
+    raw: guest.ok ? truncate(guest.output) : undefined
   };
 }
 
@@ -540,8 +589,10 @@ async function collectProfiles() {
     status: enrollmentOutput || listOutput ? "available" : "unknown",
     mdmEnrolled: enrolled,
     profileLineCount: profileLines.length,
-    enrollmentRaw: enrollmentOutput || undefined,
-    listRaw: listOutput || undefined
+    enrollmentRaw: truncate(enrollmentOutput) || undefined,
+    // `profiles list -all` enumerates every installed profile (payload
+    // identifiers, org names); diagnostics, not evidence — capped.
+    listRaw: truncate(listOutput) || undefined
   };
 }
 
@@ -557,7 +608,7 @@ async function collectDirectoryBinding() {
     bound,
     domainName: domainName || undefined,
     computerAccount: computerAccount || undefined,
-    raw: output || undefined
+    raw: truncate(output) || undefined
   };
 }
 

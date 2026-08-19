@@ -82,3 +82,16 @@ describe("run — combined output preserved for text collectors", () => {
     expect(result.stdout).toBe("partial stdout");
   });
 });
+
+describe("truncate — raw evidence cap (Sprint 4 macOS hardening)", () => {
+  it("caps at 4 KB with a marker, passes short strings through, keeps undefined", () => {
+    const { truncate } = __test__;
+    expect(truncate(undefined)).toBeUndefined();
+    expect(truncate("short")).toBe("short");
+    const big = "x".repeat(5000);
+    const out = truncate(big)!;
+    expect(out.length).toBeLessThan(5000);
+    expect(out.endsWith("...[truncated]")).toBe(true);
+    expect(out.startsWith("x".repeat(4096))).toBe(true);
+  });
+});

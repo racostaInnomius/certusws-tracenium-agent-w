@@ -532,13 +532,19 @@ function Get-GpResultLines($scope) {
 ");
 
             var obj = ParseJsonObject(output);
+            // Sprint 4 hardening: NO `raw` here. It used to ship the entire
+            // gpresult /R output for BOTH scopes — the User scope carries
+            // the logged-on user's name, every group they belong to and
+            // the site/OU path. The catalog reads only the extracted GPO
+            // lists; shipping the transcript was PII in the evidence
+            // blob for no rule's benefit. (Linux has capped raw at 4 KB
+            // since day one; macOS got the cap the same day as this.)
             return new
             {
                 partOfDomain = GetBool(obj, "partOfDomain") ?? false,
                 domain = GetString(obj, "domain"),
                 appliedComputerGpos = ExtractAppliedGpos(obj, "computer"),
-                appliedUserGpos = ExtractAppliedGpos(obj, "user"),
-                raw = obj
+                appliedUserGpos = ExtractAppliedGpos(obj, "user")
             };
         }
         catch
