@@ -83,6 +83,11 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   /var/log/tracenium/                               rw,
   /var/log/tracenium/**                             rwk,
   /run/tracenium/                                   rw,
+  # `**` ya cubre los sockets rcp-<token>.sock del shell remoto: privsvc los
+  # crea ahi y el agente se conecta. El directorio lo hace systemd 0750
+  # root:tracenium (RuntimeDirectory), asi que ningun otro usuario del sistema
+  # puede siquiera atravesarlo — esa es la frontera real de un socket que ES
+  # una shell de root.
   /run/tracenium/**                                 rw,
 
   # ── Config ───────────────────────────────────────────────────────
@@ -351,6 +356,12 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   # postinst pasan por aqui.
   /usr/bin/dash                                     ix,
   /usr/bin/sh                                       ix,
+
+  # ── RCP — helper del shell remoto privilegiado ───────────────────
+  # privsvc lanza este JS con su propio node para abrir un pty como root
+  # (ver privsvc/linux/src/rcp-pty.ts). `r` basta: no se ejecuta por si
+  # mismo, se le pasa a node como argumento — por eso se instala 0644.
+  /usr/lib/tracenium/privsvc/tracenium-rcp-pty      r,
 
   # ── RCP remote shell ─────────────────────────────────────────────
   # ⚠️ Este perfil se ancla a /usr/lib/tracenium/node, que es el MISMO

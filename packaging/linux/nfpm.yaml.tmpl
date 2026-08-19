@@ -162,6 +162,20 @@ contents:
       owner: root
       group: root
 
+  # RCP — helper del shell remoto privilegiado. JS plano que privsvc lanza
+  # con su propio node; se resuelve igual que el de screencap, con
+  # path.resolve(__dirname, "tracenium-rcp-pty").
+  #
+  # 0644 a proposito, SIN bit de ejecucion: no es un programa que se lance
+  # solo, es un argumento para /usr/lib/tracenium/node. Abre un pty de root,
+  # asi que cuantas menos formas haya de invocarlo, mejor.
+  - src: __BUILD_DIR__/privsvc/tracenium-rcp-pty
+    dst: /usr/lib/tracenium/privsvc/tracenium-rcp-pty
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+
   # Agent bundle — same.
   - src: __BUILD_DIR__/agent/index.js
     dst: /usr/lib/tracenium/agent/index.js

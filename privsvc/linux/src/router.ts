@@ -52,6 +52,7 @@ import {
 } from "./sdp";
 import { handleDpPrefetch, handleDpStatus } from "./dp";
 import { handleAgentInstall } from "./agent-install";
+import * as rcpPty from "./rcp-pty";
 
 function isRoot() {
   return typeof process.getuid === "function" ? process.getuid() === 0 : false;
@@ -70,7 +71,10 @@ function requiresRoot(method: string) {
     method === "agent.install" ||
     // RCP M3.S1 — screen.capture spawns the capture helper as the
     // session user (runuser/su), which requires root.
-    method === "screen.capture"
+    method === "screen.capture" ||
+    // RCP — abre un pty como root. Es la operacion mas privilegiada que
+    // expone este broker, asi que el gate es obligatorio.
+    method.startsWith("rcp.pty.")
   );
 }
 
@@ -181,6 +185,15 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     // PrivSvc owns spawning the capture helper as the session user
     // with DISPLAY/XAUTHORITY; result is a base64 JPEG. Mirror of
     // Windows Router.cs:121.
+    // RCP — shell remoto con privilegios en Linux. Devuelve la ruta de un
+    // socket dedicado; los bytes del pty NO pasan por este IPC (ver
+    // rcp-pty.ts para el porque).
+    case "rcp.pty.open":
+      return rcpPty.handleOpen(req);
+
+    case "rcp.pty.close":
+      return rcpPty.handleClose(req);
+
     case "screen.capture":
       return handleScreenCapture(req);
 

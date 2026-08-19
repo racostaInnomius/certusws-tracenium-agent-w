@@ -42,6 +42,7 @@
 const nodePty = require("node-pty");
 import * as fs from "node:fs";
 import type { AgentContext } from "../../core/agent-context";
+import { LinuxPrivilegedPtySession } from "./pty-session-linux";
 
 const IS_WINDOWS = process.platform === "win32";
 const IS_MACOS = process.platform === "darwin";
@@ -277,4 +278,41 @@ function redactedEnv(): Record<string, string> {
   // useful for audit ("you're inside a Tracenium remote session").
   out.TRACENIUM_REMOTE_SESSION = "1";
   return out;
+}
+
+/**
+ * Lo que peer-session necesita de una sesion de shell, sea cual sea el backend.
+ *
+ * Existe porque en Linux el pty NO lo abre este proceso: lo abre privsvc y
+ * aqui solo se hace de proxy. Las dos implementaciones comparten esta
+ * superficie para que el llamador no tenga que saber cual le toco.
+ */
+export interface RcpShellSession {
+  handleMessage(raw: string): void;
+  dispose(reason: string): void;
+}
+
+/**
+ * Elige el backend del shell segun la plataforma.
+ *
+ * Windows (AgentCore = LocalSystem) y macOS (LaunchDaemon = root) ya corren el
+ * agente con privilegios, asi que el spawn local de arriba devuelve un shell
+ * completo y no hay nada que arreglar.
+ *
+ * Linux es la excepcion, y era la peor plataforma para serlo: el agente corre
+ * como `User=tracenium` —uid sin privilegios, sin sudo, nologin— asi que el
+ * operador recibia un bash que no podia reiniciar un servicio, leer
+ * /var/log/syslog ni listar /root. Medido en SRVOC-MainAgent el 2026-08-19. Y
+ * es justo donde el shell mas importa: un servidor headless no tiene GUI ni
+ * otra via de acceso.
+ *
+ * Bajar el agente a un usuario sin privilegios fue la decision CORRECTA (las
+ * otras dos plataformas son las laxas); lo que faltaba era enrutar el pty por
+ * privsvc como ya van sdp.install, patch.install y crypto.*.
+ */
+export function createPtySession(args: PtySessionArgs): RcpShellSession {
+  if (process.platform === "linux") {
+    return new LinuxPrivilegedPtySession(args);
+  }
+  return new PtySession(args);
 }

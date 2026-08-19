@@ -344,6 +344,26 @@ if ! "${CC:-cc}" -O2 -Wall "$SCREENCAP_SRC" -o "$SCREENCAP_OUT" -lX11 -ljpeg; th
 fi
 [ -f "$SCREENCAP_OUT" ] && chmod 0755 "$SCREENCAP_OUT"
 
+# ── RCP — helper del shell remoto privilegiado ────────────────────
+# JS plano, sin compilar ni empaquetar: carga node-pty (nativo) desde el árbol
+# del agente en tiempo de ejecución, así que no puede ir dentro del bundle de
+# privsvc —esbuild lo construye SIN externals y no admite módulos nativos—.
+# Va junto a privsvc/index.js porque rcp-pty.ts lo resuelve con
+# path.resolve(__dirname, "tracenium-rcp-pty"), igual que el de screencap.
+#
+# Sin ejecutable (0644): lo lanza privsvc pasándoselo a su propio node, no se
+# ejecuta por sí solo. Un shell de root de menos que quede colgando de un bit
+# de permisos.
+RCPPTY_SRC="$ROOT_DIR/privsvc/linux/helpers/rcp-pty-helper.js"
+RCPPTY_OUT="$PKG_ROOT/privsvc/tracenium-rcp-pty"
+if [ ! -f "$RCPPTY_SRC" ]; then
+  echo "ERROR: missing rcp pty helper source: $RCPPTY_SRC" >&2
+  exit 1
+fi
+echo "→ copy rcp pty helper"
+cp "$RCPPTY_SRC" "$RCPPTY_OUT"
+chmod 0644 "$RCPPTY_OUT"
+
 # ── Rebuild + copy better-sqlite3 native binding ──────────────────
 # The agent uses better-sqlite3 (outbox.db). Native binding must be
 # ABI-compatible with the bundled node we ship in the package. We:

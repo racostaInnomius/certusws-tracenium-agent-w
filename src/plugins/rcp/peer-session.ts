@@ -14,7 +14,7 @@
 //   rcp.screen → ScreenSession                  (M3.S1)
 
 import type { AgentContext } from "../../core/agent-context";
-import { PtySession } from "./pty-session";
+import { createPtySession, type RcpShellSession } from "./pty-session";
 import { TranscriptBuffer } from "./transcript-buffer";
 import { FileSession } from "./file-session";
 import type { FileTransferAuditPayload } from "./file-session";
@@ -91,7 +91,7 @@ export class PeerSession {
   // create one locally; we wait for `onDataChannel`.
   private dataChannel: any | null = null;
   // rcp.shell — PTY + transcript buffer (M1.S2 / M1.S3)
-  private pty: PtySession | null = null;
+  private pty: RcpShellSession | null = null;
   private transcript: TranscriptBuffer | null = null;
   // rcp.file — file browser / transfer session (M2.S1)
   private fileSession: FileSession | null = null;
@@ -242,7 +242,7 @@ export class PeerSession {
         });
 
         try {
-          this.pty = new PtySession({
+          this.pty = createPtySession({
             sessionId,
             ctx,
             send: (text) => {
