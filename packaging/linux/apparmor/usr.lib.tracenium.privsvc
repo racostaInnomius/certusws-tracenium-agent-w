@@ -23,7 +23,13 @@
 
 #include <tunables/global>
 
-profile tracenium-privsvc /usr/lib/tracenium/node {
+# flags=(attach_disconnected): sin esto, `aa-status` —que es una de las
+# comprobaciones de compliance del SCP— falla al abrir
+# /sys/kernel/security/apparmor/profiles con "Failed name lookup - disconnected
+# path". securityfs queda fuera del arbol que el perfil puede resolver, asi que
+# AppArmor ve un nombre suelto ("profiles") en vez de una ruta y lo rechaza
+# aunque la regla exista. El flag reancla esos nombres a la raiz.
+profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected) {
   #include <abstractions/base>
   #include <abstractions/nameservice>
   #include <abstractions/openssl>
@@ -90,6 +96,120 @@ profile tracenium-privsvc /usr/lib/tracenium/node {
   /proc/[0-9]*/cmdline                              r,
   /proc/[0-9]*/stat                                 r,
   /proc/[0-9]*/status                               r,
+  # cgroup: deteccion de contenedor/virtualizacion. Cada proceso lee el SUYO.
+  # Sin esta linea, ademas del `open` denegado se disparaba un `capable
+  # dac_override` inmediatamente despues — el kernel reintentando por la via
+  # privilegiada lo que AppArmor acababa de negar. Conceder la RUTA elimina
+  # las dos; conceder la capability habria tapado el sintoma abriendo un
+  # bypass de permisos para todo el perfil.
+  /proc/[0-9]*/cgroup                               r,
+  # mounts y net/** son vistas POR-PROCESO de informacion global (tabla de
+  # montajes, contadores de red). No son secretos y el inventario los lee.
+  /proc/[0-9]*/mounts                               r,
+  /proc/[0-9]*/mountinfo                            r,
+  /proc/[0-9]*/net/**                               r,
+  /proc/                                            r,
+  /proc/swaps                                       r,
+  # /proc/sys/{net,kernel}: NO es relleno de inventario — son las fuentes de
+  # los checks de compliance del SCP (rp_filter, accept_redirects,
+  # tcp_syncookies, log_martians, randomize_va_space/ASLR). Denegadas, esos
+  # controles no fallaban: se evaluaban sobre nada.
+  /proc/sys/net/**                                  r,
+  /proc/sys/kernel/**                               r,
+
+  # Base de datos de dpkg: es lo que lee dpkg-query para el inventario de
+  # software en Debian/Ubuntu.
+  /var/lib/dpkg/**                                  r,
+
+  # Base de datos de udev y symlinks de disco: lsblk y `ls /dev/disk/by-id`
+  # los necesitan para dar identidad a los discos (modelo, serie, WWN).
+  /run/udev/data/**                                 r,
+  /dev/disk/**                                      r,
+  # snap y flatpak corriendo CONFINADOS (ix) necesitan sus propios datos:
+  # snap monta squashfs bajo /snap y habla con snapd por su socket.
+  # `mr`, no solo `r`: el snap real se enlaza contra la libc que vive DENTRO
+  # de la revision montada, y mapear una libreria ejecutable exige `m`. Con
+  # solo `r` el binario arranca y muere con "libc.so.6: failed to map segment
+  # from shared object" — otro mensaje que no menciona AppArmor.
+  /snap/**                                          mr,
+  /var/lib/snapd/**                                 r,
+  /run/snapd.socket                                 rw,
+  /var/lib/flatpak/**                               r,
+
+  # aa-status enumerando perfiles: con attach_disconnected la ruta suelta
+  # "profiles" de securityfs se reancla a la raiz y aparece asi.
+  /profiles/                                        r,
+  /profiles/**                                      r,
+
+  # Sesiones interactivas (w/who) y datos sueltos de /proc que piden lscpu,
+  # `w` y los probes de carga.
+  /run/systemd/sessions/                            r,
+  /run/systemd/sessions/**                          r,
+  /proc/loadavg                                     r,
+  /proc/tty/drivers                                 r,
+  /proc/cmdline                                     r,
+  /proc/[0-9]*/loginuid                             r,
+  /proc/[0-9]*/fd/                                  r,
+  # attr/current: la etiqueta de confinamiento de cada proceso. Es como
+  # aa-status cuenta cuantos procesos corren confinados — otro insumo del SCP.
+  /proc/[0-9]*/attr/current                         r,
+  /proc/[0-9]*/attr/apparmor/current                r,
+  /run/modprobe.d/                                  r,
+  /run/modprobe.d/**                                r,
+  /opt/                                             r,
+  /usr/local/lib/python3*/dist-packages/            r,
+
+  # LEER (no ejecutar) binarios del sistema. Varios probes hacen el equivalente
+  # de un `which`: abren la ruta para ver si la herramienta existe. Sin esto se
+  # veian deniegos de `open` sobre binarios que ya tenian permiso de `x` — son
+  # permisos distintos. `r` sobre un binario no permite ejecutarlo: eso lo sigue
+  # gobernando la lista de execs de mas abajo.
+  # Los DIRECTORIOS, ademas de su contenido: listar /usr/sbin es como varios
+  # probes buscan una herramienta antes de invocarla.
+  /usr/bin/                                         r,
+  /usr/sbin/                                        r,
+  /bin/                                             r,
+  /sbin/                                            r,
+  /usr/bin/*                                        r,
+  /usr/sbin/*                                       r,
+  /bin/*                                            r,
+  /sbin/*                                           r,
+
+  # kmsg: buffer del kernel, lo lee dmesg para datos de hardware.
+  /dev/kmsg                                         r,
+  # utab: montajes de userspace, complementa /proc/self/mountinfo.
+  /run/mount/utab                                   r,
+
+  # ── Superficies de solo-LECTURA del sistema ──────────────────────
+  #
+  # Enumerar estas rutas una por una no converge, y lo comprobamos: cada
+  # ronda de reglas destapaba la siguiente capa (/etc/lsb-release, luego
+  # /etc/network/interfaces, luego los locales de uutils, luego memory.max
+  # del cgroup...). No es un perfil incompleto, es la naturaleza del
+  # componente: leer la configuracion y el estado del sistema ES lo que hace
+  # un agente de inventario. Y cada hueco nuevo se manifiesta como un campo
+  # vacio en el portal, nunca como un error.
+  #
+  # POR QUE ES SEGURO AMPLIAR AQUI, y no en otro sitio: en AppArmor las
+  # reglas `deny` GANAN sobre las `allow`, sin importar el orden. El bloque
+  # de denies del final de este archivo —/etc/shadow, /etc/sudoers,
+  # /home/**, /root/.ssh/**— sigue en pie tal cual. La garantia que promete
+  # la cabecera ("aunque el daemon sea comprometido, no puede leer
+  # /etc/shadow") la sostienen esos denies, no la ausencia de un allow.
+  # Verificado en el endpoint, no deducido: con /etc/** concedido, leer
+  # /etc/shadow bajo el perfil sigue dando "Permission denied".
+  #
+  # Lo que de verdad contiene a este proceso permanece intacto: no puede
+  # ESCRIBIR fuera de sus rutas, no puede EJECUTAR nada que no este en la
+  # lista de arriba, y no tiene capabilities.
+  #
+  # /proc NO se amplia a proposito: /proc/[0-9]*/environ filtraria variables
+  # de entorno de otros procesos (credenciales incluidas) y /proc/kcore es
+  # la memoria del kernel. Las rutas de /proc siguen enumeradas arriba.
+  /etc/                                             r,
+  /etc/**                                           r,
+  /sys/**                                           r,
+  /usr/share/**                                     r,
 
   # /var/run is a symlink to /run on every modern systemd distro.
   # If a customer's host has it as a real dir we still cover it.
@@ -160,8 +280,20 @@ profile tracenium-privsvc /usr/lib/tracenium/node {
   # Consecuencia de tenerlos confinados: el inventario de snaps/flatpaks volvia
   # VACIO y sin error — el endpoint reportaba que no habia ninguno instalado,
   # que es peor que reportar un fallo.
-  /usr/bin/snap                                     Ux,
-  /usr/bin/flatpak                                  Ux,
+  # ⚠️ ix, NO Ux, y el motivo es sutil: `tracenium-agent.service` corre con
+  # NoNewPrivileges=yes, y el kernel PROHIBE la transicion Ux —salir del
+  # confinamiento es una ganancia de privilegio— con
+  #   apparmor="DENIED" ... info="no new privs" error=-1
+  # Como este perfil confina tambien al agente, cualquier Ux que el AGENTE
+  # necesite es letra muerta. Solo privsvc (NoNewPrivileges=no) puede usarlos.
+  # El inventario de snaps/flatpaks lo hace el agente, asi que van ix y este
+  # perfil concede lo que necesitan (abajo, /snap/** y el socket de snapd).
+  /usr/bin/snap                                     ix,
+  /usr/bin/flatpak                                  ix,
+  # /usr/bin/snap es un shim: re-ejecuta el snap REAL que vive dentro de la
+  # revision montada de snapd. Sin esta linea el shim arranca y muere con
+  # `panic: permission denied`, que no menciona AppArmor por ningun lado.
+  /snap/snapd/*/usr/bin/snap                        ix,
   /usr/bin/systemctl                                ix,
   # systemd-run: lanza el dpkg del auto-update en un scope propio, para que
   # sobreviva al reinicio del servicio que provoca su propia instalacion.
@@ -215,6 +347,58 @@ profile tracenium-privsvc /usr/lib/tracenium/node {
   /usr/bin/logname                                  ix,
   # whoami: mismo widget, en device-facts-builder. Faltaba.
   /usr/bin/whoami                                   ix,
+  # ── Shell-outs de `systeminformation` ────────────────────────────
+  # Estos NO los invoca nuestro codigo: los lanza la dependencia npm
+  # `systeminformation` con `sh -c` al recolectar inventario de hardware. Por
+  # eso el test de cobertura (test/packaging/apparmor-exec-coverage.test.ts)
+  # no puede verlos — escanea literales de ruta en NUESTRAS fuentes. Salieron
+  # observando denegaciones reales en SRVOC-MainAgent, no leyendo codigo.
+  #
+  # Lo que rompia tenerlos denegados: dmidecode da fabricante, modelo, serie y
+  # BIOS; lsblk da los discos. Sin ellos el equipo se inventaria sin identidad
+  # de hardware — y en silencio, porque un campo vacio no parece un fallo.
+  #
+  # Todos `ix`: son lectores acotados que no lanzan subprocesos. dmidecode ya
+  # tiene su fuente permitida mas arriba (/sys/class/dmi/id/**).
+  /usr/sbin/dmidecode                               ix,
+  /usr/bin/lsblk                                    ix,
+  /usr/bin/hostname                                 ix,
+  /usr/bin/ip                                       ix,
+  /usr/bin/grep                                     ix,
+  /usr/bin/gawk                                     ix,
+  /usr/bin/awk                                      ix,
+  /usr/bin/sed                                      ix,
+  /usr/bin/lscpu                                    ix,
+  /usr/bin/lspci                                    ix,
+  /usr/bin/dmesg                                    ix,
+  /usr/bin/w                                        ix,
+  /usr/bin/df                                       ix,
+  # gnudf: en Ubuntu 26.04, con uutils como coreutils por defecto, el `df` de
+  # GNU se conserva aparte con este nombre y es el que acaba invocandose.
+  /usr/bin/gnudf                                    ix,
+  # Hermanos del mismo grupo — inspeccion de solo lectura que `systeminformation`
+  # elige segun lo que encuentre en el host. Listados por adelantado para no
+  # descubrirlos de a uno en cada distro nueva, que es como llegamos hasta aqui.
+  /usr/bin/free                                     ix,
+  /usr/bin/nproc                                    ix,
+  /usr/bin/getconf                                  ix,
+  # getent: snap lo invoca para resolver el usuario al armar su autorizacion.
+  /usr/bin/getent                                   ix,
+  /usr/bin/findmnt                                  ix,
+  /usr/bin/mount                                    ix,
+  /usr/bin/ps                                       ix,
+  /usr/bin/ss                                       ix,
+  /usr/sbin/blkid                                   ix,
+  /usr/sbin/sysctl                                  ix,
+  # cat, y la razon del glob: Ubuntu 26.04 usa los coreutils de uutils (Rust),
+  # asi que /usr/bin/cat es un symlink a /usr/lib/cargo/bin/coreutils/cat y
+  # AppArmor resuelve al destino real — que es el que aparecia denegado. El
+  # glob cubre a la familia entera en esas distros en vez de ir sumando
+  # herramienta por herramienta cada vez que un probe use head, tail o wc.
+  /usr/lib/cargo/bin/coreutils/*                    ix,
+  /usr/bin/cat                                      ix,
+  /bin/cat                                          ix,
+
   # testparm: vuelca la config efectiva de Samba para el check de compliance.
   # Lectura acotada, sin subprocesos -> ix basta.
   /usr/bin/testparm                                 ix,
@@ -232,6 +416,10 @@ profile tracenium-privsvc /usr/lib/tracenium/node {
   /usr/sbin/nft                                     ix,
   /sbin/auditd                                      ix,
   /usr/sbin/auditd                                  ix,
+  # lsblk: SCP disk-encryption evidence (Sprint 4). Read-only block-tree
+  # walk; needs /sys/dev/block + /sys/block reads (below) and no children.
+  /bin/lsblk                                        ix,
+  /usr/bin/lsblk                                    ix,
 
   # ── Network ──────────────────────────────────────────────────────
   # Outbound IPv4/IPv6 TCP — gRPC to grpc.tracenium.com:443 + REST
@@ -262,6 +450,35 @@ profile tracenium-privsvc /usr/lib/tracenium/node {
   capability setgid,              # idem
 
   # ── Deny rules — explicit, to make policy intent obvious ─────────
+  # ── Lo que se deja DENEGADO a proposito ──────────────────────────
+  #
+  # Tras cerrar todos los huecos de ruta y exec, el unico ruido que queda en
+  # el journal son estas capabilities. NO se conceden:
+  #
+  #   dac_override  saltarse TODOS los permisos de fichero. Concederla anula
+  #                 de un plumazo el bloque de denies de aqui abajo.
+  #   sys_admin     practicamente equivalente a root; el "cajon de sastre"
+  #                 del kernel.
+  #   sys_ptrace    leer la memoria de otros procesos (y ptrace, igual).
+  #   perfmon       contadores de rendimiento del kernel.
+  #
+  # Las pide `systeminformation` sondeando de mas, no codigo nuestro, y con
+  # todas denegadas el inventario y el compliance salen COMPLETOS — verificado
+  # en SRVOC-MainAgent con ciclos enteros sin una sola denegacion de fichero.
+  # O sea: cuestan ruido de auditoria, no funcionalidad. Un agente de
+  # inventario que necesitara saltarse los permisos de fichero para hacer su
+  # trabajo seria un agente mal escrito.
+  #
+  # Se dejan AUDITADAS (denegacion implicita, no `deny` explicito) a
+  # proposito: un `deny` silencia el log, y preferimos conservar la señal por
+  # si algun dia una de estas sí corresponde a algo roto. Si el volumen
+  # molesta, convertirlas en `deny` explicito las silencia sin conceder nada.
+  #
+  # Tambien queda denegado /usr/lib/update-notifier/apt_check.py: es el
+  # contador de "actualizaciones pendientes" de Ubuntu que invoca
+  # systeminformation. Necesitaria Python confinado dentro de este perfil, y
+  # ese dato ya lo cubre el PMP con su propia implementacion.
+
   deny /boot/**                                     w,
   deny /etc/shadow                                  rw,
   deny /etc/sudoers                                 rw,
