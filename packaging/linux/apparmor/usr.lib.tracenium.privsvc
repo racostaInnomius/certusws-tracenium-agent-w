@@ -112,6 +112,23 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   /sys/kernel/security/apparmor/profiles            r,
   /sys/class/dmi/id/                                r,
   /sys/class/dmi/id/**                              r,
+  # SCP screen-lock (Sprint 4): system dconf policy fragments + locks.
+  # Read-only; we never invoke gsettings/dconf (root's profile ≠ user's).
+  /etc/dconf/                                       r,
+  /etc/dconf/**                                     r,
+  # SCP disk-encryption (Sprint 4): lsblk walks the block tree via sysfs
+  # and udev's device DB. Without these reads lsblk still EXECS fine but
+  # returns an empty tree — the same "silently empty" failure the snap/
+  # flatpak rules below document. Read-only, no device nodes opened.
+  /sys/block/                                       r,
+  /sys/block/**                                     r,
+  /sys/dev/block/                                   r,
+  /sys/dev/block/**                                 r,
+  /sys/devices/**/block/**                          r,
+  /sys/devices/virtual/block/**                     r,
+  /run/udev/data/                                   r,
+  /run/udev/data/*                                  r,
+  /proc/swaps                                       r,
   # apt lee su configuracion antes de listar actualizaciones. Sin esto el
   # escaneo de parches fallaba con "Unable to read /etc/apt/apt.conf.d/".
   /etc/apt/                                         r,

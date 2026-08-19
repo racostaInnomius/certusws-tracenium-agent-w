@@ -85,6 +85,7 @@ export async function collectLinuxScp(ctx: AgentContext): Promise<ScpNamespace> 
     // scar-tissue comment for how many releases that pattern has
     // cost). If you add a block in security-posture.ts, add it here.
     diskEncryption: posture?.diskEncryption,
+    screenLock: posture?.screenLock,
 
     ...(collectorError ? { collectorError } : {}),
   };

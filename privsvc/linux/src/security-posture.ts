@@ -53,6 +53,7 @@ import {
 import { buildMountsEvidence } from "./mounts-parse";
 import { parsePwquality, shapePwqualityEvidence, type PwqualitySettings } from "./pwquality";
 import { parseLsblkJson, buildDiskEncryptionEvidence } from "./disk-encryption-parse";
+import { buildScreenLockEvidence } from "./screen-lock-parse";
 
 const execFileAsync = promisify(execFile);
 
@@ -705,6 +706,42 @@ async function collectDiskEncryption(): Promise<Record<string, unknown>> {
   return buildDiskEncryptionEvidence(null);
 }
 
+// ── Screen lock (Sprint 4 — platform parity) ──────────────────────
+//
+// System dconf policy fragments under /etc/dconf/db/local.d (+ locks/),
+// NOT gsettings — see screen-lock-parse.ts for why (root's dconf ≠ the
+// user's). Reads files only; no subprocess.
+const DCONF_DB_DIR = "/etc/dconf/db";
+const DCONF_LOCAL_D = "/etc/dconf/db/local.d";
+
+function readDirTexts(dir: string): Array<{ name: string; text: string }> {
+  const out: Array<{ name: string; text: string }> = [];
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const name of names.sort()) {
+    const full = `${dir}/${name}`;
+    try {
+      if (!fs.statSync(full).isFile()) continue;
+      out.push({ name: full, text: truncate(fs.readFileSync(full, "utf8"), 64 * 1024) });
+    } catch {
+      /* unreadable fragment — skip, others still count */
+    }
+  }
+  return out;
+}
+
+function collectScreenLock(): Record<string, unknown> {
+  return buildScreenLockEvidence({
+    dconfDbExists: fs.existsSync(DCONF_DB_DIR),
+    keyfiles: readDirTexts(DCONF_LOCAL_D),
+    lockfiles: readDirTexts(`${DCONF_LOCAL_D}/locks`),
+  }) as unknown as Record<string, unknown>;
+}
+
 // ── Aggregate handler ─────────────────────────────────────────────
 export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSvcResponse> {
   try {
@@ -735,6 +772,7 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
     const shares = collectShares();
     const mounts = collectMounts();
     const pwquality = collectPwquality();
+    const screenLock = collectScreenLock();
 
     return success(req.id, {
       collectedAtUtc: new Date().toISOString(),
@@ -760,6 +798,9 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
       // linux.disk_encryption.*). Block name matches the Windows /
       // macOS convention the summary_payload projection already knows.
       diskEncryption,
+      // Sprint 4 — GNOME/dconf system screen-lock policy (catalog:
+      // linux.screen_lock.*). Same key as the macOS/Windows blocks.
+      screenLock,
     });
   } catch (err: any) {
     logger.error("security_posture_failed", { error: err?.message || String(err) });

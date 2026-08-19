@@ -164,6 +164,9 @@ export async function collectWindowsScp(ctx: AgentContext): Promise<ScpNamespace
     // case the backend catalog checks activate automatically (schema 2.0).
     tpm: posture?.tpm,
     secureBoot: posture?.secureBoot,
+    // Sprint 4 — machine-scoped screen lock policy (parity with the
+    // macOS screenLock block). Allowlist: name it or it never ships.
+    screenLock: posture?.screenLock,
 
     // Derived crypto + patches blocks (see helpers above).
     crypto: buildCryptoEvidence(posture),

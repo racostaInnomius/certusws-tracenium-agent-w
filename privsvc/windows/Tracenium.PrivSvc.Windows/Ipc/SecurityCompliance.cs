@@ -57,6 +57,9 @@ public static class SecurityCompliance
                 // backend catalog checks windows.tpm.* / windows.secureboot.*.
                 tpm = GetTpmStatus(),
                 secureBoot = GetSecureBootStatus(),
+                // Sprint 4 — screen lock policy (parity with macOS
+                // screenLock; Linux ships gsettings/loginctl parity).
+                screenLock = GetScreenLockStatus(),
                 ciphers = GetEnabledCiphers(),
                 protocols = GetTlsProtocols(),
                 patches = GetInstalledSecurityPatches(),
@@ -152,6 +155,65 @@ public static class SecurityCompliance
             return new { status = "unknown" };
         }
     }
+
+    // ── Screen lock (Sprint 4 — platform parity) ─────────────────
+    //
+    // Reads the MACHINE-scoped policy the domain/MDM pushes:
+    //   HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+    //     InactivityTimeoutSecs        — machine inactivity lock (CIS 2.3.7.4)
+    //   HKLM\SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop
+    //     ScreenSaveActive / ScreenSaverIsSecure / ScreenSaveTimeOut
+    //                                  — the per-user policy mirror GPO
+    //                                    writes at machine scope
+    // We do NOT read HKCU: privsvc runs as SYSTEM, so HKCU is SYSTEM's
+    // hive, not the console user's — reading it would report the wrong
+    // account (the same trap the macOS collector fell into with root's
+    // ~/Library defaults).
+    //
+    // Absent ≠ compliant: every field is OMITTED when the key/value
+    // isn't there, never coerced to false. The catalog rule reads
+    // `screenLock.inactivityTimeoutSecs` and resolves not_applicable
+    // when no policy is set — "not configured" is a real posture
+    // (arguably a fail), but a failed READ must not look like it.
+    private static object GetScreenLockStatus()
+    {
+        try
+        {
+            var output = RunPs(
+                "$o = [ordered]@{}; " +
+                "try { $v = Get-ItemPropertyValue -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System' -Name InactivityTimeoutSecs -ErrorAction Stop; $o.InactivityTimeoutSecs = [int]$v } catch {} ; " +
+                "$d = 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Control Panel\\Desktop'; " +
+                "try { $o.ScreenSaveActive = ([string](Get-ItemPropertyValue -Path $d -Name ScreenSaveActive -ErrorAction Stop)) -eq '1' } catch {} ; " +
+                "try { $o.ScreenSaverIsSecure = ([string](Get-ItemPropertyValue -Path $d -Name ScreenSaverIsSecure -ErrorAction Stop)) -eq '1' } catch {} ; " +
+                "try { $o.ScreenSaveTimeOut = [int](Get-ItemPropertyValue -Path $d -Name ScreenSaveTimeOut -ErrorAction Stop) } catch {} ; " +
+                "[pscustomobject]$o | ConvertTo-Json -Compress"
+            );
+
+            if (string.IsNullOrWhiteSpace(output))
+                return new { available = false };
+
+            var obj = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(output);
+            if (obj == null)
+                return new { available = false };
+
+            var result = new Dictionary<string, object?> { ["available"] = true };
+            if (obj.TryGetValue("InactivityTimeoutSecs", out var it) && it.ValueKind == JsonValueKind.Number)
+                result["inactivityTimeoutSecs"] = it.GetInt32();
+            if (obj.TryGetValue("ScreenSaveActive", out var sa) && (sa.ValueKind == JsonValueKind.True || sa.ValueKind == JsonValueKind.False))
+                result["screenSaverActive"] = sa.GetBoolean();
+            if (obj.TryGetValue("ScreenSaverIsSecure", out var ss) && (ss.ValueKind == JsonValueKind.True || ss.ValueKind == JsonValueKind.False))
+                result["screenSaverSecure"] = ss.GetBoolean();
+            if (obj.TryGetValue("ScreenSaveTimeOut", out var st) && st.ValueKind == JsonValueKind.Number)
+                result["screenSaverTimeoutSecs"] = st.GetInt32();
+            return result;
+        }
+        catch (Exception ex)
+        {
+            RecordSectionError("screenLock", "read_failed", ex.Message);
+            return new { available = false };
+        }
+    }
+
 
     // Platform integrity — TPM. Emits { present, ready, version } for the
     // backend catalog checks windows.tpm.present (tpm.ready) and
