@@ -62,6 +62,38 @@
 
 
       <!-- ============================= -->
+      <!-- Screen capture helper (ADR-0006) -->
+      <!-- ============================= -->
+      <!--
+        Corre DENTRO de la sesion del usuario. El PrivSvc es LocalSystem, o sea
+        Sesion 0, que desde Vista no tiene escritorio interactivo por diseno:
+        capturar desde ahi devuelve "no hay escritorio" haya o no usuario
+        conectado. macOS y Linux ya lanzaban un helper equivalente; Windows era
+        la unica plataforma sin ese salto.
+
+        Va en PRIVSVC_DIR a proposito: SessionScreenCapture.ResolveHelperPath lo
+        busca junto a su propio binario (AppContext.BaseDirectory). Moverlo de
+        directorio lo deja invisible y screen share vuelve a fallar con el error
+        historico, que es el modo de fallo mas caro de diagnosticar que hemos
+        tenido.
+
+        Vital: si el helper no viaja, screen share no funciona en ningun equipo,
+        asi que preferimos que la instalacion falle a que entregue un producto
+        con un modulo muerto en silencio.
+      -->
+
+      <Component Id="PrivSvcScreenCapComponent"
+                 Directory="PRIVSVC_DIR"
+                 Guid="*">
+
+        <File Id="ScreenCapExe"
+              Source="binaries\PrivSvc\tracenium-screencap.exe"
+              KeyPath="yes"
+              Vital="yes"/>
+
+      </Component>
+
+      <!-- ============================= -->
       <!-- Root CA Asset -->
       <!-- ============================= -->
 
