@@ -38,10 +38,23 @@ interface AgentCheckEntry {
 // Phase 2 — 1 more Windows checkId added (SMB share ACLs).
 // Phase 8 — 4 Linux checkIds added (sshd hardening + firewall).
 //
-// Names match the catalog seed (`<os>.<category>.<spec>`) so
-// backend → agent → privsvc share identical strings. Adding more
-// in future phases = a single new entry here per check + the
-// matching privsvc handler in pmp-remediation.ts on each platform.
+// ⚠️ These are HANDLER ids — the keys of the privsvc pmp-remediation
+// registries on each platform — NOT catalog check_ids. A previous
+// version of this comment claimed the names "match the catalog seed";
+// audited 2026-08-14, 7 of 14 match nothing in the catalog
+// (windows.cryptography.* vs the catalog's windows.crypto.*, linux.ssh.
+// root_login_disabled vs permit_root_login_disabled, one Windows
+// firewall handler vs three per-profile catalog checks, …). That false
+// claim is why click-to-fix stayed dead for a whole release: the
+// backend compared catalog ids against this list.
+//
+// The join now lives control-plane-side in the backend's
+// modules/patch-management/remediation-crosswalk.ts (catalog id →
+// handler id). The backend translates BEFORE dispatching, so what
+// arrives here in a patch_remediate job is always a handler id from
+// this list. Adding a check = new entry here + matching privsvc
+// handler on each platform + a crosswalk row in the backend (its test
+// reads this file and fails if a mapped handler is missing here).
 const ENTRIES: AgentCheckEntry[] = [
   {
     checkId: "windows.cryptography.legacy_tls_disabled",
