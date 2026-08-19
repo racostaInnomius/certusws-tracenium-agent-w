@@ -102,30 +102,45 @@ fi
 # so a manual operator run later (after installing the dev tools)
 # completes the load without re-installing the package.
 
-# AppArmor (Debian/Ubuntu). The profile file ships in the .deb at
-# /etc/apparmor.d/usr.lib.tracenium.privsvc but we DO NOT auto-load
-# it here. Initial production testing on Ubuntu 24.04 surfaced
-# Node-init aborts (SIGABRT during V8 startup) when the profile is
-# enforced — the profile is missing some `/proc/self/*` reads that
-# V8 does at init. Until we've refined the profile with real
-# `dmesg | grep apparmor.*denied` data, auto-loading it would brick
-# every fresh install. Auto-load lives behind an opt-in env var
-# while we iterate.
+# AppArmor (Debian/Ubuntu).
 #
-# Operators who want to enforce the current draft profile (and help
-# us catch denials):
-#   sudo apparmor_parser -r /etc/apparmor.d/usr.lib.tracenium.privsvc
-# Then reproduce normal agent activity for ~5 min and gather:
-#   sudo dmesg | grep apparmor.*denied
-# Send those denials and we'll bake them into the next .deb.
-if [ "${TRACENIUM_LOAD_APPARMOR:-0}" = "1" ] && command -v apparmor_parser >/dev/null 2>&1; then
-    if [ -f /etc/apparmor.d/usr.lib.tracenium.privsvc ]; then
-        apparmor_parser -r /etc/apparmor.d/usr.lib.tracenium.privsvc 2>/dev/null \
-            && echo "  AppArmor profile loaded (TRACENIUM_LOAD_APPARMOR=1)" \
-            || echo "  AppArmor profile load failed (continuing)"
+# ⚠️ EL OPT-IN QUE HABIA AQUI ERA FICTICIO. Este script no cargaba el
+# perfil salvo TRACENIUM_LOAD_APPARMOR=1, en la creencia de que asi no
+# se aplicaba. Pero `apparmor.service` viene enabled en Debian/Ubuntu y
+# su ExecStart es `/lib/apparmor/apparmor.systemd reload`, que carga
+# TODO lo que haya en /etc/apparmor.d/. Dejar el fichero ahi ya basta
+# para que el perfil se aplique desde el primer reboot.
+#
+# O sea que no cargarlo aqui no evitaba nada: solo aplazaba el efecto
+# hasta un reinicio cualquiera, cuando ya nadie lo relaciona con la
+# instalacion. Asi llego el deadlock que congelo SRVOC-MainAgent cuatro
+# dias en 1.1.35 — nadie habia puesto la variable, y el perfil estaba
+# enforcing igual.
+#
+# Ahora el perfil se envia en modo COMPLAIN (registra, no bloquea), asi
+# que cargarlo es seguro y ademas deja el host en un estado
+# DETERMINISTA desde la instalacion en vez de uno que cambia solo en el
+# proximo arranque.
+#
+# Para recoger lo que se denegaria en este host:
+#   sudo journalctl -k | grep 'apparmor="ALLOWED"' | grep tracenium
+#
+# Opt-out REAL: borrar el fichero es lo unico que impide la carga en
+# boot, asi que eso es lo que hace la variable.
+if [ "${TRACENIUM_SKIP_APPARMOR:-0}" = "1" ]; then
+    rm -f /etc/apparmor.d/usr.lib.tracenium.privsvc
+    echo "  AppArmor profile REMOVED (TRACENIUM_SKIP_APPARMOR=1) — no se cargara en boot"
+elif command -v apparmor_parser >/dev/null 2>&1 \
+     && [ -f /etc/apparmor.d/usr.lib.tracenium.privsvc ]; then
+    if apparmor_parser -r /etc/apparmor.d/usr.lib.tracenium.privsvc 2>/dev/null; then
+        echo "  AppArmor profile loaded in COMPLAIN mode (registra, no bloquea)"
+    else
+        # No abortar: un perfil que no carga deja el host sin confinamiento,
+        # que es exactamente el estado en el que ha vivido hasta ahora.
+        echo "  AppArmor profile load failed (continuing)"
     fi
 else
-    echo "  AppArmor profile installed at /etc/apparmor.d/usr.lib.tracenium.privsvc but NOT loaded (set TRACENIUM_LOAD_APPARMOR=1 to opt in)"
+    echo "  AppArmor profile installed; apparmor_parser ausente, se cargara en el proximo boot"
 fi
 
 # SELinux (RHEL-family). `semodule` is in `policycoreutils`

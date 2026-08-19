@@ -11,15 +11,21 @@
 # applies this profile based on the FIRST argv. We label the profile
 # by the canonical install path under /usr/lib/tracenium.
 #
-# Mode: enforce (kernel blocks denied operations + logs them via
-# auditd / dmesg). Operators can demote to complain mode for
-# debugging:
-#   sudo aa-complain /etc/apparmor.d/usr.lib.tracenium.privsvc
-#   sudo aa-enforce  /etc/apparmor.d/usr.lib.tracenium.privsvc
+# Mode: COMPLAIN (ver el bloque de flags mas abajo para el porque).
+# Registra lo que denegaria sin bloquear nada. Para ver que recogeria
+# en este host:
+#   sudo journalctl -k | grep 'apparmor="ALLOWED"' | grep tracenium
 #
-# Loading: postinstall.sh runs `apparmor_parser -r` if the parser is
-# present (Debian/Ubuntu always have it; RHEL doesn't and we silently
-# skip there).
+# ⚠️ `aa-complain` / `aa-enforce` vienen en el paquete apparmor-utils,
+# que NO esta instalado en todas partes (Ubuntu 26.04 minimal no lo
+# trae). El modo se cambia editando los flags y recargando; ver el
+# bloque de flags.
+#
+# Loading: postinstall.sh corre `apparmor_parser -r` si el parser esta
+# presente. Ojo: aunque no lo hiciera, `apparmor.service` viene enabled
+# en Debian/Ubuntu y su ExecStart hace `reload`, que carga TODO lo que
+# haya en /etc/apparmor.d/ — o sea que el fichero se aplica desde el
+# primer reboot lo quiera el instalador o no.
 
 #include <tunables/global>
 
@@ -29,7 +35,32 @@
 # path". securityfs queda fuera del arbol que el perfil puede resolver, asi que
 # AppArmor ve un nombre suelto ("profiles") en vez de una ruta y lo rechaza
 # aunque la regla exista. El flag reancla esos nombres a la raiz.
-profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected) {
+# flags=(complain): el perfil se ENVIA en modo permisivo. Registra todo lo que
+# denegaria —con apparmor="ALLOWED" en el journal— pero no bloquea nada.
+#
+# El motivo es un historial, no una preferencia. Este allowlist ya congelo un
+# host cuatro dias (le faltaba systemd-run y el arreglo viajaba dentro del
+# update que el propio perfil bloqueaba) y dejo el remote shell de Linux
+# inservible sin que nadie lo notara. Ambos fallos compartian forma: un hueco
+# en el perfil se manifiesta como una funcion que desaparece en silencio, en
+# una distro que no habiamos probado, semanas despues de escribir la regla.
+#
+# En complain esa clase de fallo deja de existir: el hueco se convierte en una
+# linea de log en vez de una funcion rota. Recogemos denegaciones de la flota
+# real —no solo del unico Ubuntu 26.04 que tenemos— y una version posterior
+# pasa a enforce con datos en vez de con suposiciones.
+#
+# ⚠️ Efecto secundario que conviene tener presente al endurecerlo: en complain
+# el kernel SI permite las transiciones de dominio (Ux/Cx) que `no_new_privs`
+# veta en enforce. Es decir que hoy, en complain, el remote shell de Linux
+# funciona; al pasar a enforce volvera a romperse mientras
+# tracenium-agent.service siga con NoNewPrivileges=true. Esa decision sigue
+# pendiente y hay que resolverla ANTES de endurecer.
+#
+# Para endurecer, una vez validado en tu distro:
+#   sudo sed -i 's/,complain//' /etc/apparmor.d/usr.lib.tracenium.privsvc
+#   sudo apparmor_parser -r /etc/apparmor.d/usr.lib.tracenium.privsvc
+profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,complain) {
   #include <abstractions/base>
   #include <abstractions/nameservice>
   #include <abstractions/openssl>
