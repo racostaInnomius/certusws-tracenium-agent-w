@@ -147,6 +147,8 @@ export type ScpNamespace = {
   updates?: unknown;
   sysctl?: unknown;
   mounts?: unknown;
+  /** Linux encryption-at-rest (lsblk crypt-layer detection). Sprint 4. */
+  diskEncryption?: unknown;
   pwquality?: unknown;
 
   collectorError?: ScpCollectorError;

@@ -52,6 +52,7 @@ import {
 } from "./fileshares";
 import { buildMountsEvidence } from "./mounts-parse";
 import { parsePwquality, shapePwqualityEvidence, type PwqualitySettings } from "./pwquality";
+import { parseLsblkJson, buildDiskEncryptionEvidence } from "./disk-encryption-parse";
 
 const execFileAsync = promisify(execFile);
 
@@ -684,6 +685,26 @@ function collectPwquality(): Record<string, unknown> {
   return shapePwqualityEvidence(true, settings);
 }
 
+// ── Disk encryption (Sprint 4 — platform parity) ──────────────────
+//
+// lsblk JSON → is "/" (and "/home", when a dedicated mount) backed by a
+// dm-crypt/LUKS layer? Windows has BitLocker and macOS FileVault
+// evidence; Linux had nothing until this. See disk-encryption-parse.ts
+// for the tree walk and the absent≠compliant contract.
+async function collectDiskEncryption(): Promise<Record<string, unknown>> {
+  // util-linux ships lsblk everywhere we support; absolute path first,
+  // PATH fallback for the odd distro that puts it in /usr/bin only.
+  for (const bin of ["/bin/lsblk", "/usr/bin/lsblk"]) {
+    if (!fs.existsSync(bin)) continue;
+    const r = await runCheck(bin, ["-J", "-o", "NAME,TYPE,FSTYPE,MOUNTPOINT"]);
+    if (r.code !== 0 || !r.stdout.trim()) {
+      return buildDiskEncryptionEvidence(null, truncate(r.stderr || r.stdout));
+    }
+    return buildDiskEncryptionEvidence(parseLsblkJson(r.stdout), truncate(r.stdout));
+  }
+  return buildDiskEncryptionEvidence(null);
+}
+
 // ── Aggregate handler ─────────────────────────────────────────────
 export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSvcResponse> {
   try {
@@ -699,7 +720,7 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
     // (errors → "unknown" status), so we shouldn't ever lose the
     // whole snapshot to one bad check. Belt-and-braces with the
     // outer try/catch.
-    const [firewall, ssh, selinux, apparmor, passwordPolicy, auditd, updates, smb] = await Promise.all([
+    const [firewall, ssh, selinux, apparmor, passwordPolicy, auditd, updates, smb, diskEncryption] = await Promise.all([
       collectFirewall(),
       collectSsh(),
       collectSelinux(distro.family),
@@ -708,6 +729,7 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
       collectAuditd(),
       collectUpdates(distro.family),
       collectSmb(),
+      collectDiskEncryption(),
     ]);
     const sysctl = collectSysctl();
     const shares = collectShares();
@@ -734,6 +756,10 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
       shares,
       mounts,
       pwquality,
+      // Sprint 4 — encryption-at-rest evidence (catalog:
+      // linux.disk_encryption.*). Block name matches the Windows /
+      // macOS convention the summary_payload projection already knows.
+      diskEncryption,
     });
   } catch (err: any) {
     logger.error("security_posture_failed", { error: err?.message || String(err) });

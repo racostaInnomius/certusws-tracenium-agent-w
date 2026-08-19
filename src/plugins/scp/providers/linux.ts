@@ -79,6 +79,12 @@ export async function collectLinuxScp(ctx: AgentContext): Promise<ScpNamespace> 
     shares: posture?.shares,
     mounts: posture?.mounts,
     pwquality: posture?.pwquality,
+    // Sprint 4 — encryption-at-rest (lsblk crypt-layer detection).
+    // ⚠️ This literal is an ALLOWLIST: a block the privsvc emits but
+    // isn't named here never reaches the wire (see the AMP builder's
+    // scar-tissue comment for how many releases that pattern has
+    // cost). If you add a block in security-posture.ts, add it here.
+    diskEncryption: posture?.diskEncryption,
 
     ...(collectorError ? { collectorError } : {}),
   };
