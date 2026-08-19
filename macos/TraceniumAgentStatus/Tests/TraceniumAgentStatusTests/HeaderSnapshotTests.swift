@@ -97,6 +97,36 @@ final class HeaderSnapshotTests: XCTestCase {
         XCTAssertFalse(images.isEmpty, "el header debería tener un NSImageView para el logo")
     }
 
+    /// Los titulos de seccion iban en `NSColor.controlAccentColor`, que no es
+    /// "el azul de Apple" sino **el color de acento que el usuario haya elegido**
+    /// en Ajustes. Una ventana de marca no puede depender de eso, y el sintoma
+    /// —titulos rosas o naranjas en la maquina de un cliente— no se ve nunca
+    /// desde una maquina de desarrollo con el acento por defecto.
+    func testSectionTitlesUseBrandTealAndNotTheSystemAccent() throws {
+        let brand = StatusPopoverViewController.brandSectionColor
+
+        let aqua = NSAppearance(named: .aqua)!
+        let dark = NSAppearance(named: .darkAqua)!
+
+        var lightRGB: NSColor!
+        var darkRGB: NSColor!
+        aqua.performAsCurrentDrawingAppearance { lightRGB = brand.usingColorSpace(.deviceRGB) }
+        dark.performAsCurrentDrawingAppearance { darkRGB = brand.usingColorSpace(.deviceRGB) }
+
+        // Debe ADAPTARSE: ningun teal unico pasa el contraste en las dos
+        // apariencias (2.82 vs 4.71 para el de marca sobre claro/oscuro).
+        XCTAssertNotEqual(
+            lightRGB.redComponent, darkRGB.redComponent, accuracy: 0.0,
+            "el color de seccion debe cambiar entre claro y oscuro"
+        )
+
+        // Y el tono debe seguir siendo teal: verde y azul juntos, por encima del rojo.
+        for (name, c) in [("claro", lightRGB!), ("oscuro", darkRGB!)] {
+            XCTAssertGreaterThan(c.greenComponent, c.redComponent, "\(name): no parece teal")
+            XCTAssertEqual(c.greenComponent, c.blueComponent, accuracy: 0.02, "\(name): no parece teal")
+        }
+    }
+
     private func allSubviews(of view: NSView) -> [NSView] {
         view.subviews + view.subviews.flatMap { allSubviews(of: $0) }
     }

@@ -470,10 +470,38 @@ final class StatusPopoverViewController: NSViewController {
         catalogScroll.isHidden = sender.selectedSegment != 3
     }
 
+    /// Teal de marca para los titulos de seccion, adaptado a la apariencia.
+    ///
+    /// Antes era `NSColor.controlAccentColor`, que no solo es el azul de Apple:
+    /// **cambia si el usuario elige otro color de acento** en Ajustes. Los
+    /// titulos de una ventana de marca no deberian depender de eso.
+    ///
+    /// Es dinamico porque NINGUN teal unico sirve en las dos apariencias. Ratios
+    /// de contraste medidos contra los fondos nominales del material .popover:
+    ///
+    ///     color      claro   oscuro
+    ///     #5A9F9F     2.82    4.71   <- el de marca: flojo sobre claro
+    ///     #3C7C7C     4.45    2.98   <- bueno sobre claro, flojo sobre oscuro
+    ///
+    /// Asi que cada apariencia usa el que le toca: el de marca en oscuro, y una
+    /// version oscurecida —mismo tono— en claro. Los dos quedan por encima de
+    /// 3.0, el umbral de WCAG para texto grande en negrita, y el de claro llega
+    /// a 4.5, el de texto normal.
+    ///
+    /// Nota: `.popover` es translucido, asi que el fondo real depende de lo que
+    /// haya detras. Los numeros son sobre el fondo nominal — sirven para elegir,
+    /// no como garantia de cumplimiento.
+    static let brandSectionColor = NSColor(name: "TraceniumBrandSection") { appearance in
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark
+            ? NSColor(calibratedRed: 90/255.0,  green: 159/255.0, blue: 159/255.0, alpha: 1.0)
+            : NSColor(calibratedRed: 60/255.0,  green: 124/255.0, blue: 124/255.0, alpha: 1.0)
+    }
+
     private func addSection(_ targetGrid: NSGridView, _ title: String) {
         let label = NSTextField(labelWithString: title)
         label.font = NSFont.systemFont(ofSize: 13, weight: .bold)
-        label.textColor = NSColor.controlAccentColor
+        label.textColor = Self.brandSectionColor
         // Section spans both columns
         let row = targetGrid.addRow(with: [label, NSGridCell.emptyContentView])
         row.mergeCells(in: NSRange(location: 0, length: 2))
