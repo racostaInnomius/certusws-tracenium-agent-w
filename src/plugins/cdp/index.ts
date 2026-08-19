@@ -9,7 +9,7 @@
 // local SQLite baseline. `hasChanges` drives the scheduler's enqueue
 // decision, mirroring the AMP delta pattern.
 //
-// Design: certusws-tracenium/docs/CDP_CRYPTO_DISCOVERY_DESIGN.md
+// Design: certusws-tracenium/docs/adr/ADR-0004-crypto-inventory-to-pqc-migration.md
 
 import os from "os";
 import type { AgentContext } from "../../core/agent-context";
@@ -139,6 +139,22 @@ export async function collectCDP(ctx: AgentContext): Promise<CdpNamespace> {
 
   // Delta vs the local baseline. null → first run → full items[].
   const delta = computeCdpDelta(items);
+
+  // A capped scan cannot claim anything was removed.
+  //
+  // `applyCap` drops the lowest-priority certificates when a host has
+  // more than MAX_ITEMS. Those are missing from `items` while being
+  // perfectly present on the device, so the diff below sees them as
+  // deletions — and would re-report them as deletions on every scan, on
+  // exactly the hosts with the largest certificate estates.
+  //
+  // The control plane refuses to act on removals from a truncated
+  // payload as well, but the agent is where the incompleteness is KNOWN,
+  // so it should not make the claim in the first place: an assertion
+  // nobody downstream is allowed to trust has no business on the wire.
+  if (truncated && delta) {
+    delta.removed = [];
+  }
   const isBaselineSend = delta === null;
   const hasChanges = isBaselineSend
     ? true
