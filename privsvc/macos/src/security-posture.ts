@@ -437,7 +437,10 @@ async function collectScreenLock() {
     user
       ? run(
           "/bin/launchctl",
-          ["asuser", String(user.uid), "/usr/bin/sudo", "-u", user.name, "/usr/bin/defaults", ...args],
+          // `-n`: never prompt — root→user needs no password, and a
+          // prompt would hang the collector until the IPC timeout.
+          // Same invocation shape screen-capture.ts has proven in the field.
+          ["asuser", String(user.uid), "sudo", "-n", "-u", user.name, "/usr/bin/defaults", ...args],
           6000
         )
       : run("/usr/bin/defaults", args, 5000);
