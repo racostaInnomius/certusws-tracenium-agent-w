@@ -70,6 +70,17 @@ internal sealed class TrayJobStatus
     public string? LastJobType { get; set; }
     public string? LastJobStatus { get; set; }
     public DateTime? LastJobAtUtc { get; set; }
+    // Present only between markJobStarted() and the matching
+    // markJobFinished() on the agent side — see tray-status-types.ts's
+    // TrayCurrentJob doc comment. Drives the "Active Job" tab.
+    public TrayCurrentJob? Current { get; set; }
+}
+
+internal sealed class TrayCurrentJob
+{
+    public string JobId { get; set; } = "";
+    public string JobType { get; set; } = "";
+    public DateTime StartedAtUtc { get; set; }
 }
 
 internal sealed class TrayUpdateStatus

@@ -9,6 +9,9 @@ internal sealed class StatusForm : Form
     private readonly Label _statusBadge;
     private readonly Label _headerSubtitle;
     private readonly Button _copyAllButton;
+    private readonly TabPage _activeJobPage;
+    private readonly ProgressBar _jobProgress;
+    private readonly Label _jobNote;
     private TrayStatus? _lastStatus;
 
     public StatusForm()
@@ -171,8 +174,63 @@ internal sealed class StatusForm : Form
         deviceLayout.Controls.Add(deviceGrid, 0, 1);
         devicePage.Controls.Add(deviceLayout);
 
+        // Active Job page: current job (if any) + an indeterminate progress
+        // bar. The agent never reports a completion percentage (RunJob over
+        // gRPC carries only jobId/jobType/payload), so this can only confirm
+        // "something is running" and show elapsed time — same contract as
+        // the macOS tray's Active Job tab.
+        _activeJobPage = new TabPage("Active Job") { BackColor = Color.White, UseVisualStyleBackColor = true };
+
+        var jobGrid = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(18, 14, 18, 18),
+            ColumnCount = 2,
+            AutoScroll = true
+        };
+        jobGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
+        jobGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        AddSection(jobGrid, "Active Job");
+        AddRow(jobGrid, "Status", "jobActiveStatus");
+        AddRow(jobGrid, "Job type", "jobActiveType");
+        AddRow(jobGrid, "Job ID", "jobActiveId");
+        AddRow(jobGrid, "Started at", "jobActiveStarted");
+        AddRow(jobGrid, "Elapsed", "jobActiveElapsed");
+
+        _jobProgress = new ProgressBar
+        {
+            Style = ProgressBarStyle.Marquee,
+            MarqueeAnimationSpeed = 30,
+            Width = 320,
+            Height = 16,
+            Margin = new Padding(0, 4, 0, 10),
+            Visible = false
+        };
+        var progressRow = jobGrid.RowStyles.Count;
+        jobGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        jobGrid.Controls.Add(_jobProgress, 0, progressRow);
+        jobGrid.SetColumnSpan(_jobProgress, 2);
+
+        _jobNote = new Label
+        {
+            Text = "The agent doesn't report a completion percentage — this bar just confirms a job is in flight, and the elapsed time above is live.",
+            AutoSize = true,
+            MaximumSize = new Size(430, 0),
+            ForeColor = Color.Gray,
+            Font = new Font(Font.FontFamily, 8.5f),
+            Visible = false
+        };
+        var noteRow = jobGrid.RowStyles.Count;
+        jobGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        jobGrid.Controls.Add(_jobNote, 0, noteRow);
+        jobGrid.SetColumnSpan(_jobNote, 2);
+
+        _activeJobPage.Controls.Add(jobGrid);
+
         tabs.TabPages.Add(devicePage);
         tabs.TabPages.Add(agentPage);
+        tabs.TabPages.Add(_activeJobPage);
 
         root.Controls.Add(header, 0, 0);
         root.Controls.Add(tabs, 0, 1);
@@ -228,6 +286,7 @@ internal sealed class StatusForm : Form
             Set("patchStatus", "—");
             Set("patchLastScan", "—");
             Set("patchError", "—");
+            RenderActiveJob(null);
             return;
         }
 
@@ -251,6 +310,54 @@ internal sealed class StatusForm : Form
         Set("patchStatus", FormatPatchStatus(status.Patch));
         Set("patchLastScan", FormatTimestamp(status.Patch.LastScanAtUtc));
         Set("patchError", string.IsNullOrWhiteSpace(status.Patch.LastError) ? "—" : status.Patch.LastError!);
+        RenderActiveJob(status.Jobs.Current);
+    }
+
+    /// <summary>
+    /// Mirrors the macOS tray's Active Job tab: no live progress percentage
+    /// (RunJob over gRPC carries only jobId/jobType/payload), so this only
+    /// confirms a job is in flight and shows elapsed time. The tab label
+    /// gets a "●" suffix while running so the signal is visible even when
+    /// a different tab is focused.
+    /// </summary>
+    private void RenderActiveJob(TrayCurrentJob? job)
+    {
+        if (job is null)
+        {
+            Set("jobActiveStatus", "Idle — no job currently running");
+            Set("jobActiveType", "—");
+            Set("jobActiveId", "—");
+            Set("jobActiveStarted", "—");
+            Set("jobActiveElapsed", "—");
+            _jobProgress.Visible = false;
+            _jobNote.Visible = false;
+            _activeJobPage.Text = "Active Job";
+            return;
+        }
+
+        Set("jobActiveStatus", "Running");
+        Set("jobActiveType", string.IsNullOrWhiteSpace(job.JobType) ? "—" : job.JobType);
+        Set("jobActiveId", string.IsNullOrWhiteSpace(job.JobId) ? "—" : job.JobId);
+        Set("jobActiveStarted", FormatTimestamp(job.StartedAtUtc));
+        Set("jobActiveElapsed", FormatElapsed(job.StartedAtUtc));
+        _jobProgress.Visible = true;
+        _jobNote.Visible = true;
+        _activeJobPage.Text = "Active Job ●";
+    }
+
+    private static string FormatElapsed(DateTime startedAtUtc)
+    {
+        var elapsed = DateTime.UtcNow - startedAtUtc;
+        if (elapsed < TimeSpan.Zero)
+        {
+            elapsed = TimeSpan.Zero;
+        }
+
+        return elapsed.TotalHours >= 1
+            ? $"{(int)elapsed.TotalHours}h {elapsed.Minutes}m {elapsed.Seconds}s"
+            : elapsed.TotalMinutes >= 1
+                ? $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds}s"
+                : $"{elapsed.Seconds}s";
     }
 
     private void AddSection(TableLayoutPanel grid, string title)
