@@ -50,12 +50,37 @@
 # real —no solo del unico Ubuntu 26.04 que tenemos— y una version posterior
 # pasa a enforce con datos en vez de con suposiciones.
 #
-# ⚠️ Efecto secundario que conviene tener presente al endurecerlo: en complain
-# el kernel SI permite las transiciones de dominio (Ux/Cx) que `no_new_privs`
-# veta en enforce. Es decir que hoy, en complain, el remote shell de Linux
-# funciona; al pasar a enforce volvera a romperse mientras
-# tracenium-agent.service siga con NoNewPrivileges=true. Esa decision sigue
-# pendiente y hay que resolverla ANTES de endurecer.
+# ⚠️ LO QUE HAY QUE MIRAR ANTES DE ENDURECER (actualizado 2026-08-19)
+#
+# En complain el kernel SI permite las transiciones de dominio (Ux/Cx) que
+# `no_new_privs` veta en enforce. O sea que cada regla `Ux` de este archivo
+# funciona hoy y puede dejar de funcionar al cambiar el flag — sin que nada
+# lo anuncie salvo un `apparmor="DENIED" ... info="no new privs"`.
+#
+# El reparto es por unidad, no por regla:
+#   tracenium-privsvc  NoNewPrivileges=no   -> sus `Ux` funcionan tambien en
+#                                              enforce (medido: bash por Ux sin
+#                                              NNP devuelve SHELL_OK en enforce)
+#   tracenium-agent    NoNewPrivileges=yes  -> sus `Ux` son letra muerta
+#
+# El remote shell YA NO depende de esto: el pty se mudo a privsvc (commit
+# 4a9d8e0), que no tiene NNP. Un aviso anterior decia lo contrario y se ha
+# corregido aqui — no volver a decidir con esa version.
+#
+# Lo que SI se rompe al endurecer son los gestores que invoca el AGENTE y
+# siguen marcados `Ux`:
+#
+#   apt-mark   dnf5   dnf   rpm
+#
+# Es el inventario de software en Debian/RHEL/Fedora, y fallaria en SILENCIO:
+# lista de paquetes vacia, sin error, igual que paso con snap. El remedio es el
+# mismo que se le aplico a snap —pasarlos a `ix` y concederles lo que
+# necesiten— o asumir conscientemente la perdida en esas distros.
+#
+# Decision tomada el 2026-08-19: NO se toca todavia. El perfil esta en complain
+# y no bloquea nada, asi que esto se resuelve al endurecer y con los datos de
+# `apparmor="ALLOWED"` que la flota vaya dejando, en vez de a ciegas contra el
+# unico Ubuntu 26.04 que tenemos.
 #
 # Para endurecer, una vez validado en tu distro:
 #   sudo sed -i 's/,complain//' /etc/apparmor.d/usr.lib.tracenium.privsvc
