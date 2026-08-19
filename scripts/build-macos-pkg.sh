@@ -59,6 +59,17 @@ ICON_PNG="$RESOURCES_DIR/tracenium.png"
 ICON_ICNS="$RESOURCES_DIR/tracenium.icns"
 STATUS_ICON_PNG="$ROOT_DIR/Tracenium_tryicon.png"
 STATUS_APP_DIR="$ROOT_DIR/macos/TraceniumAgentStatus"
+# ⚠️ El icono de la APP no es el mismo PNG que el de la barra de menús.
+#
+# Tracenium_tryicon.png es un glifo blanco puro con la forma en el alpha: eso es
+# justo lo que necesita el menubar (se pinta como template y se adapta a la
+# barra), y justo lo que NO sirve como icono de aplicación — macOS lo compone
+# sobre su fondo gris claro y en Ajustes → Privacidad y seguridad → Localización
+# el icono blanco desaparece.
+#
+# appicon-source.png es el mismo glifo sobre el fondo del portal, rgb(63,66,78).
+# Se genera con scripts/make-macos-appicon.swift y se commitea como asset.
+STATUS_APPICON_PNG="$STATUS_APP_DIR/Resources/appicon-source.png"
 STATUS_APP_INFO_TEMPLATE="$STATUS_APP_DIR/Resources/Info.plist"
 STATUS_APP_BUILD_DIR="$BUILD_DIR/AgentStatus"
 STATUS_APP_BUNDLE_NAME="Tracenium Agent Status.app"
@@ -251,16 +262,16 @@ build_status_app_bundle() {
   mkdir -p "$STATUS_APP_BUNDLE_DIR/Contents/Resources"
   mkdir -p "$STATUS_APP_ICONSET_DIR"
 
-  sips -z 16 16 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_16x16.png" >/dev/null
-  sips -z 32 32 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_16x16@2x.png" >/dev/null
-  sips -z 32 32 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_32x32.png" >/dev/null
-  sips -z 64 64 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_32x32@2x.png" >/dev/null
-  sips -z 128 128 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_128x128.png" >/dev/null
-  sips -z 256 256 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_128x128@2x.png" >/dev/null
-  sips -z 256 256 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_256x256.png" >/dev/null
-  sips -z 512 512 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_256x256@2x.png" >/dev/null
-  sips -z 512 512 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_512x512.png" >/dev/null
-  sips -z 1024 1024 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_512x512@2x.png" >/dev/null
+  sips -z 16 16 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_16x16.png" >/dev/null
+  sips -z 32 32 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_16x16@2x.png" >/dev/null
+  sips -z 32 32 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_32x32.png" >/dev/null
+  sips -z 64 64 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_32x32@2x.png" >/dev/null
+  sips -z 128 128 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_128x128.png" >/dev/null
+  sips -z 256 256 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_128x128@2x.png" >/dev/null
+  sips -z 256 256 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_256x256.png" >/dev/null
+  sips -z 512 512 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_256x256@2x.png" >/dev/null
+  sips -z 512 512 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_512x512.png" >/dev/null
+  sips -z 1024 1024 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_512x512@2x.png" >/dev/null
   if ! iconutil --convert icns "$STATUS_APP_ICONSET_DIR" --output "$STATUS_APP_ICON_ICNS" 2>/dev/null; then
     STATUS_APP_ICONSET_DIR="$STATUS_APP_ICONSET_DIR" STATUS_APP_ICON_ICNS="$STATUS_APP_ICON_ICNS" python3 - <<'PY'
 from pathlib import Path
@@ -290,6 +301,8 @@ PY
   cp "$executable_path" "$STATUS_APP_BUNDLE_DIR/Contents/MacOS/TraceniumAgentStatus"
   cp "$STATUS_APP_ICON_ICNS" "$STATUS_APP_BUNDLE_DIR/Contents/Resources/tracenium.icns"
   cp "$STATUS_ICON_PNG" "$STATUS_APP_BUNDLE_DIR/Contents/Resources/Tracenium_tryicon.png"
+  # Logo a color del header del popover (StatusPopoverViewController.configureHeader).
+  cp "$STATUS_APP_DIR/Resources/tracenium_logo_color.png" "$STATUS_APP_BUNDLE_DIR/Contents/Resources/tracenium_logo_color.png"
   sed \
     -e "s/@TRACENIUM_AGENT_VERSION@/$VERSION/g" \
     "$STATUS_APP_INFO_TEMPLATE" > "$STATUS_APP_BUNDLE_DIR/Contents/Info.plist"

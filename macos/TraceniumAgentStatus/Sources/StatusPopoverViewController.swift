@@ -34,6 +34,19 @@ final class StatusPopoverViewController: NSViewController {
     private let titleLabel = NSTextField(labelWithString: "Tracenium Agent")
     private let subtitleLabel = NSTextField(labelWithString: "Waiting for local status snapshot...")
     private let badgeLabel = NSTextField(labelWithString: "UNKNOWN")
+    /// ⚠️ El fondo y el radio viven AQUI, no en badgeLabel.
+    ///
+    /// Un NSTextField dibuja su texto arriba cuando el frame es mas alto que la
+    /// linea, asi que con una altura fija de 22 y fuente de 11 el texto quedaba
+    /// pegado al borde superior de la pastilla. `alignment = .center` solo
+    /// centra en horizontal; no existe equivalente vertical en NSTextField.
+    /// Con un contenedor, la etiqueta se centra por constraints en los dos ejes.
+    private let badgeContainer = NSView()
+    /// Logo a color, a la izquierda del titulo. Ver applyHeaderLogo().
+    private let logoView = NSImageView()
+    private var logoWidthConstraint: NSLayoutConstraint?
+    private var logoHeightConstraint: NSLayoutConstraint?
+    private var titleLeadingConstraint: NSLayoutConstraint?
 
     // Tab strip — Device Info (support widget) | Agent Info (estado clásico) | Active Job | Catalog (self-service installs)
     //
@@ -143,34 +156,94 @@ final class StatusPopoverViewController: NSViewController {
         badgeLabel.font = NSFont.systemFont(ofSize: 11, weight: .bold)
         badgeLabel.textColor = .white
         badgeLabel.alignment = .center
-        badgeLabel.wantsLayer = true
-        badgeLabel.layer?.cornerRadius = 4
-        badgeLabel.layer?.masksToBounds = true
         badgeLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        badgeContainer.wantsLayer = true
+        badgeContainer.layer?.cornerRadius = 4
+        badgeContainer.layer?.masksToBounds = true
+        // Neutro de arranque: el color real lo fija el refresh de estado, pero
+        // hasta que llega el primer snapshot la pastilla se dibujaba SIN fondo
+        // y "UNKNOWN" flotaba suelto sobre la banda. Con esto siempre es una
+        // pastilla; lo unico que cambia es su color.
+        badgeContainer.layer?.backgroundColor = NSColor(calibratedWhite: 0.45, alpha: 0.55).cgColor
+        badgeContainer.translatesAutoresizingMaskIntoConstraints = false
+        badgeContainer.addSubview(badgeLabel)
+
+        // Logo a color de marca. El header es una banda oscura, asi que el
+        // metalico con cianes contrasta bien sin necesidad de recuadro ni de
+        // una version alterna del asset.
+        //
+        // `.scaleProportionallyUpOrDown` importa: el PNG viene a 256 y sin ella
+        // NSImageView lo pintaria a tamaño nativo, desbordando la banda.
+        logoView.translatesAutoresizingMaskIntoConstraints = false
+
+        // Se guardan para poder colapsarlas: ver applyHeaderLogo().
+        let logoWidth = logoView.widthAnchor.constraint(equalToConstant: 0)
+        let logoHeight = logoView.heightAnchor.constraint(equalToConstant: 0)
+        let titleLeading = titleLabel.leadingAnchor.constraint(equalTo: logoView.trailingAnchor, constant: 0)
+        logoWidthConstraint = logoWidth
+        logoHeightConstraint = logoHeight
+        titleLeadingConstraint = titleLeading
+
+        headerView.addSubview(logoView)
         headerView.addSubview(titleLabel)
         headerView.addSubview(subtitleLabel)
-        headerView.addSubview(badgeLabel)
+        headerView.addSubview(badgeContainer)
 
         NSLayoutConstraint.activate([
-            // Title arriba-izquierda
-            titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            // Logo a la izquierda, alineado con el bloque de texto
+            logoView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            logoView.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            logoWidth,
+            logoHeight,
+
+            // Title arriba, a la derecha del logo
+            titleLeading,
             titleLabel.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 14),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeLabel.leadingAnchor, constant: -12),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeContainer.leadingAnchor, constant: -12),
 
             // Subtitle debajo del title
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
-            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeLabel.leadingAnchor, constant: -12),
+            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeContainer.leadingAnchor, constant: -12),
 
-            // Badge centrado vertical, pegado a la derecha
-            badgeLabel.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
-            badgeLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 70),
-            badgeLabel.heightAnchor.constraint(equalToConstant: 22)
+            // Pastilla centrada vertical, pegada a la derecha
+            badgeContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
+            badgeContainer.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            badgeContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 70),
+            badgeContainer.heightAnchor.constraint(equalToConstant: 22),
+
+            // Texto centrado en AMBOS ejes dentro de la pastilla
+            badgeLabel.centerXAnchor.constraint(equalTo: badgeContainer.centerXAnchor),
+            badgeLabel.centerYAnchor.constraint(equalTo: badgeContainer.centerYAnchor),
+            badgeLabel.leadingAnchor.constraint(greaterThanOrEqualTo: badgeContainer.leadingAnchor, constant: 8),
+            badgeLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeContainer.trailingAnchor, constant: -8)
         ])
 
         view.addSubview(headerView)
+
+        applyHeaderLogo(Bundle.main.url(forResource: "tracenium_logo_color", withExtension: "png")
+            .flatMap { NSImage(contentsOf: $0) })
+    }
+
+    /// Coloca —o retira— el logo del header ajustando su hueco.
+    ///
+    /// Sin imagen el ancho colapsa a 0 y el titulo se pega al borde, en vez de
+    /// dejar 34pt vacios. Un asset que no se copia al bundle es un fallo de
+    /// empaquetado SILENCIOSO —no revienta en runtime— y asi el header se ve
+    /// intencionado en lugar de roto.
+    ///
+    /// Es `internal` a proposito: el snapshot de tests corre fuera de la .app,
+    /// donde `Bundle.main` es el runner y no lleva recursos, asi que necesita
+    /// poder inyectarlo para que la imagen refleje lo que vera el usuario.
+    func applyHeaderLogo(_ image: NSImage?) {
+        logoView.image = image
+        logoView.imageScaling = .scaleProportionallyUpOrDown
+        let side: CGFloat = image == nil ? 0 : 34
+        logoWidthConstraint?.constant = side
+        logoHeightConstraint?.constant = side
+        titleLeadingConstraint?.constant = image == nil ? 0 : 10
+        headerView.needsLayout = true
     }
 
     // MARK: - Body
@@ -729,7 +802,7 @@ final class StatusPopoverViewController: NSViewController {
 
     private func applyHeader(online: Bool, hostname: String, version: String?, updatedAt: Date?) {
         badgeLabel.stringValue = online ? "ONLINE" : "OFFLINE"
-        badgeLabel.layer?.backgroundColor = online
+        badgeContainer.layer?.backgroundColor = online
             ? NSColor.systemGreen.cgColor
             : NSColor.systemRed.cgColor
 

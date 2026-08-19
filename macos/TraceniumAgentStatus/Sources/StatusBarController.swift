@@ -18,7 +18,18 @@ final class StatusBarController {
             return nil
         }
         image.size = NSSize(width: 18, height: 18)
-        image.isTemplate = false
+        // ⚠️ TEMPLATE, no la imagen tal cual. El PNG es un glifo BLANCO puro
+        // (255,255,255 con la forma en el canal alpha), asi que dibujado literal
+        // se ve bien solo sobre barras oscuras. En un Mac con barra clara —o con
+        // el resto de iconos en negro— el nuestro quedaba como el unico blanco,
+        // practicamente invisible.
+        //
+        // Con isTemplate el sistema ignora el color y usa SOLO el alpha,
+        // pintando el glifo del color que corresponda a la apariencia de la
+        // barra en ese momento (negro en clara, blanco en oscura) y ademas
+        // resaltandolo bien cuando el item esta pulsado. Es el mecanismo que usa
+        // el propio macOS para todos sus iconos de menubar.
+        image.isTemplate = true
         return image
     }()
     /// statusImage with a small dot composited onto the bottom-right
@@ -157,17 +168,33 @@ final class StatusBarController {
             width: diameter,
             height: diameter
         )
-        let path = NSBezierPath(ovalIn: badgeRect)
-        // White ring so the dot reads clearly against a light or dark
-        // menu bar and against the icon's own artwork.
-        NSColor.white.setStroke()
-        path.lineWidth = 1.2
-        NSColor.systemTeal.setFill()
-        path.fill()
-        path.stroke()
+        // ⚠️ El badge se dibuja con un HUECO, no con un anillo blanco.
+        //
+        // La version anterior era un punto teal con borde blanco, y la imagen
+        // salia con isTemplate=false para conservar ese color. Eso deja el icono
+        // sin adaptarse justo mientras hay un job — o sea, reintroduciendo por
+        // rachas el problema del icono blanco en barras claras.
+        //
+        // Como una imagen template usa SOLO el alpha, el color se pierde por
+        // definicion: un punto relleno pegado al glifo se fundiria con el. La
+        // solucion es separarlo con transparencia: se borra un disco un poco
+        // mayor (.clear) y dentro se rellena el punto. El resultado lee como
+        // badge por su SILUETA, que es lo unico que sobrevive al modo template,
+        // y funciona igual en barra clara y oscura.
+        //
+        // Se pierde el teal. Se gana que el icono nunca sea invisible, que es lo
+        // que se reporto desde campo.
+        let gap: CGFloat = 1.5
+        let clearRect = badgeRect.insetBy(dx: -gap, dy: -gap)
+        NSGraphicsContext.current?.compositingOperation = .clear
+        NSBezierPath(ovalIn: clearRect).fill()
+        NSGraphicsContext.current?.compositingOperation = .sourceOver
+
+        NSColor.black.setFill()   // el color da igual: template solo mira el alpha
+        NSBezierPath(ovalIn: badgeRect).fill()
 
         badged.unlockFocus()
-        badged.isTemplate = false
+        badged.isTemplate = true
         return badged
     }
 }
