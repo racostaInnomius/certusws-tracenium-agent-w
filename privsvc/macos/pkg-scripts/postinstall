@@ -245,20 +245,41 @@ chmod 644 /Library/LaunchAgents/com.certusws.tracenium.agentstatus.plist
 /bin/launchctl print system/com.certusws.tracenium.agent || true
 /bin/launchctl print system/com.certusws.tracenium.logrotate || true
 
-CONSOLE_USER="$(/usr/bin/stat -f %Su /dev/console 2>/dev/null || true)"
-if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
-  CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER" 2>/dev/null || true)"
-  if [ -n "$CONSOLE_UID" ]; then
-    /bin/launchctl bootout "gui/$CONSOLE_UID/com.certusws.tracenium.agentstatus" >/dev/null 2>&1 || true
-    /bin/launchctl bootstrap "gui/$CONSOLE_UID" /Library/LaunchAgents/com.certusws.tracenium.agentstatus.plist
-    /bin/launchctl enable "gui/$CONSOLE_UID/com.certusws.tracenium.agentstatus"
-    /bin/launchctl kickstart -k "gui/$CONSOLE_UID/com.certusws.tracenium.agentstatus" || true
-    /bin/launchctl print "gui/$CONSOLE_UID/com.certusws.tracenium.agentstatus" || true
-  else
-    echo "Skipping agent status LaunchAgent bootstrap: unable to resolve console UID"
+# ⚠️ SIMETRICO con el bootout del bloque (a) de arriba, y tiene que serlo.
+#
+# Aquel apaga el status app para CADA UID >= 500 de la maquina. Esta parte
+# solia volver a levantarlo unicamente para el usuario de consola, y solo si
+# habia uno — asi que una actualizacion corrida sin sesion interactiva (pantalla
+# de login, o el equipo con la sesion cerrada) apagaba la app para todos y no la
+# encendia nadie. Los LaunchAgents recargan al INICIAR SESION, no al despertar,
+# de modo que un usuario que solo cierra la tapa se queda sin app
+# indefinidamente: en campo aparecio como un Mac con el permiso de ubicacion
+# intacto y el dashboard diciendo, con razon, que la app no reportaba.
+#
+# Regla: no desmontar lo que no se puede volver a montar. Se restaura para cada
+# UID que tenga un dominio gui vivo, que es exactamente el conjunto al que el
+# bootout pudo haberle hecho algo.
+RESTORED_AGENTS=0
+for uid in $(/usr/bin/dscl . -list /Users UniqueID 2>/dev/null | /usr/bin/awk '$2 >= 500 && $2 < 60000 {print $2}'); do
+  # Solo los usuarios con sesion grafica viva tienen dominio gui/<uid>.
+  if /bin/launchctl print "gui/$uid" >/dev/null 2>&1; then
+    /bin/launchctl bootout    "gui/$uid/com.certusws.tracenium.agentstatus" >/dev/null 2>&1 || true
+    /bin/launchctl bootstrap  "gui/$uid" /Library/LaunchAgents/com.certusws.tracenium.agentstatus.plist >/dev/null 2>&1 || true
+    /bin/launchctl enable     "gui/$uid/com.certusws.tracenium.agentstatus" >/dev/null 2>&1 || true
+    # `|| true` a proposito: en pkg 1.1.5 un kickstart colgado agoto el timeout
+    # de 10 min del Installer. Que falle uno no puede tumbar la instalacion.
+    /bin/launchctl kickstart -k "gui/$uid/com.certusws.tracenium.agentstatus" >/dev/null 2>&1 || true
+    RESTORED_AGENTS=$((RESTORED_AGENTS + 1))
   fi
+done
+
+if [ "$RESTORED_AGENTS" -gt 0 ]; then
+  echo "Agent status LaunchAgent restored for $RESTORED_AGENTS graphical session(s)"
 else
-  echo "Skipping agent status LaunchAgent bootstrap: no interactive console user"
+  # No es un fallo: sin sesion grafica no hay nada que levantar, y el
+  # LaunchAgent cargara solo en el proximo inicio de sesion. Se registra para
+  # que un equipo que quede sin app tenga explicacion en el log del install.
+  echo "No graphical session at install time; agent status will start at next login"
 fi
 
 exit 0
