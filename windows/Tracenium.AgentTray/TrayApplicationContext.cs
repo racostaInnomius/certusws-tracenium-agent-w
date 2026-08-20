@@ -7,7 +7,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
 {
     private readonly StatusReader _reader = new();
     private readonly StatusForm _statusForm = new();
-    private readonly DeviceInfoFlyout _deviceFlyout = new();
+    // NOT readonly: see the disposed-instance recovery in RefreshStatus().
+    private DeviceInfoFlyout _deviceFlyout = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly Icon _trayIcon;
@@ -71,6 +72,34 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void RefreshStatus()
     {
+        // Confirmed via a real crash log (2026-08-18): an
+        // ObjectDisposedException on DeviceInfoFlyout, thrown from
+        // Show() -> SetVisibleCore -> CreateHandle, inside this exact
+        // Timer tick. Nothing in this codebase disposes _deviceFlyout
+        // outside ExitThreadCore (reachable only via the "Exit Tray"
+        // menu item, which the user hadn't clicked) — the only other
+        // candidate is Windows Restart Manager sending a close signal to
+        // this always-live top-level window (no taskbar entry, but a
+        // real HWND whenever policy shows it) while msiexec has this
+        // .exe's file locked during an upgrade. Whatever the exact
+        // trigger, the old instance is gone for good once it happens —
+        // recreate rather than let one bad tick crash (and, per
+        // Program.cs's restart-once guard, potentially permanently kill)
+        // the whole tray.
+        if (_deviceFlyout.IsDisposed)
+        {
+            _deviceFlyout = new DeviceInfoFlyout();
+        }
+
+        // Same external-close risk applies to _statusForm in principle,
+        // but recreating it would also mean re-wiring FormClosing /
+        // VisibleChanged / the NotifyIcon.DoubleClick handler — skip the
+        // tick instead of guessing at that wiring untested.
+        if (_statusForm.IsDisposed)
+        {
+            return;
+        }
+
         TrayStatus? status = _reader.Read();
         _statusForm.Render(status);
         _deviceFlyout.Render(status);
@@ -104,6 +133,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void ShowStatus()
     {
+        if (_statusForm.IsDisposed)
+        {
+            return;
+        }
+
         _statusForm.Render(_reader.Read());
 
         if (!_statusForm.Visible)
