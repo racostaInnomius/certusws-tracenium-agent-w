@@ -16,6 +16,23 @@ import {
 } from "./update-service";
 import { compareSemver, looksLikeSemver } from "./semver";
 
+/**
+ * Which tier served the installer for the attempt that just ran.
+ *
+ * Read from the update state because the per-OS updaters return different
+ * shapes, while the state is already the channel that carries the hand-off
+ * between download and install. Absent means no distribution point served it —
+ * reported as "origin" rather than left blank, so a fleet-wide "how much came
+ * over the LAN?" is answerable without treating silence as a third category.
+ */
+function servedTier(): string {
+  try {
+    return loadUpdateState().lastServedBy || "origin";
+  } catch {
+    return "origin";
+  }
+}
+
 function nowMs() {
   return Date.now();
 }
@@ -76,7 +93,12 @@ function reconcilePendingUpdate(currentVersion: string, logger?: {
  * from reconcilePendingUpdate on the next boot.
  */
 export type UpdateOutcome =
-  | { status: "started"; version: string }
+  | {
+      status: "started";
+      version: string;
+      /** Source tier that served the installer: "dp" | "cdn" | "origin". */
+      servedBy?: string;
+    }
   | { status: "skipped"; reason: string }
   | { status: "failed"; error: string };
 
@@ -185,6 +207,9 @@ export async function runUpdateTask(
 
     updateUpdateState({
       updateInProgress: true,
+      // Clear the previous run's tier: reporting a stale one would claim the DP
+      // served an update it never touched.
+      lastServedBy: null,
       lastAttemptedVersion: targetVersion,
       lastAttemptedAtUtc: new Date().toISOString()
     });
@@ -201,7 +226,7 @@ export async function runUpdateTask(
       command: run.command,
       args: run.args
     });
-    return { status: "started", version: targetVersion };
+    return { status: "started", version: targetVersion, servedBy: servedTier() };
   }
 
   // If only PART of the override pair was supplied, that's a backend
@@ -319,6 +344,9 @@ export async function runUpdateTask(
 
     updateUpdateState({
       updateInProgress: true,
+      // Clear the previous run's tier: reporting a stale one would claim the DP
+      // served an update it never touched.
+      lastServedBy: null,
       lastAttemptedVersion: effectiveVersion,
       lastAttemptedAtUtc: new Date().toISOString()
     });
@@ -335,7 +363,7 @@ export async function runUpdateTask(
       command: run.command,
       args: run.args
     });
-    return { status: "started", version: effectiveVersion };
+    return { status: "started", version: effectiveVersion, servedBy: servedTier() };
 
   } catch (err: any) {
     const error = err?.message || String(err);

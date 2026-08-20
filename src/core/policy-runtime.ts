@@ -942,6 +942,31 @@ export class PolicyRuntime extends EventEmitter {
    * presence IS the enablement (ADR-0001 (A)). Callers must treat null as
    * "reject any gateway job" — never as "use defaults".
    */
+  /**
+   * LAN base URLs of the distribution points serving this device's site.
+   *
+   * NOT operator-authored: the control plane injects this per device when it
+   * delivers the policy (see modules/policies/policy-wire.ts), because it is a
+   * fact about where the device sits, not a setting anyone typed.
+   *
+   * It exists so the agent's OWN periodic update check can prefer the LAN. That
+   * check runs with no job behind it, so it had no way to learn about a DP and
+   * always pulled the installer from the internet — even on a site whose DP
+   * already held those exact bytes. Across a fleet that is the same file over
+   * the WAN once per endpoint.
+   *
+   * Entries are validated here rather than trusted: only https URLs survive, so
+   * a malformed or partially-written policy degrades to "no DP" (download from
+   * the internet, as before) instead of handing a junk URL to the downloader.
+   */
+  dpBaseUrls(): string[] {
+    const raw = (this.policy as any)?.sdp?.dpBaseUrls;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter((u: unknown): u is string => typeof u === "string" && /^https:\/\//i.test(u))
+      .slice(0, 8);
+  }
+
   gatewayConfig(): GatewayConfig | null {
     return parseGatewayConfig(this.policy.gateway);
   }

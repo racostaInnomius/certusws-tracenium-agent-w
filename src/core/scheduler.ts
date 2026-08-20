@@ -851,7 +851,14 @@ class Scheduler {
 
       await runUpdateTask(ctx, {
         logger,
-        force: true
+        force: true,
+        // Prefer the site's distribution point over the internet. Without this
+        // the periodic check — which is how the fleet actually moves, since it
+        // needs no job — always pulled the installer over the WAN, once per
+        // endpoint, even where a DP on the same switch already held it. The
+        // per-OS updater falls through to the direct download on its own, so a
+        // stale or unreachable DP costs a few seconds, not the update.
+        dpBaseUrls: ctx.policyRuntime?.dpBaseUrls?.() ?? []
       });
 
     } catch (err) {

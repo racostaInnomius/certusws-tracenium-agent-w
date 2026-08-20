@@ -1076,7 +1076,14 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
         if (outcome.status === "skipped") {
           return { status: 0, message: `update_skipped: ${outcome.reason}` };
         }
-        return { status: 0, message: "update_started" };
+        // `src=` names the tier that served the installer, mirroring what an
+        // SDP install already reports. Without it the control plane cannot tell
+        // a LAN download from a WAN one, which is the whole KPI of putting
+        // distribution points on the update path.
+        return {
+          status: 0,
+          message: `update_started;src=${outcome.servedBy || "origin"}`,
+        };
       } finally {
         (ctx as any)._agentUpdateInProgress = false;
       }
@@ -1917,7 +1924,12 @@ stream = client.Connect();
               await sendControlAck(ctx, eventId, 0, `update_skipped: ${outcome.reason}`);
               return;
             }
-            await sendControlAck(ctx, eventId, 0, "update_started");
+            await sendControlAck(
+              ctx,
+              eventId,
+              0,
+              `update_started;src=${outcome?.servedBy || "origin"}`
+            );
           })
           .catch((err: any) => {
             ctx.logger?.error?.("agentUpdate execution failed", {
