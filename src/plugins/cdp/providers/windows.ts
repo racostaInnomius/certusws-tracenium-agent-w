@@ -96,5 +96,55 @@ export async function collectWindowsCdp(ctx: AgentContext): Promise<WindowsCdpRe
     }
   }
 
+  // ── Stores por usuario ────────────────────────────────────────────
+  //
+  // Fallo blando y deliberado. Este metodo IPC es nuevo: un agente
+  // actualizado contra un PrivSvc antiguo recibe `not_supported`, y eso
+  // NO puede costar el escaneo de maquina que acaba de funcionar. Lo
+  // mismo vale para cualquier otro fallo — los certificados de usuario
+  // son un anadido, no un requisito.
+  try {
+    const userResp = await ctx.priv.call({
+      v: 1,
+      id: `cdpu_${Date.now()}`,
+      method: "cdp.certs.readUser",
+      params: {},
+      meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+    });
+
+    if (userResp?.ok && userResp.result?.budgetExceeded !== true) {
+      const userCerts: Array<{ store?: string; userSid?: string; rawDerBase64?: string }> =
+        Array.isArray(userResp.result?.certificates) ? userResp.result.certificates : [];
+
+      for (const raw of userCerts) {
+        if (!raw?.rawDerBase64) {
+          parseFailures += 1;
+          continue;
+        }
+        const storeName = String(raw?.store || "Unknown");
+        const sid = String(raw?.userSid || "unknown");
+        // El SID forma parte de la identidad del store: el mismo
+        // certificado en el Personal de dos usuarios son dos
+        // ubicaciones, no una.
+        const store: CdpStoreInfo = {
+          id: `user/${sid}/${storeName.toLowerCase()}`,
+          name: `CurrentUser\\${storeName} (${sid})`,
+          scope: "user"
+        };
+        storesSeen.set(store.id, store);
+
+        const item = parseCertToItem(Buffer.from(raw.rawDerBase64, "base64"), {
+          store,
+          hasPrivateKey: false
+        });
+        if (item) items.push(item);
+        else parseFailures += 1;
+      }
+    }
+  } catch {
+    // PrivSvc antiguo, o cualquier otro fallo. El escaneo de maquina ya
+    // esta hecho y se entrega igual.
+  }
+
   return { items, stores: [...storesSeen.values()], parseFailures };
 }

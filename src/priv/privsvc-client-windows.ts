@@ -122,6 +122,12 @@ export function getTimeoutForMethod(method: string): number {
     // has, so this sits above it with margin.
     case "cdp.certs.read":
       return 60 * 1000; // privsvc: 45s + margin
+    case "cdp.certs.readUser":
+      // Mismo techo que el handler de maquina (45s) y misma holgura. La
+      // lectura es de registro en vez de X509Store, pero recorre un
+      // arbol por cada hive de usuario cargado, asi que el peor caso es
+      // de la misma familia.
+      return 60 * 1000; // privsvc: 45s + margin
     default:
       return DEFAULT_TIMEOUT_MS;
   }
