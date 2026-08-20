@@ -15,6 +15,9 @@ internal sealed class TrayStatus
     public TrayPatchStatus Patch { get; set; } = new();
     // Device Info (support widget). Null on snapshots from older agents.
     public TrayDeviceInfo? Device { get; set; }
+    // Self-service Software Catalog. Null on snapshots from older agents
+    // (pre self-service catalog) — treated the same as an empty catalog.
+    public TrayCatalogStatus? Catalog { get; set; }
 }
 
 /// <summary>
@@ -81,6 +84,28 @@ internal sealed class TrayCurrentJob
     public string JobId { get; set; } = "";
     public string JobType { get; set; } = "";
     public DateTime StartedAtUtc { get; set; }
+}
+
+/// <summary>
+/// One entry in the self-service Software Catalog tray tab. Mirrors
+/// proto SoftwareCatalogItem — see controlplane.proto's "SOFTWARE
+/// CATALOG (self-service)" doc block.
+/// </summary>
+internal sealed class TrayCatalogItem
+{
+    public string PackageId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string? Vendor { get; set; }
+    public string Version { get; set; } = "";
+    public string? Description { get; set; }
+    public bool? RequiresReboot { get; set; }
+}
+
+internal sealed class TrayCatalogStatus
+{
+    public DateTime? UpdatedAtUtc { get; set; }
+    public string? CatalogVersion { get; set; }
+    public List<TrayCatalogItem> Items { get; set; } = new();
 }
 
 internal sealed class TrayUpdateStatus
