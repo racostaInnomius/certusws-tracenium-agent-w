@@ -3,7 +3,8 @@ import { promisify } from "util";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { success } from "./protocol";
 import { parseSshdConfig } from "./ssh-parse";
-import { boolFromDefaultsRead } from "./defaults-parse";
+import { boolFromDefaultsRead, classifyDefaultsRead } from "./defaults-parse";
+import { parseSysadminctlScreenLock } from "./screenlock-parse";
 
 const execFileAsync = promisify(execFile);
 
@@ -413,44 +414,61 @@ async function collectSmb(shares: { smbEnabled?: boolean; raw?: string }) {
 }
 
 /**
- * Screen-saver password requirement. The relevant defaults key is
- * `askForPassword` on `com.apple.screensaver`, but it's stored per-user
- * (and per-host under `ByHost`). We read the `-currentHost` variant
- * first (closest match to what the GUI toggles) and fall back to the
- * global domain. If nothing is set, the attribute is left `undefined`
- * so the evaluator marks the check not_applicable rather than failing.
+ * Screen-saver password requirement. Primary source is
+ * `sysadminctl -screenLock status`: on modern macOS (Ventura+) the GUI
+ * toggle no longer writes `askForPassword` to com.apple.screensaver —
+ * verified in the field 2026-08-19: the key does not exist in ANY
+ * domain even with the setting ON, so the defaults-based read was
+ * structurally not_applicable on every unmanaged Mac. sysadminctl is
+ * per-user and prints to stderr (run() combines streams, so the parser
+ * sees it). The defaults chain stays as fallback: MDM profiles still
+ * land `askForPassword` system-wide, and older macOS still writes the
+ * per-user key.
  */
 async function collectScreenLock() {
-  // ⚠️ privsvc runs as root. A bare `defaults -currentHost read` here
-  // reads ROOT's ByHost preferences — not the console user's — so until
-  // 2026-08-16 this collector answered for the wrong account on every
-  // workstation (root has no screensaver prefs → undefined →
-  // not_applicable, or stale ones → wrong verdict). Resolve the console
-  // user and read in THEIR context via `launchctl asuser <uid> sudo -u
-  // <name> defaults …`, the same technique the screen-capture helper
-  // uses to reach the GUI session. At the login window (no console
-  // user) there is no per-user value to read: report the system-wide
-  // /Library/Preferences fallback only and say so in `source`.
+  // ⚠️ privsvc runs as root. Both sysadminctl and `defaults
+  // -currentHost read` answer for the INVOKING user — root's prefs, not
+  // the console user's — so every per-user read must run in the console
+  // user's context via `launchctl asuser <uid> sudo -n -u <name> …`,
+  // the same technique screen-capture.ts has proven in the field. At
+  // the login window (no console user) there is no per-user value to
+  // read: report the system-wide /Library/Preferences fallback only and
+  // say so in `source`.
   const user = await activeConsoleUser();
 
-  const readAs = (args: string[]) =>
+  const runAs = (bin: string, args: string[]) =>
     user
       ? run(
           "/bin/launchctl",
           // `-n`: never prompt — root→user needs no password, and a
           // prompt would hang the collector until the IPC timeout.
-          // Same invocation shape screen-capture.ts has proven in the field.
-          ["asuser", String(user.uid), "sudo", "-n", "-u", user.name, "/usr/bin/defaults", ...args],
+          ["asuser", String(user.uid), "sudo", "-n", "-u", user.name, bin, ...args],
           6000
         )
-      : run("/usr/bin/defaults", args, 5000);
+      : run(bin, args, 5000);
 
-  const [currentHost, userGlobal, systemGlobal] = await Promise.all([
-    readAs(["-currentHost", "read", "com.apple.screensaver", "askForPassword"]),
-    readAs(["read", "com.apple.screensaver", "askForPassword"]),
+  const [screenLockStatus, currentHost, userGlobal, systemGlobal] = await Promise.all([
+    user
+      ? runAs("/usr/sbin/sysadminctl", ["-screenLock", "status"])
+      : Promise.resolve<CommandResult>({ output: "", stdout: "", ok: false }),
+    runAs("/usr/bin/defaults", ["-currentHost", "read", "com.apple.screensaver", "askForPassword"]),
+    runAs("/usr/bin/defaults", ["read", "com.apple.screensaver", "askForPassword"]),
     // MDM profiles land system-wide; this is the managed-fleet answer.
     run("/usr/bin/defaults", ["read", "/Library/Preferences/com.apple.screensaver", "askForPassword"], 5000)
   ]);
+
+  const live = parseSysadminctlScreenLock(screenLockStatus.output);
+  if (live) {
+    return {
+      passwordRequired: live.passwordRequired,
+      // 0 = immediately. Not evaluated by the current catalog check;
+      // carried so a future delay-bounded rule needs no agent change.
+      delaySeconds: live.delaySeconds,
+      consoleUser: user?.name,
+      source: "sysadminctl",
+      raw: { sysadminctl: truncate(screenLockStatus.output) }
+    };
+  }
 
   // Absent is NOT a verdict here: macOS' default for askForPassword is
   // on in recent releases but varies by version and is overridden by
@@ -460,9 +478,17 @@ async function collectScreenLock() {
     boolFromDefaultsRead(userGlobal, undefined) ??
     boolFromDefaultsRead(systemGlobal, undefined);
 
+  // "unavailable" used to swallow the common case where every read
+  // worked but the key is simply not set ("does not exist" exits
+  // non-zero) — misleading in the drawer. Distinguish not_set.
+  const reads = [currentHost, userGlobal, systemGlobal];
+  const anyValue = reads.some((r) => classifyDefaultsRead(r) === "value");
+  const allAbsentOrValue = reads.every((r) => classifyDefaultsRead(r) !== "failed");
   const source = user
-    ? currentHost.ok ? "user.currentHost" : userGlobal.ok ? "user.global" : systemGlobal.ok ? "system" : "unavailable"
-    : systemGlobal.ok ? "system" : "no_console_user";
+    ? anyValue
+      ? currentHost.ok ? "user.currentHost" : userGlobal.ok ? "user.global" : "system"
+      : allAbsentOrValue ? "not_set" : "unavailable"
+    : systemGlobal.ok ? "system" : classifyDefaultsRead(systemGlobal) === "absent" ? "not_set" : "no_console_user";
 
   return {
     passwordRequired: resolved,
