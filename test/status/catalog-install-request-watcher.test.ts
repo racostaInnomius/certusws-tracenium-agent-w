@@ -2,15 +2,16 @@
 //
 // Coverage for the tray -> core channel that lets the Software Catalog
 // tab's "Install" button reach the control plane: the tray writes
-// catalog-install-request.json into its own Application Support
-// directory, and this module (polled from grpc-stream.ts) reads +
-// consumes it.
+// catalog-install-request.json into its own per-user directory, and
+// this module (polled from grpc-stream.ts) reads + consumes it.
 //
 // Mocks geo.ts's parseConsoleUser/resolveHomeDirectory (the only two
 // exports this module uses from it) rather than child_process directly
 // — that keeps this suite focused on the file-handling contract
 // (consume-once, staleness, malformed input) instead of re-testing
-// console-user resolution, which geo.test.ts already owns.
+// console-user resolution, which geo.test.ts already owns. Same idea
+// for Windows: mocks device-facts-builder's getInteractiveUserFromOs
+// rather than the PowerShell call underneath it.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "fs";
@@ -33,6 +34,11 @@ vi.mock("child_process", () => ({
   ) => cb(null, { stdout: "testuser", stderr: "" }),
 }));
 
+const getInteractiveUserFromOs = vi.fn();
+vi.mock("../../src/domain/device-facts-builder", () => ({
+  getInteractiveUserFromOs: (...a: unknown[]) => getInteractiveUserFromOs(...a),
+}));
+
 let consumePendingCatalogInstallRequest: typeof import("../../src/status/catalog-install-request-watcher").consumePendingCatalogInstallRequest;
 
 function requestFilePath() {
@@ -50,6 +56,7 @@ const originalPlatform = process.platform;
 beforeEach(async () => {
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "catalog-install-watcher-test-"));
   Object.defineProperty(process, "platform", { value: "darwin" });
+  getInteractiveUserFromOs.mockReset();
   vi.resetModules();
   ({ consumePendingCatalogInstallRequest } = await import(
     "../../src/status/catalog-install-request-watcher"
@@ -123,16 +130,97 @@ describe("consumePendingCatalogInstallRequest", () => {
     await expect(consumePendingCatalogInstallRequest()).resolves.toBeNull();
   });
 
-  it("returns null on non-macOS platforms without touching the filesystem", async () => {
-    Object.defineProperty(process, "platform", { value: "win32" });
+  it("returns null on Linux without touching the filesystem (only darwin/win32 are supported)", async () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
     writeRequestFile({ packageId: "42", requestedAtUtc: new Date().toISOString() });
 
     const result = await consumePendingCatalogInstallRequest();
 
     expect(result).toBeNull();
-    // File untouched — the win32 path returns before ever resolving a
-    // console user, so a stray macOS-shaped file left on a Windows box
-    // (shouldn't happen, but) is not silently consumed.
     expect(fs.existsSync(requestFilePath())).toBe(true);
+  });
+});
+
+describe("consumePendingCatalogInstallRequest — Windows", () => {
+  beforeEach(() => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+  });
+
+  // Repeated vi.spyOn(fs, ...) calls across tests in this block would
+  // otherwise reuse the same spy (and its accumulated call count) —
+  // restore after every test so each one starts from a clean fs.
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns null and does not touch the filesystem when no interactive user is found", async () => {
+    getInteractiveUserFromOs.mockResolvedValue(null);
+    const readSpy = vi.spyOn(fs, "readFileSync");
+
+    const result = await consumePendingCatalogInstallRequest();
+
+    expect(result).toBeNull();
+    expect(readSpy).not.toHaveBeenCalled();
+  });
+
+  it("reads from a path built from the resolved user's AppData\\Local\\Tracenium", async () => {
+    getInteractiveUserFromOs.mockResolvedValue({ user: "jdoe" });
+    const readSpy = vi
+      .spyOn(fs, "readFileSync")
+      .mockReturnValue(JSON.stringify({ packageId: "42", requestedAtUtc: new Date().toISOString() }));
+    vi.spyOn(fs, "unlinkSync").mockImplementation(() => {});
+
+    const result = await consumePendingCatalogInstallRequest();
+
+    expect(result).toEqual({ packageId: "42" });
+    const calledPath = String(readSpy.mock.calls[0][0]);
+    expect(calledPath).toContain("jdoe");
+    expect(calledPath).toContain("AppData");
+    expect(calledPath).toContain("Local");
+    expect(calledPath).toContain("Tracenium");
+    expect(calledPath).toContain("catalog-install-request.json");
+  });
+
+  it("consumes (deletes) the file it read from", async () => {
+    getInteractiveUserFromOs.mockResolvedValue({ user: "jdoe" });
+    vi.spyOn(fs, "readFileSync").mockReturnValue(
+      JSON.stringify({ packageId: "42", requestedAtUtc: new Date().toISOString() })
+    );
+    const unlinkSpy = vi.spyOn(fs, "unlinkSync").mockImplementation(() => {});
+
+    await consumePendingCatalogInstallRequest();
+
+    expect(unlinkSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("caches the resolved user for repeated ticks instead of re-resolving every time", async () => {
+    getInteractiveUserFromOs.mockResolvedValue({ user: "jdoe" });
+    vi.spyOn(fs, "readFileSync").mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
+
+    await consumePendingCatalogInstallRequest();
+    await consumePendingCatalogInstallRequest();
+    await consumePendingCatalogInstallRequest();
+
+    expect(getInteractiveUserFromOs).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-resolves once the cache TTL has passed", async () => {
+    vi.useFakeTimers();
+    try {
+      getInteractiveUserFromOs.mockResolvedValue({ user: "jdoe" });
+      vi.spyOn(fs, "readFileSync").mockImplementation(() => {
+        throw new Error("ENOENT");
+      });
+
+      await consumePendingCatalogInstallRequest();
+      vi.advanceTimersByTime(61_000);
+      await consumePendingCatalogInstallRequest();
+
+      expect(getInteractiveUserFromOs).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

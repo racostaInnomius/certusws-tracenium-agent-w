@@ -127,7 +127,7 @@ async function runCommand(command: string, args: string[], timeout = 2500): Prom
   }
 }
 
-async function getInteractiveUserFromOs(): Promise<NormalizedUser | null> {
+export async function getInteractiveUserFromOs(): Promise<NormalizedUser | null> {
   const platform = os.platform();
 
   if (platform === "win32") {

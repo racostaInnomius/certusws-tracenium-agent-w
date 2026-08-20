@@ -12,6 +12,15 @@ internal sealed class StatusForm : Form
     private readonly TabPage _activeJobPage;
     private readonly ProgressBar _jobProgress;
     private readonly Label _jobNote;
+    private readonly TabPage _catalogPage;
+    private readonly FlowLayoutPanel _catalogFlow;
+    private readonly Label _catalogEmptyLabel;
+    // Grace window a just-clicked Install button stays "Installing…" even
+    // if the next 5s poll hasn't yet reflected a running job — avoids a
+    // one-tick flash back to enabled between the click and the job
+    // actually starting.
+    private static readonly TimeSpan InstallRequestGrace = TimeSpan.FromSeconds(90);
+    private readonly Dictionary<string, DateTime> _pendingInstallClicks = new();
     private TrayStatus? _lastStatus;
 
     public StatusForm()
@@ -228,9 +237,46 @@ internal sealed class StatusForm : Form
 
         _activeJobPage.Controls.Add(jobGrid);
 
+        // Catalog page: self-service Software Catalog — admin-opted-in
+        // packages the user can install themselves. A FlowLayoutPanel
+        // (not a TableLayoutPanel) holds the dynamic per-package rows on
+        // purpose: it supports Controls.Clear() + rebuild safely on every
+        // render tick, unlike a TableLayoutPanel's row/cell bookkeeping.
+        _catalogPage = new TabPage("Catalog") { BackColor = Color.White, UseVisualStyleBackColor = true };
+
+        var catalogScroll = new Panel
+        {
+            Dock = DockStyle.Fill,
+            AutoScroll = true,
+            Padding = new Padding(18, 14, 18, 18)
+        };
+
+        _catalogFlow = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+            Width = 560
+        };
+
+        _catalogEmptyLabel = new Label
+        {
+            Text = "Nothing available right now.",
+            AutoSize = true,
+            Font = new Font(Font.FontFamily, 9.5f),
+            ForeColor = Color.Gray,
+            Margin = new Padding(0, 6, 0, 0)
+        };
+
+        catalogScroll.Controls.Add(_catalogFlow);
+        _catalogPage.Controls.Add(catalogScroll);
+
         tabs.TabPages.Add(devicePage);
         tabs.TabPages.Add(agentPage);
         tabs.TabPages.Add(_activeJobPage);
+        tabs.TabPages.Add(_catalogPage);
 
         root.Controls.Add(header, 0, 0);
         root.Controls.Add(tabs, 0, 1);
@@ -287,6 +333,7 @@ internal sealed class StatusForm : Form
             Set("patchLastScan", "—");
             Set("patchError", "—");
             RenderActiveJob(null);
+            RenderCatalog(null, false);
             return;
         }
 
@@ -311,6 +358,7 @@ internal sealed class StatusForm : Form
         Set("patchLastScan", FormatTimestamp(status.Patch.LastScanAtUtc));
         Set("patchError", string.IsNullOrWhiteSpace(status.Patch.LastError) ? "—" : status.Patch.LastError!);
         RenderActiveJob(status.Jobs.Current);
+        RenderCatalog(status.Catalog, status.Jobs.Current != null);
     }
 
     /// <summary>
@@ -358,6 +406,110 @@ internal sealed class StatusForm : Form
             : elapsed.TotalMinutes >= 1
                 ? $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds}s"
                 : $"{elapsed.Seconds}s";
+    }
+
+    /// <summary>
+    /// Self-service Software Catalog — mirrors the macOS tray's Catalog
+    /// tab. Full clear + rebuild on every render tick (every 5s): the
+    /// catalog rarely changes and the list is normally short, so the
+    /// redraw cost is negligible and it sidesteps any row-bookkeeping
+    /// bugs entirely (the class of bug that hit the macOS NSGridView
+    /// version — see fix/tray-catalog-merged-row-crash).
+    /// </summary>
+    private void RenderCatalog(TrayCatalogStatus? catalog, bool jobRunning)
+    {
+        var items = catalog?.Items ?? new List<TrayCatalogItem>();
+        var now = DateTime.UtcNow;
+
+        // Drop grace entries older than the window — a stale entry here
+        // would keep an Install button permanently disabled for a job
+        // that already finished (or never started) minutes ago.
+        foreach (var staleKey in _pendingInstallClicks
+                     .Where(kv => now - kv.Value > InstallRequestGrace)
+                     .Select(kv => kv.Key)
+                     .ToList())
+        {
+            _pendingInstallClicks.Remove(staleKey);
+        }
+
+        _catalogFlow.SuspendLayout();
+        _catalogFlow.Controls.Clear();
+
+        if (items.Count == 0)
+        {
+            _catalogFlow.Controls.Add(_catalogEmptyLabel);
+            _catalogFlow.ResumeLayout();
+            return;
+        }
+
+        foreach (var item in items)
+        {
+            _catalogFlow.Controls.Add(BuildCatalogRow(item, jobRunning));
+        }
+
+        _catalogFlow.ResumeLayout();
+    }
+
+    private Control BuildCatalogRow(TrayCatalogItem item, bool jobRunning)
+    {
+        var row = new TableLayoutPanel
+        {
+            ColumnCount = 2,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Width = 540,
+            Margin = new Padding(0, 4, 0, 10)
+        };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+        var nameField = new Label
+        {
+            Text = item.Name,
+            AutoSize = true,
+            Font = new Font(Font, FontStyle.Bold)
+        };
+
+        var isPending = _pendingInstallClicks.ContainsKey(item.PackageId);
+        var installButton = new Button
+        {
+            Text = isPending || jobRunning ? "Installing…" : "Install",
+            AutoSize = true,
+            Enabled = !isPending && !jobRunning,
+            UseVisualStyleBackColor = true
+        };
+        installButton.Click += (_, _) =>
+        {
+            _pendingInstallClicks[item.PackageId] = DateTime.UtcNow;
+            installButton.Text = "Installing…";
+            installButton.Enabled = false;
+            CatalogInstallSink.Write(item.PackageId);
+        };
+
+        row.Controls.Add(nameField, 0, 0);
+        row.Controls.Add(installButton, 1, 0);
+
+        var detailParts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(item.Vendor)) detailParts.Add(item.Vendor!);
+        if (!string.IsNullOrWhiteSpace(item.Version)) detailParts.Add($"v{item.Version}");
+        if (!string.IsNullOrWhiteSpace(item.Description)) detailParts.Add(item.Description!);
+        if (item.RequiresReboot == true) detailParts.Add("Requires a restart");
+
+        if (detailParts.Count > 0)
+        {
+            var detailField = new Label
+            {
+                Text = string.Join("  ·  ", detailParts),
+                AutoSize = true,
+                MaximumSize = new Size(520, 0),
+                Font = new Font(Font.FontFamily, 8.5f),
+                ForeColor = Color.Gray
+            };
+            row.Controls.Add(detailField, 0, 1);
+            row.SetColumnSpan(detailField, 2);
+        }
+
+        return row;
     }
 
     private void AddSection(TableLayoutPanel grid, string title)
