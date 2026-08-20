@@ -692,17 +692,30 @@ private const int MaxPendingPushEvents = 50;
                             // SslStream properties like SslProtocol are not available until authentication
                             // completes, so only log basic certificate information here.
 
-                            if (!string.IsNullOrWhiteSpace(opt.IssuingCaThumbprint))
-                            {
-                                var expectedCa = LoadCaCertFromLocalMachineByThumbprint(opt.IssuingCaThumbprint);
+                            // Conjunto de huellas de CA aceptables. Antes era UNA
+                            // sola, y eso convertía cualquier rotación de la CA
+                            // emisora en una desconexión de todo el parque: el pin
+                            // exigía una huella que la cadena nueva ya no lleva, y
+                            // sin conexión no hay forma de mandar el arreglo.
+                            var accepted = AcceptableCaThumbprints(opt);
 
+                            if (accepted.Count > 0)
+                            {
                                 using var customChain = new X509Chain();
                                 customChain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
                                 customChain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
                                 customChain.ChainPolicy.VerificationTime = DateTime.UtcNow;
                                 customChain.ChainPolicy.UrlRetrievalTimeout = TimeSpan.FromSeconds(2);
 
-                                customChain.ChainPolicy.ExtraStore.Add(expectedCa);
+                                // Se añaden las que estén instaladas. Una huella
+                                // aceptable cuyo certificado aún no esté en el
+                                // almacén no es un error: es el estado normal
+                                // mientras la CA nueva se está desplegando.
+                                foreach (var tp in accepted)
+                                {
+                                    var ca = TryLoadCaCertByThumbprint(tp);
+                                    if (ca != null) customChain.ChainPolicy.ExtraStore.Add(ca);
+                                }
 
                                 var serverCert = cert as X509Certificate2 ?? new X509Certificate2(cert!);
 
@@ -713,14 +726,14 @@ private const int MaxPendingPushEvents = 50;
                                 var ok = customChain.Build(serverCert);
                                 if (!ok) return false;
 
-                                var expected = new string(opt.IssuingCaThumbprint.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
                                 var found = customChain.ChainElements
                                     .Cast<X509ChainElement>()
-                                    .Any(e => string.Equals(
-                                        new string((e.Certificate.Thumbprint ?? "").Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant(),
-                                        expected,
-                                        StringComparison.OrdinalIgnoreCase));
+                                    .Any(e => accepted.Contains(NormalizeThumbprint(e.Certificate.Thumbprint)));
 
+                                if (!found)
+                                {
+                                    Log($"Server chain contains none of the {accepted.Count} accepted CA thumbprint(s)");
+                                }
                                 return found;
                             }
 
@@ -1587,6 +1600,35 @@ private const int MaxPendingPushEvents = 50;
         throw new InvalidOperationException("Client cert found but has no private key association (HasPrivateKey=false)");
     }
 
+    /// <summary>Huella sin separadores y en mayúsculas, para comparar sin sorpresas.</summary>
+    private static string NormalizeThumbprint(string? thumbprint) =>
+        new string((thumbprint ?? "").Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
+
+    /// <summary>
+    /// Huellas de CA que se aceptan en la cadena del servidor: la singular
+    /// (compatibilidad) más la lista. Devuelve un conjunto normalizado.
+    /// </summary>
+    private static System.Collections.Generic.HashSet<string> AcceptableCaThumbprints(
+        GrpcBridgeConnectOptions opt)
+    {
+        var set = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(opt.IssuingCaThumbprint))
+            set.Add(NormalizeThumbprint(opt.IssuingCaThumbprint));
+        if (opt.IssuingCaThumbprints != null)
+        {
+            foreach (var tp in opt.IssuingCaThumbprints)
+                if (!string.IsNullOrWhiteSpace(tp)) set.Add(NormalizeThumbprint(tp));
+        }
+        return set;
+    }
+
+    /// <summary>Como LoadCaCertFromLocalMachineByThumbprint, pero null en vez de lanzar.</summary>
+    private static X509Certificate2? TryLoadCaCertByThumbprint(string thumbprint)
+    {
+        try { return LoadCaCertFromLocalMachineByThumbprint(thumbprint); }
+        catch { return null; }
+    }
+
     private static X509Certificate2 LoadCaCertFromLocalMachineByThumbprint(string thumbprint)
     {
         if (string.IsNullOrWhiteSpace(thumbprint))
@@ -1929,6 +1971,14 @@ public sealed class GrpcBridgeConnectOptions
     public required string Target { get; init; }
     public required string ClientCertThumbprint { get; init; }
     public string? IssuingCaThumbprint { get; init; }
+
+    /// <summary>
+    /// Huellas de CA aceptables. La cadena del servidor debe contener AL MENOS
+    /// una. Es una lista y no un valor único porque, si no, rotar la CA emisora
+    /// desconecta a todo el parque a la vez y sin recurso: el pin exige una
+    /// huella que la cadena nueva ya no lleva.
+    /// </summary>
+    public System.Collections.Generic.IReadOnlyList<string>? IssuingCaThumbprints { get; init; }
     public string? TenantId { get; init; }
     public string? DeviceId { get; init; }
     public string? AgentVersion { get; init; }

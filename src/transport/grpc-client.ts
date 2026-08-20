@@ -514,6 +514,11 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
         const clientCertThumbprint = String((ctx.enrollment as any)?.mtls?.clientCertThumbprint || "");
         const issuingCaThumbprint = String((ctx.enrollment as any)?.mtls?.issuingCaThumbprint || "");
+        // Todas las CA aceptables. Si el enrolamiento es anterior a este
+        // campo se manda la singular sola, que es el comportamiento previo.
+        const issuingCaThumbprints: string[] = Array.isArray((ctx.enrollment as any)?.mtls?.issuingCaThumbprints)
+          ? (ctx.enrollment as any).mtls.issuingCaThumbprints.map(String).filter(Boolean)
+          : (issuingCaThumbprint ? [issuingCaThumbprint] : []);
 
         if (!tenantId || !deviceId) throw new Error("Missing enrollment tenantId/deviceId");
         if (!clientCertThumbprint) throw new Error("Missing mtls.clientCertThumbprint in enrollment");
@@ -540,6 +545,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
             target,
             clientCertThumbprint,
             issuingCaThumbprint,
+            issuingCaThumbprints,
             tenantId,
             deviceId,
             agentVersion,

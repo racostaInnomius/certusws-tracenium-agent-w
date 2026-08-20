@@ -47,14 +47,23 @@ public static class IpcGrpcHandlers
             }
             clientTp ??= GetString(p, "clientCertThumbprint") ?? GetString(p, "clientTp");
 
-            // Optional issuing CA thumbprint (sent by Node bridge)
+            // Huella(s) de CA emisora aceptables (las manda el puente de Node).
+            //
+            // Se leen las DOS formas: la singular, que es lo que mandan los
+            // agentes ya desplegados, y la lista, que es lo que permite rotar
+            // la CA sin desconectar al parque. Un agente nuevo contra un
+            // control plane viejo recibe sólo la singular y sigue funcionando.
             string? issuingCaTp = null;
+            var issuingCaTps = new List<string>();
             if (p.TryGetValue("mtls", out var mtlsObj2) && mtlsObj2 != null)
             {
                 var mtlsDict2 = ToDict(mtlsObj2);
                 issuingCaTp = GetString(mtlsDict2, "issuingCaThumbprint");
+                issuingCaTps.AddRange(GetStringList(mtlsDict2, "issuingCaThumbprints"));
             }
             issuingCaTp ??= GetString(p, "issuingCaThumbprint");
+            if (issuingCaTps.Count == 0)
+                issuingCaTps.AddRange(GetStringList(p, "issuingCaThumbprints"));
 
             if (string.IsNullOrWhiteSpace(clientTp))
                 throw new Exception("clientCertThumbprint required");
@@ -86,6 +95,7 @@ public static class IpcGrpcHandlers
                         Target = target,
                         ClientCertThumbprint = clientTp,
                         IssuingCaThumbprint = issuingCaTp,
+                        IssuingCaThumbprints = issuingCaTps,
                         TenantId = tenantId,
                         DeviceId = deviceId,
                         AgentVersion = agentVersion,

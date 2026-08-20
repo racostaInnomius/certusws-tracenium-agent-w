@@ -121,3 +121,54 @@ describe("grpc-client — heartbeat failure emit safety", () => {
     expect(String(onError.mock.calls[0][0]?.message || "")).toContain("heartbeat_failed");
   });
 });
+
+// ── pins de CA aceptables (Fase 0.5 de la rotación de CA) ─────────────────
+//
+// El privsvc de Windows valida al servidor exigiendo que la cadena contenga
+// una huella de CA conocida. Con UNA sola, rotar la CA emisora desconecta al
+// parque entero y sin recurso: el pin exige una huella que la cadena nueva ya
+// no lleva, y sin conexión no hay forma de mandar el arreglo.
+describe("grpc.connect — huellas de CA aceptables", () => {
+  async function capturaConnect(mtls: Record<string, unknown>) {
+    const ctx: any = makeCtx();
+    ctx.enrollment.mtls = mtls;
+    const client = createGrpcClient(ctx);
+    client.Connect();
+    // El `grpc.connect` sale por IPC de forma asíncrona; se cede el turno
+    // para que la llamada llegue al espía antes de mirarla.
+    await new Promise((r) => setTimeout(r, 0));
+    const call = ctx.priv.call.mock.calls.find(
+      ([r]: any[]) => r?.method === "grpc.connect"
+    );
+    return call?.[0]?.params;
+  }
+
+  it("❗ manda la LISTA cuando el enrolamiento la tiene", async () => {
+    const params = await capturaConnect({
+      clientCertThumbprint: "cert-thumb",
+      issuingCaThumbprint: "ca-vieja",
+      issuingCaThumbprints: ["ca-vieja", "ca-nueva"]
+    });
+    expect(params?.issuingCaThumbprints).toEqual(["ca-vieja", "ca-nueva"]);
+  });
+
+  it("❗ un enrolamiento ANTERIOR a este campo manda la singular como lista de uno", async () => {
+    // Es el estado de los 24 equipos que ya están en campo: sin este
+    // respaldo se quedarían sin pin ninguno y aceptarían cualquier CA.
+    const params = await capturaConnect({
+      clientCertThumbprint: "cert-thumb",
+      issuingCaThumbprint: "ca-vieja"
+    });
+    expect(params?.issuingCaThumbprints).toEqual(["ca-vieja"]);
+    expect(params?.issuingCaThumbprint).toBe("ca-vieja");
+  });
+
+  it("sigue mandando el campo singular, por compatibilidad con privsvc anteriores", async () => {
+    const params = await capturaConnect({
+      clientCertThumbprint: "cert-thumb",
+      issuingCaThumbprint: "ca-vieja",
+      issuingCaThumbprints: ["ca-vieja", "ca-nueva"]
+    });
+    expect(params?.issuingCaThumbprint).toBe("ca-vieja");
+  });
+});

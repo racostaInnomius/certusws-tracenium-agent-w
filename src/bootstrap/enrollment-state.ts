@@ -11,6 +11,12 @@ export interface EnrollmentState {
     caBundlePath: string;
     clientCertThumbprint?: string;
     issuingCaThumbprint?: string;
+    /**
+     * Todas las CA intermedias del bundle instalado. El agente de Windows
+     * exige que la cadena del servidor contenga AL MENOS una: con un valor
+     * único, rotar la CA emisora desconecta al parque entero y sin recurso.
+     */
+    issuingCaThumbprints?: string[];
     clientCertNotAfter?: string;
   };
 

@@ -188,7 +188,7 @@ async function generateCsrViaPrivSvc(): Promise<{ csrPem: string; deviceId: stri
 }
 
 // Helper to install certificates via PrivSvc IPC
-async function installCertViaPrivSvc(clientCertPem: string, caBundlePem: string): Promise<{ clientCertThumbprint: string; issuingCaThumbprint?: string }> {
+async function installCertViaPrivSvc(clientCertPem: string, caBundlePem: string): Promise<{ clientCertThumbprint: string; issuingCaThumbprint?: string; issuingCaThumbprints?: string[] }> {
   const net = await import("net");
 
   const deviceId = getDeviceId();
@@ -248,7 +248,12 @@ async function installCertViaPrivSvc(clientCertPem: string, caBundlePem: string)
           client.destroy();
           resolve({
             clientCertThumbprint: String(result.clientCertThumbprint || ""),
-            issuingCaThumbprint: result.issuingCaThumbprint ? String(result.issuingCaThumbprint) : undefined
+            issuingCaThumbprint: result.issuingCaThumbprint ? String(result.issuingCaThumbprint) : undefined,
+            // Un privsvc anterior no la manda; se deja undefined y el
+            // consumidor cae al valor singular.
+            issuingCaThumbprints: Array.isArray(result.issuingCaThumbprints)
+              ? result.issuingCaThumbprints.map(String).filter(Boolean)
+              : undefined
           });
           return;
 
@@ -496,7 +501,8 @@ export async function ensureEnrolled(): Promise<EnrollmentState> {
           clientCertPath: paths.clientCert,
           caBundlePath: paths.caBundle,
           clientCertThumbprint: certInstall.clientCertThumbprint,
-          issuingCaThumbprint: certInstall.issuingCaThumbprint
+          issuingCaThumbprint: certInstall.issuingCaThumbprint,
+          issuingCaThumbprints: certInstall.issuingCaThumbprints
         } as any,
         bootstrap: {
           channel: "stable",
