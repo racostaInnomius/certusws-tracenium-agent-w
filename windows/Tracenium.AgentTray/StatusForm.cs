@@ -173,15 +173,6 @@ internal sealed class StatusForm : Form
         AddRow(content, "Enabled plugins", "plugins");
         AddRow(content, "Enabled modules", "modules");
 
-        AddSection(content, "Operations");
-        AddRow(content, "Last job", "lastJob");
-        AddRow(content, "Update status", "updateStatus");
-        AddRow(content, "Last update check", "lastUpdateCheck");
-        AddRow(content, "Last update complete", "lastUpdateComplete");
-        AddRow(content, "Patch status", "patchStatus");
-        AddRow(content, "Patch last scan", "patchLastScan");
-        AddRow(content, "Patch error", "patchError");
-
         // Tabs: Device Info (soporte, default) | Agent Info (grid clásico).
         var tabs = new TabControl
         {
@@ -242,12 +233,15 @@ internal sealed class StatusForm : Form
         deviceLayout.Controls.Add(deviceGrid, 0, 1);
         devicePage.Controls.Add(deviceLayout);
 
-        // Active Job page: current job (if any) + an indeterminate progress
-        // bar. The agent never reports a completion percentage (RunJob over
-        // gRPC carries only jobId/jobType/payload), so this can only confirm
-        // "something is running" and show elapsed time — same contract as
-        // the macOS tray's Active Job tab.
-        _activeJobPage = new TabPage("Active Job") { BackColor = Color.White, UseVisualStyleBackColor = true };
+        // Activity page: current job (if any) + an indeterminate progress
+        // bar, plus the Operations rows (last job, update/patch status)
+        // that used to sit on the Agent Info tab — moved here so
+        // everything about "what the agent is doing" lives in one place.
+        // The agent never reports a completion percentage (RunJob over
+        // gRPC carries only jobId/jobType/payload), so the job section
+        // can only confirm "something is running" and show elapsed time
+        // — same contract as the macOS tray's Active Job tab.
+        _activeJobPage = new TabPage("Activity") { BackColor = Color.White, UseVisualStyleBackColor = true };
 
         var jobGrid = new TableLayoutPanel
         {
@@ -293,6 +287,19 @@ internal sealed class StatusForm : Form
         jobGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         jobGrid.Controls.Add(_jobNote, 0, noteRow);
         jobGrid.SetColumnSpan(_jobNote, 2);
+
+        // Moved from the Agent Info tab: last job dispatched, plus
+        // agent-update/patch status. Same _valueLabels keys as before —
+        // Render()'s Set(...) calls don't need to change, only where the
+        // row lives.
+        AddSection(jobGrid, "Operations");
+        AddRow(jobGrid, "Last job", "lastJob");
+        AddRow(jobGrid, "Update status", "updateStatus");
+        AddRow(jobGrid, "Last update check", "lastUpdateCheck");
+        AddRow(jobGrid, "Last update complete", "lastUpdateComplete");
+        AddRow(jobGrid, "Patch status", "patchStatus");
+        AddRow(jobGrid, "Patch last scan", "patchLastScan");
+        AddRow(jobGrid, "Patch error", "patchError");
 
         _activeJobPage.Controls.Add(jobGrid);
 
@@ -438,7 +445,7 @@ internal sealed class StatusForm : Form
             Set("jobActiveElapsed", "—");
             _jobProgress.Visible = false;
             _jobNote.Visible = false;
-            _activeJobPage.Text = "Active Job";
+            _activeJobPage.Text = "Activity";
             return;
         }
 
@@ -449,7 +456,7 @@ internal sealed class StatusForm : Form
         Set("jobActiveElapsed", FormatElapsed(job.StartedAtUtc));
         _jobProgress.Visible = true;
         _jobNote.Visible = true;
-        _activeJobPage.Text = "Active Job ●";
+        _activeJobPage.Text = "Activity ●";
     }
 
     private static string FormatElapsed(DateTime startedAtUtc)
