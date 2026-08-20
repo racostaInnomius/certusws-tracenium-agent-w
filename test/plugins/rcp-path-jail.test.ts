@@ -291,3 +291,29 @@ describe("sanitizeAbsolutePaths", () => {
     expect(sanitizeAbsolutePaths([1, null, {}], "linux")).toEqual([]);
   });
 });
+
+describe("PathJail — raíces duplicadas", () => {
+  // Los duplicados no están en la lista literal: aparecen al resolver symlinks.
+  // En macOS /tmp → /private/tmp, y os.tmpdir() suele coincidir con una raíz ya
+  // presente. El operador veía chips repetidos que llevaban al mismo sitio.
+  it("colapsa las raíces que resuelven al mismo sitio real", () => {
+    const jail = new PathJail(
+      { roots: ["/Users", "/tmp", "/private/tmp", "/opt"] },
+      {
+        platform: "darwin",
+        realpathSync: (p: string) => (p === "/tmp" ? "/private/tmp" : p),
+        existsSync: () => true
+      }
+    );
+    const roots = (jail as any).rootsForDisplay as string[];
+    expect(roots).toEqual(["/Users", "/private/tmp", "/opt"]);
+  });
+
+  it("no colapsa raíces distintas que comparten prefijo", () => {
+    const jail = new PathJail(
+      { roots: ["/opt", "/opt2"] },
+      { platform: "linux", realpathSync: (p: string) => p, existsSync: () => true }
+    );
+    expect((jail as any).rootsForDisplay).toEqual(["/opt", "/opt2"]);
+  });
+});

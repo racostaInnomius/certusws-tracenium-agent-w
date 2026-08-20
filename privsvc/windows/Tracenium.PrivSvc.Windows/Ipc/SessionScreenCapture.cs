@@ -209,8 +209,20 @@ internal static class SessionScreenCapture
             // y el resto apuntando a sitios que no son del usuario.
             NativeMethods.CreateEnvironmentBlock(out envBlock, primaryToken, false);
 
-            var (childStdinRead, parentStdinWrite) = CreatePipePair(inheritRead: true);
-            var (parentStdoutRead, childStdoutWrite) = CreatePipePair(inheritRead: false);
+            // Acceso por NOMBRE, no por posición. Esto era una desestructuración
+            // posicional y el par de stdout estaba cruzado: `parentStdoutRead`
+            // acababa siendo el extremo de ESCRITURA, y abrir un FileStream de
+            // lectura sobre él da "Access to the path is denied" envuelto en un
+            // AggregateException — un mensaje que no menciona pipes por ningún
+            // lado. La tupla invierte su significado según el booleano, así que
+            // el orden correcto no es evidente al leer la llamada.
+            var stdinPipe = CreatePipePair(inheritRead: true);   // el hijo LEE
+            var stdoutPipe = CreatePipePair(inheritRead: false); // el hijo ESCRIBE
+
+            var childStdinRead = stdinPipe.childEnd;
+            var parentStdinWrite = stdinPipe.ourEnd;
+            var childStdoutWrite = stdoutPipe.childEnd;
+            var parentStdoutRead = stdoutPipe.ourEnd;
 
             var si = new NativeMethods.STARTUPINFO();
             si.cb = Marshal.SizeOf<NativeMethods.STARTUPINFO>();
@@ -280,7 +292,7 @@ internal static class SessionScreenCapture
     /// heredable: si el hijo hereda nuestro extremo, el pipe nunca cierra del
     /// todo y las lecturas se quedan esperando para siempre.
     /// </summary>
-    private static (IntPtr inheritable, IntPtr ours) CreatePipePair(bool inheritRead)
+    private static (IntPtr childEnd, IntPtr ourEnd) CreatePipePair(bool inheritRead)
     {
         var sa = new NativeMethods.SECURITY_ATTRIBUTES
         {
@@ -293,9 +305,14 @@ internal static class SessionScreenCapture
             throw new InvalidOperationException(
                 $"CreatePipe failed (Win32 {Marshal.GetLastWin32Error()}).");
         }
-        var ours = inheritRead ? write : read;
-        NativeMethods.SetHandleInformation(ours, NativeMethods.HANDLE_FLAG_INHERIT, 0);
-        return inheritRead ? (read, write) : (write, read);
+        // inheritRead=true  → el hijo lee: su extremo es `read`, el nuestro `write`
+        // inheritRead=false → el hijo escribe: su extremo es `write`, el nuestro `read`
+        var childEnd = inheritRead ? read : write;
+        var ourEnd = inheritRead ? write : read;
+        // Nuestro extremo NO debe heredarse. Si el hijo lo hereda, el pipe nunca
+        // llega a cerrarse del todo y la lectura se queda esperando para siempre.
+        NativeMethods.SetHandleInformation(ourEnd, NativeMethods.HANDLE_FLAG_INHERIT, 0);
+        return (childEnd, ourEnd);
     }
 
     private static string? ResolveHelperPath()

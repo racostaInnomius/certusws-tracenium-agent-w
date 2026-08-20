@@ -202,8 +202,25 @@ export class PathJail {
     // Roots are resolved through realpath too: on macOS /tmp is a symlink to
     // /private/tmp, so a lexical root of "/tmp" would never match the real
     // path of anything inside it.
-    this.rootsForDisplay = rawRoots.map((r) => this.tryReal(r));
-    this.roots = this.rootsForDisplay.map((r) => this.forCompare(r));
+    // Deduplicar DESPUÉS de realpath, no antes: los duplicados no existen en la
+    // lista literal, aparecen al resolverla. En macOS /tmp y /private/tmp son la
+    // misma carpeta, y os.tmpdir() suele coincidir con una de las que ya están;
+    // en Windows TEMP resuelve a C:\WINDOWS\TEMP, que también está codificado.
+    // El operador veía chips repetidos ("tmp tmp tmp", "TEMP TEMP") que
+    // navegaban al mismo sitio.
+    const seen = new Set<string>();
+    const display: string[] = [];
+    const compare: string[] = [];
+    for (const raw of rawRoots) {
+      const real = this.tryReal(raw);
+      const key = this.forCompare(real);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      display.push(real);
+      compare.push(key);
+    }
+    this.rootsForDisplay = display;
+    this.roots = compare;
 
     this.denyPaths = [
       ...defaultDenyPaths(platform, env),
