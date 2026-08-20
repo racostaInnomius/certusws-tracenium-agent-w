@@ -23,7 +23,40 @@ describe("parseGeoOutput", () => {
       lon: -99.133209,
       accuracyM: 38,
       collectedAtUtc: "2026-08-09T18:00:00.000Z",
+      // Sin campo `source` la plataforma no dijo cómo se posicionó, y null es
+      // esa respuesta. Distinto de "unknown", que es la plataforma diciendo
+      // explícitamente que no lo sabe.
+      positionSource: null,
     });
+  });
+
+  it("conserva el método con el que el SO se posicionó", () => {
+    // ⚠️ El agente ya leía este dato para rechazar 3 y 5, y lo tiraba. Cuando
+    // dos equipos reportaron posiciones a 120 y 300 km de donde estaban, no se
+    // pudo saber si habían sido fixes de satélite o adivinanzas por Wi-Fi.
+    const fix = parseGeoOutput('{"lat":19.43,"lon":-99.13,"accuracyM":38,"source":2}', at);
+    expect(fix?.positionSource).toBe("wifi");
+    expect(parseGeoOutput('{"lat":19.43,"lon":-99.13,"source":1}', at)?.positionSource).toBe("satellite");
+    expect(parseGeoOutput('{"lat":19.43,"lon":-99.13,"source":0}', at)?.positionSource).toBe("cellular");
+  });
+
+  it("un source desconocido no se disfraza de método real", () => {
+    // Windows podría añadir valores; inventarles significado sería peor que
+    // decir que no lo conocemos.
+    expect(parseGeoOutput('{"lat":19.43,"lon":-99.13,"source":99}', at)?.positionSource).toBe("unknown");
+  });
+
+  it("acepta el vocabulario propio directo, para plataformas futuras", () => {
+    expect(parseGeoOutput('{"lat":19.43,"lon":-99.13,"source":"satellite"}', at)?.positionSource).toBe("satellite");
+    // Una cadena que no es de nuestro vocabulario no se fuerza a nada.
+    expect(parseGeoOutput('{"lat":19.43,"lon":-99.13,"source":"gps-ish"}', at)?.positionSource).toBeNull();
+  });
+
+  it("sigue rechazando las posiciones adivinadas antes de mirar el método", () => {
+    // El filtro que ya existía no cambia: 3=IPAddress y 5=Default no son
+    // posiciones que el equipo observó de sí mismo.
+    expect(parseGeoOutput('{"lat":19.43,"lon":-99.13,"source":3}', at)).toBeNull();
+    expect(parseGeoOutput('{"lat":19.43,"lon":-99.13,"source":5}', at)).toBeNull();
   });
 
   it("treats the helper's own failure markers as 'no position'", () => {

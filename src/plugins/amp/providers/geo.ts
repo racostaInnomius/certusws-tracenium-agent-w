@@ -100,13 +100,83 @@ export type GeoResult = {
   detail?: string;
 };
 
+/**
+ * How the OS arrived at a position.
+ *
+ * Our own vocabulary, not Windows' enum: the numbers are a Windows API detail
+ * and every other platform would have to be forced into them. A reader asking
+ * "was this a satellite fix or a Wi-Fi guess?" gets an answer that means the
+ * same thing on every endpoint.
+ *
+ * `unknown` is a real answer — macOS never tells us — and is NOT the same as
+ * the field being absent, which means the agent predates this and cannot say.
+ */
+export type GeoPositionSource =
+  | "satellite"
+  | "wifi"
+  | "cellular"
+  | "ip"
+  | "default"
+  | "obfuscated"
+  | "unknown";
+
 /** Matches the amp.geo shape the backend already reads (lat/lon/accuracyM). */
 export type AmpGeo = {
   lat: number;
   lon: number;
   accuracyM: number | null;
   collectedAtUtc: string;
+  /**
+   * ⚠️ Este campo existe porque su ausencia costó un diagnóstico.
+   *
+   * Dos equipos reportaron posiciones a 120 y 300 km de donde estaban, y no se
+   * pudo decir si habían sido fixes de satélite o adivinanzas por Wi-Fi: el
+   * agente leía PositionSource, decidía con él y lo tiraba. La decisión de
+   * confianza se tomaba aquí y la evidencia no llegaba a ningún lado, así que
+   * nadie río abajo podía revisarla ni construir un filtro sobre ella.
+   *
+   * Null cuando la plataforma no lo dice.
+   */
+  positionSource: GeoPositionSource | null;
 };
+
+/**
+ * Windows PositionSource → our vocabulary.
+ *
+ * 3 (IPAddress) and 5 (Default) are rejected outright before this runs, so
+ * they should never be stored — they are mapped anyway rather than left to
+ * fall through as `unknown`, because a value silently reshaped into the wrong
+ * bucket is worse than one that is merely surprising.
+ */
+const WINDOWS_POSITION_SOURCE: Record<number, GeoPositionSource> = {
+  0: "cellular",
+  1: "satellite",
+  2: "wifi",
+  3: "ip",
+  4: "unknown",
+  5: "default",
+  6: "obfuscated",
+};
+
+/**
+ * Read the positioning method out of whatever the platform script emitted.
+ *
+ * Windows sends the numeric enum; macOS sends nothing (CoreLocation does not
+ * expose it). A string is accepted too so a future platform can report
+ * directly in our vocabulary without another mapping table here.
+ */
+export function parsePositionSource(raw: unknown): GeoPositionSource | null {
+  if (typeof raw === "number" && Number.isInteger(raw)) {
+    return WINDOWS_POSITION_SOURCE[raw] ?? "unknown";
+  }
+  if (typeof raw === "string") {
+    const v = raw.trim().toLowerCase();
+    return (Object.values(WINDOWS_POSITION_SOURCE) as string[]).includes(v)
+      ? (v as GeoPositionSource)
+      : null;
+  }
+  return null;
+}
 
 /**
  * A generous budget. The first fix after a cold start can take seconds while
@@ -251,6 +321,7 @@ export function parseGeoOutput(stdout: unknown, now: () => Date = () => new Date
     // A negative or absent accuracy means "unknown", not "perfect".
     accuracyM: Number.isFinite(accuracy) && accuracy >= 0 ? accuracy : null,
     collectedAtUtc,
+    positionSource: parsePositionSource(parsed.source),
   };
 }
 
