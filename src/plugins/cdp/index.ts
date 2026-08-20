@@ -110,6 +110,32 @@ export async function collectCDP(ctx: AgentContext): Promise<CdpNamespace> {
     });
   }
 
+  // Certificates that live as files on disk. Opt-in via policy: an empty
+  // path list means the feature is off, and there is no default set —
+  // see the collector for why. Fail-soft like the Java stores: a bad
+  // path must never cost us the store scan that just succeeded.
+  const certFileRoots = ctx.policyRuntime.getCdpCertFilePaths();
+  if (certFileRoots.length > 0) {
+    try {
+      const { collectCertFiles } = await import("./providers/cert-files");
+      const files = await collectCertFiles(certFileRoots);
+      result.items.push(...files.items);
+      result.stores.push(...files.stores);
+      result.parseFailures += files.parseFailures;
+      if (files.capped || files.unreadable > 0) {
+        ctx.logger?.warn?.("CDP: cert file scan incomplete", {
+          filesScanned: files.filesScanned,
+          unreadable: files.unreadable,
+          capped: files.capped
+        });
+      }
+    } catch (err: any) {
+      ctx.logger?.warn?.("CDP: cert file scan failed (non-fatal)", {
+        error: err?.message || String(err)
+      });
+    }
+  }
+
   // TLS listeners — opt-in, loopback-only, and the only collector that
   // opens sockets. Same fail-soft contract as the Java stores: a probe
   // that misbehaves must never cost us the store scan that just

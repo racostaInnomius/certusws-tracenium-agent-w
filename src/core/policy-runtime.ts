@@ -61,6 +61,7 @@ export type RuntimePolicy = {
     /** Optional narrowing: when non-empty, ONLY these ports are probed
      *  (still intersected with what is actually listening). */
     tlsListenerPorts?: number[];
+    certFilePaths?: string[];
   };
   /** Remote Control tuning that isn't a simple on/off capability gate.
    *  The `features.remote*` flags decide WHETHER a capability runs; this
@@ -640,6 +641,17 @@ export class PolicyRuntime extends EventEmitter {
     return this.policy.cdp?.scanTlsListeners === true;
   }
 
+  /**
+   * Rutas donde buscar certificados sueltos en disco.
+   *
+   * Sin default a propósito: lista vacía = función apagada. Un default
+   * seria inutil (demasiado estrecho) o un escaneo recursivo de algo
+   * grande en cada endpoint de la flota.
+   */
+  getCdpCertFilePaths(): string[] {
+    return this.policy.cdp?.certFilePaths ?? [];
+  }
+
   getCdpTlsListenerPorts(): number[] {
     return this.policy.cdp?.tlsListenerPorts ?? [];
   }
@@ -795,7 +807,8 @@ export class PolicyRuntime extends EventEmitter {
         this.logger
       ),
       scanTlsListeners: policy.cdp?.scanTlsListeners === true,
-      tlsListenerPorts: sanitizeTlsListenerPorts(policy.cdp?.tlsListenerPorts, this.logger)
+      tlsListenerPorts: sanitizeTlsListenerPorts(policy.cdp?.tlsListenerPorts, this.logger),
+      certFilePaths: sanitizeJavaKeystorePaths(policy.cdp?.certFilePaths, this.logger)
     };
     // rcp.file confinement. Path lists get the same hard sanitation as
     // cdp.javaKeystorePaths — absolute only, bounded length, bounded count,

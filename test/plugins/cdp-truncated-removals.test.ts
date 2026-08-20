@@ -64,7 +64,11 @@ const items = (n: number, offset = 0) =>
 const ctx = {
   config: { agentVersion: "test" },
   logger: { warn: vi.fn(), info: vi.fn() },
-  policyRuntime: { getCdpScanTlsListeners: () => false, getCdpJavaKeystorePaths: () => [] }
+  policyRuntime: {
+    getCdpScanTlsListeners: () => false,
+    getCdpJavaKeystorePaths: () => [],
+    getCdpCertFilePaths: () => []
+  }
 } as any;
 
 const deltaWithRemovals = () => ({
