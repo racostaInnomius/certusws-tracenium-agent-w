@@ -317,3 +317,44 @@ describe("PathJail — raíces duplicadas", () => {
     expect((jail as any).rootsForDisplay).toEqual(["/opt", "/opt2"]);
   });
 });
+
+describe("PathJail — excepciones a la denylist (logs)", () => {
+  const winDeps = {
+    platform: "win32" as NodeJS.Platform,
+    env: { ProgramData: "C:\\ProgramData", SystemDrive: "C:", SystemRoot: "C:\\Windows" },
+    realpathSync: (p: string) => p,
+    existsSync: () => true,
+    tmpdir: "C:\\Windows\\Temp"
+  };
+
+  it("los logs del agente son alcanzables aunque su carpeta padre esté denegada", () => {
+    const jail = new PathJail({}, winDeps);
+    const d = jail.check("C:\\ProgramData\\Tracenium\\logs\\privsvc-20260820.log");
+    expect(d.allowed).toBe(true);
+  });
+
+  it("el resto del directorio de datos sigue sellado", () => {
+    const jail = new PathJail({}, winDeps);
+    for (const p of [
+      "C:\\ProgramData\\Tracenium\\mtls-client.crt.pem",
+      "C:\\ProgramData\\Tracenium\\outbox.db",
+      "C:\\ProgramData\\Tracenium\\Agent\\debug.flag"
+    ]) {
+      const d: any = jail.check(p);
+      expect(d.allowed, `debería seguir denegado: ${p}`).toBe(false);
+      expect(d.code).toBe("PATH_DENIED");
+    }
+  });
+
+  it("una excepción no anula los segmentos prohibidos", () => {
+    const jail = new PathJail({}, winDeps);
+    const d: any = jail.check("C:\\ProgramData\\Tracenium\\logs\\.ssh\\id_rsa");
+    expect(d.allowed).toBe(false);
+    expect(d.code).toBe("PATH_DENIED");
+  });
+
+  it("Program Files es alcanzable en Windows", () => {
+    const jail = new PathJail({}, winDeps);
+    expect(jail.check("C:\\Program Files\\Tracenium\\AgentCore").allowed).toBe(true);
+  });
+});

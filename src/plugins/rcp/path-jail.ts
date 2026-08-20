@@ -56,6 +56,9 @@ export type PathJailConfig = {
   denyPaths?: string[];
   /** Extra file extensions to seal, merged with the built-in list. */
   denyExtensions?: string[];
+  /** Subtrees rescued from denyPaths, merged with the built-in list.
+   *  Only lifts the deny — the path still has to sit inside a root. */
+  denyExceptions?: string[];
 };
 
 export type JailDeps = {
@@ -109,12 +112,53 @@ function defaultRoots(
     const systemDrive = env.SystemDrive || "C:";
     const programData = env.ProgramData || "C:\\ProgramData";
     const temp = env.TEMP || env.TMP || path.win32.join(systemDrive, "\\Windows\\Temp");
-    return [path.win32.join(systemDrive, "\\Users"), programData, temp, tmpdir];
+    // Program Files: sin él no se puede llegar a lo instalado, que es la mitad
+    // de lo que soporte necesita mirar (incluidos nuestros propios logs de
+    // AgentCore). Es de solo lectura para cualquiera que no sea admin, así que
+    // no abre nada que el operador no pudiera ver por otra vía.
+    const programFiles = env.ProgramFiles || path.win32.join(systemDrive, "\\Program Files");
+    const programFilesX86 =
+      env["ProgramFiles(x86)"] || path.win32.join(systemDrive, "\\Program Files (x86)");
+    return [
+      path.win32.join(systemDrive, "\\Users"),
+      programData,
+      programFiles,
+      programFilesX86,
+      temp,
+      tmpdir
+    ];
   }
   if (platform === "darwin") {
-    return ["/Users", "/tmp", "/private/tmp", "/var/tmp", "/opt", "/srv", tmpdir];
+    return ["/Users", "/tmp", "/private/tmp", "/var/tmp", "/opt", "/srv",
+            "/Library/Logs/Tracenium", tmpdir];
   }
-  return ["/home", "/tmp", "/var/tmp", "/opt", "/srv", tmpdir];
+  return ["/home", "/tmp", "/var/tmp", "/opt", "/srv", "/var/log/tracenium", tmpdir];
+}
+
+/**
+ * Rutas que se rescatan de la denylist. Soporte necesita descargar NUESTROS
+ * logs, y viven dentro del directorio de datos del agente, que está denegado
+ * entero porque ahí también están el certificado mTLS y el estado. Denegar la
+ * carpeta y rescatar `logs` deja el secreto sellado y el diagnóstico a mano.
+ *
+ * Solo levanta el veto de la denylist: la ruta sigue teniendo que caer dentro
+ * de alguna raíz permitida.
+ */
+function defaultDenyExceptions(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv
+): string[] {
+  if (platform === "win32") {
+    const programData = env.ProgramData || "C:\\ProgramData";
+    return [
+      path.win32.join(programData, "Tracenium", "logs"),
+      path.win32.join(programData, "Tracenium", "PrivSvc", "logs")
+    ];
+  }
+  if (platform === "darwin") {
+    return ["/Library/Application Support/Tracenium/Logs", "/Library/Logs/Tracenium"];
+  }
+  return ["/var/log/tracenium"];
 }
 
 function defaultDenyPaths(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] {
@@ -181,6 +225,8 @@ export class PathJail {
   /** Absolute, real (symlink-resolved where possible), comparison-normalized. */
   private readonly roots: string[];
   private readonly denyPaths: string[];
+  /** Subárboles que ganan a denyPaths. Ver defaultDenyExceptions. */
+  private readonly denyExceptions: string[];
   private readonly denyExtensions: string[];
   /** Display copies — real paths, not case-folded. Shown to the operator. */
   private readonly rootsForDisplay: string[];
@@ -225,6 +271,13 @@ export class PathJail {
     this.denyPaths = [
       ...defaultDenyPaths(platform, env),
       ...sanitizeAbsolutePaths(config.denyPaths, platform)
+    ]
+      .map((d) => this.tryReal(d))
+      .map((d) => this.forCompare(d));
+
+    this.denyExceptions = [
+      ...defaultDenyExceptions(platform, env),
+      ...sanitizeAbsolutePaths(config.denyExceptions, platform)
     ]
       .map((d) => this.tryReal(d))
       .map((d) => this.forCompare(d));
@@ -285,9 +338,13 @@ export class PathJail {
 
     const cmp = this.forCompare(real);
 
+    // Una excepción rescata su subárbol de la denylist de RUTAS. No toca los
+    // segmentos ni las extensiones prohibidas: esos siguen aplicando dentro.
+    const rescued = this.denyExceptions.some((ex) => this.isWithin(cmp, ex));
+
     // Deny before allow — a denied subtree inside an allowed root must lose.
     for (const denied of this.denyPaths) {
-      if (this.isWithin(cmp, denied)) {
+      if (!rescued && this.isWithin(cmp, denied)) {
         return deny("PATH_DENIED", "This location is blocked by the remote access policy");
       }
     }
