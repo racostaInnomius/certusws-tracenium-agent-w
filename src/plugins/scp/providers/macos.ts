@@ -78,6 +78,9 @@ export async function collectMacosScp(ctx: AgentContext): Promise<ScpNamespace> 
     softwareUpdate: posture?.softwareUpdate,
     accounts: posture?.accounts,
     domain: posture?.domain,
+    // Platform parity — pwpolicy-derived password policy
+    // (macos.password_policy.min_length catalog check, gated 1.1.46).
+    passwordPolicy: posture?.passwordPolicy,
     // SSH crypto/hardening posture — same shape as Linux, so the shared SSH
     // crypto catalog rules evaluate on macOS (replaces the former crypto stub).
     ssh: posture?.ssh,

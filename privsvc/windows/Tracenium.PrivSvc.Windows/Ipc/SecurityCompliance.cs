@@ -60,6 +60,12 @@ public static class SecurityCompliance
                 // Sprint 4 — screen lock policy (parity with macOS
                 // screenLock; Linux ships gsettings/loginctl parity).
                 screenLock = GetScreenLockStatus(),
+                // Platform parity — local password policy (Linux ships
+                // login.defs/pwquality parity). secedit export, NOT
+                // `net accounts`: secedit's INI keys are locale-stable
+                // while `net accounts` labels localize (this fleet runs
+                // Spanish Windows).
+                passwordPolicy = GetPasswordPolicyStatus(),
                 ciphers = GetEnabledCiphers(),
                 protocols = GetTlsProtocols(),
                 patches = GetInstalledSecurityPatches(),
@@ -214,6 +220,63 @@ public static class SecurityCompliance
         }
     }
 
+
+    // Local password policy via `secedit /export`. The [System Access]
+    // INI keys are locale-independent (`net accounts` localizes its
+    // labels and would silently parse nothing on non-English Windows).
+    // Each field is emitted ONLY when the export carries it, so the
+    // backend's absent≠compliant rule holds per attribute. secedit
+    // semantics worth pinning:
+    //   - MaximumPasswordAge = -1 means "never expires"; the catalog
+    //     rule is numeric_between 1..365, so -1 (and 0) FAIL rather
+    //     than pass a less-than.
+    //   - LockoutBadCount = 0 means "never lock out" → fails the
+    //     1..5 bound the same way.
+    private static object GetPasswordPolicyStatus()
+    {
+        try
+        {
+            var output = RunPs(
+                "$o = [ordered]@{}; " +
+                "try { " +
+                "$f = Join-Path $env:TEMP ('trc-secpol-' + [guid]::NewGuid().ToString('N') + '.cfg'); " +
+                "secedit /export /cfg $f /quiet | Out-Null; " +
+                "$t = Get-Content $f -Raw -ErrorAction Stop; Remove-Item $f -Force -ErrorAction SilentlyContinue; " +
+                "if ($t -match 'MinimumPasswordLength\\s*=\\s*(\\d+)') { $o.MinimumPasswordLength = [int]$Matches[1] } ; " +
+                "if ($t -match 'MaximumPasswordAge\\s*=\\s*(-?\\d+)') { $o.MaximumPasswordAge = [int]$Matches[1] } ; " +
+                "if ($t -match 'PasswordComplexity\\s*=\\s*(\\d+)') { $o.PasswordComplexity = [int]$Matches[1] } ; " +
+                "if ($t -match 'PasswordHistorySize\\s*=\\s*(\\d+)') { $o.PasswordHistorySize = [int]$Matches[1] } ; " +
+                "if ($t -match 'LockoutBadCount\\s*=\\s*(\\d+)') { $o.LockoutBadCount = [int]$Matches[1] } " +
+                "} catch {} ; " +
+                "[pscustomobject]$o | ConvertTo-Json -Compress"
+            );
+
+            if (string.IsNullOrWhiteSpace(output))
+                return new { available = false };
+
+            var obj = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(output);
+            if (obj == null)
+                return new { available = false };
+
+            var result = new Dictionary<string, object?> { ["available"] = true };
+            if (obj.TryGetValue("MinimumPasswordLength", out var ml) && ml.ValueKind == JsonValueKind.Number)
+                result["minimumLength"] = ml.GetInt32();
+            if (obj.TryGetValue("MaximumPasswordAge", out var ma) && ma.ValueKind == JsonValueKind.Number)
+                result["maximumAgeDays"] = ma.GetInt32();
+            if (obj.TryGetValue("PasswordComplexity", out var pc) && pc.ValueKind == JsonValueKind.Number)
+                result["complexityEnabled"] = pc.GetInt32() == 1;
+            if (obj.TryGetValue("PasswordHistorySize", out var ph) && ph.ValueKind == JsonValueKind.Number)
+                result["historySize"] = ph.GetInt32();
+            if (obj.TryGetValue("LockoutBadCount", out var lb) && lb.ValueKind == JsonValueKind.Number)
+                result["lockoutThreshold"] = lb.GetInt32();
+            return result;
+        }
+        catch (Exception ex)
+        {
+            RecordSectionError("passwordPolicy", "read_failed", ex.Message);
+            return new { available = false };
+        }
+    }
 
     // Platform integrity — TPM. Emits { present, ready, version } for the
     // backend catalog checks windows.tpm.present (tpm.ready) and

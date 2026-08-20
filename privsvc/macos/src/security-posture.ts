@@ -5,6 +5,7 @@ import { success } from "./protocol";
 import { parseSshdConfig } from "./ssh-parse";
 import { boolFromDefaultsRead, classifyDefaultsRead } from "./defaults-parse";
 import { parseSysadminctlScreenLock } from "./screenlock-parse";
+import { parsePwpolicyMinimumLength } from "./pwpolicy-parse";
 
 const execFileAsync = promisify(execFile);
 
@@ -503,6 +504,28 @@ async function collectScreenLock() {
 }
 
 /**
+ * Local password policy from `pwpolicy -getaccountpolicies` (global
+ * account policies — readable as root, no console-user context needed).
+ * Two forms carry the minimum length (the OS-default regex
+ * `policyAttributePassword matches '.{4,}+'` and the MDM
+ * `minimumLength` integer); parsePwpolicyMinimumLength takes the
+ * strictest. Every real Mac has at least the default regex, so unlike
+ * the old askForPassword read this yields a verdict fleet-wide.
+ */
+async function collectPasswordPolicy() {
+  const result = await run("/usr/bin/pwpolicy", ["-getaccountpolicies"], 8000);
+  const minimumLength = parsePwpolicyMinimumLength(result.output);
+
+  return {
+    available: result.ok,
+    // undefined when no recognizable policy → the catalog rule lands
+    // not_applicable, never a guess.
+    minimumLength,
+    raw: truncate(result.output) || undefined
+  };
+}
+
+/**
  * Enumerate the sharing services CIS cares about (Remote Login,
  * Remote Management, etc.). `systemsetup` requires root, which PrivSvc
  * already provides. Output line is `Remote Login: On` / `Remote Login:
@@ -699,6 +722,8 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
     collectAccounts()
   ]);
 
+  const passwordPolicy = await collectPasswordPolicy();
+
   const smb = await collectSmb(shares);
   const ssh = await collectSsh();
 
@@ -720,6 +745,10 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
     services,
     softwareUpdate,
     accounts,
+    // Platform parity — local password policy (Linux ships login.defs /
+    // pwquality parity; Windows ships secedit parity). Global account
+    // policies are readable as root, no console-user context needed.
+    passwordPolicy,
     // SSH crypto/hardening posture — the real replacement for the former
     // `crypto` stub. Same shape as the Linux ssh block, so the shared SSH
     // catalog rules (ssh.ciphers / ssh.macs / ssh.kexAlgorithms) evaluate here.

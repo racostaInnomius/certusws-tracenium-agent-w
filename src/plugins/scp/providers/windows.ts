@@ -167,6 +167,9 @@ export async function collectWindowsScp(ctx: AgentContext): Promise<ScpNamespace
     // Sprint 4 — machine-scoped screen lock policy (parity with the
     // macOS screenLock block). Allowlist: name it or it never ships.
     screenLock: posture?.screenLock,
+    // Platform parity — secedit-derived local password policy
+    // (windows.password_policy.* catalog checks, gated 1.1.46).
+    passwordPolicy: posture?.passwordPolicy,
 
     // Derived crypto + patches blocks (see helpers above).
     crypto: buildCryptoEvidence(posture),
