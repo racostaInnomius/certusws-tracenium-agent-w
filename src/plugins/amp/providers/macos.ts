@@ -8,8 +8,10 @@ import fs from "fs";
 import type { AgentContext } from "../../../core/agent-context";
 import type { AmpNamespace } from "../../../domain/amp-types";
 import type { SoftwareApplication } from "../../../domain/normalize-app";
+import type { MacBundleInfo } from "../../../domain/macos-bundle-info";
 
 import { normalizeApp } from "../../../domain/normalize-app";
+import { parseBundleInfo } from "../../../domain/macos-bundle-info";
 import { computeSoftwareDelta, toBaselineOps } from "../../../domain/software-inventory-delta";
 import { collectCupsPrinters } from "./printers-cups";
 import {
@@ -23,7 +25,8 @@ import {
 } from "../../../domain/software-baseline-repo";
 
 // execFile does not spawn a shell — arguments are passed directly to the
-// binary. This is critical for `mdls -name ... "$appPath"`: the path comes
+// binary. This is critical for the per-app calls below (`plutil` on
+// "$appPath/Contents/Info.plist", `pkgutil --pkg-info`): the path comes
 // from filesystem enumeration and could contain shell metacharacters
 // (backticks, $(…), newlines, ;) which would be interpreted if we used
 // exec. execFile sidesteps the shell entirely, so path injection via a
@@ -160,6 +163,90 @@ function canonicalizePkgutilId(pkgId: string): { canonical: string; version: str
 }
 
 
+/**
+ * Colapsa la MISMA app vista por varias fuentes, en una fila por app.
+ *
+ * Dos pasadas:
+ *
+ *   1. Por installId — dos lecturas de la misma fuente ya colapsan aquí.
+ *   2. Por packageFamilyName — el bundle y el recibo de pkgutil describen la
+ *      misma app con nombres distintos, y solo el identificador los une:
+ *
+ *        .app bundle:  name="Microsoft OneNote"          pfn="com.microsoft.onenote.mac"
+ *        pkgutil:      name="com.microsoft.onenote.mac"  pfn="com.microsoft.onenote.mac"
+ *
+ * ⚠️ Extraída del colector a propósito: el colector necesita una Mac para
+ * correr, y aquí es donde vive la decisión de qué dato sobrevive.
+ *
+ * Una app sin pfn no se fusiona con nadie. Es deliberado: sin llave, adivinar
+ * por nombre uniría cosas distintas, y una fila suelta de más es mucho menos
+ * dañina que dos apps fusionadas en una.
+ */
+export function mergeMacAppsBySource(
+  results: SoftwareApplication[]
+): SoftwareApplication[] {
+  const byInstallId = new Map<string, SoftwareApplication>();
+
+  for (const app of results) {
+    if (!app.installId) continue;
+    byInstallId.set(app.installId, app);
+  }
+
+  const SOURCE_PRIORITY: Record<string, number> = {
+    "macos-app-bundle": 3,
+    "homebrew": 2,
+    "pkgutil": 1
+  };
+
+  const sourceRank = (s: string) => SOURCE_PRIORITY[s?.toLowerCase?.() || ""] ?? 0;
+
+  const byPfn = new Map<string, SoftwareApplication>();
+  const unkeyed: SoftwareApplication[] = [];
+
+  for (const app of byInstallId.values()) {
+    const pfn = app.packageFamilyName?.toLowerCase?.() || "";
+
+    if (!pfn) {
+      // No packageFamilyName to merge on — keep as-is. Anything
+      // without a PFN is rare (nping from /Applications with "(null)"
+      // bundle id, a handful of sideloaded apps); these stay.
+      unkeyed.push(app);
+      continue;
+    }
+
+    const existing = byPfn.get(pfn);
+
+    if (!existing) {
+      byPfn.set(pfn, app);
+      continue;
+    }
+
+    // ⚠️ Se FUSIONAN campos, no se elige un ganador.
+    //
+    // Antes esto era `byPfn.set(pfn, app)` para el de mayor prioridad, y
+    // como el bundle gana sobre pkgutil, la fila que sobrevivía era
+    // justamente la que no traía versión — descartando la del recibo, que sí
+    // la tenía. PMP third-party y la detección de CVE cruzan por nombre +
+    // versión, así que la fusión les estaba quitando el dato con el que
+    // trabajan.
+    //
+    // La prioridad sigue mandando en QUIÉN es la fila (nombre, ubicación,
+    // fuente); lo que cambia es que un campo vacío del ganador se rellena
+    // con el del perdedor en vez de perderse.
+    const winner = sourceRank(app.source) > sourceRank(existing.source) ? app : existing;
+    const loser = winner === app ? existing : app;
+
+    byPfn.set(pfn, {
+      ...winner,
+      version: winner.version ?? loser.version ?? null,
+      publisher: winner.publisher ?? loser.publisher,
+      installLocation: winner.installLocation ?? loser.installLocation
+    } as SoftwareApplication);
+  }
+
+  return [...byPfn.values(), ...unkeyed];
+}
+
 async function collectMacSoftware(): Promise<SoftwareApplication[]> {
   try {
     const appDirs = [
@@ -196,7 +283,7 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
     // Deduplicate paths
     const uniquePaths = Array.from(new Set(appPaths));
 
-    // Parallel mdls with concurrency limit
+    // Lectura del Info.plist en paralelo, con límite de concurrencia
     const concurrency = 5;
     const results: SoftwareApplication[] = [];
 
@@ -206,35 +293,39 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
           const appName = appPath.split("/").pop() || "";
           const name = appName.replace(/\.app$/, "");
 
-          let bundleId: string | null = null;
+          // ⚠️ Se lee el Info.plist, NO Spotlight. `mdls` consultaba el índice
+          // y, cuando ese índice no resolvía la ruta, salía con código 1 y el
+          // bundle id se perdía en TODAS las apps de esa máquina a la vez —
+          // 98% en JPR-MacBookPro, 94% en Diego-3, 0% en el resto de la flota.
+          // Como el bundle id es la llave de fusión entre fuentes, la
+          // deduplicación no fallaba: se apagaba en silencio justo en los
+          // equipos con más duplicados. Ver domain/macos-bundle-info.ts.
+          //
+          // La misma llamada trae la versión, que el colector anterior no
+          // pedía: las 253 filas de esta fuente en producción tenían version
+          // NULL, y son las que ganan la fusión.
+          let info = { bundleId: null, version: null, displayName: null } as MacBundleInfo;
 
           try {
-            // Arguments passed as an array — no shell interpolation,
-            // so metacharacters inside appPath are harmless.
+            // Argumentos como arreglo — sin shell, así que los metacaracteres
+            // dentro de appPath son inocuos.
             const { stdout } = await execFileAsync(
-              "/usr/bin/mdls",
-              ["-name", "kMDItemCFBundleIdentifier", "-raw", appPath],
+              "/usr/bin/plutil",
+              ["-convert", "json", "-o", "-", `${appPath}/Contents/Info.plist`],
               { timeout: 5000 }
             );
-
-            const rawBundleId = stdout.trim();
-
-            bundleId =
-              rawBundleId &&
-              rawBundleId !== "(null)" &&
-              rawBundleId.toLowerCase() !== "null"
-                ? rawBundleId
-                : null;
+            info = parseBundleInfo(stdout);
           } catch {
-            bundleId = null;
+            // Bundle sin Info.plist legible. Se sigue reportando la app por su
+            // nombre de archivo: existe en el disco y eso ya es inventario.
           }
 
           const normalized = normalizeApp({
             name,
-            version: null,
+            version: info.version,
             publisher: undefined,
             installLocation: appPath,
-            packageFamilyName: bundleId,
+            packageFamilyName: info.bundleId,
             source: "macos-app-bundle"
           });
 
@@ -499,43 +590,7 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
     //   - homebrew has a version string.
     //   - pkgutil is last-resort identification for things that aren't
     //     bundles (drivers, kexts, receipts for deleted apps).
-    const byInstallId = new Map<string, SoftwareApplication>();
-
-    for (const app of results) {
-      if (!app.installId) continue;
-      byInstallId.set(app.installId, app);
-    }
-
-    const SOURCE_PRIORITY: Record<string, number> = {
-      "macos-app-bundle": 3,
-      "homebrew": 2,
-      "pkgutil": 1
-    };
-
-    const sourceRank = (s: string) => SOURCE_PRIORITY[s?.toLowerCase?.() || ""] ?? 0;
-
-    const byPfn = new Map<string, SoftwareApplication>();
-    const unkeyed: SoftwareApplication[] = [];
-
-    for (const app of byInstallId.values()) {
-      const pfn = app.packageFamilyName?.toLowerCase?.() || "";
-
-      if (!pfn) {
-        // No packageFamilyName to merge on — keep as-is. Anything
-        // without a PFN is rare (nping from /Applications with "(null)"
-        // bundle id, a handful of sideloaded apps); these stay.
-        unkeyed.push(app);
-        continue;
-      }
-
-      const existing = byPfn.get(pfn);
-
-      if (!existing || sourceRank(app.source) > sourceRank(existing.source)) {
-        byPfn.set(pfn, app);
-      }
-    }
-
-    return [...byPfn.values(), ...unkeyed];
+    return mergeMacAppsBySource(results);
   } catch (err) {
     console.warn("[MACOS] enterprise collector failed", err);
     return [];

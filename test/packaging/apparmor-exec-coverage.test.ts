@@ -47,7 +47,7 @@ const ROOTS = ["privsvc/linux/src", "src"];
  */
 const NON_LINUX = new Set([
   "/usr/bin/dscl", // macOS: directory services
-  "/usr/bin/mdls", // macOS: metadata
+  "/usr/bin/plutil", // macOS: lee el Info.plist de un .app
   "/usr/bin/security", // macOS: keychain
   "/usr/bin/stat", // macOS: -f%Su sobre /dev/console (en Linux sería otra sintaxis)
   "/usr/sbin/installer", // macOS: instalador de .pkg
