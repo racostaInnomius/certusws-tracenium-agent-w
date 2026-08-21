@@ -32,7 +32,12 @@ final class StatusPopoverViewController: NSViewController {
     // Header
     private let headerView = NSView()
     private let titleLabel = NSTextField(labelWithString: "Tracenium Agent")
-    private let subtitleLabel = NSTextField(labelWithString: "Waiting for local status snapshot...")
+    /// Eslogan de producto. NO lleva estado: hostname, versión y último
+    /// refresco están todos en las pestañas de detalle —Device Info y Agent
+    /// Info— así que repetirlos aquí gastaba la única línea de la cabecera en
+    /// datos duplicados. El estado vivo que sí importa de un vistazo es la
+    /// pastilla ONLINE/OFFLINE, que está a la derecha.
+    private let subtitleLabel = NSTextField(labelWithString: "")
     private let badgeLabel = NSTextField(labelWithString: "UNKNOWN")
     /// ⚠️ El fondo y el radio viven AQUI, no en badgeLabel.
     ///
@@ -149,6 +154,7 @@ final class StatusPopoverViewController: NSViewController {
 
         subtitleLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
         subtitleLabel.textColor = NSColor(calibratedWhite: 0.82, alpha: 1.0)
+        subtitleLabel.attributedStringValue = Self.sloganAttributed()
         subtitleLabel.lineBreakMode = .byTruncatingTail
         subtitleLabel.maximumNumberOfLines = 1
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -834,9 +840,32 @@ final class StatusPopoverViewController: NSViewController {
             ? NSColor.systemGreen.cgColor
             : NSColor.systemRed.cgColor
 
-        let resolvedVersion = (version?.isEmpty == false) ? "v\(version!)" : "unknown version"
-        let updated = updatedAt != nil ? "Last refresh \(format(updatedAt))" : "Last refresh unavailable"
-        subtitleLabel.stringValue = "\(hostname)  |  \(resolvedVersion)  |  \(updated)"
+        // El subtitulo ya no se toca aqui: es el eslogan, fijo. hostname,
+        // version y ultimo refresco siguen estando —y con mas detalle— en las
+        // pestañas Device Info y Agent Info.
+        _ = (hostname, version, updatedAt)
+    }
+
+    /// El eslogan con el "&" en el cian de marca.
+    ///
+    /// Se arma como NSAttributedString y no como dos etiquetas para que el
+    /// truncado por ancho siga funcionando como en una sola linea: con dos
+    /// campos, un popover estrecho partiria la frase por un sitio arbitrario.
+    static func sloganAttributed() -> NSAttributedString {
+        let font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        let base = NSColor(calibratedWhite: 0.86, alpha: 1.0)
+        // #8FFDFF — el cian de la paleta, el mismo acento del logo del header.
+        let accent = NSColor(calibratedRed: 143/255.0, green: 253/255.0, blue: 255/255.0, alpha: 1.0)
+
+        let s = NSMutableAttributedString()
+        s.append(NSAttributedString(string: "Endpoint Intelligence ",
+                                    attributes: [.font: font, .foregroundColor: base]))
+        s.append(NSAttributedString(string: "&",
+                                    attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                                                 .foregroundColor: accent]))
+        s.append(NSAttributedString(string: " Compliance Platform",
+                                    attributes: [.font: font, .foregroundColor: base]))
+        return s
     }
 
     private func set(_ key: String, _ value: String) {

@@ -47,7 +47,19 @@ internal sealed class StatusForm : Form
             Dock = DockStyle.Top,
             Height = 86,
             Padding = new Padding(18, 16, 18, 10),
-            BackColor = Color.FromArgb(34, 40, 49)
+            BackColor = BrandAssets.HeaderBackground
+        };
+
+        // Logo a color a la izquierda del título, como en el popover de macOS.
+        // Si el recurso no viajó, LoadLogoOrNull devuelve null y el hueco se
+        // colapsa más abajo — un asset sin embeber no debe dejar un agujero.
+        var logoImage = BrandAssets.LoadLogoOrNull();
+        var logo = new PictureBox
+        {
+            Image = logoImage,
+            SizeMode = PictureBoxSizeMode.Zoom,
+            Size = new Size(logoImage is null ? 0 : 34, 34),
+            BackColor = Color.Transparent
         };
 
         var headerTitle = new Label
@@ -63,27 +75,74 @@ internal sealed class StatusForm : Form
             Text = "UNKNOWN",
             AutoSize = true,
             Padding = new Padding(8, 4, 8, 4),
+            // Con AutoSize la etiqueta se ajusta al texto, pero se fija el
+            // alineado igualmente: si algún día se le da ancho fijo —como pasó
+            // en macOS, donde el texto se iba al borde superior— el centrado ya
+            // está puesto y no hay que descubrirlo mirando la ventana.
+            TextAlign = ContentAlignment.MiddleCenter,
             Font = new Font(Font.FontFamily, 9, FontStyle.Bold),
             BackColor = Color.FromArgb(96, 96, 96),
             ForeColor = Color.White,
             Location = new Point(0, 0)
         };
 
+        // Eslogan de producto en lugar de hostname | versión | último refresco:
+        // esos tres ya están, con más detalle, en las pestañas Device Info y
+        // Agent Info, así que gastaban la única línea del header en repetirse.
+        //
+        // Son tres etiquetas y no una porque WinForms no sabe pintar parte de
+        // un Label en otro color, y el "&" va en el cian de marca.
         _headerSubtitle = new Label
         {
-            Text = "Waiting for local status snapshot...",
+            Text = BrandAssets.SloganLeft,
             AutoSize = true,
-            ForeColor = Color.FromArgb(210, 216, 224),
+            ForeColor = BrandAssets.HeaderText,
+            Location = new Point(0, 0)
+        };
+        var sloganAccent = new Label
+        {
+            Text = BrandAssets.SloganAccent,
+            AutoSize = true,
+            ForeColor = BrandAssets.AccentCyan,
+            Font = new Font(Font.FontFamily, Font.Size, FontStyle.Bold),
+            Location = new Point(0, 0)
+        };
+        var sloganRight = new Label
+        {
+            Text = BrandAssets.SloganRight,
+            AutoSize = true,
+            ForeColor = BrandAssets.HeaderText,
             Location = new Point(0, 0)
         };
 
+        header.Controls.Add(logo);
         header.Controls.Add(headerTitle);
         header.Controls.Add(_statusBadge);
         header.Controls.Add(_headerSubtitle);
+        header.Controls.Add(sloganAccent);
+        header.Controls.Add(sloganRight);
+
+        // Todo el header se posiciona a mano aquí. Las etiquetas son AutoSize,
+        // así que sus anchos sólo se conocen tras medir el texto; encadenarlas
+        // en el Resize evita tener que suponerlos.
         header.Resize += (_, _) =>
         {
-            _statusBadge.Location = new Point(header.Width - _statusBadge.Width - 18, 18);
-            _headerSubtitle.Location = new Point(20, 48);
+            var textLeft = 20;
+            if (logoImage is not null)
+            {
+                logo.Location = new Point(18, (header.Height - logo.Height) / 2);
+                textLeft = logo.Right + 10;
+            }
+
+            headerTitle.Location = new Point(textLeft, 14);
+
+            var sloganY = 48;
+            _headerSubtitle.Location = new Point(textLeft, sloganY);
+            sloganAccent.Location = new Point(_headerSubtitle.Right, sloganY);
+            sloganRight.Location = new Point(sloganAccent.Right, sloganY);
+
+            _statusBadge.Location = new Point(header.Width - _statusBadge.Width - 18,
+                                              (header.Height - _statusBadge.Height) / 2);
         };
 
         var content = new TableLayoutPanel
@@ -522,7 +581,7 @@ internal sealed class StatusForm : Form
             Text = title,
             AutoSize = true,
             Font = new Font(Font.FontFamily, 10, FontStyle.Bold),
-            ForeColor = Color.FromArgb(0, 120, 212),
+            ForeColor = BrandAssets.SectionTeal,
             Margin = new Padding(0, row == 0 ? 0 : 12, 0, 8)
         };
 
@@ -601,11 +660,10 @@ internal sealed class StatusForm : Form
             ? Color.FromArgb(28, 160, 98)
             : Color.FromArgb(196, 59, 59);
 
-        var version = string.IsNullOrWhiteSpace(agentVersion) ? "unknown version" : $"v{agentVersion}";
-        var updated = updatedAtUtc.HasValue
-            ? $"Last refresh {updatedAtUtc.Value.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
-            : "Last refresh unavailable";
-        _headerSubtitle.Text = $"{hostname}  |  {version}  |  {updated}";
+        // El subtítulo ya no se toca: es el eslogan, fijo. hostname, versión y
+        // último refresco siguen estando —y con más detalle— en las pestañas
+        // Device Info y Agent Info, que es donde el usuario los busca.
+        _ = (hostname, agentVersion, updatedAtUtc);
     }
 
     private void Set(string key, string value)
