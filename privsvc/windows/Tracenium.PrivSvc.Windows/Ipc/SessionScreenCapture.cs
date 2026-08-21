@@ -54,6 +54,7 @@ internal static class SessionScreenCapture
     private static StreamWriter? _stdin;
     private static StreamReader? _stdout;
     private static uint _helperSession = uint.MaxValue;
+    private static StreamReader? _stderr;
 
     /// <summary>
     /// Captura un fotograma desde la sesión del usuario. Devuelve la misma
@@ -110,6 +111,16 @@ internal static class SessionScreenCapture
                 }
 
                 var line = readTask.Result;
+                // Cinturón además de tirantes: stderr ya va por su propio pipe,
+                // pero si algo vuelve a escribir texto suelto en stdout preferimos
+                // un error nuestro y legible al del parser de JSON.
+                if (line is not null && line.Length > 0 && line[0] != '{')
+                {
+                    IpcLog.Write($"[screencap helper] salida no-JSON en stdout: {line}");
+                    StopHelperLocked();
+                    return PrivSvcResponse.Fail(reqId, "screen_capture_failed",
+                        "The screen capture helper wrote unexpected output. See the PrivSvc log.");
+                }
                 if (string.IsNullOrWhiteSpace(line))
                 {
                     StopHelperLocked();
@@ -218,11 +229,19 @@ internal static class SessionScreenCapture
             // el orden correcto no es evidente al leer la llamada.
             var stdinPipe = CreatePipePair(inheritRead: true);   // el hijo LEE
             var stdoutPipe = CreatePipePair(inheritRead: false); // el hijo ESCRIBE
+            // stderr necesita SU PROPIO pipe. Compartirlo con stdout mezclaba
+            // los diagnósticos del helper con las líneas JSON, y el parser se
+            // atragantaba: "'D' is an invalid start of a value" era literalmente
+            // el "DXGI falló…" que el helper escribe antes de probar GDI. Un
+            // canal de datos y un canal de texto no pueden compartir tubería.
+            var stderrPipe = CreatePipePair(inheritRead: false);
 
             var childStdinRead = stdinPipe.childEnd;
             var parentStdinWrite = stdinPipe.ourEnd;
             var childStdoutWrite = stdoutPipe.childEnd;
             var parentStdoutRead = stdoutPipe.ourEnd;
+            var childStderrWrite = stderrPipe.childEnd;
+            var parentStderrRead = stderrPipe.ourEnd;
 
             var si = new NativeMethods.STARTUPINFO();
             si.cb = Marshal.SizeOf<NativeMethods.STARTUPINFO>();
@@ -232,7 +251,7 @@ internal static class SessionScreenCapture
             si.dwFlags = NativeMethods.STARTF_USESTDHANDLES;
             si.hStdInput = childStdinRead;
             si.hStdOutput = childStdoutWrite;
-            si.hStdError = childStdoutWrite;
+            si.hStdError = childStderrWrite;
 
             var cmdline = new StringBuilder($"\"{exe}\" --serve");
 
@@ -254,12 +273,14 @@ internal static class SessionScreenCapture
             // muere y la lectura se cuelga hasta el timeout.
             NativeMethods.CloseHandle(childStdinRead);
             NativeMethods.CloseHandle(childStdoutWrite);
+            NativeMethods.CloseHandle(childStderrWrite);
 
             if (!created)
             {
                 var err = Marshal.GetLastWin32Error();
                 NativeMethods.CloseHandle(parentStdinWrite);
                 NativeMethods.CloseHandle(parentStdoutRead);
+                NativeMethods.CloseHandle(parentStderrRead);
                 throw new InvalidOperationException(
                     $"CreateProcessAsUser failed (Win32 {err}).");
             }
@@ -276,6 +297,31 @@ internal static class SessionScreenCapture
                 new FileStream(new Microsoft.Win32.SafeHandles.SafeFileHandle(
                     parentStdoutRead, true), FileAccess.Read),
                 new UTF8Encoding(false));
+
+            _stderr = new StreamReader(
+                new FileStream(new Microsoft.Win32.SafeHandles.SafeFileHandle(
+                    parentStderrRead, true), FileAccess.Read),
+                new UTF8Encoding(false));
+
+            // Drenar stderr en su propio hilo, SIEMPRE. Un pipe que nadie lee
+            // se llena y bloquea al que escribe: el helper se quedaría colgado
+            // a mitad de una captura y lo veríamos como un timeout. Y de paso
+            // sus diagnósticos acaban en nuestro log, que es donde se explica
+            // por qué DXGI no pudo.
+            var stderrReader = _stderr;
+            new Thread(() =>
+            {
+                try
+                {
+                    string? l;
+                    while ((l = stderrReader.ReadLine()) != null)
+                    {
+                        if (l.Length > 0) IpcLog.Write($"[screencap helper] {l}");
+                    }
+                }
+                catch { /* el pipe se cerró: fin normal */ }
+            })
+            { IsBackground = true }.Start();
 
             NativeMethods.CloseHandle(pi.hProcess);
         }
@@ -329,6 +375,7 @@ internal static class SessionScreenCapture
         // dentro de una llamada a DXGI.
         try { _stdin?.Dispose(); } catch { /* ya cerrado */ }
         try { _stdout?.Dispose(); } catch { /* ya cerrado */ }
+        try { _stderr?.Dispose(); } catch { /* ya cerrado */ }
         try
         {
             if (_helper is { HasExited: false })
@@ -341,6 +388,7 @@ internal static class SessionScreenCapture
 
         _stdin = null;
         _stdout = null;
+        _stderr = null;
         _helper = null;
         _helperSession = uint.MaxValue;
     }
