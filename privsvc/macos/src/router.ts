@@ -14,6 +14,8 @@ import {
   handleFactsSend,
   handleGrpcConnect,
   handleHeartbeat,
+  handleCatalogRequest,
+  handleSelfInstallRequest,
   handleRemoteSessionAnswer,
   handleRemoteSessionIce,
   handleRemoteSessionClose,
@@ -139,6 +141,12 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "grpc.close":
       return handleClose(req);
+
+    case "grpc.catalog.request":
+      return handleCatalogRequest(req);
+
+    case "grpc.selfInstall.request":
+      return handleSelfInstallRequest(req);
 
     // RCP M1.S1 — agent-side outbound signaling. The Node.js RCP
     // plugin sends these when the WebRTC peer generates an answer /

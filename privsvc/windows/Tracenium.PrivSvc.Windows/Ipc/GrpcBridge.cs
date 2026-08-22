@@ -1275,6 +1275,48 @@ private const int MaxPendingPushEvents = 50;
                     });
                 }
 
+                if (msg.CatalogResponse is not null)
+                {
+                    PushToAll(new
+                    {
+                        v = 1,
+                        method = "grpc.control.catalogResponse",
+                        @params = new
+                        {
+                            eventId = msg.CatalogResponse.EventId ?? "",
+                            catalogVersion = msg.CatalogResponse.CatalogVersion ?? "",
+                            items = msg.CatalogResponse.Items.Select(i => new
+                            {
+                                packageId = i.PackageId ?? "",
+                                name = i.Name ?? "",
+                                vendor = i.Vendor ?? "",
+                                version = i.Version ?? "",
+                                description = i.Description ?? "",
+                                requiresReboot = i.RequiresReboot
+                            }).ToArray(),
+                            receivedAtUtc = DateTime.UtcNow.ToString("o")
+                        }
+                    });
+                }
+
+                if (msg.SelfInstallAck is not null)
+                {
+                    PushToAll(new
+                    {
+                        v = 1,
+                        method = "grpc.control.selfInstallAck",
+                        @params = new
+                        {
+                            eventId = msg.SelfInstallAck.EventId ?? "",
+                            accepted = msg.SelfInstallAck.Accepted,
+                            jobId = msg.SelfInstallAck.JobId ?? "",
+                            errorCode = msg.SelfInstallAck.ErrorCode ?? "",
+                            errorMessage = msg.SelfInstallAck.ErrorMessage ?? "",
+                            receivedAtUtc = DateTime.UtcNow.ToString("o")
+                        }
+                    });
+                }
+
                 // ── RCP M1.S1 signaling: server → agent ────────────
                 // Four message types from the new RCP oneof variants
                 // (proto fields 20-24). PrivSvc just forwards the
@@ -1730,6 +1772,68 @@ private const int MaxPendingPushEvents = 50;
             // Re-throw so HandleHeartbeat can surface the failure to the
             // IPC caller — agent-core uses this signal to tear down and
             // reconnect. Silencing would mask a broken stream.
+            throw;
+        }
+    }
+
+    // Catalog / self-service install — agent-initiated requests to the
+    // control plane. Mirrors SendHeartbeat's contract: rethrow on failure
+    // so the IPC handler can surface a Fail response back to agent-core.
+
+    public async Task SendCatalogRequest(string eventId, CancellationToken ct = default)
+    {
+        if (_call is null)
+        {
+            Log($"SendCatalogRequest skipped: no active call eventId={eventId}");
+            return;
+        }
+
+        try
+        {
+            await _call.RequestStream.WriteAsync(new ControlMessage
+            {
+                CatalogRequest = new CatalogRequest { EventId = eventId ?? string.Empty }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+            Log($"CatalogRequest sent eventId={eventId}");
+        }
+        catch (Exception ex)
+        {
+            Log($"SendCatalogRequest error eventId={eventId} {ex}");
+            throw;
+        }
+    }
+
+    public async Task SendSelfInstallRequest(string eventId, string packageId, CancellationToken ct = default)
+    {
+        if (_call is null)
+        {
+            Log($"SendSelfInstallRequest skipped: no active call packageId={packageId}");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(packageId))
+        {
+            Log("SendSelfInstallRequest skipped: empty packageId");
+            return;
+        }
+
+        try
+        {
+            await _call.RequestStream.WriteAsync(new ControlMessage
+            {
+                SelfInstallRequest = new SelfInstallRequest
+                {
+                    EventId = eventId ?? string.Empty,
+                    PackageId = packageId
+                }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+            Log($"SelfInstallRequest sent packageId={packageId} eventId={eventId}");
+        }
+        catch (Exception ex)
+        {
+            Log($"SendSelfInstallRequest error packageId={packageId} {ex}");
             throw;
         }
     }
