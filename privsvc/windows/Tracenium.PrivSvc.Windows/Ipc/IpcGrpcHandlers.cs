@@ -712,6 +712,40 @@ public static class IpcGrpcHandlers
         }
     }
 
+    // ── Catalog / self-service install — outbound requests ───────────
+
+    public static async Task<PrivSvcResponse> HandleCatalogRequest(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var eventId = GetString(p, "eventId") ?? "";
+            await GrpcBridgeSingleton.Instance.SendCatalogRequest(eventId);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_catalog_request_error", ex.Message);
+        }
+    }
+
+    public static async Task<PrivSvcResponse> HandleSelfInstallRequest(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var eventId = GetString(p, "eventId") ?? "";
+            var packageId = GetString(p, "packageId");
+            if (string.IsNullOrWhiteSpace(packageId)) throw new Exception("packageId required");
+            await GrpcBridgeSingleton.Instance.SendSelfInstallRequest(eventId, packageId);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_self_install_request_error", ex.Message);
+        }
+    }
+
     // ── RCP M1.S1 — outbound signaling handlers ───────────────────────
     //
     // Each handler unpacks the params dict from agent-core and calls

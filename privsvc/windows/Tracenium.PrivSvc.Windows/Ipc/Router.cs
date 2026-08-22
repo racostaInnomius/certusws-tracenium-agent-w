@@ -146,7 +146,7 @@ public sealed class Router
             "ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 service = "TraceniumPrivSvc",
-                version = "1.1.48",
+                version = "1.1.49",
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
@@ -192,6 +192,8 @@ public sealed class Router
             "grpc.close" => IpcGrpcHandlers.HandleClose(req),
             "grpc.ack" => IpcGrpcHandlers.HandleAck(req),
             "grpc.heartbeat" => IpcGrpcHandlers.HandleHeartbeat(req),
+            "grpc.catalog.request" => IpcGrpcHandlers.HandleCatalogRequest(req),
+            "grpc.selfInstall.request" => IpcGrpcHandlers.HandleSelfInstallRequest(req),
 
             // RCP M1.S1 — agent-side outbound signaling. The
             // Node.js plugin sends these when the WebRTC peer

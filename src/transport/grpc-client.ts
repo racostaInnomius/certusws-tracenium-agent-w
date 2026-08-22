@@ -419,6 +419,16 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         return;
       }
 
+      if (method === "grpc.control.catalogResponse") {
+        stream.emit("data", { catalogResponse: params });
+        return;
+      }
+
+      if (method === "grpc.control.selfInstallAck") {
+        stream.emit("data", { selfInstallAck: params });
+        return;
+      }
+
       // RCP M1.S1 — signaling messages from backend. PrivSvc maps
       // the proto oneof variants to these four methods. The agent
       // dispatches them to the RCP SessionManager via the
@@ -818,6 +828,63 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               ctx.trayStatus.markGrpcDisconnected();
             } catch {}
             safeEmitError(err instanceof Error ? err : new Error(String(err)));
+          }
+
+          return;
+        }
+
+        if (msg?.catalogRequest) {
+          const eventId = String(msg.catalogRequest.eventId || "");
+
+          // Best-effort: unlike heartbeat, a failed catalog request is not a
+          // liveness signal — the tray simply keeps showing whatever catalog
+          // it last had (or "Nothing available"), so we don't mark the
+          // connection broken on failure here.
+          try {
+            const resp = await (ctx.priv as any).call({
+              v: 1,
+              id: eventId || `catalog-${Date.now()}`,
+              method: "grpc.catalog.request",
+              params: { eventId },
+              meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+            });
+            if (!resp?.ok) {
+              ctx.logger?.warn("[grpc-client] catalogRequest IPC rejected", {
+                errorCode: resp?.error?.code,
+                errorMessage: resp?.error?.message
+              });
+            }
+          } catch (err: any) {
+            ctx.logger?.warn("[grpc-client] catalogRequest IPC threw", {
+              error: err?.message || String(err)
+            });
+          }
+
+          return;
+        }
+
+        if (msg?.selfInstallRequest) {
+          const eventId = String(msg.selfInstallRequest.eventId || "");
+          const packageId = String(msg.selfInstallRequest.packageId || "");
+
+          try {
+            const resp = await (ctx.priv as any).call({
+              v: 1,
+              id: eventId || `self-install-${Date.now()}`,
+              method: "grpc.selfInstall.request",
+              params: { eventId, packageId },
+              meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+            });
+            if (!resp?.ok) {
+              ctx.logger?.warn("[grpc-client] selfInstallRequest IPC rejected", {
+                errorCode: resp?.error?.code,
+                errorMessage: resp?.error?.message
+              });
+            }
+          } catch (err: any) {
+            ctx.logger?.warn("[grpc-client] selfInstallRequest IPC threw", {
+              error: err?.message || String(err)
+            });
           }
 
           return;
