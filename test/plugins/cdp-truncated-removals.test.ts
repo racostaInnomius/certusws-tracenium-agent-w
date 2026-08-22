@@ -18,7 +18,8 @@
 // error de fake-que-reimplementa-la-lógica que ya se cometió tres veces
 // en este repo.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import os from "os";
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
 
 const computeCdpDelta = vi.fn();
 const commitCdpBaseline = vi.fn();
@@ -28,7 +29,8 @@ vi.mock("../../src/domain/cdp-baseline-repo", () => ({
   commitCdpBaseline: (...a: any[]) => commitCdpBaseline(...a)
 }));
 
-// El host de CI es macOS; se fija el colector de esa plataforma.
+// El colector de macOS se fija sin importar el host real (CI corre en
+// ubuntu-latest — ver .github/workflows/test.yml).
 const collectMacosCdp = vi.fn();
 vi.mock("../../src/plugins/cdp/providers/macos", () => ({
   collectMacosCdp: () => collectMacosCdp()
@@ -39,9 +41,20 @@ vi.mock("../../src/plugins/cdp/providers/java-stores", () => ({
   collectJavaStores: async () => ({ items: [], stores: [], parseFailures: 0 })
 }));
 
-vi.mock("os", async (orig) => {
-  const actual = (await orig()) as any;
-  return { ...actual, default: { ...actual.default, platform: () => "darwin", hostname: () => "test" } };
+// vi.mock("os", async …) does NOT reliably take effect here — the same
+// trap documented in sdp-reboot-windows.test.ts: collectCDP's default
+// import of the builtin can keep resolving to the real module depending
+// on load order, so os.platform() intermittently returns the actual host
+// platform instead of the mocked one. On a real macOS dev machine that
+// accidentally still resolves to "darwin" (masking the bug); on CI's
+// ubuntu-latest it falls through to the unconfigured collectLinuxCdp
+// mock, which returns undefined and crashes at result.items. Spying on
+// the shared module object is the pattern proven to work in this repo.
+beforeAll(() => {
+  vi.spyOn(os, "platform").mockReturnValue("darwin");
+});
+afterAll(() => {
+  vi.restoreAllMocks();
 });
 
 import { collectCDP } from "../../src/plugins/cdp";
