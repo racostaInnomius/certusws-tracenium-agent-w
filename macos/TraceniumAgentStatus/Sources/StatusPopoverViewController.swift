@@ -50,7 +50,6 @@ final class StatusPopoverViewController: NSViewController {
     /// Logo a color, a la izquierda del titulo. Ver applyHeaderLogo().
     private let logoView = NSImageView()
     private var logoWidthConstraint: NSLayoutConstraint?
-    private var logoHeightConstraint: NSLayoutConstraint?
     private var titleLeadingConstraint: NSLayoutConstraint?
 
     // Tab strip — Device Info (support widget) | Agent Info (estado clásico) | Active Job | Catalog (self-service installs)
@@ -183,12 +182,14 @@ final class StatusPopoverViewController: NSViewController {
         // NSImageView lo pintaria a tamaño nativo, desbordando la banda.
         logoView.translatesAutoresizingMaskIntoConstraints = false
 
-        // Se guardan para poder colapsarlas: ver applyHeaderLogo().
+        // Se guarda para poder colapsarla: ver applyHeaderLogo(). La altura
+        // NO es una constante — se deriva de title+subtitle (ver activate()
+        // abajo) para que el logo quede exactamente tan alto como las dos
+        // líneas de texto, en vez de un valor fijo que coincidía con ellas
+        // solo por casualidad.
         let logoWidth = logoView.widthAnchor.constraint(equalToConstant: 0)
-        let logoHeight = logoView.heightAnchor.constraint(equalToConstant: 0)
         let titleLeading = titleLabel.leadingAnchor.constraint(equalTo: logoView.trailingAnchor, constant: 0)
         logoWidthConstraint = logoWidth
-        logoHeightConstraint = logoHeight
         titleLeadingConstraint = titleLeading
 
         headerView.addSubview(logoView)
@@ -197,11 +198,14 @@ final class StatusPopoverViewController: NSViewController {
         headerView.addSubview(badgeContainer)
 
         NSLayoutConstraint.activate([
-            // Logo a la izquierda, alineado con el bloque de texto
+            // Logo a la izquierda. Top/bottom pinned al bloque title+subtitle
+            // en vez de una altura fija centrada en el header — así el logo
+            // mide exactamente lo que miden las dos líneas de texto, sin
+            // importar el font metrics exacto de cada una.
             logoView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
-            logoView.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            logoView.topAnchor.constraint(equalTo: titleLabel.topAnchor),
+            logoView.bottomAnchor.constraint(equalTo: subtitleLabel.bottomAnchor),
             logoWidth,
-            logoHeight,
 
             // Title arriba, a la derecha del logo
             titleLeading,
@@ -213,17 +217,20 @@ final class StatusPopoverViewController: NSViewController {
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
             subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeContainer.leadingAnchor, constant: -12),
 
-            // Pastilla centrada vertical, pegada a la derecha
+            // Pastilla centrada vertical, pegada a la derecha. El ancho ya no
+            // es un piso fijo de 70 (que sobraba de sobra para "ONLINE") sino
+            // uno por debajo de lo que "OFFLINE" necesita, así el padding de
+            // la etiqueta es quien realmente decide el ancho de cada estado.
             badgeContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
             badgeContainer.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            badgeContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 70),
+            badgeContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 52),
             badgeContainer.heightAnchor.constraint(equalToConstant: 22),
 
             // Texto centrado en AMBOS ejes dentro de la pastilla
             badgeLabel.centerXAnchor.constraint(equalTo: badgeContainer.centerXAnchor),
             badgeLabel.centerYAnchor.constraint(equalTo: badgeContainer.centerYAnchor),
-            badgeLabel.leadingAnchor.constraint(greaterThanOrEqualTo: badgeContainer.leadingAnchor, constant: 8),
-            badgeLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeContainer.trailingAnchor, constant: -8)
+            badgeLabel.leadingAnchor.constraint(greaterThanOrEqualTo: badgeContainer.leadingAnchor, constant: 6),
+            badgeLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeContainer.trailingAnchor, constant: -6)
         ])
 
         view.addSubview(headerView)
@@ -245,9 +252,10 @@ final class StatusPopoverViewController: NSViewController {
     func applyHeaderLogo(_ image: NSImage?) {
         logoView.image = image
         logoView.imageScaling = .scaleProportionallyUpOrDown
-        let side: CGFloat = image == nil ? 0 : 34
-        logoWidthConstraint?.constant = side
-        logoHeightConstraint?.constant = side
+        // Height is no longer set here — it's derived from the
+        // titleLabel.top/subtitleLabel.bottom pin (see configureHeader),
+        // so it always matches the two text lines exactly.
+        logoWidthConstraint?.constant = image == nil ? 0 : 34
         titleLeadingConstraint?.constant = image == nil ? 0 : 10
         headerView.needsLayout = true
     }
