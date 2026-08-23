@@ -358,3 +358,23 @@ describe("PathJail — excepciones a la denylist (logs)", () => {
     expect(jail.check("C:\\Program Files\\Tracenium\\AgentCore").allowed).toBe(true);
   });
 });
+
+describe("PathJail — los logs son navegables, no solo permitidos", () => {
+  // Una excepción a la denylist no basta por sí sola: para ENTRAR en
+  // ProgramData\Tracenium\logs hay que poder listar ProgramData\Tracenium,
+  // que está denegado. El operador veía el rescate y no podía llegar a él.
+  it("el directorio de logs es una raíz propia en Windows", () => {
+    const jail = new PathJail({}, {
+      platform: "win32",
+      env: { ProgramData: "C:\\ProgramData", SystemDrive: "C:", SystemRoot: "C:\\Windows" },
+      realpathSync: (p) => p,
+      existsSync: () => true,
+      tmpdir: "C:\\Windows\\Temp"
+    });
+    const roots = (jail).rootsForDisplay;
+    expect(roots).toContain("C:\\ProgramData\\Tracenium\\logs");
+    // Y el padre sigue sellado: la raíz no lo abre.
+    const d = jail.check("C:\\ProgramData\\Tracenium\\mtls-client.crt.pem");
+    expect(d.allowed).toBe(false);
+  });
+});

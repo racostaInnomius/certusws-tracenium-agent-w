@@ -119,12 +119,21 @@ function defaultRoots(
     const programFiles = env.ProgramFiles || path.win32.join(systemDrive, "\\Program Files");
     const programFilesX86 =
       env["ProgramFiles(x86)"] || path.win32.join(systemDrive, "\\Program Files (x86)");
+    // Los directorios de logs entran como RAÍCES, no solo como excepciones a
+    // la denylist. Una excepción sola no basta: para entrar en
+    // ProgramData\Tracenium\logs hay que poder listar ProgramData\Tracenium,
+    // que está denegado — así que el operador veía el rescate pero no podía
+    // llegar a él. Como raíz aparece de chip y se navega directo, sin pasar
+    // por el padre sellado.
+    const traceniumData = path.win32.join(programData, "Tracenium");
     return [
       path.win32.join(systemDrive, "\\Users"),
       programData,
       programFiles,
       programFilesX86,
       temp,
+      path.win32.join(traceniumData, "logs"),
+      path.win32.join(traceniumData, "PrivSvc", "logs"),
       tmpdir
     ];
   }
