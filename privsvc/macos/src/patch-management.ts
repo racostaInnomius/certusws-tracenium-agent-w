@@ -15,7 +15,7 @@ type CommandResult = {
   signal?: string;
 };
 
-type MacPatchItem = {
+export type MacPatchItem = {
   label: string;
   title?: string;
   version?: string;
@@ -85,9 +85,27 @@ function parseAction(raw: string | undefined) {
   return value;
 }
 
-function isSecurityLike(item: MacPatchItem): boolean {
+// Which pending updates count as SECURITY updates — this number feeds
+// the macos.updates.no_pending_security_updates compliance check, so a
+// miss here is a false PASS.
+//
+// Field finding 2026-08-23: every Mac in the fleet had exactly one
+// pending item, "macOS Tahoe 26.6.2", and all four reported
+// securityUpdateCount=0 → the check passed with an OS update pending.
+// On modern macOS the OS point release IS the security update: Apple
+// stopped shipping standalone "Security Update" packages for the
+// current OS (Ventura+) and Rapid Security Responses were all but
+// retired, so CVE fixes ride exclusively on "macOS <name> x.y.z". Any
+// pending OS update is therefore security-relevant. Command Line
+// Tools, Xcode, fonts etc. stay non-security.
+export function isSecurityLike(item: MacPatchItem): boolean {
   const value = `${item.label} ${item.title || ""}`.toLowerCase();
-  return /security|rapid security response|xprotect|gatekeeper|mrt/.test(value);
+  if (/security|rapid security response|xprotect|gatekeeper|mrt/.test(value)) return true;
+  // "macOS Tahoe 26.6.2" / label "macOS Tahoe 26.6.2-26G5049" /
+  // older "macOS Ventura 13.6.7". Anchored on the word so "Command Line
+  // Tools for Xcode" and third-party titles containing "macOS" as a
+  // platform tag don't match.
+  return /^macos\s+[a-z]+\s+\d+(\.\d+)*/.test(value) || /^macos\s+\d+(\.\d+)*/.test(value);
 }
 
 function parseYesNo(value: string | undefined): boolean | undefined {
