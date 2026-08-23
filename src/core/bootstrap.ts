@@ -10,6 +10,9 @@ import { PolicyRuntime } from "./policy-runtime";
 import { PluginManager } from "./plugin-manager";
 import { logger } from "../bootstrap/logger";
 import { TrayStatusStore } from "../status/tray-status-store";
+import { outbox } from "../queue/sqlite-outbox";
+import { loadUpdateState, updateUpdateState } from "../update/update-state";
+import { decideSourceReport, sourceReportPayload } from "../update/update-source-report";
 
 export async function bootstrapContext(): Promise<AgentContext> {
 
@@ -57,5 +60,37 @@ export async function bootstrapContext(): Promise<AgentContext> {
 
   await pluginManager.init(ctx);
 
+  reportUpdateSource(agent.version);
+
   return ctx;
+}
+
+/**
+ * Tell the control plane who served the installer for the version now running.
+ *
+ * The periodic update check has no job and no ACK behind it, so its `servedBy`
+ * was computed and then dropped — leaving the one mechanism that moves the
+ * fleet on its own as the one we could not measure. The tier is on disk, so the
+ * report waits for the boot AFTER the install rather than racing the installer
+ * that is about to replace this process.
+ *
+ * Enqueued on the outbox, not written to the stream: the outbox already gives
+ * this durability and retry across reconnects, and it dedupes identical
+ * payloads that are still pending. Cleared once enqueued so a later boot does
+ * not report the same install again.
+ *
+ * Best effort throughout. This is telemetry; an agent that cannot report where
+ * its bytes came from must still finish starting up.
+ */
+function reportUpdateSource(runningVersion: string): void {
+  try {
+    const report = decideSourceReport(loadUpdateState(), runningVersion);
+    if (!report) return;
+
+    outbox.enqueue({ type: "FACTS_SNAPSHOT", payload: sourceReportPayload(report) });
+    updateUpdateState({ lastServedBy: null });
+    logger.info("[update] reported install source", report);
+  } catch (err: any) {
+    logger.warn("[update] could not report install source", err?.message || err);
+  }
 }
