@@ -63,6 +63,56 @@ internal static class SessionScreenCapture
     /// </summary>
     public static PrivSvcResponse Capture(string reqId, int quality, bool forceFull)
     {
+        var req = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["kind"] = "capture",
+            ["quality"] = quality,
+            ["full"] = forceFull
+        });
+        var (line, error) = Exchange(reqId, req);
+        return error ?? ParseHelperLine(reqId, line!);
+    }
+
+    /// <summary>
+    /// Inyecta teclado/ratón en la sesión del usuario.
+    ///
+    /// SendInput encola en el escritorio al que está adjunto el HILO QUE LLAMA.
+    /// Un hilo de la Sesión 0 no está adjunto a winsta0\default, así que la
+    /// entrada se iba al vacío: el operador veía "Controlling" encendido y el
+    /// escritorio remoto quieto. Es el mismo problema de sesión que la captura,
+    /// y tenía escrita la misma premisa falsa en su cabecera ("still works from
+    /// Session 0 in most modern Windows builds"). Pasa por el helper, que sí
+    /// vive en la sesión del usuario.
+    /// </summary>
+    public static PrivSvcResponse Inject(PrivSvcRequest req)
+    {
+        var payload = new Dictionary<string, object?> { ["kind"] = "input" };
+        foreach (var kv in req.Params ?? new Dictionary<string, object>())
+        {
+            payload[kv.Key] = kv.Value;
+        }
+
+        var (line, error) = Exchange(req.Id, JsonSerializer.Serialize(payload));
+        if (error is not null) return error;
+
+        using var doc = JsonDocument.Parse(line!);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("ok", out var okEl) && okEl.ValueKind == JsonValueKind.True)
+        {
+            return PrivSvcResponse.Success(req.Id, new Dictionary<string, object?> { ["injected"] = true });
+        }
+        return PrivSvcResponse.Fail(req.Id,
+            root.TryGetProperty("code", out var c) ? c.GetString() ?? "input_inject_error" : "input_inject_error",
+            root.TryGetProperty("message", out var m) ? m.GetString() ?? "input injection failed" : "input injection failed");
+    }
+
+    /// <summary>
+    /// Manda una línea de petición al helper y devuelve su línea de respuesta.
+    /// Arranca el helper si hace falta. Serializado por `Gate`: el pipe es un
+    /// carril único y dos peticiones a la vez leerían la respuesta de la otra.
+    /// </summary>
+    private static (string? line, PrivSvcResponse? error) Exchange(string reqId, string requestJson)
+    {
         lock (Gate)
         {
             try
@@ -73,9 +123,9 @@ internal static class SessionScreenCapture
                 // era CIERTO; durante meses se mostró también cuando sí lo había.
                 if (session == 0xFFFFFFFF)
                 {
-                    return PrivSvcResponse.Fail(reqId, "no_interactive_desktop",
+                    return (null, PrivSvcResponse.Fail(reqId, "no_interactive_desktop",
                         "No user is signed in to this device right now. " +
-                        "For a headless server, use a Shell session instead.");
+                        "For a headless server, use a Shell session instead."));
                 }
 
                 // Si el usuario cerró sesión y entró otro, el helper viejo
@@ -89,13 +139,7 @@ internal static class SessionScreenCapture
                     StartHelperLocked(session);
                 }
 
-                var request = JsonSerializer.Serialize(new Dictionary<string, object?>
-                {
-                    ["quality"] = quality,
-                    ["full"] = forceFull
-                });
-
-                _stdin!.Write(request);
+                _stdin!.Write(requestJson);
                 _stdin.Write('\n');
                 _stdin.Flush();
 
@@ -103,11 +147,11 @@ internal static class SessionScreenCapture
                 if (!readTask.Wait(ResponseTimeoutMs))
                 {
                     // No podemos abandonar una lectura a medias sobre un stream
-                    // compartido: el siguiente fotograma leería la respuesta de
-                    // este. Tiramos el helper y que el siguiente lo rearranque.
+                    // compartido: la siguiente petición leería la respuesta de
+                    // esta. Tiramos el helper y que la siguiente lo rearranque.
                     StopHelperLocked();
-                    return PrivSvcResponse.Fail(reqId, "screen_capture_timeout",
-                        $"The screen capture helper did not respond within {ResponseTimeoutMs} ms.");
+                    return (null, PrivSvcResponse.Fail(reqId, "screen_capture_timeout",
+                        $"The session helper did not respond within {ResponseTimeoutMs} ms."));
                 }
 
                 var line = readTask.Result;
@@ -118,22 +162,22 @@ internal static class SessionScreenCapture
                 {
                     IpcLog.Write($"[screencap helper] salida no-JSON en stdout: {line}");
                     StopHelperLocked();
-                    return PrivSvcResponse.Fail(reqId, "screen_capture_failed",
-                        "The screen capture helper wrote unexpected output. See the PrivSvc log.");
+                    return (null, PrivSvcResponse.Fail(reqId, "screen_capture_failed",
+                        "The session helper wrote unexpected output. See the PrivSvc log."));
                 }
                 if (string.IsNullOrWhiteSpace(line))
                 {
                     StopHelperLocked();
-                    return PrivSvcResponse.Fail(reqId, "screen_capture_helper_gone",
-                        "The screen capture helper closed its output stream.");
+                    return (null, PrivSvcResponse.Fail(reqId, "screen_capture_helper_gone",
+                        "The session helper closed its output stream."));
                 }
 
-                return ParseHelperLine(reqId, line!);
+                return (line, null);
             }
             catch (Exception ex)
             {
                 StopHelperLocked();
-                return PrivSvcResponse.Fail(reqId, "screen_capture_failed", ex.Message);
+                return (null, PrivSvcResponse.Fail(reqId, "screen_capture_failed", ex.Message));
             }
         }
     }

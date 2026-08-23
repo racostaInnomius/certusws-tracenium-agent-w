@@ -978,6 +978,31 @@ public static class IpcGrpcHandlers
     {
         // SendInput is non-blocking; we still wrap in Task.Run so a slow
         // call doesn't tie up the IPC dispatcher thread.
-        return Task.Run(() => InputInjection.Inject(req));
+        return Task.Run(() =>
+        {
+            // ADR-0006 — la entrada va por el helper de sesión, igual que la
+            // captura. SendInput encola en el escritorio al que está adjunto el
+            // HILO QUE LLAMA, y este servicio es LocalSystem: sus hilos viven en
+            // la Sesión 0, cuyo escritorio no es el del usuario. Inyectar desde
+            // aquí no daba error — simplemente no llegaba a ninguna parte, que
+            // es el peor modo de fallo posible: el operador veía "Controlling"
+            // encendido y el escritorio remoto quieto.
+            var viaSession = SessionScreenCapture.Inject(req);
+
+            // Misma reserva que la captura, y por el mismo motivo: durante la
+            // ventana de despliegue puede haber un PrivSvc nuevo con un MSI que
+            // todavía no trae el helper. El camino viejo tampoco funcionará,
+            // pero falla como siempre en vez de con un error nuevo sobre un
+            // fichero que el operador no sabe que debería existir.
+            if (viaSession is { Ok: false } &&
+                viaSession.Error?.Message?.Contains(
+                    "tracenium-screencap.exe not found",
+                    StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return InputInjection.Inject(req);
+            }
+
+            return viaSession;
+        });
     }
 }
