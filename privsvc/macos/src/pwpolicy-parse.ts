@@ -28,12 +28,25 @@ export function parsePwpolicyMinimumLength(output: string | null | undefined): n
     candidates.push(Number(m[1]));
   }
 
-  // Form 1 — the `.{N,}` lower bound inside a policyAttributePassword
-  // regex. Only the anchored "matches '.{N,}...'" shape: guessing at
-  // arbitrary policy regexes would mint verdicts from rules we don't
-  // actually understand.
-  for (const m of text.matchAll(/policyAttributePassword\s+matches\s+'\.\{(\d+),\}?[^']*'/g)) {
-    candidates.push(Number(m[1]));
+  // Form 1 — the password regex. Three real shapes seen in the field:
+  //   '.{4,}+'      OS default (JPR-MacBookPro)            → 4
+  //   '^$|.{4,}+'   OS default allowing a BLANK password    → 0
+  //                 (iMac-2, GtecMBPro 2026-08-23): the `^$`
+  //                 alternative means the empty string passes, so the
+  //                 effective minimum is zero — reporting 4 would hide
+  //                 exactly the weakness the check exists for.
+  //   '^.{15,}$'    anchored MDM/pwpolicy form              → 15
+  // Anything without a recognizable `.{N,}` bound stays undefined:
+  // guessing at arbitrary policy regexes would mint verdicts from
+  // rules we don't actually understand.
+  for (const m of text.matchAll(/policyAttributePassword\s+matches\s+'([^']*)'/g)) {
+    const re = m[1];
+    if (/(^|\|)\^\$(\||$)/.test(re)) {
+      candidates.push(0);
+      continue;
+    }
+    const bound = re.match(/\.\{(\d+),\}/);
+    if (bound) candidates.push(Number(bound[1]));
   }
 
   const valid = candidates.filter((n) => Number.isFinite(n) && n >= 0);

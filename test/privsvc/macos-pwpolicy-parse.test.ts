@@ -49,10 +49,23 @@ describe("parsePwpolicyMinimumLength", () => {
     expect(parsePwpolicyMinimumLength(DEFAULT_POLICY + MDM_POLICY)).toBe(12);
   });
 
-  it("regex variants: with and without the trailing +, with anchors", () => {
+  it("regex variants: with and without the trailing +, anchored", () => {
     expect(parsePwpolicyMinimumLength("policyAttributePassword matches '.{8,}'")).toBe(8);
-    expect(parsePwpolicyMinimumLength("policyAttributePassword matches '^.{15,}$'")).toBeUndefined();
-    // ^-anchored form is NOT the plain shape we pin — see next test for why.
+    expect(parsePwpolicyMinimumLength("policyAttributePassword matches '^.{15,}$'")).toBe(15);
+  });
+
+  it("the blank-allowed default ('^$|.{4,}+', field 2026-08-23) is minimum 0, not 4", () => {
+    // `^$` as an alternative means the empty password satisfies the
+    // policy — the effective minimum is zero. Two Macs in the fleet
+    // carry exactly this shape.
+    expect(parsePwpolicyMinimumLength("<string>policyAttributePassword matches '^$|.{4,}+'</string>")).toBe(0);
+    // …and it stays 0 even when a looser-looking bound follows; the
+    // MDM integer still wins when present (strictest = max).
+    expect(
+      parsePwpolicyMinimumLength(
+        "policyAttributePassword matches '^$|.{4,}+'\n<key>minimumLength</key><integer>12</integer>"
+      )
+    ).toBe(12);
   });
 
   it("unrecognized policies → undefined, never a guess (absent ≠ compliant)", () => {
