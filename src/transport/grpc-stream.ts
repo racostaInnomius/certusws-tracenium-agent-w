@@ -288,7 +288,10 @@ const CONTROL_FACTS_COOLDOWN_MS = 60_000;
 const FACT_TYPE_COOLDOWN_KEYS: Record<string, string> = {
   inventory:  "lastSentFactsAt:inventory",
   compliance: "lastSentFactsAt:compliance",
-  patch:      "lastSentFactsAt:patch"
+  patch:      "lastSentFactsAt:patch",
+  // The scheduler's runCdp already stamps this key, so a manual scan
+  // that lands right after a 12h tick is correctly seen as redundant.
+  cdp:        "lastSentFactsAt:cdp"
 };
 
 function isOnCooldown(factType: string): { skip: boolean; ageMs: number | null } {
@@ -360,6 +363,23 @@ async function collectFactsSnapshot(
       namespaces.pmp = await ctx.plugins.run("pmp.collect");
     } catch (err) {
       ctx.logger?.error?.(`PMP collect failed (${source})`, { err });
+    }
+  }
+
+  // CDP is gated on the plugin flag ALONE — unlike amp/scp/pmp it has no
+  // module toggle, so `plugins.enabled` is both the opt-in and the
+  // kill-switch (same rule as the scheduler's cdp pipeline).
+  //
+  // `full: true` because a control-driven snapshot must be a complete
+  // picture of the device. This is the same requirement the AMP
+  // rehydration below exists to satisfy; CDP can meet it directly,
+  // since the collector has just read every certificate it can see and
+  // does not need to reload a baseline to know what is there.
+  if ((factType === "cdp" || factType === "all") && ctx.policyRuntime.pluginEnabled("cdp")) {
+    try {
+      namespaces.cdp = await ctx.plugins.run("cdp.collect", { full: true });
+    } catch (err) {
+      ctx.logger?.error?.(`CDP collect failed (${source})`, { err });
     }
   }
 

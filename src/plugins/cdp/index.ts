@@ -46,7 +46,63 @@ function applyCap(items: CdpCertItem[]): { items: CdpCertItem[]; truncated: bool
   return { items: prioritized.slice(0, MAX_ITEMS), truncated: true };
 }
 
-export async function collectCDP(ctx: AgentContext): Promise<CdpNamespace> {
+export type CollectCdpOptions = {
+  /**
+   * Send the COMPLETE inventory instead of a delta.
+   *
+   * The scheduled scan is incremental by design: after the first run it
+   * ships only what changed. That is right for a 12h heartbeat and wrong
+   * for an operator who just asked for a scan — a delta of zero would
+   * answer "nothing changed" when the question was "what is on this
+   * device?", and an on-demand snapshot that says nothing is
+   * indistinguishable from one that failed.
+   *
+   * Skipping the diff also makes the forced scan idempotent: the payload
+   * is a full picture, so re-running it cannot leave the control plane
+   * in a state that depends on how many times it was asked.
+   */
+  full?: boolean;
+};
+
+/**
+ * Serialization lane for CDP scans.
+ *
+ * `collectOnce` commits the SQLite baseline, and the delta it computes is
+ * only meaningful against the baseline as it stood when the scan started.
+ * Two overlapping scans therefore corrupt each other: the second diffs
+ * against a baseline the first has already replaced, so genuinely new
+ * certificates read as unchanged and vanish from the wire until something
+ * else about them moves.
+ *
+ * Until now the only caller was the scheduler, which held its own
+ * `cdpRunning` mutex — the invariant was real but enforced by the caller.
+ * On-demand collection adds a second entrance, so the guard moves to the
+ * thing that owns the baseline. Any future caller gets it for free rather
+ * than having to know it exists.
+ *
+ * Queue, don't share: a caller that asked for `full` must not be handed a
+ * delta produced by whoever happened to be running. Waiting costs a
+ * second scan; sharing would silently break the contract.
+ */
+let cdpLane: Promise<void> = Promise.resolve();
+
+export function collectCDP(
+  ctx: AgentContext,
+  options?: CollectCdpOptions
+): Promise<CdpNamespace> {
+  const result = cdpLane.then(() => collectOnce(ctx, options));
+  // The lane must never reject, or every later scan inherits the failure.
+  cdpLane = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
+
+async function collectOnce(
+  ctx: AgentContext,
+  options?: CollectCdpOptions
+): Promise<CdpNamespace> {
   const platform = os.platform();
   const base: Pick<CdpNamespace, "schemaVersion" | "collector" | "collectedAt"> = {
     schemaVersion: "1.0",
@@ -164,7 +220,12 @@ export async function collectCDP(ctx: AgentContext): Promise<CdpNamespace> {
   }
 
   // Delta vs the local baseline. null → first run → full items[].
-  const delta = computeCdpDelta(items);
+  //
+  // A forced scan takes the same route as a first run: no diff, full
+  // items[]. That is not a special case bolted on — "send everything you
+  // have" is exactly what the baseline path already means, so `full`
+  // reuses it instead of introducing a third shape on the wire.
+  const delta = options?.full ? null : computeCdpDelta(items);
 
   // A capped scan cannot claim anything was removed.
   //
