@@ -42,6 +42,7 @@ import {
 } from "./mode";
 import { evaluateSignatureGate, normalizeVerifyResponse } from "./signature-gate";
 import { decideReboot, shouldSkipPostDetect, withRebootExitCodes } from "./reboot";
+import { failureReason } from "./failure-detail";
 
 // Mirror of the backend's `InstallOutcome` enum. Keep in lockstep.
 export type InstallOutcome =
@@ -243,7 +244,7 @@ function encodeAckMessage(
  */
 function trimStderr(stderr: unknown): string | undefined {
   if (typeof stderr !== "string" || stderr.length === 0) return undefined;
-  return stderr.replace(/\r/g, "").replace(/ /g, "").slice(0, 1024);
+  return stderr.replace(/\r/g, "").replace(/\x00/g, "").slice(0, 1024);
 }
 
 /**
@@ -499,10 +500,16 @@ export async function runSoftwareInstall(
         outcome = errCode === "install_timeout" || errCode === "uninstall_timeout"
           ? "timed_out"
           : isPermanent ? "rejected" : "failed";
-        extraReason = errCode;
+        // Same gap as the install branch: the classification above needs the
+        // bare code, but the operator needs what privsvc said.
+        extraReason = failureReason(
+          (runResp as any)?.error?.code,
+          (runResp as any)?.error?.message,
+          "uninstall_failed"
+        );
         return {
           ackStatus: outcome === "timed_out" ? 1 : isPermanent ? 2 : 2,
-          ackMessage: encodeAckMessage(outcome, deploymentId, { reason: errCode }),
+          ackMessage: encodeAckMessage(outcome, deploymentId, { reason: extraReason }),
           outcome,
         };
       }
@@ -704,11 +711,20 @@ export async function runSoftwareInstall(
         // whether to retry (Phase 1 we don't auto-retry; future:
         // the retry-engine can read this).
         outcome = errCode === "install_timeout" ? "timed_out" : "failed";
-        extraReason = errCode;
+        // Carry what privsvc actually said. Keeping only the code sent every
+        // real-world failure to the dashboard as a bare `install_failed` with
+        // no exit code and no stderr — literally "it broke, and nothing said
+        // why". The message was already in hand and was being dropped one line
+        // before it could be sent.
+        extraReason = failureReason(
+          (runResp as any)?.error?.code,
+          (runResp as any)?.error?.message,
+          "install_failed"
+        );
         return {
           ackStatus: outcome === "timed_out" ? 1 : 2,
           ackMessage: encodeAckMessage(outcome, deploymentId, {
-            reason: errCode,
+            reason: extraReason,
           }),
           outcome,
         };
