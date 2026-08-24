@@ -21,10 +21,32 @@ describe("decideSourceReport", () => {
     ).toEqual({ version: "1.1.49", servedBy: "dp" });
   });
 
-  it("carries origin as a real answer, not a blank", () => {
+  // ⚠️ THE SHAPE THE PRODUCER ACTUALLY WRITES.
+  //
+  // `lastServedBy` is set ONLY inside the `if (viaDp)` branch of update-service.
+  // A direct download leaves it EMPTY — it never contains the string "origin".
+  // The first version of this module demanded a non-empty tier and so reported
+  // nothing at all for WAN updates; the two endpoints that updated over the
+  // internet right after it shipped produced no row. The old test passed
+  // because it fed a value the producer cannot emit.
+  it("reads an empty tier as origin, which is what a direct download leaves", () => {
     expect(
-      decideSourceReport({ lastServedBy: "origin", lastAttemptedVersion: "1.1.49" }, "1.1.49")
+      decideSourceReport({ lastAttemptedVersion: "1.1.49" }, "1.1.49")
     ).toEqual({ version: "1.1.49", servedBy: "origin" });
+    expect(
+      decideSourceReport({ lastServedBy: null, lastAttemptedVersion: "1.1.49" }, "1.1.49")
+    ).toEqual({ version: "1.1.49", servedBy: "origin" });
+    expect(
+      decideSourceReport({ lastServedBy: "   ", lastAttemptedVersion: "1.1.49" }, "1.1.49")
+    ).toEqual({ version: "1.1.49", servedBy: "origin" });
+  });
+
+  // Silence has to land in the denominator: "how much came over the LAN" is not
+  // a fraction if WAN updates simply vanish from the count.
+  it("mirrors the default the ACK path already ships in production", () => {
+    const viaDp = decideSourceReport({ lastServedBy: "dp", lastAttemptedVersion: "1.1.49" }, "1.1.49");
+    const direct = decideSourceReport({ lastAttemptedVersion: "1.1.49" }, "1.1.49");
+    expect([viaDp?.servedBy, direct?.servedBy]).toEqual(["dp", "origin"]);
   });
 
   // The decisive case. A failed or abandoned update leaves lastServedBy behind;
@@ -33,16 +55,6 @@ describe("decideSourceReport", () => {
   it("says nothing when the update did not land", () => {
     expect(
       decideSourceReport({ lastServedBy: "dp", lastAttemptedVersion: "1.1.49" }, "1.1.48")
-    ).toBeNull();
-  });
-
-  it("says nothing when no tier was recorded", () => {
-    expect(decideSourceReport({ lastAttemptedVersion: "1.1.49" }, "1.1.49")).toBeNull();
-    expect(
-      decideSourceReport({ lastServedBy: null, lastAttemptedVersion: "1.1.49" }, "1.1.49")
-    ).toBeNull();
-    expect(
-      decideSourceReport({ lastServedBy: "  ", lastAttemptedVersion: "1.1.49" }, "1.1.49")
     ).toBeNull();
   });
 
@@ -60,6 +72,26 @@ describe("decideSourceReport", () => {
     expect(decideSourceReport(null, "1.1.49")).toBeNull();
     expect(decideSourceReport(undefined, "1.1.49")).toBeNull();
     expect(decideSourceReport({}, "1.1.49")).toBeNull();
+  });
+
+  // An attempt that died before downloading leaves no tier — but it also leaves
+  // the endpoint behind the version it was attempting, so the version guard
+  // catches it before the origin default can turn a failure into a fake WAN
+  // download. This is the pair that makes defaulting to origin safe.
+  it("does not turn a failed attempt into a phantom origin download", () => {
+    expect(decideSourceReport({ lastAttemptedVersion: "1.1.50" }, "1.1.49")).toBeNull();
+  });
+
+  // Re-reporting is deliberate: the backend upserts on (tenant, device,
+  // version), so a boot that repeats the report is the same row written twice.
+  // The first version cleared the state on enqueue and turned one lost delivery
+  // into permanent loss.
+  it("keeps reporting the same install across boots, idempotently", () => {
+    const state = { lastServedBy: "dp", lastAttemptedVersion: "1.1.50" };
+    const first = decideSourceReport(state, "1.1.50");
+    const second = decideSourceReport(state, "1.1.50");
+    expect(first).toEqual(second);
+    expect(first).toEqual({ version: "1.1.50", servedBy: "dp" });
   });
 });
 

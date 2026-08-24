@@ -64,16 +64,31 @@ export function decideSourceReport(
   state: UpdateSourceStateView | null | undefined,
   runningVersion: string | null | undefined
 ): UpdateSourceReport | null {
-  const servedBy = String(state?.lastServedBy ?? "").trim();
-  if (!servedBy) return null;
-
   const attempted = String(state?.lastAttemptedVersion ?? "").trim();
   const running = String(runningVersion ?? "").trim();
   if (!attempted || !running) return null;
 
   // The update did not land — the endpoint is on some other version. Whoever
   // served those bytes did not serve what is running, so say nothing.
+  //
+  // This guard is also what makes the `origin` default below safe: an attempt
+  // that died before downloading anything leaves no tier AND leaves the running
+  // version behind the attempted one, so it never reaches that line.
   if (attempted !== running) return null;
+
+  // ⚠️ A MISSING TIER MEANS ORIGIN, NOT "NOTHING TO REPORT".
+  //
+  // `lastServedBy` is written ONLY inside the `if (viaDp)` branch of
+  // update-service — a direct download never sets it. The ACK path has always
+  // papered over that with `lastServedBy || "origin"`, which is why `src=origin`
+  // shows up in production while the state field is empty.
+  //
+  // Requiring a non-empty tier here made every WAN update invisible: the first
+  // two endpoints to update after this shipped both came over the internet and
+  // reported nothing at all. Mirroring the convention the ACK already ships is
+  // what makes "what fraction came over the LAN" a real fraction — silence has
+  // to land in the denominator, not outside it.
+  const servedBy = String(state?.lastServedBy ?? "").trim() || "origin";
 
   return { version: running, servedBy };
 }
