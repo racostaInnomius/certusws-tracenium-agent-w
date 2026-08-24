@@ -136,6 +136,27 @@ static string CaptureOnce(int quality, bool forceFull)
         message = ex.Message;
     }
 
+    // `no_frame` NO es un fallo: es la señal de que el escritorio no ha
+    // cambiado. Caer a GDI aquí fue un error de diseño con consecuencias
+    // visibles: con el escritorio quieto el stream se pasaba a GDI (fotograma
+    // completo, sin dirty rects) y al moverse volvía a DXGI (parciales), o sea
+    // que el canvas del operador recibía dos semánticas alternadas. El
+    // resultado eran ventanas duplicadas y desplazadas al tomar el control,
+    // que es justo cuando DXGI empieza a producir parciales de verdad.
+    //
+    // El agente ya sabe qué hacer con esto — screen-session.ts lo trata como
+    // "no hay nada nuevo que enviar" desde el arreglo de los códigos
+    // colapsados. Se lo pasamos tal cual.
+    if (result is null && code == "screen_capture_no_frame")
+    {
+        return JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["ok"] = false,
+            ["code"] = code,
+            ["message"] = message ?? "no new frame"
+        });
+    }
+
     if (result is null)
     {
         Console.Error.WriteLine($"DXGI falló ({code}): {message} — probando GDI");

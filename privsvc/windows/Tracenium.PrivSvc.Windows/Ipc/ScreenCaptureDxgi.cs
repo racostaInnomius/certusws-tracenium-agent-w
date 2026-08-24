@@ -516,7 +516,17 @@ internal static class ScreenCaptureDxgi
         response = null;
 
         // Acquire next frame with 500ms timeout.
-        var hr = AcquireNextFrame(_outputDuplication, 500,
+        // 500 ms era demasiado: con el escritorio quieto AcquireNextFrame
+        // agota el timeout entero antes de decir "no hay frame", y mientras
+        // tanto retiene el carril del pipe que comparte con la inyección de
+        // entrada — el operador movía el ratón y la respuesta llegaba medio
+        // segundo tarde. Además, a 5 fps el presupuesto por fotograma son
+        // 200 ms, así que 500 hacía imposible el ritmo pedido.
+        //
+        // Acortarlo no pierde nada: cuando SÍ hay fotograma la llamada
+        // retorna de inmediato; el timeout solo gobierna el caso "nada ha
+        // cambiado", que ahora es barato y se reporta como no_frame.
+        var hr = AcquireNextFrame(_outputDuplication, 100,
             out var frameInfo, out var desktopResource);
         if (hr != S_OK) return hr;
 
