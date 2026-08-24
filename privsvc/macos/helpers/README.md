@@ -64,22 +64,54 @@ The binary is staged next to `privsvc.js` (the orchestrator resolves it
 via `path.resolve(__dirname, "tracenium-screencap")`) and ships inside
 the `.pkg` automatically (`pkgbuild --root` packages the whole tree).
 
-## TCC — PPPC profile (required, no interactive prompt)
+## TCC — Grabación de Pantalla: la aprueba una PERSONA
 
-Screen Recording is pre-granted fleet-wide via a **PPPC** (Privacy
-Preferences Policy Control) configuration profile keyed to the helper's
-signing identity. The helper *preflights* and never *requests*
-permission, so without this profile it returns
-`no_screen_recording_permission` instead of prompting.
+> **Corrección (agosto 2026).** Este documento afirmaba durante meses que
+> Screen Recording se concedía en flota vía perfil PPPC. **Es falso.** Apple
+> trata `kTCCServiceScreenCapture` como **deny-only** en PPPC: un perfil puede
+> DENEGARLO a apps concretas, nunca concederlo. Es una decisión de diseño de
+> Apple sobre privacidad, no una limitación del MDM que se use. La sección
+> anterior incluso documentaba `Authorization: Allow` y un "no-prompt flow" en
+> macOS 11+ que no existe.
+>
+> Confirmado en documentación de Kandji, la comunidad de Jamf, dataJAR y
+> ControlUp. El `⚠️` de validación pendiente que llevaba este fichero desde el
+> principio tenía razón, y nadie lo resolvió hasta que el módulo falló en campo.
 
-> **Who delivers this profile.** A PPPC payload can only be installed by
-> an MDM — no agent, however privileged, can grant itself TCC. Tracenium
-> is building its **own** MDM for exactly this class of control
-> (configuration profiles, restrictions, managed preferences); until
-> that ships, the profile has to come from whatever MDM the customer
-> already runs, and endpoints with no MDM at all will keep returning
-> `no_screen_recording_permission`. Earlier revisions of this file
-> assumed a third-party MDM was a given — that is no longer the plan.
+**Consecuencia de producto:** screen share en macOS exige **una aprobación
+humana, una vez por Mac**. No hay despliegue silencioso y no lo habrá. Windows
+y Linux no tienen esta restricción.
+
+### Cómo funciona ahora
+
+1. El helper viaja como **bundle** `Tracenium Screen Helper.app`, no como
+   ejecutable suelto. Un binario Unix pelado no aparece de forma fiable en la
+   lista de Grabación de Pantalla — hay una regresión abierta en macOS 26.1 —
+   y el selector de Ajustes solo deja escoger aplicaciones, así que el permiso
+   no se podía conceder ni a mano. Además el nombre del bundle es lo que ve la
+   persona que aprueba: tiene que ser reconocible.
+
+2. El helper **PIDE** el permiso una vez por proceso, al arrancar:
+   `CGPreflightScreenCaptureAccess()` solo consulta y **no registra** el
+   binario en Ajustes. Solo `CGRequestScreenCaptureAccess()` lo hace. Mientras
+   el helper únicamente consultaba, no aparecía en la lista y no había forma de
+   autorizarlo.
+
+3. Si sigue sin concederse, devuelve `screen_recording_permission_pending`, que
+   la UI presenta como acción pendiente y no como error: hay alguien mirando un
+   diálogo.
+
+4. La firma estable con Developer ID sigue importando, pero **no** para que un
+   perfil conceda nada: sirve para que la aprobación que hizo una persona
+   sobreviva a las actualizaciones del agente. Si la identidad cambiara en cada
+   build, habría que volver a aprobar en cada versión.
+
+### Lo único que MDM sí aporta
+
+`AllowStandardUserToSetSystemService` (macOS 11+) permite que un usuario **sin
+privilegios de administrador** apruebe el permiso. No lo concede — sigue
+haciendo falta que alguien pulse — pero quita la fricción de tener que pasar
+por un admin, que en un parque gestionado es la barrera real.
 
 Payload — `com.apple.TCC.configuration-profile-policy`:
 
@@ -95,8 +127,10 @@ Payload — `com.apple.TCC.configuration-profile-policy`:
       <string>bundleID</string>
       <key>CodeRequirement</key>
       <string>identifier "com.certusws.tracenium.screencap" and anchor apple generic and certificate leaf[subject.OU] = "3CN673MCWH"</string>
+      <!-- NO "Allow": Apple lo ignora para ScreenCapture. Esto solo evita que
+           haga falta un administrador para aprobar. -->
       <key>Authorization</key>
-      <string>Allow</string>
+      <string>AllowStandardUserToSetSystemService</string>
       <key>StaticCode</key>
       <false/>
     </dict>
@@ -104,15 +138,11 @@ Payload — `com.apple.TCC.configuration-profile-policy`:
 </dict>
 ```
 
-Notes:
-- `3CN673MCWH` is the CERTUS ITM LLC Team ID (matches the Developer ID
-  used to sign every shipped binary).
-- `Authorization: Allow` requires macOS 11+. For 10.15 fall back to the
-  legacy `Allowed: <true/>` key.
-- Screen Recording **cannot** be granted by a PPPC profile silently on
-  macOS 10.15 (Apple restriction); 11+ is required for the no-prompt
-  flow. 10.15 endpoints would need an interactive grant (out of scope —
-  the fleet baseline is 12.3+).
+`3CN673MCWH` es el Team ID de CERTUS ITM LLC, el mismo con el que se firma todo
+lo que enviamos.
+
+El mismo payload sirve además para **denegar** ScreenCapture a otras apps, que
+es para lo que PPPC sí funciona en este servicio.
 
 ## ⚠️ On-device validation pending
 

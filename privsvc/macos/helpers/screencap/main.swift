@@ -194,12 +194,33 @@ func parseQuality() -> Int {
 
 let quality = parseQuality()
 
-// Preflight TCC (never request — PPPC handles the grant fleet-wide).
+// TCC: consultar y, si hace falta, PEDIR una vez.
+//
+// Pedir no es opcional aunque parezca intrusivo:
+// CGPreflightScreenCaptureAccess() solo consulta y NO registra el binario en
+// Ajustes › Privacidad y seguridad › Grabación de pantalla. Solo
+// CGRequestScreenCaptureAccess() lo hace. Mientras este helper solo
+// consultaba, no aparecía en la lista y NO HABÍA FORMA de autorizarlo — ni
+// siquiera a mano, porque el selector de Ajustes busca aplicaciones. Ese fue
+// el callejón sin salida que nos tuvo dando vueltas.
+//
+// Se pide UNA sola vez por proceso, aquí en el arranque y no por fotograma:
+// el helper es de vida larga, así que una petición por sesión de screen share
+// es el mínimo que registra la entrada sin convertirse en spam de diálogos.
+//
+// La llamada NO espera a que el usuario decida. Devuelve el estado actual —
+// normalmente false la primera vez — mientras el diálogo sigue abierto. Por
+// eso el código que emitimos distingue los dos casos: si acabamos de pedirlo,
+// el operador tiene que saber que hay alguien mirando un diálogo, no que algo
+// está roto.
 if !CGPreflightScreenCaptureAccess() {
-    emitError(
-        "no_screen_recording_permission",
-        "Screen Recording permission not granted (TCC). A person must approve this on the Mac itself — Apple does not let MDM grant Screen Recording; the PPPC payload is deny-only for this service."
-    )
+    let grantedNow = CGRequestScreenCaptureAccess()
+    if !grantedNow {
+        emitError(
+            "screen_recording_permission_pending",
+            "Screen Recording is not granted yet. macOS has been asked for it and the entry now exists in System Settings > Privacy & Security > Screen Recording — someone at the Mac has to enable Tracenium there. Apple does not allow MDM to grant this."
+        )
+    }
 }
 
 let (cursorX, cursorY) = cursorPoint()

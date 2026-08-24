@@ -75,6 +75,23 @@ function helperPath(): string {
   const override = process.env.TRACENIUM_SCREENCAP_HELPER;
   if (override && override.trim()) return override.trim();
   // dist/screen-capture.js → ./tracenium-screencap (installed sibling)
+  // Dentro del bundle. El helper dejó de ser un ejecutable suelto porque TCC
+  // no le daba sitio: un binario Unix pelado no aparece de forma fiable en la
+  // lista de Grabación de Pantalla, y el selector de Ajustes solo deja escoger
+  // aplicaciones — así que el permiso no se podía conceder ni a mano.
+  //
+  // Se lanza el ejecutable de dentro, no `open` el bundle: necesitamos su
+  // stdout. TCC lee igualmente la identidad del bundle que lo contiene, que es
+  // lo que hace que el permiso se ancle donde debe.
+  const bundled = path.resolve(
+    __dirname,
+    "Tracenium Screen Helper.app/Contents/MacOS/tracenium-screencap"
+  );
+  if (fs.existsSync(bundled)) return bundled;
+
+  // Reserva para la ventana de actualización: un agente con el .pkg anterior
+  // todavía tiene el ejecutable suelto. Falla por TCC igual que antes, pero
+  // con el error de siempre en vez de uno sobre un fichero que falta.
   return path.resolve(__dirname, "tracenium-screencap");
 }
 

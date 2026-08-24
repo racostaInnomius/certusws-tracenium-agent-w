@@ -163,14 +163,26 @@ build_privsvc_bundle() {
 build_screencap_helper() {
   # RCP M3.S1 — compile + sign the screen-capture helper that PrivSvc
   # spawns into the console user's GUI session (via launchctl asuser).
-  # It MUST sit next to privsvc.js — the orchestrator resolves it with
-  # path.resolve(__dirname, "tracenium-screencap"), the same __dirname
-  # the proto path uses — and be signed with a STABLE Developer ID so the
-  # MDM PPPC profile's code requirement matches and pre-grants Screen
-  # Recording. See privsvc/macos/helpers/screencap/main.swift and
-  # privsvc/macos/helpers/README.md (PPPC payload).
+  # Vive junto a privsvc.js, que es donde lo busca el orquestador.
+  #
+  # ⚠️ La firma estable NO existe para que un perfil PPPC conceda Grabación de
+  # Pantalla: Apple no lo permite, el servicio es deny-only en PPPC. Sirve para
+  # que la concesión que hace UNA PERSONA sobreviva a las actualizaciones del
+  # agente — si la identidad cambiara en cada build, el usuario tendría que
+  # volver a aprobar en cada versión.
+  # El helper viaja como BUNDLE .app, no como ejecutable suelto. Dos motivos,
+  # los dos medidos en campo:
+  #
+  #   1. TCC. Un ejecutable Unix suelto tiene problemas conocidos para
+  #      aparecer en la lista de Grabación de Pantalla (hay regresión abierta
+  #      en macOS 26.1), y el selector de Ajustes solo deja escoger
+  #      aplicaciones — así que ni siquiera se podía autorizar a mano.
+  #   2. Es una persona quien aprueba. En el diálogo y en la lista aparece el
+  #      nombre del bundle, así que tiene que ser algo que el usuario final
+  #      reconozca, no "tracenium-screencap".
   local src="$ROOT_DIR/privsvc/macos/helpers/screencap/main.swift"
-  local out="$BUILD_DIR/PrivSvc/macos/tracenium-screencap"
+  local app_dir="$BUILD_DIR/PrivSvc/macos/Tracenium Screen Helper.app"
+  local out="$app_dir/Contents/MacOS/tracenium-screencap"
 
   if [ ! -f "$src" ]; then
     echo "ERROR: missing screencap helper source: $src" >&2
@@ -187,7 +199,39 @@ build_screencap_helper() {
     exit 1
   fi
 
-  mkdir -p "$BUILD_DIR/PrivSvc/macos"
+  rm -rf "$app_dir"
+  mkdir -p "$app_dir/Contents/MacOS"
+
+  # LSUIElement: sin icono en el Dock ni menú. Es un helper, no una app que el
+  # usuario abra — pero sigue siendo un bundle para que TCC y Ajustes lo traten
+  # como ciudadano de primera.
+  cat > "$app_dir/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.certusws.tracenium.screencap</string>
+  <key>CFBundleName</key>
+  <string>Tracenium Screen Helper</string>
+  <key>CFBundleDisplayName</key>
+  <string>Tracenium Screen Helper</string>
+  <key>CFBundleExecutable</key>
+  <string>tracenium-screencap</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>12.3</string>
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+
   local tmp; tmp="$(mktemp -d)"
   echo "→ building tracenium-screencap (arm64 + x86_64, target macos12.3)"
   swiftc -O -target arm64-apple-macos12.3  "$src" -o "$tmp/screencap.arm64"
@@ -206,18 +250,21 @@ build_screencap_helper() {
     echo "Skipping screencap helper codesign (TRACENIUM_CODESIGN_IDENTITY=skip)."
   else
     local CODESIGN_ID="${TRACENIUM_CODESIGN_IDENTITY:-Developer ID Application: CERTUS ITM LLC (3CN673MCWH)}"
-    /usr/bin/xattr -c "$out" || true
-    echo "→ codesign $out"
+    /usr/bin/xattr -cr "$app_dir" || true
+    echo "→ codesign $app_dir"
     # -i pins a STABLE signing identifier so the MDM PPPC profile's
     # CodeRequirement (identifier "com.certusws.tracenium.screencap" and
     # anchor apple generic and certificate leaf[subject.OU]="3CN673MCWH")
     # matches deterministically. Without -i the identifier defaults to the
     # binary filename, which is fine today but brittle. See
     # privsvc/macos/helpers/README.md.
+    # Se firma el BUNDLE entero, no el ejecutable suelto: TCC ancla el
+    # permiso al bundle, y firmar solo el binario de dentro deja el .app sin
+    # sello y la concesión sin sitio donde agarrarse.
     codesign --force --options runtime --timestamp \
       -i com.certusws.tracenium.screencap \
-      --sign "$CODESIGN_ID" "$out"
-    codesign --verify --strict --verbose=2 "$out"
+      --sign "$CODESIGN_ID" "$app_dir"
+    codesign --verify --strict --verbose=2 "$app_dir"
   fi
 }
 
