@@ -30,11 +30,22 @@
 //   error, so a single transient SCK failure doesn't drop the frame.
 //
 // ── TCC ──────────────────────────────────────────────────────────────
-//   Screen Recording is pre-granted fleet-wide via an MDM PPPC profile
-//   keyed to this binary's code-signing identity. We PREFLIGHT (never
-//   request) so an unprovisioned device reports a clean
-//   no_screen_recording_permission instead of triggering an interactive
-//   prompt from a faceless helper.
+//   ⚠️ LA PREMISA ORIGINAL DE ESTE FICHERO ERA FALSA. Decía que Screen
+//   Recording se concede en flota vía perfil PPPC de MDM. No se puede:
+//   Apple trata kTCCServiceScreenCapture como DENY-ONLY en PPPC — un
+//   perfil puede denegarlo a otras apps, nunca concederlo. Lo único que
+//   MDM aporta es Authorization = AllowStandardUserToSetSystemService,
+//   que permite que un usuario SIN privilegios de admin lo apruebe; pero
+//   alguien tiene que pulsar igualmente.
+//
+//   Consecuencia de diseño: screen share en macOS EXIGE una aprobación
+//   humana, una vez por Mac. No hay despliegue silencioso posible.
+//
+//   Y preflight NO basta para que el helper aparezca en Ajustes:
+//   CGPreflightScreenCaptureAccess() solo consulta. Solo
+//   CGRequestScreenCaptureAccess() registra el binario en la lista de
+//   Grabación de Pantalla. Por eso el operador no encontraba a
+//   com.certusws.tracenium.screencap por ningún lado: nunca lo pidió.
 //
 // Build (see scripts/build-macos-pkg.sh):
 //   swiftc -O -target arm64-apple-macos12.3  main.swift -o screencap.arm64
@@ -187,7 +198,7 @@ let quality = parseQuality()
 if !CGPreflightScreenCaptureAccess() {
     emitError(
         "no_screen_recording_permission",
-        "Screen Recording permission not granted (TCC). Provision via the MDM PPPC profile keyed to this helper's Team ID."
+        "Screen Recording permission not granted (TCC). A person must approve this on the Mac itself — Apple does not let MDM grant Screen Recording; the PPPC payload is deny-only for this service."
     )
 }
 
