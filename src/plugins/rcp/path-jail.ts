@@ -56,6 +56,9 @@ export type PathJailConfig = {
   denyPaths?: string[];
   /** Extra file extensions to seal, merged with the built-in list. */
   denyExtensions?: string[];
+  /** Subtrees rescued from denyPaths, merged with the built-in list.
+   *  Only lifts the deny — the path still has to sit inside a root. */
+  denyExceptions?: string[];
 };
 
 export type JailDeps = {
@@ -109,12 +112,62 @@ function defaultRoots(
     const systemDrive = env.SystemDrive || "C:";
     const programData = env.ProgramData || "C:\\ProgramData";
     const temp = env.TEMP || env.TMP || path.win32.join(systemDrive, "\\Windows\\Temp");
-    return [path.win32.join(systemDrive, "\\Users"), programData, temp, tmpdir];
+    // Program Files: sin él no se puede llegar a lo instalado, que es la mitad
+    // de lo que soporte necesita mirar (incluidos nuestros propios logs de
+    // AgentCore). Es de solo lectura para cualquiera que no sea admin, así que
+    // no abre nada que el operador no pudiera ver por otra vía.
+    const programFiles = env.ProgramFiles || path.win32.join(systemDrive, "\\Program Files");
+    const programFilesX86 =
+      env["ProgramFiles(x86)"] || path.win32.join(systemDrive, "\\Program Files (x86)");
+    // Los directorios de logs entran como RAÍCES, no solo como excepciones a
+    // la denylist. Una excepción sola no basta: para entrar en
+    // ProgramData\Tracenium\logs hay que poder listar ProgramData\Tracenium,
+    // que está denegado — así que el operador veía el rescate pero no podía
+    // llegar a él. Como raíz aparece de chip y se navega directo, sin pasar
+    // por el padre sellado.
+    const traceniumData = path.win32.join(programData, "Tracenium");
+    return [
+      path.win32.join(systemDrive, "\\Users"),
+      programData,
+      programFiles,
+      programFilesX86,
+      temp,
+      path.win32.join(traceniumData, "logs"),
+      path.win32.join(traceniumData, "PrivSvc", "logs"),
+      tmpdir
+    ];
   }
   if (platform === "darwin") {
-    return ["/Users", "/tmp", "/private/tmp", "/var/tmp", "/opt", "/srv", tmpdir];
+    return ["/Users", "/tmp", "/private/tmp", "/var/tmp", "/opt", "/srv",
+            "/Library/Logs/Tracenium", tmpdir];
   }
-  return ["/home", "/tmp", "/var/tmp", "/opt", "/srv", tmpdir];
+  return ["/home", "/tmp", "/var/tmp", "/opt", "/srv", "/var/log/tracenium", tmpdir];
+}
+
+/**
+ * Rutas que se rescatan de la denylist. Soporte necesita descargar NUESTROS
+ * logs, y viven dentro del directorio de datos del agente, que está denegado
+ * entero porque ahí también están el certificado mTLS y el estado. Denegar la
+ * carpeta y rescatar `logs` deja el secreto sellado y el diagnóstico a mano.
+ *
+ * Solo levanta el veto de la denylist: la ruta sigue teniendo que caer dentro
+ * de alguna raíz permitida.
+ */
+function defaultDenyExceptions(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv
+): string[] {
+  if (platform === "win32") {
+    const programData = env.ProgramData || "C:\\ProgramData";
+    return [
+      path.win32.join(programData, "Tracenium", "logs"),
+      path.win32.join(programData, "Tracenium", "PrivSvc", "logs")
+    ];
+  }
+  if (platform === "darwin") {
+    return ["/Library/Application Support/Tracenium/Logs", "/Library/Logs/Tracenium"];
+  }
+  return ["/var/log/tracenium"];
 }
 
 function defaultDenyPaths(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] {
@@ -181,6 +234,8 @@ export class PathJail {
   /** Absolute, real (symlink-resolved where possible), comparison-normalized. */
   private readonly roots: string[];
   private readonly denyPaths: string[];
+  /** Subárboles que ganan a denyPaths. Ver defaultDenyExceptions. */
+  private readonly denyExceptions: string[];
   private readonly denyExtensions: string[];
   /** Display copies — real paths, not case-folded. Shown to the operator. */
   private readonly rootsForDisplay: string[];
@@ -202,12 +257,36 @@ export class PathJail {
     // Roots are resolved through realpath too: on macOS /tmp is a symlink to
     // /private/tmp, so a lexical root of "/tmp" would never match the real
     // path of anything inside it.
-    this.rootsForDisplay = rawRoots.map((r) => this.tryReal(r));
-    this.roots = this.rootsForDisplay.map((r) => this.forCompare(r));
+    // Deduplicar DESPUÉS de realpath, no antes: los duplicados no existen en la
+    // lista literal, aparecen al resolverla. En macOS /tmp y /private/tmp son la
+    // misma carpeta, y os.tmpdir() suele coincidir con una de las que ya están;
+    // en Windows TEMP resuelve a C:\WINDOWS\TEMP, que también está codificado.
+    // El operador veía chips repetidos ("tmp tmp tmp", "TEMP TEMP") que
+    // navegaban al mismo sitio.
+    const seen = new Set<string>();
+    const display: string[] = [];
+    const compare: string[] = [];
+    for (const raw of rawRoots) {
+      const real = this.tryReal(raw);
+      const key = this.forCompare(real);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      display.push(real);
+      compare.push(key);
+    }
+    this.rootsForDisplay = display;
+    this.roots = compare;
 
     this.denyPaths = [
       ...defaultDenyPaths(platform, env),
       ...sanitizeAbsolutePaths(config.denyPaths, platform)
+    ]
+      .map((d) => this.tryReal(d))
+      .map((d) => this.forCompare(d));
+
+    this.denyExceptions = [
+      ...defaultDenyExceptions(platform, env),
+      ...sanitizeAbsolutePaths(config.denyExceptions, platform)
     ]
       .map((d) => this.tryReal(d))
       .map((d) => this.forCompare(d));
@@ -268,9 +347,13 @@ export class PathJail {
 
     const cmp = this.forCompare(real);
 
+    // Una excepción rescata su subárbol de la denylist de RUTAS. No toca los
+    // segmentos ni las extensiones prohibidas: esos siguen aplicando dentro.
+    const rescued = this.denyExceptions.some((ex) => this.isWithin(cmp, ex));
+
     // Deny before allow — a denied subtree inside an allowed root must lose.
     for (const denied of this.denyPaths) {
-      if (this.isWithin(cmp, denied)) {
+      if (!rescued && this.isWithin(cmp, denied)) {
         return deny("PATH_DENIED", "This location is blocked by the remote access policy");
       }
     }

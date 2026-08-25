@@ -891,6 +891,7 @@ export async function performWindowsMsiUpdate(
       updateUpdateState({
         lastDownloadedPath: viaDp.filePath,
         lastDownloadedSha256: viaDp.sha256,
+        lastServedBy: viaDp.servedBy || "dp",
         arch: getArch(),
       });
       downloaded = {
@@ -1027,6 +1028,7 @@ export async function performMacosPkgUpdate(
       updateUpdateState({
         lastDownloadedPath: viaDp.filePath,
         lastDownloadedSha256: viaDp.sha256,
+        lastServedBy: viaDp.servedBy || "dp",
         arch: getArch(),
       });
       downloaded = {
@@ -1238,6 +1240,7 @@ export async function performLinuxUpdate(
       updateUpdateState({
         lastDownloadedPath: viaDp.filePath,
         lastDownloadedSha256: viaDp.sha256,
+        lastServedBy: viaDp.servedBy || "dp",
         arch: getArch(),
       });
       downloaded = {

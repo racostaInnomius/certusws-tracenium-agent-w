@@ -59,6 +59,17 @@ ICON_PNG="$RESOURCES_DIR/tracenium.png"
 ICON_ICNS="$RESOURCES_DIR/tracenium.icns"
 STATUS_ICON_PNG="$ROOT_DIR/Tracenium_tryicon.png"
 STATUS_APP_DIR="$ROOT_DIR/macos/TraceniumAgentStatus"
+# ⚠️ El icono de la APP no es el mismo PNG que el de la barra de menús.
+#
+# Tracenium_tryicon.png es un glifo blanco puro con la forma en el alpha: eso es
+# justo lo que necesita el menubar (se pinta como template y se adapta a la
+# barra), y justo lo que NO sirve como icono de aplicación — macOS lo compone
+# sobre su fondo gris claro y en Ajustes → Privacidad y seguridad → Localización
+# el icono blanco desaparece.
+#
+# appicon-source.png es el mismo glifo sobre el fondo del portal, rgb(63,66,78).
+# Se genera con scripts/make-macos-appicon.swift y se commitea como asset.
+STATUS_APPICON_PNG="$STATUS_APP_DIR/Resources/appicon-source.png"
 STATUS_APP_INFO_TEMPLATE="$STATUS_APP_DIR/Resources/Info.plist"
 STATUS_APP_BUILD_DIR="$BUILD_DIR/AgentStatus"
 STATUS_APP_BUNDLE_NAME="Tracenium Agent Status.app"
@@ -152,14 +163,26 @@ build_privsvc_bundle() {
 build_screencap_helper() {
   # RCP M3.S1 — compile + sign the screen-capture helper that PrivSvc
   # spawns into the console user's GUI session (via launchctl asuser).
-  # It MUST sit next to privsvc.js — the orchestrator resolves it with
-  # path.resolve(__dirname, "tracenium-screencap"), the same __dirname
-  # the proto path uses — and be signed with a STABLE Developer ID so the
-  # MDM PPPC profile's code requirement matches and pre-grants Screen
-  # Recording. See privsvc/macos/helpers/screencap/main.swift and
-  # privsvc/macos/helpers/README.md (PPPC payload).
+  # Vive junto a privsvc.js, que es donde lo busca el orquestador.
+  #
+  # ⚠️ La firma estable NO existe para que un perfil PPPC conceda Grabación de
+  # Pantalla: Apple no lo permite, el servicio es deny-only en PPPC. Sirve para
+  # que la concesión que hace UNA PERSONA sobreviva a las actualizaciones del
+  # agente — si la identidad cambiara en cada build, el usuario tendría que
+  # volver a aprobar en cada versión.
+  # El helper viaja como BUNDLE .app, no como ejecutable suelto. Dos motivos,
+  # los dos medidos en campo:
+  #
+  #   1. TCC. Un ejecutable Unix suelto tiene problemas conocidos para
+  #      aparecer en la lista de Grabación de Pantalla (hay regresión abierta
+  #      en macOS 26.1), y el selector de Ajustes solo deja escoger
+  #      aplicaciones — así que ni siquiera se podía autorizar a mano.
+  #   2. Es una persona quien aprueba. En el diálogo y en la lista aparece el
+  #      nombre del bundle, así que tiene que ser algo que el usuario final
+  #      reconozca, no "tracenium-screencap".
   local src="$ROOT_DIR/privsvc/macos/helpers/screencap/main.swift"
-  local out="$BUILD_DIR/PrivSvc/macos/tracenium-screencap"
+  local app_dir="$BUILD_DIR/PrivSvc/macos/Tracenium Screen Helper.app"
+  local out="$app_dir/Contents/MacOS/tracenium-screencap"
 
   if [ ! -f "$src" ]; then
     echo "ERROR: missing screencap helper source: $src" >&2
@@ -176,7 +199,39 @@ build_screencap_helper() {
     exit 1
   fi
 
-  mkdir -p "$BUILD_DIR/PrivSvc/macos"
+  rm -rf "$app_dir"
+  mkdir -p "$app_dir/Contents/MacOS"
+
+  # LSUIElement: sin icono en el Dock ni menú. Es un helper, no una app que el
+  # usuario abra — pero sigue siendo un bundle para que TCC y Ajustes lo traten
+  # como ciudadano de primera.
+  cat > "$app_dir/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.certusws.tracenium.screencap</string>
+  <key>CFBundleName</key>
+  <string>Tracenium Screen Helper</string>
+  <key>CFBundleDisplayName</key>
+  <string>Tracenium Screen Helper</string>
+  <key>CFBundleExecutable</key>
+  <string>tracenium-screencap</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>12.3</string>
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+
   local tmp; tmp="$(mktemp -d)"
   echo "→ building tracenium-screencap (arm64 + x86_64, target macos12.3)"
   swiftc -O -target arm64-apple-macos12.3  "$src" -o "$tmp/screencap.arm64"
@@ -195,18 +250,21 @@ build_screencap_helper() {
     echo "Skipping screencap helper codesign (TRACENIUM_CODESIGN_IDENTITY=skip)."
   else
     local CODESIGN_ID="${TRACENIUM_CODESIGN_IDENTITY:-Developer ID Application: CERTUS ITM LLC (3CN673MCWH)}"
-    /usr/bin/xattr -c "$out" || true
-    echo "→ codesign $out"
+    /usr/bin/xattr -cr "$app_dir" || true
+    echo "→ codesign $app_dir"
     # -i pins a STABLE signing identifier so the MDM PPPC profile's
     # CodeRequirement (identifier "com.certusws.tracenium.screencap" and
     # anchor apple generic and certificate leaf[subject.OU]="3CN673MCWH")
     # matches deterministically. Without -i the identifier defaults to the
     # binary filename, which is fine today but brittle. See
     # privsvc/macos/helpers/README.md.
+    # Se firma el BUNDLE entero, no el ejecutable suelto: TCC ancla el
+    # permiso al bundle, y firmar solo el binario de dentro deja el .app sin
+    # sello y la concesión sin sitio donde agarrarse.
     codesign --force --options runtime --timestamp \
       -i com.certusws.tracenium.screencap \
-      --sign "$CODESIGN_ID" "$out"
-    codesign --verify --strict --verbose=2 "$out"
+      --sign "$CODESIGN_ID" "$app_dir"
+    codesign --verify --strict --verbose=2 "$app_dir"
   fi
 }
 
@@ -251,16 +309,16 @@ build_status_app_bundle() {
   mkdir -p "$STATUS_APP_BUNDLE_DIR/Contents/Resources"
   mkdir -p "$STATUS_APP_ICONSET_DIR"
 
-  sips -z 16 16 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_16x16.png" >/dev/null
-  sips -z 32 32 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_16x16@2x.png" >/dev/null
-  sips -z 32 32 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_32x32.png" >/dev/null
-  sips -z 64 64 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_32x32@2x.png" >/dev/null
-  sips -z 128 128 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_128x128.png" >/dev/null
-  sips -z 256 256 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_128x128@2x.png" >/dev/null
-  sips -z 256 256 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_256x256.png" >/dev/null
-  sips -z 512 512 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_256x256@2x.png" >/dev/null
-  sips -z 512 512 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_512x512.png" >/dev/null
-  sips -z 1024 1024 "$STATUS_ICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_512x512@2x.png" >/dev/null
+  sips -z 16 16 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_16x16.png" >/dev/null
+  sips -z 32 32 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_16x16@2x.png" >/dev/null
+  sips -z 32 32 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_32x32.png" >/dev/null
+  sips -z 64 64 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_32x32@2x.png" >/dev/null
+  sips -z 128 128 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_128x128.png" >/dev/null
+  sips -z 256 256 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_128x128@2x.png" >/dev/null
+  sips -z 256 256 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_256x256.png" >/dev/null
+  sips -z 512 512 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_256x256@2x.png" >/dev/null
+  sips -z 512 512 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_512x512.png" >/dev/null
+  sips -z 1024 1024 "$STATUS_APPICON_PNG" --out "$STATUS_APP_ICONSET_DIR/icon_512x512@2x.png" >/dev/null
   if ! iconutil --convert icns "$STATUS_APP_ICONSET_DIR" --output "$STATUS_APP_ICON_ICNS" 2>/dev/null; then
     STATUS_APP_ICONSET_DIR="$STATUS_APP_ICONSET_DIR" STATUS_APP_ICON_ICNS="$STATUS_APP_ICON_ICNS" python3 - <<'PY'
 from pathlib import Path
@@ -290,6 +348,8 @@ PY
   cp "$executable_path" "$STATUS_APP_BUNDLE_DIR/Contents/MacOS/TraceniumAgentStatus"
   cp "$STATUS_APP_ICON_ICNS" "$STATUS_APP_BUNDLE_DIR/Contents/Resources/tracenium.icns"
   cp "$STATUS_ICON_PNG" "$STATUS_APP_BUNDLE_DIR/Contents/Resources/Tracenium_tryicon.png"
+  # Logo a color del header del popover (StatusPopoverViewController.configureHeader).
+  cp "$STATUS_APP_DIR/Resources/tracenium_logo_color.png" "$STATUS_APP_BUNDLE_DIR/Contents/Resources/tracenium_logo_color.png"
   sed \
     -e "s/@TRACENIUM_AGENT_VERSION@/$VERSION/g" \
     "$STATUS_APP_INFO_TEMPLATE" > "$STATUS_APP_BUNDLE_DIR/Contents/Info.plist"

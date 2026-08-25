@@ -47,14 +47,23 @@ public static class IpcGrpcHandlers
             }
             clientTp ??= GetString(p, "clientCertThumbprint") ?? GetString(p, "clientTp");
 
-            // Optional issuing CA thumbprint (sent by Node bridge)
+            // Huella(s) de CA emisora aceptables (las manda el puente de Node).
+            //
+            // Se leen las DOS formas: la singular, que es lo que mandan los
+            // agentes ya desplegados, y la lista, que es lo que permite rotar
+            // la CA sin desconectar al parque. Un agente nuevo contra un
+            // control plane viejo recibe sólo la singular y sigue funcionando.
             string? issuingCaTp = null;
+            var issuingCaTps = new List<string>();
             if (p.TryGetValue("mtls", out var mtlsObj2) && mtlsObj2 != null)
             {
                 var mtlsDict2 = ToDict(mtlsObj2);
                 issuingCaTp = GetString(mtlsDict2, "issuingCaThumbprint");
+                issuingCaTps.AddRange(GetStringList(mtlsDict2, "issuingCaThumbprints"));
             }
             issuingCaTp ??= GetString(p, "issuingCaThumbprint");
+            if (issuingCaTps.Count == 0)
+                issuingCaTps.AddRange(GetStringList(p, "issuingCaThumbprints"));
 
             if (string.IsNullOrWhiteSpace(clientTp))
                 throw new Exception("clientCertThumbprint required");
@@ -86,6 +95,7 @@ public static class IpcGrpcHandlers
                         Target = target,
                         ClientCertThumbprint = clientTp,
                         IssuingCaThumbprint = issuingCaTp,
+                        IssuingCaThumbprints = issuingCaTps,
                         TenantId = tenantId,
                         DeviceId = deviceId,
                         AgentVersion = agentVersion,
@@ -696,9 +706,53 @@ public static class IpcGrpcHandlers
 
             return PrivSvcResponse.Success(req.Id, new { ok = true });
         }
+        catch (GrpcStreamCompletedException ex)
+        {
+            // The stream ENDED; it did not break. Writing to a call the server
+            // already completed throws RpcException with StatusCode.OK, and
+            // reporting that as `grpc_heartbeat_error` made agent-core tear
+            // down a healthy agent — 21 of one endpoint's 38 reconnects in a
+            // day came from this. Its own code lets agent-core reconnect
+            // without treating the wire as broken.
+            return PrivSvcResponse.Fail(req.Id, "grpc_stream_completed", ex.Message);
+        }
         catch (Exception ex)
         {
             return PrivSvcResponse.Fail(req.Id, "grpc_heartbeat_error", ex.Message);
+        }
+    }
+
+    // ── Catalog / self-service install — outbound requests ───────────
+
+    public static async Task<PrivSvcResponse> HandleCatalogRequest(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var eventId = GetString(p, "eventId") ?? "";
+            await GrpcBridgeSingleton.Instance.SendCatalogRequest(eventId);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_catalog_request_error", ex.Message);
+        }
+    }
+
+    public static async Task<PrivSvcResponse> HandleSelfInstallRequest(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var eventId = GetString(p, "eventId") ?? "";
+            var packageId = GetString(p, "packageId");
+            if (string.IsNullOrWhiteSpace(packageId)) throw new Exception("packageId required");
+            await GrpcBridgeSingleton.Instance.SendSelfInstallRequest(eventId, packageId);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_self_install_request_error", ex.Message);
         }
     }
 
@@ -934,6 +988,31 @@ public static class IpcGrpcHandlers
     {
         // SendInput is non-blocking; we still wrap in Task.Run so a slow
         // call doesn't tie up the IPC dispatcher thread.
-        return Task.Run(() => InputInjection.Inject(req));
+        return Task.Run(() =>
+        {
+            // ADR-0006 — la entrada va por el helper de sesión, igual que la
+            // captura. SendInput encola en el escritorio al que está adjunto el
+            // HILO QUE LLAMA, y este servicio es LocalSystem: sus hilos viven en
+            // la Sesión 0, cuyo escritorio no es el del usuario. Inyectar desde
+            // aquí no daba error — simplemente no llegaba a ninguna parte, que
+            // es el peor modo de fallo posible: el operador veía "Controlling"
+            // encendido y el escritorio remoto quieto.
+            var viaSession = SessionScreenCapture.Inject(req);
+
+            // Misma reserva que la captura, y por el mismo motivo: durante la
+            // ventana de despliegue puede haber un PrivSvc nuevo con un MSI que
+            // todavía no trae el helper. El camino viejo tampoco funcionará,
+            // pero falla como siempre en vez de con un error nuevo sobre un
+            // fichero que el operador no sabe que debería existir.
+            if (viaSession is { Ok: false } &&
+                viaSession.Error?.Message?.Contains(
+                    "tracenium-screencap.exe not found",
+                    StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return InputInjection.Inject(req);
+            }
+
+            return viaSession;
+        });
     }
 }

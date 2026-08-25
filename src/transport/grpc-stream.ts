@@ -288,7 +288,10 @@ const CONTROL_FACTS_COOLDOWN_MS = 60_000;
 const FACT_TYPE_COOLDOWN_KEYS: Record<string, string> = {
   inventory:  "lastSentFactsAt:inventory",
   compliance: "lastSentFactsAt:compliance",
-  patch:      "lastSentFactsAt:patch"
+  patch:      "lastSentFactsAt:patch",
+  // The scheduler's runCdp already stamps this key, so a manual scan
+  // that lands right after a 12h tick is correctly seen as redundant.
+  cdp:        "lastSentFactsAt:cdp"
 };
 
 function isOnCooldown(factType: string): { skip: boolean; ageMs: number | null } {
@@ -360,6 +363,23 @@ async function collectFactsSnapshot(
       namespaces.pmp = await ctx.plugins.run("pmp.collect");
     } catch (err) {
       ctx.logger?.error?.(`PMP collect failed (${source})`, { err });
+    }
+  }
+
+  // CDP is gated on the plugin flag ALONE — unlike amp/scp/pmp it has no
+  // module toggle, so `plugins.enabled` is both the opt-in and the
+  // kill-switch (same rule as the scheduler's cdp pipeline).
+  //
+  // `full: true` because a control-driven snapshot must be a complete
+  // picture of the device. This is the same requirement the AMP
+  // rehydration below exists to satisfy; CDP can meet it directly,
+  // since the collector has just read every certificate it can see and
+  // does not need to reload a baseline to know what is there.
+  if ((factType === "cdp" || factType === "all") && ctx.policyRuntime.pluginEnabled("cdp")) {
+    try {
+      namespaces.cdp = await ctx.plugins.run("cdp.collect", { full: true });
+    } catch (err) {
+      ctx.logger?.error?.(`CDP collect failed (${source})`, { err });
     }
   }
 
@@ -1076,7 +1096,14 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
         if (outcome.status === "skipped") {
           return { status: 0, message: `update_skipped: ${outcome.reason}` };
         }
-        return { status: 0, message: "update_started" };
+        // `src=` names the tier that served the installer, mirroring what an
+        // SDP install already reports. Without it the control plane cannot tell
+        // a LAN download from a WAN one, which is the whole KPI of putting
+        // distribution points on the update path.
+        return {
+          status: 0,
+          message: `update_started;src=${outcome.servedBy || "origin"}`,
+        };
       } finally {
         (ctx as any)._agentUpdateInProgress = false;
       }
@@ -1917,7 +1944,12 @@ stream = client.Connect();
               await sendControlAck(ctx, eventId, 0, `update_skipped: ${outcome.reason}`);
               return;
             }
-            await sendControlAck(ctx, eventId, 0, "update_started");
+            await sendControlAck(
+              ctx,
+              eventId,
+              0,
+              `update_started;src=${outcome?.servedBy || "origin"}`
+            );
           })
           .catch((err: any) => {
             ctx.logger?.error?.("agentUpdate execution failed", {

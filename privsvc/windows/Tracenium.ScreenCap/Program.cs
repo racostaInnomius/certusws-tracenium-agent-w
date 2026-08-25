@@ -136,6 +136,27 @@ static string CaptureOnce(int quality, bool forceFull)
         message = ex.Message;
     }
 
+    // `no_frame` NO es un fallo: es la señal de que el escritorio no ha
+    // cambiado. Caer a GDI aquí fue un error de diseño con consecuencias
+    // visibles: con el escritorio quieto el stream se pasaba a GDI (fotograma
+    // completo, sin dirty rects) y al moverse volvía a DXGI (parciales), o sea
+    // que el canvas del operador recibía dos semánticas alternadas. El
+    // resultado eran ventanas duplicadas y desplazadas al tomar el control,
+    // que es justo cuando DXGI empieza a producir parciales de verdad.
+    //
+    // El agente ya sabe qué hacer con esto — screen-session.ts lo trata como
+    // "no hay nada nuevo que enviar" desde el arreglo de los códigos
+    // colapsados. Se lo pasamos tal cual.
+    if (result is null && code == "screen_capture_no_frame")
+    {
+        return JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["ok"] = false,
+            ["code"] = code,
+            ["message"] = message ?? "no new frame"
+        });
+    }
+
     if (result is null)
     {
         Console.Error.WriteLine($"DXGI falló ({code}): {message} — probando GDI");
@@ -182,6 +203,43 @@ static string CaptureOnce(int quality, bool forceFull)
     var dirty = Prop("dirty");
     if (dirty is not null) payload["dirty"] = dirty;
     return JsonSerializer.Serialize(payload);
+}
+
+// ── Inyección de entrada ──────────────────────────────────────────────
+// Mismo motivo que la captura: SendInput encola en el escritorio al que está
+// adjunto el hilo que llama. Desde la Sesión 0 ese escritorio no es el del
+// usuario, así que el clic se iba al vacío — el operador veía el botón
+// "Controlling" encendido y nada se movía.
+static string InjectOnce(Dictionary<string, object>? p)
+{
+    try
+    {
+        var res = InputInjection.Inject(new PrivSvcRequest
+        {
+            Id = "helper",
+            Method = "input.inject",
+            Params = p ?? new Dictionary<string, object>()
+        });
+        if (res is { Ok: true })
+        {
+            return JsonSerializer.Serialize(new Dictionary<string, object?> { ["ok"] = true });
+        }
+        return JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["ok"] = false,
+            ["code"] = res?.Error?.Code ?? "input_inject_error",
+            ["message"] = res?.Error?.Message ?? "input injection failed"
+        });
+    }
+    catch (Exception ex)
+    {
+        return JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["ok"] = false,
+            ["code"] = "input_inject_error",
+            ["message"] = ex.Message
+        });
+    }
 }
 
 // Escribimos por el stream crudo: Console.WriteLine mete CRLF en Windows y
@@ -233,12 +291,35 @@ while ((line = Console.In.ReadLine()) != null)
     lastRequest = DateTime.UtcNow;
     var reqQuality = 80;
     var reqFull = false;
+    // `kind` distingue captura de entrada. Ausente = captura, para que un
+    // PrivSvc viejo hablando con un helper nuevo siga funcionando: los dos
+    // viajan en el mismo MSI, pero durante una actualización a medias no
+    // conviene depender de eso.
+    var kind = "capture";
+    Dictionary<string, object>? inputParams = null;
     try
     {
         if (!string.IsNullOrWhiteSpace(line))
         {
             using var doc = JsonDocument.Parse(line);
             var root = doc.RootElement;
+            if (root.TryGetProperty("kind", out var kEl) &&
+                kEl.ValueKind == JsonValueKind.String)
+            {
+                kind = kEl.GetString() ?? "capture";
+            }
+            if (kind == "input")
+            {
+                // Reconstruimos el diccionario que espera InputInjection. Sus
+                // getters ya saben leer JsonElement, así que no hay conversión
+                // que se pueda desalinear con el original.
+                inputParams = new Dictionary<string, object>();
+                foreach (var prop in root.EnumerateObject())
+                {
+                    if (prop.NameEquals("kind")) continue;
+                    inputParams[prop.Name] = prop.Value.Clone();
+                }
+            }
             if (root.TryGetProperty("quality", out var qEl) &&
                 qEl.TryGetInt32(out var qv))
             {
@@ -264,6 +345,12 @@ while ((line = Console.In.ReadLine()) != null)
             ["code"] = "bad_request",
             ["message"] = ex.Message
         }));
+        continue;
+    }
+
+    if (kind == "input")
+    {
+        WriteLine(InjectOnce(inputParams));
         continue;
     }
 

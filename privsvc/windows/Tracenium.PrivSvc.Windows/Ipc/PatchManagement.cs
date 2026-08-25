@@ -34,6 +34,29 @@ public static class PatchManagement
             var psResult = RunPs(@"
 $session = New-Object -ComObject Microsoft.Update.Session
 $searcher = $session.CreateUpdateSearcher()
+
+# Search the catalogue Windows already synced instead of going out to
+# WSUS on every scan. An online search is a network round trip against
+# the update server; on a domain controller with a large catalogue it
+# runs for MINUTES. Four servers in one tenant blew a 60s ceiling, then
+# a 150s one, doing nothing but waiting on WSUS. Raising the ceiling
+# again would only hold the serial IPC lane hostage for longer.
+#
+# The OS syncs this catalogue on its own AU/WSUS schedule, so a cached
+# search returns the same pending set as the last sync -- which is what
+# an inventory pass wants, and what other inventory tools use.
+$searcher.Online = $false
+
+# When that sync last succeeded. Without it a cached search on a machine
+# that has NEVER synced returns zero updates, and zero is exactly what a
+# perfectly patched machine returns -- the false-healthy trap this
+# plugin has already been caught by twice.
+$lastSyncUtc = $(try {
+  $au = New-Object -ComObject Microsoft.Update.AutoUpdate
+  $d = $au.Results.LastSearchSuccessDate
+  if ($d) { $d.ToUniversalTime() } else { $null }
+} catch { $null })
+
 $result = $searcher.Search(""IsInstalled=0 and IsHidden=0 and Type='Software'"")
 $items = @()
 foreach ($update in $result.Updates) {
@@ -69,12 +92,43 @@ $securityItems = @($items | Where-Object {
   ($_.msrcSeverity -and $_.msrcSeverity -ne '')
 })
 
+# A cached catalogue older than this is treated as no answer at all.
+# Seven days is well past any normal AU/WSUS cadence, so crossing it
+# means the machine stopped talking to its update server.
+$staleAfterDays = 7
+$syncAgeDays = $(if ($lastSyncUtc) {
+  ((Get-Date).ToUniversalTime() - $lastSyncUtc).TotalDays
+} else { $null })
+$catalogUsable = $(if ($syncAgeDays -eq $null) { $false } else { $syncAgeDays -le $staleAfterDays })
+
+# Zero pending updates only means 'healthy' when the catalogue behind
+# that zero is trustworthy. Otherwise say 'unknown' and explain why --
+# an honest gap beats a green row that nobody will look at again.
+$scanStatus = $(if ($items.Count -gt 0) {
+  'updates_available'
+} elseif ($catalogUsable) {
+  'healthy'
+} else {
+  'unknown'
+})
+
+$scanNote = $(if ($catalogUsable) {
+  $null
+} elseif ($lastSyncUtc) {
+  'Windows Update last synced ' + [int]$syncAgeDays + ' days ago; cached catalogue is stale, so a count of 0 is not evidence the machine is patched.'
+} else {
+  'Windows Update has no record of a successful sync, so the cached catalogue cannot be trusted; a count of 0 is not evidence the machine is patched.'
+})
+
 [pscustomobject]@{
-  status = if ($items.Count -gt 0) { 'updates_available' } else { 'healthy' }
   source = 'windows_update_agent'
   scannedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
   updateCount = $items.Count
   securityUpdateCount = $securityItems.Count
+  searchMode = 'cached'
+  lastSyncUtc = $(if ($lastSyncUtc) { $lastSyncUtc.ToString('o') } else { $null })
+  status = $scanStatus
+  note = $scanNote
   items = $items
 } | ConvertTo-Json -Depth 8
 ", ScanTimeoutMs);

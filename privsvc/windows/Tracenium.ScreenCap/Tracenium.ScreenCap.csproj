@@ -32,5 +32,11 @@
     <Compile Include="../Tracenium.PrivSvc.Windows/Ipc/Protocol.cs" />
     <Compile Include="../Tracenium.PrivSvc.Windows/Ipc/ScreenCaptureDxgi.cs" />
     <Compile Include="../Tracenium.PrivSvc.Windows/Ipc/ScreenCapture.cs" />
+    <!-- La inyección de entrada tiene el MISMO problema de sesión que la
+         captura: SendInput encola en el escritorio al que está adjunto el hilo
+         que llama, y un hilo de Sesión 0 no está adjunto a winsta0\default.
+         El código es el del PrivSvc, incluido por referencia — un fork
+         divergiría en el mapeo de coordenadas y en la tabla de teclas. -->
+    <Compile Include="../Tracenium.PrivSvc.Windows/Ipc/InputInjection.cs" />
   </ItemGroup>
 </Project>

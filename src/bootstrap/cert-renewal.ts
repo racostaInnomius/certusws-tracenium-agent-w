@@ -169,6 +169,12 @@ export async function maybeRenewClientCertificate(input: {
       issuingCaThumbprint: result.issuingCaThumbprint
         ? String(result.issuingCaThumbprint)
         : enrollment.mtls.issuingCaThumbprint,
+      // Si la respuesta no trae la lista (privsvc anterior), se conserva la
+      // que ya había: perderla dejaría al equipo con un solo pin justo
+      // durante una rotación, que es cuando más falta hacen los dos.
+      issuingCaThumbprints: Array.isArray((result as any).issuingCaThumbprints)
+        ? (result as any).issuingCaThumbprints.map(String).filter(Boolean)
+        : enrollment.mtls.issuingCaThumbprints,
       clientCertNotAfter: result.notAfter ? String(result.notAfter) : undefined
     }
   };

@@ -146,7 +146,7 @@ public sealed class Router
             "ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 service = "TraceniumPrivSvc",
-                version = "1.1.46",
+                version = "1.1.52",
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
@@ -164,6 +164,11 @@ public sealed class Router
             // CDP — read-only LocalMachine cert store enumeration
             // (metadata + public DER only; never key material).
             "cdp.certs.read" => CdpCertificates.Handle(req),
+            // Metodo NUEVO, no una extension del anterior: cdp.certs.read
+            // esta en produccion y alimenta todo el plugin. Un agente
+            // contra un PrivSvc antiguo recibe `not_supported` y sigue
+            // con los stores de maquina.
+            "cdp.certs.readUser" => CdpUserCertificates.Handle(req),
             "patch.scan" => PatchManagement.HandleScan(req),
             "patch.install" => PatchManagement.HandleInstall(req),
 
@@ -187,6 +192,8 @@ public sealed class Router
             "grpc.close" => IpcGrpcHandlers.HandleClose(req),
             "grpc.ack" => IpcGrpcHandlers.HandleAck(req),
             "grpc.heartbeat" => IpcGrpcHandlers.HandleHeartbeat(req),
+            "grpc.catalog.request" => IpcGrpcHandlers.HandleCatalogRequest(req),
+            "grpc.selfInstall.request" => IpcGrpcHandlers.HandleSelfInstallRequest(req),
 
             // RCP M1.S1 — agent-side outbound signaling. The
             // Node.js plugin sends these when the WebRTC peer

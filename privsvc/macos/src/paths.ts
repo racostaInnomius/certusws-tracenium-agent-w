@@ -19,7 +19,21 @@ export function ensurePrivSvcDirs() {
 
   try {
     fs.chmodSync(RUN_DIR, 0o755);
-    fs.chmodSync(DATA_DIR, 0o700);
+    // DATA_DIR a 755, NO 700. Lo secreto vive en certs/, que se queda en 700
+    // justo debajo, así que el contenido sigue sellado — lo único que 755
+    // concede es ATRAVESAR el directorio.
+    //
+    // Con 700 el helper de captura (PrivSvc/macos/tracenium-screencap) era
+    // inalcanzable: el privsvc lo lanza con `sudo -u <usuario>` para que corra
+    // en la sesión gráfica, y ese proceso ya no es root, así que no podía ni
+    // entrar en el directorio. El síntoma era
+    //   sudo: unable to execute .../tracenium-screencap: Permission denied
+    // que parece falta de bit de ejecución y no lo es.
+    //
+    // ⚠️ El postinstall del pkg ya ponía 755 aquí, pero esta línea lo revertía
+    // en CADA arranque del privsvc — segundos después de instalar. Un arreglo
+    // solo en el instalador no sobrevive; los dos sitios tienen que coincidir.
+    fs.chmodSync(DATA_DIR, 0o755);
     fs.chmodSync(CERT_DIR, 0o700);
     fs.chmodSync(ASSETS_DIR, 0o755);
     fs.chmodSync(LOG_DIR, 0o755);

@@ -105,7 +105,13 @@ const NO_FRAME_CODE = "screen_capture_no_frame";
 const TERMINAL_CAPTURE_CODES = new Set([
   "no_interactive_desktop",         // all three OSes — nobody logged in
   "wayland_unsupported",            // Linux — X11-only helper
-  "no_screen_recording_permission", // macOS — TCC not granted via PPPC
+  "no_screen_recording_permission", // macOS — TCC denegado (agentes previos al bundle)
+  // macOS — se acaba de PEDIR el permiso y hay un diálogo abierto en el Mac.
+  // Es terminal para ESTA sesión a propósito: reintentar cada 5 s no acelera a
+  // la persona que está mirando el diálogo, solo llena el log y mantiene viva
+  // una sesión que no va a dar imagen. Que el operador reintente cuando le
+  // confirmen que ya está aprobado.
+  "screen_recording_permission_pending",
   "screen_capture_helper_missing",  // macOS/Linux — helper not deployed
   "screen_capture_init_failed",     // Windows — DXGI chain wouldn't come up
   "screen_capture_no_display",      // no display attached at all

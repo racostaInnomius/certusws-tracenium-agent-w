@@ -32,8 +32,25 @@ final class StatusPopoverViewController: NSViewController {
     // Header
     private let headerView = NSView()
     private let titleLabel = NSTextField(labelWithString: "Tracenium Agent")
-    private let subtitleLabel = NSTextField(labelWithString: "Waiting for local status snapshot...")
+    /// Eslogan de producto. NO lleva estado: hostname, versión y último
+    /// refresco están todos en las pestañas de detalle —Device Info y Agent
+    /// Info— así que repetirlos aquí gastaba la única línea de la cabecera en
+    /// datos duplicados. El estado vivo que sí importa de un vistazo es la
+    /// pastilla ONLINE/OFFLINE, que está a la derecha.
+    private let subtitleLabel = NSTextField(labelWithString: "")
     private let badgeLabel = NSTextField(labelWithString: "UNKNOWN")
+    /// ⚠️ El fondo y el radio viven AQUI, no en badgeLabel.
+    ///
+    /// Un NSTextField dibuja su texto arriba cuando el frame es mas alto que la
+    /// linea, asi que con una altura fija de 22 y fuente de 11 el texto quedaba
+    /// pegado al borde superior de la pastilla. `alignment = .center` solo
+    /// centra en horizontal; no existe equivalente vertical en NSTextField.
+    /// Con un contenedor, la etiqueta se centra por constraints en los dos ejes.
+    private let badgeContainer = NSView()
+    /// Logo a color, a la izquierda del titulo. Ver applyHeaderLogo().
+    private let logoView = NSImageView()
+    private var logoWidthConstraint: NSLayoutConstraint?
+    private var titleLeadingConstraint: NSLayoutConstraint?
 
     // Tab strip — Device Info (support widget) | Agent Info (estado clásico) | Active Job | Catalog (self-service installs)
     //
@@ -136,6 +153,7 @@ final class StatusPopoverViewController: NSViewController {
 
         subtitleLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
         subtitleLabel.textColor = NSColor(calibratedWhite: 0.82, alpha: 1.0)
+        subtitleLabel.attributedStringValue = Self.sloganAttributed()
         subtitleLabel.lineBreakMode = .byTruncatingTail
         subtitleLabel.maximumNumberOfLines = 1
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -143,34 +161,103 @@ final class StatusPopoverViewController: NSViewController {
         badgeLabel.font = NSFont.systemFont(ofSize: 11, weight: .bold)
         badgeLabel.textColor = .white
         badgeLabel.alignment = .center
-        badgeLabel.wantsLayer = true
-        badgeLabel.layer?.cornerRadius = 4
-        badgeLabel.layer?.masksToBounds = true
         badgeLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        badgeContainer.wantsLayer = true
+        badgeContainer.layer?.cornerRadius = 4
+        badgeContainer.layer?.masksToBounds = true
+        // Neutro de arranque: el color real lo fija el refresh de estado, pero
+        // hasta que llega el primer snapshot la pastilla se dibujaba SIN fondo
+        // y "UNKNOWN" flotaba suelto sobre la banda. Con esto siempre es una
+        // pastilla; lo unico que cambia es su color.
+        badgeContainer.layer?.backgroundColor = NSColor(calibratedWhite: 0.45, alpha: 0.55).cgColor
+        badgeContainer.translatesAutoresizingMaskIntoConstraints = false
+        badgeContainer.addSubview(badgeLabel)
+
+        // Logo a color de marca. El header es una banda oscura, asi que el
+        // metalico con cianes contrasta bien sin necesidad de recuadro ni de
+        // una version alterna del asset.
+        //
+        // `.scaleProportionallyUpOrDown` importa: el PNG viene a 256 y sin ella
+        // NSImageView lo pintaria a tamaño nativo, desbordando la banda.
+        logoView.translatesAutoresizingMaskIntoConstraints = false
+
+        // Se guarda para poder colapsarla: ver applyHeaderLogo(). La altura
+        // NO es una constante — se deriva de title+subtitle (ver activate()
+        // abajo) para que el logo quede exactamente tan alto como las dos
+        // líneas de texto, en vez de un valor fijo que coincidía con ellas
+        // solo por casualidad.
+        let logoWidth = logoView.widthAnchor.constraint(equalToConstant: 0)
+        let titleLeading = titleLabel.leadingAnchor.constraint(equalTo: logoView.trailingAnchor, constant: 0)
+        logoWidthConstraint = logoWidth
+        titleLeadingConstraint = titleLeading
+
+        headerView.addSubview(logoView)
         headerView.addSubview(titleLabel)
         headerView.addSubview(subtitleLabel)
-        headerView.addSubview(badgeLabel)
+        headerView.addSubview(badgeContainer)
 
         NSLayoutConstraint.activate([
-            // Title arriba-izquierda
-            titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            // Logo a la izquierda. Top/bottom pinned al bloque title+subtitle
+            // en vez de una altura fija centrada en el header — así el logo
+            // mide exactamente lo que miden las dos líneas de texto, sin
+            // importar el font metrics exacto de cada una.
+            logoView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            logoView.topAnchor.constraint(equalTo: titleLabel.topAnchor),
+            logoView.bottomAnchor.constraint(equalTo: subtitleLabel.bottomAnchor),
+            logoWidth,
+
+            // Title arriba, a la derecha del logo
+            titleLeading,
             titleLabel.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 14),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeLabel.leadingAnchor, constant: -12),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeContainer.leadingAnchor, constant: -12),
 
             // Subtitle debajo del title
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
-            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeLabel.leadingAnchor, constant: -12),
+            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeContainer.leadingAnchor, constant: -12),
 
-            // Badge centrado vertical, pegado a la derecha
-            badgeLabel.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
-            badgeLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            badgeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 70),
-            badgeLabel.heightAnchor.constraint(equalToConstant: 22)
+            // Pastilla centrada vertical, pegada a la derecha. El ancho ya no
+            // es un piso fijo de 70 (que sobraba de sobra para "ONLINE") sino
+            // uno por debajo de lo que "OFFLINE" necesita, así el padding de
+            // la etiqueta es quien realmente decide el ancho de cada estado.
+            badgeContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
+            badgeContainer.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            badgeContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 52),
+            badgeContainer.heightAnchor.constraint(equalToConstant: 22),
+
+            // Texto centrado en AMBOS ejes dentro de la pastilla
+            badgeLabel.centerXAnchor.constraint(equalTo: badgeContainer.centerXAnchor),
+            badgeLabel.centerYAnchor.constraint(equalTo: badgeContainer.centerYAnchor),
+            badgeLabel.leadingAnchor.constraint(greaterThanOrEqualTo: badgeContainer.leadingAnchor, constant: 6),
+            badgeLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeContainer.trailingAnchor, constant: -6)
         ])
 
         view.addSubview(headerView)
+
+        applyHeaderLogo(Bundle.main.url(forResource: "tracenium_logo_color", withExtension: "png")
+            .flatMap { NSImage(contentsOf: $0) })
+    }
+
+    /// Coloca —o retira— el logo del header ajustando su hueco.
+    ///
+    /// Sin imagen el ancho colapsa a 0 y el titulo se pega al borde, en vez de
+    /// dejar 34pt vacios. Un asset que no se copia al bundle es un fallo de
+    /// empaquetado SILENCIOSO —no revienta en runtime— y asi el header se ve
+    /// intencionado en lugar de roto.
+    ///
+    /// Es `internal` a proposito: el snapshot de tests corre fuera de la .app,
+    /// donde `Bundle.main` es el runner y no lleva recursos, asi que necesita
+    /// poder inyectarlo para que la imagen refleje lo que vera el usuario.
+    func applyHeaderLogo(_ image: NSImage?) {
+        logoView.image = image
+        logoView.imageScaling = .scaleProportionallyUpOrDown
+        // Height is no longer set here — it's derived from the
+        // titleLabel.top/subtitleLabel.bottom pin (see configureHeader),
+        // so it always matches the two text lines exactly.
+        logoWidthConstraint?.constant = image == nil ? 0 : 34
+        titleLeadingConstraint?.constant = image == nil ? 0 : 10
+        headerView.needsLayout = true
     }
 
     // MARK: - Body
@@ -397,10 +484,38 @@ final class StatusPopoverViewController: NSViewController {
         catalogScroll.isHidden = sender.selectedSegment != 3
     }
 
+    /// Teal de marca para los titulos de seccion, adaptado a la apariencia.
+    ///
+    /// Antes era `NSColor.controlAccentColor`, que no solo es el azul de Apple:
+    /// **cambia si el usuario elige otro color de acento** en Ajustes. Los
+    /// titulos de una ventana de marca no deberian depender de eso.
+    ///
+    /// Es dinamico porque NINGUN teal unico sirve en las dos apariencias. Ratios
+    /// de contraste medidos contra los fondos nominales del material .popover:
+    ///
+    ///     color      claro   oscuro
+    ///     #5A9F9F     2.82    4.71   <- el de marca: flojo sobre claro
+    ///     #3C7C7C     4.45    2.98   <- bueno sobre claro, flojo sobre oscuro
+    ///
+    /// Asi que cada apariencia usa el que le toca: el de marca en oscuro, y una
+    /// version oscurecida —mismo tono— en claro. Los dos quedan por encima de
+    /// 3.0, el umbral de WCAG para texto grande en negrita, y el de claro llega
+    /// a 4.5, el de texto normal.
+    ///
+    /// Nota: `.popover` es translucido, asi que el fondo real depende de lo que
+    /// haya detras. Los numeros son sobre el fondo nominal — sirven para elegir,
+    /// no como garantia de cumplimiento.
+    static let brandSectionColor = NSColor(name: "TraceniumBrandSection") { appearance in
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark
+            ? NSColor(calibratedRed: 90/255.0,  green: 159/255.0, blue: 159/255.0, alpha: 1.0)
+            : NSColor(calibratedRed: 60/255.0,  green: 124/255.0, blue: 124/255.0, alpha: 1.0)
+    }
+
     private func addSection(_ targetGrid: NSGridView, _ title: String) {
         let label = NSTextField(labelWithString: title)
         label.font = NSFont.systemFont(ofSize: 13, weight: .bold)
-        label.textColor = NSColor.controlAccentColor
+        label.textColor = Self.brandSectionColor
         // Section spans both columns
         let row = targetGrid.addRow(with: [label, NSGridCell.emptyContentView])
         row.mergeCells(in: NSRange(location: 0, length: 2))
@@ -729,13 +844,36 @@ final class StatusPopoverViewController: NSViewController {
 
     private func applyHeader(online: Bool, hostname: String, version: String?, updatedAt: Date?) {
         badgeLabel.stringValue = online ? "ONLINE" : "OFFLINE"
-        badgeLabel.layer?.backgroundColor = online
+        badgeContainer.layer?.backgroundColor = online
             ? NSColor.systemGreen.cgColor
             : NSColor.systemRed.cgColor
 
-        let resolvedVersion = (version?.isEmpty == false) ? "v\(version!)" : "unknown version"
-        let updated = updatedAt != nil ? "Last refresh \(format(updatedAt))" : "Last refresh unavailable"
-        subtitleLabel.stringValue = "\(hostname)  |  \(resolvedVersion)  |  \(updated)"
+        // El subtitulo ya no se toca aqui: es el eslogan, fijo. hostname,
+        // version y ultimo refresco siguen estando —y con mas detalle— en las
+        // pestañas Device Info y Agent Info.
+        _ = (hostname, version, updatedAt)
+    }
+
+    /// El eslogan con el "&" en el cian de marca.
+    ///
+    /// Se arma como NSAttributedString y no como dos etiquetas para que el
+    /// truncado por ancho siga funcionando como en una sola linea: con dos
+    /// campos, un popover estrecho partiria la frase por un sitio arbitrario.
+    static func sloganAttributed() -> NSAttributedString {
+        let font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        let base = NSColor(calibratedWhite: 0.86, alpha: 1.0)
+        // #8FFDFF — el cian de la paleta, el mismo acento del logo del header.
+        let accent = NSColor(calibratedRed: 143/255.0, green: 253/255.0, blue: 255/255.0, alpha: 1.0)
+
+        let s = NSMutableAttributedString()
+        s.append(NSAttributedString(string: "Endpoint Intelligence ",
+                                    attributes: [.font: font, .foregroundColor: base]))
+        s.append(NSAttributedString(string: "&",
+                                    attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                                                 .foregroundColor: accent]))
+        s.append(NSAttributedString(string: " Compliance Platform",
+                                    attributes: [.font: font, .foregroundColor: base]))
+        return s
     }
 
     private func set(_ key: String, _ value: String) {

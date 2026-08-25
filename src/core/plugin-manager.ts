@@ -94,7 +94,11 @@ export class PluginManager {
       this.register({
         name: "cdp",
         tasks: {
-          collect: async (ctx: AgentContext) => collectCDP(ctx)
+          // `full` is set by the on-demand path (a control-driven
+          // facts snapshot); the scheduler leaves it unset and gets
+          // the incremental scan.
+          collect: async (ctx: AgentContext, params?: any) =>
+            collectCDP(ctx, { full: params?.full === true })
         }
       });
 

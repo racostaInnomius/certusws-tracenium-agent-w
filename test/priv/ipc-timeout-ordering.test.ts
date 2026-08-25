@@ -60,6 +60,8 @@ const PRIVSVC_CEILING_MS: Record<string, { windows?: number; macos?: number; lin
   // CdpCertificates.HandlerBudgetMs — which did not exist until this bug;
   // an unbounded handler is one the invariant cannot even be stated for.
   "cdp.certs.read": { windows: 45_000 },
+  // Stores por usuario (HKEY_USERS). Windows-only por construccion.
+  "cdp.certs.readUser": { windows: 45_000 },
 };
 
 const CLIENTS = {

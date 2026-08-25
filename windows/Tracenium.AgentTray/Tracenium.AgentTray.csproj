@@ -75,6 +75,11 @@
          (default namespace + filename). El TrayIconLoader.cs lo
          busca con ese string exacto. -->
     <EmbeddedResource Include="tracenium.ico" />
+    <!-- Logo a color del header del status form. Mismo mecanismo que el .ico:
+         BrandAssets.LoadLogoOrNull() lo resuelve por logical name. Devuelve
+         null si falta, así que un fallo de empaquetado degrada el header en
+         vez de tumbar el tray. -->
+    <EmbeddedResource Include="tracenium_logo_color.png" />
   </ItemGroup>
 
   <!--

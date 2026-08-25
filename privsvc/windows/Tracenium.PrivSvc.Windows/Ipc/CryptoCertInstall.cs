@@ -199,19 +199,34 @@ public static class CryptoCertInstall
             store.Close();
 
             string? issuingThumbprint = null;
+            var issuingThumbprints = new System.Collections.Generic.List<string>();
 
             if (bundleCerts != null)
             {
-                var issuing = bundleCerts.FirstOrDefault(c => c.Subject != c.Issuer);
-                if (issuing != null)
-                    issuingThumbprint = issuing.Thumbprint;
+                // TODAS las CA intermedias del bundle, no sólo la primera.
+                //
+                // Fijar una sola convierte cualquier rotación de la CA emisora en
+                // una desconexión: el pin exige una huella que la cadena nueva ya
+                // no contiene, y sin conexión no hay forma de mandar el arreglo —
+                // se vuelve una visita presencial por equipo. Con la lista, basta
+                // que el bundle instalado contenga la CA vieja Y la nueva durante
+                // la transición para que el equipo acepte ambas cadenas.
+                foreach (var c in bundleCerts.Where(c => c.Subject != c.Issuer))
+                {
+                    if (!string.IsNullOrWhiteSpace(c.Thumbprint))
+                        issuingThumbprints.Add(c.Thumbprint!);
+                }
+                issuingThumbprint = issuingThumbprints.FirstOrDefault();
             }
 
             var result = new
             {
                 deviceId = deviceId,
                 clientCertThumbprint = finalCert.Thumbprint,
+                // Se conserva el campo singular por compatibilidad: un agente
+                // nuevo hablando con un control plane viejo, o al revés.
                 issuingCaThumbprint = issuingThumbprint,
+                issuingCaThumbprints = issuingThumbprints.ToArray(),
                 subject = finalCert.Subject,
                 notAfter = finalCert.NotAfter
             };

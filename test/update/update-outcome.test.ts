@@ -110,7 +110,15 @@ describe("runUpdateTask outcome contract", () => {
 
     const outcome = await runUpdateTask(ctx, { force: true, targetVersion: "1.1.30" });
 
-    expect(outcome).toEqual({ status: "started", version: "1.1.30" });
+    // `servedBy` names the tier that served the installer. It defaults to
+    // "origin" rather than being omitted so that "how much of the fleet updated
+    // over the LAN?" is answerable by counting, without having to treat a
+    // missing field as a third, unknown category.
+    expect(outcome).toEqual({
+      status: "started",
+      version: "1.1.30",
+      servedBy: "origin",
+    });
   });
 
   it("distinguishes a legitimate no-op from a failure", async () => {

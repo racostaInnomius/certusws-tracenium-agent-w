@@ -30,11 +30,22 @@
 //   error, so a single transient SCK failure doesn't drop the frame.
 //
 // ── TCC ──────────────────────────────────────────────────────────────
-//   Screen Recording is pre-granted fleet-wide via an MDM PPPC profile
-//   keyed to this binary's code-signing identity. We PREFLIGHT (never
-//   request) so an unprovisioned device reports a clean
-//   no_screen_recording_permission instead of triggering an interactive
-//   prompt from a faceless helper.
+//   ⚠️ LA PREMISA ORIGINAL DE ESTE FICHERO ERA FALSA. Decía que Screen
+//   Recording se concede en flota vía perfil PPPC de MDM. No se puede:
+//   Apple trata kTCCServiceScreenCapture como DENY-ONLY en PPPC — un
+//   perfil puede denegarlo a otras apps, nunca concederlo. Lo único que
+//   MDM aporta es Authorization = AllowStandardUserToSetSystemService,
+//   que permite que un usuario SIN privilegios de admin lo apruebe; pero
+//   alguien tiene que pulsar igualmente.
+//
+//   Consecuencia de diseño: screen share en macOS EXIGE una aprobación
+//   humana, una vez por Mac. No hay despliegue silencioso posible.
+//
+//   Y preflight NO basta para que el helper aparezca en Ajustes:
+//   CGPreflightScreenCaptureAccess() solo consulta. Solo
+//   CGRequestScreenCaptureAccess() registra el binario en la lista de
+//   Grabación de Pantalla. Por eso el operador no encontraba a
+//   com.certusws.tracenium.screencap por ningún lado: nunca lo pidió.
 //
 // Build (see scripts/build-macos-pkg.sh):
 //   swiftc -O -target arm64-apple-macos12.3  main.swift -o screencap.arm64
@@ -183,12 +194,100 @@ func parseQuality() -> Int {
 
 let quality = parseQuality()
 
-// Preflight TCC (never request — PPPC handles the grant fleet-wide).
+// ── Desvincularse del proceso responsable ────────────────────────────
+//
+// TCC no mira quién llama: mira el RESPONSIBLE PROCESS, que se hereda del
+// padre. Este helper lo lanza el privsvc (Node), así que macOS atribuía la
+// petición a "node" — el usuario final veía un diálogo alarmante pidiendo
+// grabar su pantalla en nombre de "node", y el permiso quedaba anclado a
+// nuestro binario de Node, concediendo captura de pantalla a TODO lo que
+// corre ahí dentro en vez de solo a este helper.
+//
+// `responsibility_spawnattrs_setdisclaim` rompe esa herencia: el proceso
+// resultante es responsable de sus propios permisos. No está documentada —
+// se descubrió en LLDB y la usan Qt y otros — así que se resuelve por dlsym
+// y CUALQUIER fallo degrada a seguir en este proceso: peor atribución, pero
+// captura funcionando. Nunca romper por esto.
+//
+// Nos re-ejecutamos y ESPERAMOS al hijo en vez de salir: el privsvc lanza un
+// proceso por captura y espera su stdout y su código de salida. Los
+// descriptores se heredan, así que el hijo escribe directamente en la tubería
+// del privsvc y este no nota la diferencia.
+private func reexecDisclaimed() {
+    // El hijo lleva la marca para no re-ejecutarse en bucle.
+    if ProcessInfo.processInfo.environment["TRACENIUM_SCREENCAP_DISCLAIMED"] == "1" {
+        return
+    }
+    guard let exePath = Bundle.main.executablePath ?? CommandLine.arguments.first else {
+        return
+    }
+    typealias SetDisclaimFn =
+        @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
+    guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                          "responsibility_spawnattrs_setdisclaim") else {
+        FileHandle.standardError.write(
+            "responsibility_spawnattrs_setdisclaim no disponible; sigo sin desvincular\n"
+                .data(using: .utf8)!)
+        return
+    }
+    let setDisclaim = unsafeBitCast(sym, to: SetDisclaimFn.self)
+
+    var attrs: posix_spawnattr_t?
+    guard posix_spawnattr_init(&attrs) == 0 else { return }
+    defer { posix_spawnattr_destroy(&attrs) }
+    guard setDisclaim(&attrs, 1) == 0 else { return }
+
+    var argv: [UnsafeMutablePointer<CChar>?] =
+        CommandLine.arguments.map { strdup($0) }
+    argv.append(nil)
+    defer { for a in argv where a != nil { free(a) } }
+
+    var env = ProcessInfo.processInfo.environment
+    env["TRACENIUM_SCREENCAP_DISCLAIMED"] = "1"
+    var envp: [UnsafeMutablePointer<CChar>?] = env.map { strdup("\($0.key)=\($0.value)") }
+    envp.append(nil)
+    defer { for e in envp where e != nil { free(e) } }
+
+    var pid: pid_t = 0
+    // fileActions nil ⇒ el hijo hereda stdin/stdout/stderr tal cual, que es
+    // justo lo que queremos: escribe en la tubería del privsvc sin puentes.
+    guard posix_spawn(&pid, exePath, nil, &attrs, argv, envp) == 0 else { return }
+
+    var status: Int32 = 0
+    waitpid(pid, &status, 0)
+    // Propagar el código de salida: el privsvc distingue ok de fallo por él.
+    exit((status & 0x7f) == 0 ? (status >> 8) & 0xff : 1)
+}
+
+reexecDisclaimed()
+
+// TCC: consultar y, si hace falta, PEDIR una vez.
+//
+// Pedir no es opcional aunque parezca intrusivo:
+// CGPreflightScreenCaptureAccess() solo consulta y NO registra el binario en
+// Ajustes › Privacidad y seguridad › Grabación de pantalla. Solo
+// CGRequestScreenCaptureAccess() lo hace. Mientras este helper solo
+// consultaba, no aparecía en la lista y NO HABÍA FORMA de autorizarlo — ni
+// siquiera a mano, porque el selector de Ajustes busca aplicaciones. Ese fue
+// el callejón sin salida que nos tuvo dando vueltas.
+//
+// Se pide UNA sola vez por proceso, aquí en el arranque y no por fotograma:
+// el helper es de vida larga, así que una petición por sesión de screen share
+// es el mínimo que registra la entrada sin convertirse en spam de diálogos.
+//
+// La llamada NO espera a que el usuario decida. Devuelve el estado actual —
+// normalmente false la primera vez — mientras el diálogo sigue abierto. Por
+// eso el código que emitimos distingue los dos casos: si acabamos de pedirlo,
+// el operador tiene que saber que hay alguien mirando un diálogo, no que algo
+// está roto.
 if !CGPreflightScreenCaptureAccess() {
-    emitError(
-        "no_screen_recording_permission",
-        "Screen Recording permission not granted (TCC). Provision via the MDM PPPC profile keyed to this helper's Team ID."
-    )
+    let grantedNow = CGRequestScreenCaptureAccess()
+    if !grantedNow {
+        emitError(
+            "screen_recording_permission_pending",
+            "Screen Recording is not granted yet. macOS has been asked for it and the entry now exists in System Settings > Privacy & Security > Screen Recording — someone at the Mac has to enable Tracenium there. Apple does not allow MDM to grant this."
+        )
+    }
 }
 
 let (cursorX, cursorY) = cursorPoint()

@@ -789,6 +789,36 @@ function handleControlMessage(msg: any) {
       dpBaseUrlsJson: msg.agentUpdate.dpBaseUrlsJson || "",
       receivedAtUtc: new Date().toISOString()
     });
+    return;
+  }
+
+  if (msg.catalogResponse) {
+    push("grpc.control.catalogResponse", {
+      eventId: String(msg.catalogResponse.eventId || ""),
+      catalogVersion: String(msg.catalogResponse.catalogVersion || ""),
+      items: (msg.catalogResponse.items || []).map((item: any) => ({
+        packageId: String(item.packageId || ""),
+        name: String(item.name || ""),
+        vendor: String(item.vendor || ""),
+        version: String(item.version || ""),
+        description: String(item.description || ""),
+        requiresReboot: Boolean(item.requiresReboot)
+      })),
+      receivedAtUtc: new Date().toISOString()
+    });
+    return;
+  }
+
+  if (msg.selfInstallAck) {
+    push("grpc.control.selfInstallAck", {
+      eventId: String(msg.selfInstallAck.eventId || ""),
+      accepted: Boolean(msg.selfInstallAck.accepted),
+      jobId: String(msg.selfInstallAck.jobId || ""),
+      errorCode: String(msg.selfInstallAck.errorCode || ""),
+      errorMessage: String(msg.selfInstallAck.errorMessage || ""),
+      receivedAtUtc: new Date().toISOString()
+    });
+    return;
   }
 }
 
@@ -1186,6 +1216,35 @@ export async function handleHeartbeat(req: PrivSvcRequest): Promise<PrivSvcRespo
     return success(req.id, { accepted: true, traceId });
   } catch (err: any) {
     return fail(req.id, "heartbeat_send_failed", err?.message || String(err));
+  }
+}
+
+export async function handleCatalogRequest(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  try {
+    const eventId = String(req.params?.eventId || "");
+    await write({
+      traceId: eventId || crypto.randomUUID().replace(/-/g, ""),
+      catalogRequest: { eventId }
+    });
+    return success(req.id, { accepted: true, eventId });
+  } catch (err: any) {
+    return fail(req.id, "catalog_request_send_failed", err?.message || String(err));
+  }
+}
+
+export async function handleSelfInstallRequest(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  try {
+    const eventId = String(req.params?.eventId || "");
+    const packageId = String(req.params?.packageId || "");
+    if (!packageId) return fail(req.id, "bad_request", "packageId required");
+
+    await write({
+      traceId: eventId || crypto.randomUUID().replace(/-/g, ""),
+      selfInstallRequest: { eventId, packageId }
+    });
+    return success(req.id, { accepted: true, eventId });
+  } catch (err: any) {
+    return fail(req.id, "self_install_request_send_failed", err?.message || String(err));
   }
 }
 

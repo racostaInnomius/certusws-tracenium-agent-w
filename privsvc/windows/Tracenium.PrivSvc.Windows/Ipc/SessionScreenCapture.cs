@@ -54,6 +54,7 @@ internal static class SessionScreenCapture
     private static StreamWriter? _stdin;
     private static StreamReader? _stdout;
     private static uint _helperSession = uint.MaxValue;
+    private static StreamReader? _stderr;
 
     /// <summary>
     /// Captura un fotograma desde la sesión del usuario. Devuelve la misma
@@ -61,6 +62,56 @@ internal static class SessionScreenCapture
     /// no distinga de dónde vino.
     /// </summary>
     public static PrivSvcResponse Capture(string reqId, int quality, bool forceFull)
+    {
+        var req = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["kind"] = "capture",
+            ["quality"] = quality,
+            ["full"] = forceFull
+        });
+        var (line, error) = Exchange(reqId, req);
+        return error ?? ParseHelperLine(reqId, line!);
+    }
+
+    /// <summary>
+    /// Inyecta teclado/ratón en la sesión del usuario.
+    ///
+    /// SendInput encola en el escritorio al que está adjunto el HILO QUE LLAMA.
+    /// Un hilo de la Sesión 0 no está adjunto a winsta0\default, así que la
+    /// entrada se iba al vacío: el operador veía "Controlling" encendido y el
+    /// escritorio remoto quieto. Es el mismo problema de sesión que la captura,
+    /// y tenía escrita la misma premisa falsa en su cabecera ("still works from
+    /// Session 0 in most modern Windows builds"). Pasa por el helper, que sí
+    /// vive en la sesión del usuario.
+    /// </summary>
+    public static PrivSvcResponse Inject(PrivSvcRequest req)
+    {
+        var payload = new Dictionary<string, object?> { ["kind"] = "input" };
+        foreach (var kv in req.Params ?? new Dictionary<string, object>())
+        {
+            payload[kv.Key] = kv.Value;
+        }
+
+        var (line, error) = Exchange(req.Id, JsonSerializer.Serialize(payload));
+        if (error is not null) return error;
+
+        using var doc = JsonDocument.Parse(line!);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("ok", out var okEl) && okEl.ValueKind == JsonValueKind.True)
+        {
+            return PrivSvcResponse.Success(req.Id, new Dictionary<string, object?> { ["injected"] = true });
+        }
+        return PrivSvcResponse.Fail(req.Id,
+            root.TryGetProperty("code", out var c) ? c.GetString() ?? "input_inject_error" : "input_inject_error",
+            root.TryGetProperty("message", out var m) ? m.GetString() ?? "input injection failed" : "input injection failed");
+    }
+
+    /// <summary>
+    /// Manda una línea de petición al helper y devuelve su línea de respuesta.
+    /// Arranca el helper si hace falta. Serializado por `Gate`: el pipe es un
+    /// carril único y dos peticiones a la vez leerían la respuesta de la otra.
+    /// </summary>
+    private static (string? line, PrivSvcResponse? error) Exchange(string reqId, string requestJson)
     {
         lock (Gate)
         {
@@ -72,9 +123,9 @@ internal static class SessionScreenCapture
                 // era CIERTO; durante meses se mostró también cuando sí lo había.
                 if (session == 0xFFFFFFFF)
                 {
-                    return PrivSvcResponse.Fail(reqId, "no_interactive_desktop",
+                    return (null, PrivSvcResponse.Fail(reqId, "no_interactive_desktop",
                         "No user is signed in to this device right now. " +
-                        "For a headless server, use a Shell session instead.");
+                        "For a headless server, use a Shell session instead."));
                 }
 
                 // Si el usuario cerró sesión y entró otro, el helper viejo
@@ -88,13 +139,7 @@ internal static class SessionScreenCapture
                     StartHelperLocked(session);
                 }
 
-                var request = JsonSerializer.Serialize(new Dictionary<string, object?>
-                {
-                    ["quality"] = quality,
-                    ["full"] = forceFull
-                });
-
-                _stdin!.Write(request);
+                _stdin!.Write(requestJson);
                 _stdin.Write('\n');
                 _stdin.Flush();
 
@@ -102,27 +147,37 @@ internal static class SessionScreenCapture
                 if (!readTask.Wait(ResponseTimeoutMs))
                 {
                     // No podemos abandonar una lectura a medias sobre un stream
-                    // compartido: el siguiente fotograma leería la respuesta de
-                    // este. Tiramos el helper y que el siguiente lo rearranque.
+                    // compartido: la siguiente petición leería la respuesta de
+                    // esta. Tiramos el helper y que la siguiente lo rearranque.
                     StopHelperLocked();
-                    return PrivSvcResponse.Fail(reqId, "screen_capture_timeout",
-                        $"The screen capture helper did not respond within {ResponseTimeoutMs} ms.");
+                    return (null, PrivSvcResponse.Fail(reqId, "screen_capture_timeout",
+                        $"The session helper did not respond within {ResponseTimeoutMs} ms."));
                 }
 
                 var line = readTask.Result;
+                // Cinturón además de tirantes: stderr ya va por su propio pipe,
+                // pero si algo vuelve a escribir texto suelto en stdout preferimos
+                // un error nuestro y legible al del parser de JSON.
+                if (line is not null && line.Length > 0 && line[0] != '{')
+                {
+                    IpcLog.Write($"[screencap helper] salida no-JSON en stdout: {line}");
+                    StopHelperLocked();
+                    return (null, PrivSvcResponse.Fail(reqId, "screen_capture_failed",
+                        "The session helper wrote unexpected output. See the PrivSvc log."));
+                }
                 if (string.IsNullOrWhiteSpace(line))
                 {
                     StopHelperLocked();
-                    return PrivSvcResponse.Fail(reqId, "screen_capture_helper_gone",
-                        "The screen capture helper closed its output stream.");
+                    return (null, PrivSvcResponse.Fail(reqId, "screen_capture_helper_gone",
+                        "The session helper closed its output stream."));
                 }
 
-                return ParseHelperLine(reqId, line!);
+                return (line, null);
             }
             catch (Exception ex)
             {
                 StopHelperLocked();
-                return PrivSvcResponse.Fail(reqId, "screen_capture_failed", ex.Message);
+                return (null, PrivSvcResponse.Fail(reqId, "screen_capture_failed", ex.Message));
             }
         }
     }
@@ -209,8 +264,28 @@ internal static class SessionScreenCapture
             // y el resto apuntando a sitios que no son del usuario.
             NativeMethods.CreateEnvironmentBlock(out envBlock, primaryToken, false);
 
-            var (childStdinRead, parentStdinWrite) = CreatePipePair(inheritRead: true);
-            var (parentStdoutRead, childStdoutWrite) = CreatePipePair(inheritRead: false);
+            // Acceso por NOMBRE, no por posición. Esto era una desestructuración
+            // posicional y el par de stdout estaba cruzado: `parentStdoutRead`
+            // acababa siendo el extremo de ESCRITURA, y abrir un FileStream de
+            // lectura sobre él da "Access to the path is denied" envuelto en un
+            // AggregateException — un mensaje que no menciona pipes por ningún
+            // lado. La tupla invierte su significado según el booleano, así que
+            // el orden correcto no es evidente al leer la llamada.
+            var stdinPipe = CreatePipePair(inheritRead: true);   // el hijo LEE
+            var stdoutPipe = CreatePipePair(inheritRead: false); // el hijo ESCRIBE
+            // stderr necesita SU PROPIO pipe. Compartirlo con stdout mezclaba
+            // los diagnósticos del helper con las líneas JSON, y el parser se
+            // atragantaba: "'D' is an invalid start of a value" era literalmente
+            // el "DXGI falló…" que el helper escribe antes de probar GDI. Un
+            // canal de datos y un canal de texto no pueden compartir tubería.
+            var stderrPipe = CreatePipePair(inheritRead: false);
+
+            var childStdinRead = stdinPipe.childEnd;
+            var parentStdinWrite = stdinPipe.ourEnd;
+            var childStdoutWrite = stdoutPipe.childEnd;
+            var parentStdoutRead = stdoutPipe.ourEnd;
+            var childStderrWrite = stderrPipe.childEnd;
+            var parentStderrRead = stderrPipe.ourEnd;
 
             var si = new NativeMethods.STARTUPINFO();
             si.cb = Marshal.SizeOf<NativeMethods.STARTUPINFO>();
@@ -220,7 +295,7 @@ internal static class SessionScreenCapture
             si.dwFlags = NativeMethods.STARTF_USESTDHANDLES;
             si.hStdInput = childStdinRead;
             si.hStdOutput = childStdoutWrite;
-            si.hStdError = childStdoutWrite;
+            si.hStdError = childStderrWrite;
 
             var cmdline = new StringBuilder($"\"{exe}\" --serve");
 
@@ -242,12 +317,14 @@ internal static class SessionScreenCapture
             // muere y la lectura se cuelga hasta el timeout.
             NativeMethods.CloseHandle(childStdinRead);
             NativeMethods.CloseHandle(childStdoutWrite);
+            NativeMethods.CloseHandle(childStderrWrite);
 
             if (!created)
             {
                 var err = Marshal.GetLastWin32Error();
                 NativeMethods.CloseHandle(parentStdinWrite);
                 NativeMethods.CloseHandle(parentStdoutRead);
+                NativeMethods.CloseHandle(parentStderrRead);
                 throw new InvalidOperationException(
                     $"CreateProcessAsUser failed (Win32 {err}).");
             }
@@ -265,6 +342,31 @@ internal static class SessionScreenCapture
                     parentStdoutRead, true), FileAccess.Read),
                 new UTF8Encoding(false));
 
+            _stderr = new StreamReader(
+                new FileStream(new Microsoft.Win32.SafeHandles.SafeFileHandle(
+                    parentStderrRead, true), FileAccess.Read),
+                new UTF8Encoding(false));
+
+            // Drenar stderr en su propio hilo, SIEMPRE. Un pipe que nadie lee
+            // se llena y bloquea al que escribe: el helper se quedaría colgado
+            // a mitad de una captura y lo veríamos como un timeout. Y de paso
+            // sus diagnósticos acaban en nuestro log, que es donde se explica
+            // por qué DXGI no pudo.
+            var stderrReader = _stderr;
+            new Thread(() =>
+            {
+                try
+                {
+                    string? l;
+                    while ((l = stderrReader.ReadLine()) != null)
+                    {
+                        if (l.Length > 0) IpcLog.Write($"[screencap helper] {l}");
+                    }
+                }
+                catch { /* el pipe se cerró: fin normal */ }
+            })
+            { IsBackground = true }.Start();
+
             NativeMethods.CloseHandle(pi.hProcess);
         }
         finally
@@ -280,7 +382,7 @@ internal static class SessionScreenCapture
     /// heredable: si el hijo hereda nuestro extremo, el pipe nunca cierra del
     /// todo y las lecturas se quedan esperando para siempre.
     /// </summary>
-    private static (IntPtr inheritable, IntPtr ours) CreatePipePair(bool inheritRead)
+    private static (IntPtr childEnd, IntPtr ourEnd) CreatePipePair(bool inheritRead)
     {
         var sa = new NativeMethods.SECURITY_ATTRIBUTES
         {
@@ -293,9 +395,14 @@ internal static class SessionScreenCapture
             throw new InvalidOperationException(
                 $"CreatePipe failed (Win32 {Marshal.GetLastWin32Error()}).");
         }
-        var ours = inheritRead ? write : read;
-        NativeMethods.SetHandleInformation(ours, NativeMethods.HANDLE_FLAG_INHERIT, 0);
-        return inheritRead ? (read, write) : (write, read);
+        // inheritRead=true  → el hijo lee: su extremo es `read`, el nuestro `write`
+        // inheritRead=false → el hijo escribe: su extremo es `write`, el nuestro `read`
+        var childEnd = inheritRead ? read : write;
+        var ourEnd = inheritRead ? write : read;
+        // Nuestro extremo NO debe heredarse. Si el hijo lo hereda, el pipe nunca
+        // llega a cerrarse del todo y la lectura se queda esperando para siempre.
+        NativeMethods.SetHandleInformation(ourEnd, NativeMethods.HANDLE_FLAG_INHERIT, 0);
+        return (childEnd, ourEnd);
     }
 
     private static string? ResolveHelperPath()
@@ -312,6 +419,7 @@ internal static class SessionScreenCapture
         // dentro de una llamada a DXGI.
         try { _stdin?.Dispose(); } catch { /* ya cerrado */ }
         try { _stdout?.Dispose(); } catch { /* ya cerrado */ }
+        try { _stderr?.Dispose(); } catch { /* ya cerrado */ }
         try
         {
             if (_helper is { HasExited: false })
@@ -324,6 +432,7 @@ internal static class SessionScreenCapture
 
         _stdin = null;
         _stdout = null;
+        _stderr = null;
         _helper = null;
         _helperSession = uint.MaxValue;
     }

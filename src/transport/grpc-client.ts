@@ -419,6 +419,16 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         return;
       }
 
+      if (method === "grpc.control.catalogResponse") {
+        stream.emit("data", { catalogResponse: params });
+        return;
+      }
+
+      if (method === "grpc.control.selfInstallAck") {
+        stream.emit("data", { selfInstallAck: params });
+        return;
+      }
+
       // RCP M1.S1 — signaling messages from backend. PrivSvc maps
       // the proto oneof variants to these four methods. The agent
       // dispatches them to the RCP SessionManager via the
@@ -514,6 +524,11 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
         const clientCertThumbprint = String((ctx.enrollment as any)?.mtls?.clientCertThumbprint || "");
         const issuingCaThumbprint = String((ctx.enrollment as any)?.mtls?.issuingCaThumbprint || "");
+        // Todas las CA aceptables. Si el enrolamiento es anterior a este
+        // campo se manda la singular sola, que es el comportamiento previo.
+        const issuingCaThumbprints: string[] = Array.isArray((ctx.enrollment as any)?.mtls?.issuingCaThumbprints)
+          ? (ctx.enrollment as any).mtls.issuingCaThumbprints.map(String).filter(Boolean)
+          : (issuingCaThumbprint ? [issuingCaThumbprint] : []);
 
         if (!tenantId || !deviceId) throw new Error("Missing enrollment tenantId/deviceId");
         if (!clientCertThumbprint) throw new Error("Missing mtls.clientCertThumbprint in enrollment");
@@ -540,6 +555,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
             target,
             clientCertThumbprint,
             issuingCaThumbprint,
+            issuingCaThumbprints,
             tenantId,
             deviceId,
             agentVersion,
@@ -786,6 +802,31 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
             if (!resp?.ok) {
               const errorCode = String(resp?.error?.code || "");
               const errorMessage = String(resp?.error?.message || resp?.error || "heartbeat failed");
+              // A stream that ENDED is not a wire that broke. Writing to a call
+              // the server already completed throws StatusCode.OK — a status
+              // that says nothing went wrong — and the bridge has already
+              // scheduled its own reconnect by the time it tells us. Reported
+              // as a failure it accounted for 21 of one endpoint's 38
+              // reconnects in a single day, each one tearing down a healthy
+              // agent and re-running the whole handshake.
+              //
+              // We still drop `connected` and let the reconnect happen: the
+              // stream really is gone. What changes is that it stops being
+              // logged and emitted as a fault, so the noise floor reflects
+              // actual faults.
+              // ⚠️ The reconnect still has to happen — a completed stream is
+              // gone either way, and skipping the emit would leave us waiting
+              // on the bridge to notice. What changes is that it stops being
+              // reported as a fault.
+              if (errorCode === "grpc_stream_completed") {
+                ctx.logger?.info("[grpc-client] stream completed cleanly — reconnecting", {
+                  errorMessage
+                });
+                connected = false;
+                connectPromise = null;
+                safeEmitError(new Error("stream_completed"));
+                return;
+              }
               ctx.logger?.warn("[grpc-client] heartbeat IPC rejected — marking connection broken", {
                 errorCode,
                 errorMessage
@@ -812,6 +853,63 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               ctx.trayStatus.markGrpcDisconnected();
             } catch {}
             safeEmitError(err instanceof Error ? err : new Error(String(err)));
+          }
+
+          return;
+        }
+
+        if (msg?.catalogRequest) {
+          const eventId = String(msg.catalogRequest.eventId || "");
+
+          // Best-effort: unlike heartbeat, a failed catalog request is not a
+          // liveness signal — the tray simply keeps showing whatever catalog
+          // it last had (or "Nothing available"), so we don't mark the
+          // connection broken on failure here.
+          try {
+            const resp = await (ctx.priv as any).call({
+              v: 1,
+              id: eventId || `catalog-${Date.now()}`,
+              method: "grpc.catalog.request",
+              params: { eventId },
+              meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+            });
+            if (!resp?.ok) {
+              ctx.logger?.warn("[grpc-client] catalogRequest IPC rejected", {
+                errorCode: resp?.error?.code,
+                errorMessage: resp?.error?.message
+              });
+            }
+          } catch (err: any) {
+            ctx.logger?.warn("[grpc-client] catalogRequest IPC threw", {
+              error: err?.message || String(err)
+            });
+          }
+
+          return;
+        }
+
+        if (msg?.selfInstallRequest) {
+          const eventId = String(msg.selfInstallRequest.eventId || "");
+          const packageId = String(msg.selfInstallRequest.packageId || "");
+
+          try {
+            const resp = await (ctx.priv as any).call({
+              v: 1,
+              id: eventId || `self-install-${Date.now()}`,
+              method: "grpc.selfInstall.request",
+              params: { eventId, packageId },
+              meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+            });
+            if (!resp?.ok) {
+              ctx.logger?.warn("[grpc-client] selfInstallRequest IPC rejected", {
+                errorCode: resp?.error?.code,
+                errorMessage: resp?.error?.message
+              });
+            }
+          } catch (err: any) {
+            ctx.logger?.warn("[grpc-client] selfInstallRequest IPC threw", {
+              error: err?.message || String(err)
+            });
           }
 
           return;

@@ -15,7 +15,7 @@ type CommandResult = {
   signal?: string;
 };
 
-type MacPatchItem = {
+export type MacPatchItem = {
   label: string;
   title?: string;
   version?: string;
@@ -35,7 +35,11 @@ async function run(command: string, args: string[], timeout = 30000): Promise<Co
     const result = {
       stdout: stdout || "",
       stderr: stderr || "",
-      output: `${stdout || ""}${stderr || ""}`.trim(),
+      // Joined on a newline, not concatenated: softwareupdate splits its
+      // reporting across both streams, and gluing the last stdout line to
+      // the first stderr line would fuse an update title onto an error and
+      // hide both from a line-oriented reader.
+      output: [stdout || "", stderr || ""].filter((s) => s.trim()).join("\n").trim(),
       ok: true,
       code: 0
     };
@@ -85,9 +89,27 @@ function parseAction(raw: string | undefined) {
   return value;
 }
 
-function isSecurityLike(item: MacPatchItem): boolean {
+// Which pending updates count as SECURITY updates — this number feeds
+// the macos.updates.no_pending_security_updates compliance check, so a
+// miss here is a false PASS.
+//
+// Field finding 2026-08-23: every Mac in the fleet had exactly one
+// pending item, "macOS Tahoe 26.6.2", and all four reported
+// securityUpdateCount=0 → the check passed with an OS update pending.
+// On modern macOS the OS point release IS the security update: Apple
+// stopped shipping standalone "Security Update" packages for the
+// current OS (Ventura+) and Rapid Security Responses were all but
+// retired, so CVE fixes ride exclusively on "macOS <name> x.y.z". Any
+// pending OS update is therefore security-relevant. Command Line
+// Tools, Xcode, fonts etc. stay non-security.
+export function isSecurityLike(item: MacPatchItem): boolean {
   const value = `${item.label} ${item.title || ""}`.toLowerCase();
-  return /security|rapid security response|xprotect|gatekeeper|mrt/.test(value);
+  if (/security|rapid security response|xprotect|gatekeeper|mrt/.test(value)) return true;
+  // "macOS Tahoe 26.6.2" / label "macOS Tahoe 26.6.2-26G5049" /
+  // older "macOS Ventura 13.6.7". Anchored on the word so "Command Line
+  // Tools for Xcode" and third-party titles containing "macOS" as a
+  // platform tag don't match.
+  return /^macos\s+[a-z]+\s+\d+(\.\d+)*/.test(value) || /^macos\s+\d+(\.\d+)*/.test(value);
 }
 
 function parseYesNo(value: string | undefined): boolean | undefined {
@@ -151,40 +173,95 @@ function parseSoftwareUpdateList(output: string): MacPatchItem[] {
   return items;
 }
 
-function parseInstallOutput(items: MacPatchItem[], output: string) {
-  const normalizedOutput = output.toLowerCase();
-  const results = items.map((item) => {
-    const titleOrLabel = (item.title || item.label).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const labelPattern = new RegExp(`(install(ed|ing)|done with).*${titleOrLabel}|${titleOrLabel}.*(install(ed|ing)|done)`, "i");
-    const downloadedPattern = new RegExp(`download(ed|ing).*${titleOrLabel}|${titleOrLabel}.*download(ed|ing)`, "i");
-    const failedPattern = new RegExp(`(failed|error).*${titleOrLabel}|${titleOrLabel}.*(failed|error)`, "i");
+/**
+ * Works out what softwareupdate actually did to each selected update.
+ *
+ * The previous implementation matched `verb.*title` against the whole output
+ * blob. In JavaScript `.` does not cross a newline, so it only ever saw the
+ * one shape where the verb and the title share a line — and softwareupdate
+ * mostly does the opposite: it names the update, then reports progress or the
+ * error on the lines below it. Every macOS install in production therefore
+ * scored every update "skipped" and returned `installed=0; failed=0`, a
+ * result that looks harmless and says nothing.
+ *
+ * So this reads line by line and keeps track of which update the tool is
+ * currently talking about, the way a person reading the log would.
+ */
+export function parseInstallOutput(items: MacPatchItem[], output: string) {
+  type Outcome = "installed" | "downloaded" | "failed" | "skipped";
 
-    let result: "installed" | "downloaded" | "failed" | "skipped" = "skipped";
-    if (failedPattern.test(output)) {
-      result = "failed";
-    } else if (downloadedPattern.test(output)) {
-      result = "downloaded";
-    } else if (labelPattern.test(output)) {
-      result = "installed";
-    }
+  // Ranked: a failure anywhere about an update outranks a download line that
+  // came before it. Never let a later, weaker signal overwrite a stronger one.
+  const RANK: Record<Outcome, number> = { skipped: 0, downloaded: 1, installed: 2, failed: 3 };
 
-    return {
-      updateId: item.label,
-      kb: item.label,
-      title: item.title || item.label,
-      result,
-      message: result === "failed" ? "softwareupdate reported an install failure" : undefined
-    };
+  const FAILED = /\b(error|errors|failed|failure|unable to|cannot|could not|not authorized)\b/i;
+  const INSTALLED = /\b(installed|installing|done with|done\.)\b/i;
+  const DOWNLOADED = /\b(downloaded|downloading)\b/i;
+
+  const outcomes: Outcome[] = items.map(() => "skipped");
+  const messages: (string | undefined)[] = items.map(() => undefined);
+
+  const needles = items.map((item) =>
+    [item.title, item.label].filter((v): v is string => Boolean(v && v.trim())).map((v) => v.toLowerCase())
+  );
+
+  const record = (idx: number, outcome: Outcome, line: string) => {
+    if (RANK[outcome] < RANK[outcomes[idx]]) return;
+    outcomes[idx] = outcome;
+    // Keep the operator's evidence verbatim; a paraphrase of an error is
+    // worth less than the error.
+    if (outcome === "failed") messages[idx] = line.trim();
+  };
+
+  // Which update the tool is currently reporting on. softwareupdate prints a
+  // heading and then indented progress underneath it.
+  let current = -1;
+
+  for (const rawLine of output.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const lower = line.toLowerCase();
+
+    const named = needles.findIndex((forms) => forms.some((form) => lower.includes(form)));
+    if (named !== -1) current = named;
+
+    const target = named !== -1 ? named : current;
+    if (target === -1) continue;
+
+    if (FAILED.test(line)) record(target, "failed", line);
+    else if (INSTALLED.test(line)) record(target, "installed", line);
+    else if (DOWNLOADED.test(line)) record(target, "downloaded", line);
+  }
+
+  // An update we were asked to install must land in a bucket someone can act
+  // on. "We tried and can tell you nothing" is the outcome that hid every
+  // macOS failure so far, so it is reported as a failure carrying the raw
+  // tail rather than as a silent skip.
+  const tail = output.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(-4).join(" | ");
+  outcomes.forEach((outcome, idx) => {
+    if (outcome !== "skipped") return;
+    outcomes[idx] = "failed";
+    messages[idx] =
+      "could not confirm any outcome for this update in softwareupdate output" +
+      (tail ? `; output tail: ${tail}` : "; softwareupdate produced no output");
   });
 
-  const installedCount = results.filter((item) => item.result === "installed" || item.result === "downloaded").length;
-  const failedCount = results.filter((item) => item.result === "failed").length;
-  const rebootRequired = items.some((item) => item.requiresRestart) || /restart/i.test(normalizedOutput);
-  let status: "success" | "partial" | "failed" | "no_updates" = "success";
+  const results = items.map((item, idx) => ({
+    updateId: item.label,
+    kb: item.label,
+    title: item.title || item.label,
+    result: outcomes[idx],
+    message: messages[idx]
+  }));
 
+  const installedCount = results.filter((r) => r.result === "installed" || r.result === "downloaded").length;
+  const failedCount = results.filter((r) => r.result === "failed").length;
+  const rebootRequired = items.some((item) => item.requiresRestart) || /restart/i.test(output.toLowerCase());
+
+  let status: "success" | "partial" | "failed" | "no_updates" = "success";
   if (items.length === 0) {
     status = "no_updates";
-  } else if (installedCount === 0 && failedCount > 0) {
+  } else if (installedCount === 0) {
     status = "failed";
   } else if (failedCount > 0 || installedCount < items.length) {
     status = "partial";

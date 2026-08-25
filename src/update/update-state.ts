@@ -12,6 +12,17 @@ export interface UpdateState {
   lastSuccessVersion?: string;
   lastDownloadedPath?: string;
   lastDownloadedSha256?: string;
+  /**
+   * Which source tier served the installer for the run in progress: "dp" when a
+   * distribution point did, "origin"/"cdn" otherwise.
+   *
+   * Rides the update state rather than the per-OS return values because those
+   * differ by platform, while this hand-off between download and ACK is exactly
+   * what the state already carries (see lastDownloadedPath/Sha256). Cleared at
+   * the start of every attempt so a previous run's tier can never be reported
+   * as this one's.
+   */
+  lastServedBy?: string | null;
   updateInProgress?: boolean;
   status?: "idle" | "in_progress" | "install_started" | "success" | "failed";
   lastError?: string;
