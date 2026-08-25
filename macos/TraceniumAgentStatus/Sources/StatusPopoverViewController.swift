@@ -52,12 +52,12 @@ final class StatusPopoverViewController: NSViewController {
     private var logoWidthConstraint: NSLayoutConstraint?
     private var titleLeadingConstraint: NSLayoutConstraint?
 
-    // Tab strip — Device Info (support widget) | Agent Info (estado clásico) | Active Job | Catalog (self-service installs)
+    // Tab strip — Device Info (support widget) | Agent Info (estado clásico) | Activity (active job + Operations) | Catalog (self-service installs)
     //
     // "Catalog" not "Software Catalog" in the strip itself — four
     // segments plus the Copy button is already tight at 480pt; the
     // section header inside the tab spells the name out in full.
-    private let tabControl = NSSegmentedControl(labels: ["Device Info", "Agent Info", "Active Job", "Catalog"], trackingMode: .selectOne, target: nil, action: nil)
+    private let tabControl = NSSegmentedControl(labels: ["Device Info", "Agent Info", "Activity", "Catalog"], trackingMode: .selectOne, target: nil, action: nil)
     private let copyButton = NSButton(title: "Copy all", target: nil, action: nil)
 
     /// Shown only while location is switched on by policy and still ungranted.
@@ -278,16 +278,25 @@ final class StatusPopoverViewController: NSViewController {
         tabControl.action = #selector(tabChanged(_:))
         tabControl.translatesAutoresizingMaskIntoConstraints = false
 
+        // .mini, not .small — .small's rounded bezel still carries enough
+        // padding to read as noticeably bigger than the Windows tray's
+        // native "Copy all" button (a plain AutoSize WinForms Button).
+        // .mini is the closest native macOS equivalent to that compact
+        // footprint; the font size is Apple's own HIG-prescribed size for
+        // that control size rather than a guessed constant.
         copyButton.bezelStyle = .rounded
-        copyButton.controlSize = .small
-        copyButton.font = NSFont.systemFont(ofSize: 11)
+        copyButton.controlSize = .mini
+        copyButton.font = NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .mini))
         copyButton.target = self
         copyButton.action = #selector(copyAllPressed(_:))
         copyButton.translatesAutoresizingMaskIntoConstraints = false
 
+        // Same size as copyButton — they share the tab strip, so a
+        // mismatched size between the two would look worse than either
+        // alone.
         locationButton.bezelStyle = .rounded
-        locationButton.controlSize = .small
-        locationButton.font = NSFont.systemFont(ofSize: 11)
+        locationButton.controlSize = .mini
+        locationButton.font = NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .mini))
         locationButton.target = self
         locationButton.action = #selector(enableLocationPressed(_:))
         locationButton.translatesAutoresizingMaskIntoConstraints = false
@@ -343,15 +352,6 @@ final class StatusPopoverViewController: NSViewController {
         addRow(grid, into: &valueCells, "Plugins", key: "plugins")
         addRow(grid, into: &valueCells, "Modules", key: "modules")
 
-        addSection(grid, "Operations")
-        addRow(grid, into: &valueCells, "Last job", key: "lastJob")
-        addRow(grid, into: &valueCells, "Update status", key: "updateStatus")
-        addRow(grid, into: &valueCells, "Last update check", key: "lastUpdateCheck")
-        addRow(grid, into: &valueCells, "Last update complete", key: "lastUpdateComplete")
-        addRow(grid, into: &valueCells, "Patch status", key: "patchStatus")
-        addRow(grid, into: &valueCells, "Patch last scan", key: "patchLastScan")
-        addRow(grid, into: &valueCells, "Patch error", key: "patchError")
-
         // ── Device Info (widget de soporte) ──
         addSection(deviceGrid, "User & Identity")
         addRow(deviceGrid, into: &deviceCells, "Logged user", key: "devUser")
@@ -373,7 +373,10 @@ final class StatusPopoverViewController: NSViewController {
         addSection(deviceGrid, "Tracenium")
         addRow(deviceGrid, into: &deviceCells, "Device ID", key: "devDeviceId")
 
-        // ── Active Job ──
+        // ── Activity: current job + Operations (last job, update/patch
+        // status — moved here from Agent Info so everything about "what
+        // the agent is doing" lives in one place; mirrors the Windows
+        // tray's Activity tab) ──
         addSection(jobGrid, "Active Job")
         addRow(jobGrid, into: &jobCells, "Status", key: "jobActiveStatus")
         addRow(jobGrid, into: &jobCells, "Job type", key: "jobActiveType")
@@ -401,6 +404,15 @@ final class StatusPopoverViewController: NSViewController {
         let noteRow = jobGrid.addRow(with: [progressNoteField, NSGridCell.emptyContentView])
         noteRow.mergeCells(in: NSRange(location: 0, length: 2))
         noteRow.topPadding = 4
+
+        addSection(jobGrid, "Operations")
+        addRow(jobGrid, into: &jobCells, "Last job", key: "lastJob")
+        addRow(jobGrid, into: &jobCells, "Update status", key: "updateStatus")
+        addRow(jobGrid, into: &jobCells, "Last update check", key: "lastUpdateCheck")
+        addRow(jobGrid, into: &jobCells, "Last update complete", key: "lastUpdateComplete")
+        addRow(jobGrid, into: &jobCells, "Patch status", key: "patchStatus")
+        addRow(jobGrid, into: &jobCells, "Patch last scan", key: "patchLastScan")
+        addRow(jobGrid, into: &jobCells, "Patch error", key: "patchError")
 
         // ── Software Catalog (self-service) ──
         // Static intro row; the actual package rows are rebuilt on
@@ -578,13 +590,13 @@ final class StatusPopoverViewController: NSViewController {
             set("policyVersion", "—")
             set("plugins", "—")
             set("modules", "—")
-            set("lastJob", "—")
-            set("updateStatus", "—")
-            set("lastUpdateCheck", "—")
-            set("lastUpdateComplete", "—")
-            set("patchStatus", "—")
-            set("patchLastScan", "—")
-            set("patchError", "—")
+            setJob("lastJob", "—")
+            setJob("updateStatus", "—")
+            setJob("lastUpdateCheck", "—")
+            setJob("lastUpdateComplete", "—")
+            setJob("patchStatus", "—")
+            setJob("patchLastScan", "—")
+            setJob("patchError", "—")
             return
         }
 
@@ -607,13 +619,13 @@ final class StatusPopoverViewController: NSViewController {
         set("policyVersion", status.policy.version.isEmpty ? "none" : status.policy.version)
         set("plugins", status.policy.plugins.isEmpty ? "—" : status.policy.plugins.joined(separator: ", "))
         set("modules", status.policy.modules.isEmpty ? "—" : status.policy.modules.joined(separator: ", "))
-        set("lastJob", formatJob(status.jobs))
-        set("updateStatus", formatUpdate(status.update))
-        set("lastUpdateCheck", format(status.update.lastCheckedAtUtc))
-        set("lastUpdateComplete", format(status.update.lastCompletedAtUtc))
-        set("patchStatus", formatPatch(status.patch))
-        set("patchLastScan", format(status.patch.lastScanAtUtc))
-        set("patchError", (status.patch.lastError?.isEmpty == false) ? status.patch.lastError! : "—")
+        setJob("lastJob", formatJob(status.jobs))
+        setJob("updateStatus", formatUpdate(status.update))
+        setJob("lastUpdateCheck", format(status.update.lastCheckedAtUtc))
+        setJob("lastUpdateComplete", format(status.update.lastCompletedAtUtc))
+        setJob("patchStatus", formatPatch(status.patch))
+        setJob("patchLastScan", format(status.patch.lastScanAtUtc))
+        setJob("patchError", (status.patch.lastError?.isEmpty == false) ? status.patch.lastError! : "—")
     }
 
     // MARK: - Device Info tab
@@ -674,7 +686,7 @@ final class StatusPopoverViewController: NSViewController {
             setJob("jobActiveElapsed", "—")
             jobProgress.stopAnimation(nil)
             jobCells["jobActiveNote"]?.isHidden = true
-            tabControl.setLabel("Active Job", forSegment: 2)
+            tabControl.setLabel("Activity", forSegment: 2)
             return
         }
 
@@ -685,7 +697,7 @@ final class StatusPopoverViewController: NSViewController {
         setJob("jobActiveElapsed", JobElapsedFormatter.format(startedAtUtc: job.startedAtUtc))
         jobProgress.startAnimation(nil)
         jobCells["jobActiveNote"]?.isHidden = false
-        tabControl.setLabel("Active Job ●", forSegment: 2)
+        tabControl.setLabel("Activity ●", forSegment: 2)
     }
 
     private func setJob(_ key: String, _ value: String) {
@@ -754,9 +766,34 @@ final class StatusPopoverViewController: NSViewController {
         let jobRunning = status?.jobs.current != nil
 
         for (index, item) in items.enumerated() {
+            // A thin separator between packages (not before the first
+            // one) — NSGridView has no per-row background API to fake a
+            // "card" with, so a divider is what actually groups one
+            // package's rows visually apart from the next's within the
+            // existing flat, non-merged-cell structure (see the isEmpty
+            // branch above for why cells here stay unmerged).
+            if index > 0 {
+                // NOT merged — same constraint as everywhere else in this
+                // loop (a merged cell can't be removeRow(at:)'d on the
+                // next render tick without crashing). Column 1 stays
+                // blank, so the line spans column 0's width rather than
+                // the full row; a shorter divider beats a crash.
+                let divider = NSBox()
+                divider.boxType = .separator
+                let dividerRow = catalogGrid.addRow(with: [divider, NSGridCell.emptyContentView])
+                dividerRow.topPadding = 10
+                dividerRow.bottomPadding = 10
+            }
+
+            // Version only when it's a real value — the catalog sometimes
+            // ships the literal string "unknown" for packages with no
+            // version metadata, which used to render right in the bold
+            // title line ("Winzip unknown").
+            let hasRealVersion = !item.version.isEmpty && item.version.caseInsensitiveCompare("unknown") != .orderedSame
             let vendorSuffix = (item.vendor?.isEmpty == false) ? "  ·  \(item.vendor!)" : ""
-            let nameField = NSTextField(labelWithString: "\(item.name) \(item.version)\(vendorSuffix)")
-            nameField.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            let versionSuffix = hasRealVersion ? " \(item.version)" : ""
+            let nameField = NSTextField(labelWithString: "\(item.name)\(versionSuffix)\(vendorSuffix)")
+            nameField.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
             nameField.lineBreakMode = .byTruncatingTail
             nameField.maximumNumberOfLines = 1
 
@@ -769,14 +806,11 @@ final class StatusPopoverViewController: NSViewController {
             button.title = isPending ? "Installing…" : "Install"
             button.isEnabled = !isPending && !jobRunning
 
-            let row = catalogGrid.addRow(with: [nameField, button])
-            row.topPadding = 6
+            let nameRow = catalogGrid.addRow(with: [nameField, button])
+            nameRow.topPadding = index == 0 ? 6 : 0
 
-            var detailParts: [String] = []
-            if let description = item.description, !description.isEmpty { detailParts.append(description) }
-            if item.requiresReboot == true { detailParts.append("Requires a restart") }
-            if !detailParts.isEmpty {
-                let detailField = NSTextField(labelWithString: detailParts.joined(separator: "  ·  "))
+            if let description = item.description, !description.isEmpty {
+                let detailField = NSTextField(labelWithString: description)
                 detailField.font = NSFont.systemFont(ofSize: 10.5)
                 detailField.textColor = NSColor.secondaryLabelColor
                 detailField.lineBreakMode = .byWordWrapping
@@ -786,10 +820,30 @@ final class StatusPopoverViewController: NSViewController {
                 // isEmpty branch above for why (removeRow(at:) crashes on a
                 // merged row; this row gets rebuilt on every 5s tick).
                 detailField.preferredMaxLayoutWidth = 300
-                let detailRow = catalogGrid.addRow(with: [detailField, NSGridCell.emptyContentView])
-                detailRow.bottomPadding = 2
+                catalogGrid.addRow(with: [detailField, NSGridCell.emptyContentView])
+            }
+
+            // Its own line, not buried in the description — a restart
+            // requirement is important enough to read at a glance, not
+            // parse out of a joined "·"-separated string.
+            if item.requiresReboot == true {
+                let restartField = NSTextField(labelWithString: "Requires a restart")
+                restartField.font = NSFont.systemFont(ofSize: 10.5, weight: .semibold)
+                restartField.textColor = Self.catalogWarningText
+                let restartRow = catalogGrid.addRow(with: [restartField, NSGridCell.emptyContentView])
+                restartRow.topPadding = 2
             }
         }
+    }
+
+    /// "Requires a restart" text color — same amber family as the
+    /// Windows tray's warning chip, adapted per appearance the same way
+    /// brandSectionColor is.
+    static let catalogWarningText = NSColor(name: "TraceniumCatalogWarning") { appearance in
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark
+            ? NSColor(calibratedRed: 255/255.0, green: 197/255.0, blue: 92/255.0, alpha: 1.0)
+            : NSColor(calibratedRed: 139/255.0, green: 100/255.0, blue: 4/255.0, alpha: 1.0)
     }
 
     @objc private func installButtonPressed(_ sender: NSButton) {

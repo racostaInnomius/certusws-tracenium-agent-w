@@ -21,6 +21,11 @@ internal sealed class StatusForm : Form
     // actually starting.
     private static readonly TimeSpan InstallRequestGrace = TimeSpan.FromSeconds(90);
     private readonly Dictionary<string, DateTime> _pendingInstallClicks = new();
+    // packageId -> when we detected its job finished (not "success"). Shown
+    // as an inline error under the row for a short window so a failed
+    // click isn't silently indistinguishable from one that never happened.
+    private static readonly TimeSpan FailureDisplayWindow = TimeSpan.FromSeconds(30);
+    private readonly Dictionary<string, DateTime> _recentInstallFailures = new();
     private TrayStatus? _lastStatus;
 
     public StatusForm()
@@ -399,7 +404,7 @@ internal sealed class StatusForm : Form
             Set("patchLastScan", "—");
             Set("patchError", "—");
             RenderActiveJob(null);
-            RenderCatalog(null, false);
+            RenderCatalog(null, new TrayJobStatus());
             return;
         }
 
@@ -424,7 +429,7 @@ internal sealed class StatusForm : Form
         Set("patchLastScan", FormatTimestamp(status.Patch.LastScanAtUtc));
         Set("patchError", string.IsNullOrWhiteSpace(status.Patch.LastError) ? "—" : status.Patch.LastError!);
         RenderActiveJob(status.Jobs.Current);
-        RenderCatalog(status.Catalog, status.Jobs.Current != null);
+        RenderCatalog(status.Catalog, status.Jobs);
     }
 
     /// <summary>
@@ -482,20 +487,58 @@ internal sealed class StatusForm : Form
     /// bugs entirely (the class of bug that hit the macOS NSGridView
     /// version — see fix/tray-catalog-merged-row-crash).
     /// </summary>
-    private void RenderCatalog(TrayCatalogStatus? catalog, bool jobRunning)
+    private void RenderCatalog(TrayCatalogStatus? catalog, TrayJobStatus jobs)
     {
         var items = catalog?.Items ?? new List<TrayCatalogItem>();
         var now = DateTime.UtcNow;
+        var jobRunning = jobs.Current != null;
+
+        // A pending click resolves the moment the agent's own job record
+        // shows a software_install finishing AFTER the click (Current
+        // cleared, LastJobAtUtc re-stamped by markJobFinished) — instead
+        // of only ever clearing 90s later via the staleness sweep below.
+        // Without this, a job that failed in 5-10s still left the button
+        // reading "Installing…" for the rest of those 90 seconds, then
+        // silently reverted to "Install" with no indication anything had
+        // gone wrong — exactly the "waits a while, nothing happens" report.
+        if (jobs.Current is null &&
+            string.Equals(jobs.LastJobType, "software_install", StringComparison.OrdinalIgnoreCase) &&
+            jobs.LastJobAtUtc is DateTime lastJobAtUtc)
+        {
+            foreach (var packageId in _pendingInstallClicks
+                         .Where(kv => lastJobAtUtc > kv.Value)
+                         .Select(kv => kv.Key)
+                         .ToList())
+            {
+                _pendingInstallClicks.Remove(packageId);
+                if (!string.Equals(jobs.LastJobStatus, "success", StringComparison.OrdinalIgnoreCase))
+                {
+                    _recentInstallFailures[packageId] = now;
+                }
+            }
+        }
 
         // Drop grace entries older than the window — a stale entry here
         // would keep an Install button permanently disabled for a job
-        // that already finished (or never started) minutes ago.
+        // that never actually started (e.g. the request file write
+        // failed, or the server rejected it before ever dispatching a
+        // job — see the selfInstallAck-rejected path on the agent side,
+        // which never sets jobs.current at all so the check above can't
+        // catch it).
         foreach (var staleKey in _pendingInstallClicks
                      .Where(kv => now - kv.Value > InstallRequestGrace)
                      .Select(kv => kv.Key)
                      .ToList())
         {
             _pendingInstallClicks.Remove(staleKey);
+        }
+
+        foreach (var staleFailureKey in _recentInstallFailures
+                     .Where(kv => now - kv.Value > FailureDisplayWindow)
+                     .Select(kv => kv.Key)
+                     .ToList())
+        {
+            _recentInstallFailures.Remove(staleFailureKey);
         }
 
         _catalogFlow.SuspendLayout();
@@ -516,66 +559,146 @@ internal sealed class StatusForm : Form
         _catalogFlow.ResumeLayout();
     }
 
+    /// <summary>
+    /// One card per catalog package: bordered, padded, with a bold title
+    /// row (name + Install), an optional muted meta line (vendor ·
+    /// version · description), and optional status chips below (restart
+    /// required, install failed). Replaces the old bare two-column row —
+    /// a plain label/button pair with no visual separation between
+    /// packages, tiny 8.5pt gray detail text, and a literal "vunknown"
+    /// whenever the catalog's version field was the placeholder string
+    /// "unknown" rather than a real version.
+    /// </summary>
     private Control BuildCatalogRow(TrayCatalogItem item, bool jobRunning)
     {
-        var row = new TableLayoutPanel
+        var card = new TableLayoutPanel
+        {
+            ColumnCount = 1,
+            RowCount = 1,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Width = 540,
+            Padding = new Padding(16, 14, 16, 14),
+            Margin = new Padding(0, 0, 0, 10),
+            BackColor = Color.White
+        };
+        card.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        card.Paint += (_, e) =>
+        {
+            using var pen = new Pen(BrandAssets.CardBorder);
+            e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
+        };
+
+        var body = new TableLayoutPanel
         {
             ColumnCount = 2,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Width = 540,
-            Margin = new Padding(0, 4, 0, 10)
+            Width = 508
         };
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
         var nameField = new Label
         {
             Text = item.Name,
             AutoSize = true,
-            Font = new Font(Font, FontStyle.Bold)
+            Font = new Font(Font.FontFamily, 10.5f, FontStyle.Bold)
         };
 
         var isPending = _pendingInstallClicks.ContainsKey(item.PackageId);
+        var installing = isPending || jobRunning;
         var installButton = new Button
         {
-            Text = isPending || jobRunning ? "Installing…" : "Install",
+            Text = installing ? "Installing…" : "Install",
             AutoSize = true,
-            Enabled = !isPending && !jobRunning,
-            UseVisualStyleBackColor = true
+            Padding = new Padding(10, 3, 10, 3),
+            Enabled = !installing,
+            FlatStyle = FlatStyle.Flat,
+            UseVisualStyleBackColor = false,
+            BackColor = installing ? Color.FromArgb(240, 240, 240) : BrandAssets.PrimaryButtonBackground,
+            ForeColor = installing ? Color.Gray : BrandAssets.SectionTeal,
+            Font = new Font(Font.FontFamily, 9f, FontStyle.Bold)
         };
+        installButton.FlatAppearance.BorderSize = 1;
+        installButton.FlatAppearance.BorderColor = installing ? Color.FromArgb(210, 210, 210) : BrandAssets.SectionTeal;
         installButton.Click += (_, _) =>
         {
             _pendingInstallClicks[item.PackageId] = DateTime.UtcNow;
+            _recentInstallFailures.Remove(item.PackageId);
             installButton.Text = "Installing…";
             installButton.Enabled = false;
+            installButton.BackColor = Color.FromArgb(240, 240, 240);
+            installButton.ForeColor = Color.Gray;
+            installButton.FlatAppearance.BorderColor = Color.FromArgb(210, 210, 210);
             CatalogInstallSink.Write(item.PackageId);
         };
 
-        row.Controls.Add(nameField, 0, 0);
-        row.Controls.Add(installButton, 1, 0);
+        body.Controls.Add(nameField, 0, 0);
+        body.Controls.Add(installButton, 1, 0);
 
+        // Meta line: vendor + description. Version only when it's a real
+        // value — the catalog sometimes ships the literal string
+        // "unknown" for packages with no version metadata, which used to
+        // render as "vunknown" here.
         var detailParts = new List<string>();
         if (!string.IsNullOrWhiteSpace(item.Vendor)) detailParts.Add(item.Vendor!);
-        if (!string.IsNullOrWhiteSpace(item.Version)) detailParts.Add($"v{item.Version}");
+        if (!string.IsNullOrWhiteSpace(item.Version) &&
+            !string.Equals(item.Version, "unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            detailParts.Add($"v{item.Version}");
+        }
         if (!string.IsNullOrWhiteSpace(item.Description)) detailParts.Add(item.Description!);
-        if (item.RequiresReboot == true) detailParts.Add("Requires a restart");
 
+        var nextRow = 1;
         if (detailParts.Count > 0)
         {
             var detailField = new Label
             {
                 Text = string.Join("  ·  ", detailParts),
                 AutoSize = true,
-                MaximumSize = new Size(520, 0),
-                Font = new Font(Font.FontFamily, 8.5f),
-                ForeColor = Color.Gray
+                MaximumSize = new Size(490, 0),
+                Font = new Font(Font.FontFamily, 9f),
+                ForeColor = Color.FromArgb(96, 96, 96),
+                Margin = new Padding(0, 5, 0, 0)
             };
-            row.Controls.Add(detailField, 0, 1);
-            row.SetColumnSpan(detailField, 2);
+            body.Controls.Add(detailField, 0, nextRow);
+            body.SetColumnSpan(detailField, 2);
+            nextRow++;
         }
 
-        return row;
+        if (item.RequiresReboot == true)
+        {
+            var chip = BuildChip("Requires a restart", BrandAssets.ChipWarningBackground, BrandAssets.ChipWarningText);
+            body.Controls.Add(chip, 0, nextRow);
+            body.SetColumnSpan(chip, 2);
+            nextRow++;
+        }
+
+        if (_recentInstallFailures.ContainsKey(item.PackageId))
+        {
+            var chip = BuildChip("Install failed — try again.", BrandAssets.ChipErrorBackground, BrandAssets.ChipErrorText);
+            body.Controls.Add(chip, 0, nextRow);
+            body.SetColumnSpan(chip, 2);
+        }
+
+        card.Controls.Add(body, 0, 0);
+        return card;
+    }
+
+    private Label BuildChip(string text, Color background, Color foreground)
+    {
+        return new Label
+        {
+            Text = text,
+            AutoSize = true,
+            BackColor = background,
+            ForeColor = foreground,
+            Font = new Font(Font.FontFamily, 8f, FontStyle.Bold),
+            Padding = new Padding(7, 2, 7, 2),
+            Margin = new Padding(0, 7, 0, 0)
+        };
     }
 
     private void AddSection(TableLayoutPanel grid, string title)
