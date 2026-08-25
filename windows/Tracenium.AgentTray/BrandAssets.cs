@@ -28,6 +28,20 @@ internal static class BrandAssets
     /// <summary>Cian de la paleta (#8FFDFF) — el acento del logo.</summary>
     public static readonly Color AccentCyan = Color.FromArgb(143, 253, 255);
 
+    /// <summary>Borde sutil de las cards del Software Catalog.</summary>
+    public static readonly Color CardBorder = Color.FromArgb(225, 228, 230);
+
+    /// <summary>Fondo tintado de teal para el botón primario (Install).</summary>
+    public static readonly Color PrimaryButtonBackground = Color.FromArgb(235, 244, 244);
+
+    /// <summary>Chip ámbar — "Requires a restart".</summary>
+    public static readonly Color ChipWarningBackground = Color.FromArgb(255, 244, 214);
+    public static readonly Color ChipWarningText = Color.FromArgb(139, 100, 4);
+
+    /// <summary>Chip rojo — mensajes de error inline (ej. install failed).</summary>
+    public static readonly Color ChipErrorBackground = Color.FromArgb(252, 232, 232);
+    public static readonly Color ChipErrorText = Color.FromArgb(158, 42, 42);
+
     /// <summary>Gris claro del texto sobre la banda oscura del header.</summary>
     public static readonly Color HeaderText = Color.FromArgb(219, 224, 230);
 

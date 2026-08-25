@@ -754,9 +754,34 @@ final class StatusPopoverViewController: NSViewController {
         let jobRunning = status?.jobs.current != nil
 
         for (index, item) in items.enumerated() {
+            // A thin separator between packages (not before the first
+            // one) — NSGridView has no per-row background API to fake a
+            // "card" with, so a divider is what actually groups one
+            // package's rows visually apart from the next's within the
+            // existing flat, non-merged-cell structure (see the isEmpty
+            // branch above for why cells here stay unmerged).
+            if index > 0 {
+                // NOT merged — same constraint as everywhere else in this
+                // loop (a merged cell can't be removeRow(at:)'d on the
+                // next render tick without crashing). Column 1 stays
+                // blank, so the line spans column 0's width rather than
+                // the full row; a shorter divider beats a crash.
+                let divider = NSBox()
+                divider.boxType = .separator
+                let dividerRow = catalogGrid.addRow(with: [divider, NSGridCell.emptyContentView])
+                dividerRow.topPadding = 10
+                dividerRow.bottomPadding = 10
+            }
+
+            // Version only when it's a real value — the catalog sometimes
+            // ships the literal string "unknown" for packages with no
+            // version metadata, which used to render right in the bold
+            // title line ("Winzip unknown").
+            let hasRealVersion = !item.version.isEmpty && item.version.caseInsensitiveCompare("unknown") != .orderedSame
             let vendorSuffix = (item.vendor?.isEmpty == false) ? "  ·  \(item.vendor!)" : ""
-            let nameField = NSTextField(labelWithString: "\(item.name) \(item.version)\(vendorSuffix)")
-            nameField.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            let versionSuffix = hasRealVersion ? " \(item.version)" : ""
+            let nameField = NSTextField(labelWithString: "\(item.name)\(versionSuffix)\(vendorSuffix)")
+            nameField.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
             nameField.lineBreakMode = .byTruncatingTail
             nameField.maximumNumberOfLines = 1
 
@@ -769,14 +794,11 @@ final class StatusPopoverViewController: NSViewController {
             button.title = isPending ? "Installing…" : "Install"
             button.isEnabled = !isPending && !jobRunning
 
-            let row = catalogGrid.addRow(with: [nameField, button])
-            row.topPadding = 6
+            let nameRow = catalogGrid.addRow(with: [nameField, button])
+            nameRow.topPadding = index == 0 ? 6 : 0
 
-            var detailParts: [String] = []
-            if let description = item.description, !description.isEmpty { detailParts.append(description) }
-            if item.requiresReboot == true { detailParts.append("Requires a restart") }
-            if !detailParts.isEmpty {
-                let detailField = NSTextField(labelWithString: detailParts.joined(separator: "  ·  "))
+            if let description = item.description, !description.isEmpty {
+                let detailField = NSTextField(labelWithString: description)
                 detailField.font = NSFont.systemFont(ofSize: 10.5)
                 detailField.textColor = NSColor.secondaryLabelColor
                 detailField.lineBreakMode = .byWordWrapping
@@ -786,10 +808,30 @@ final class StatusPopoverViewController: NSViewController {
                 // isEmpty branch above for why (removeRow(at:) crashes on a
                 // merged row; this row gets rebuilt on every 5s tick).
                 detailField.preferredMaxLayoutWidth = 300
-                let detailRow = catalogGrid.addRow(with: [detailField, NSGridCell.emptyContentView])
-                detailRow.bottomPadding = 2
+                catalogGrid.addRow(with: [detailField, NSGridCell.emptyContentView])
+            }
+
+            // Its own line, not buried in the description — a restart
+            // requirement is important enough to read at a glance, not
+            // parse out of a joined "·"-separated string.
+            if item.requiresReboot == true {
+                let restartField = NSTextField(labelWithString: "Requires a restart")
+                restartField.font = NSFont.systemFont(ofSize: 10.5, weight: .semibold)
+                restartField.textColor = Self.catalogWarningText
+                let restartRow = catalogGrid.addRow(with: [restartField, NSGridCell.emptyContentView])
+                restartRow.topPadding = 2
             }
         }
+    }
+
+    /// "Requires a restart" text color — same amber family as the
+    /// Windows tray's warning chip, adapted per appearance the same way
+    /// brandSectionColor is.
+    static let catalogWarningText = NSColor(name: "TraceniumCatalogWarning") { appearance in
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark
+            ? NSColor(calibratedRed: 255/255.0, green: 197/255.0, blue: 92/255.0, alpha: 1.0)
+            : NSColor(calibratedRed: 139/255.0, green: 100/255.0, blue: 4/255.0, alpha: 1.0)
     }
 
     @objc private func installButtonPressed(_ sender: NSButton) {
