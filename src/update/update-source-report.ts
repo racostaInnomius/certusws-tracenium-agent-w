@@ -94,15 +94,42 @@ export function decideSourceReport(
 }
 
 /**
+ * Envelope version every FACTS payload must declare.
+ *
+ * ⚠️ NOT OPTIONAL. The control plane rejects a payload without it — before it
+ * logs anything about the namespaces — with `status 2, "missing schemaVersion"`.
+ * Status 2 is a PERMANENT rejection, so the outbox discards the event and never
+ * retries: the report is lost silently, and the only trace is one ACK line in
+ * the agent's own log.
+ *
+ * That is exactly what happened to the first three fleet-wide runs of this.
+ * Every report was built, enqueued and sent correctly, and every one was
+ * thrown away at the door for a field I did not know existed — because I hand
+ * wrote this payload instead of copying the shape the real producer emits.
+ *
+ * Kept in lockstep with buildDeviceFacts in domain/device-facts-builder.ts,
+ * which is the only other thing that builds this envelope. A test pins them
+ * together.
+ */
+export const FACTS_SCHEMA_VERSION = "1.0";
+
+/**
  * The outbox payload for a report.
  *
- * Only the payload: the sender loop derives the wire `namespace` and
- * `namespaces` from the payload's own keys, which is also what the backend
- * validator cross-checks them against. Building them here would just be a
- * second copy of the same truth, free to drift.
+ * `namespace` and `namespaces` on the WIRE are derived by the sender loop from
+ * this payload's own keys, and the backend cross-checks the two — so building
+ * them here would be a second copy of the same truth, free to drift. The
+ * envelope fields below are a different matter: they are required, and nothing
+ * downstream can infer them.
  */
 export function sourceReportPayload(report: UpdateSourceReport): Record<string, unknown> {
+  // Nothing beyond what the validator demands: buildDeviceFacts also stamps a
+  // `collectedAtUtc`, but a timestamp here would make every boot produce a
+  // different payload hash and defeat the outbox's dedupe of identical pending
+  // events. The report carries no time of its own — it describes the version
+  // that is running, and `reported_at` is stamped server-side.
   return {
+    schemaVersion: FACTS_SCHEMA_VERSION,
     namespaces: {
       [NAMESPACE]: {
         version: report.version,

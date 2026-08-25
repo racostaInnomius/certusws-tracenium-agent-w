@@ -8,7 +8,10 @@
 // a KPI you cannot trust is worse than one you do not have.
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import path from "path";
 import {
+  FACTS_SCHEMA_VERSION,
   NAMESPACE,
   decideSourceReport,
   sourceReportPayload,
@@ -101,6 +104,7 @@ describe("sourceReportPayload", () => {
   // payload shaped any other way is rejected at the envelope.
   it("nests the report under its namespace so the envelope validates", () => {
     expect(sourceReportPayload({ version: "1.1.49", servedBy: "dp" })).toEqual({
+      schemaVersion: FACTS_SCHEMA_VERSION,
       namespaces: { agent_update: { version: "1.1.49", servedBy: "dp" } },
     });
   });
@@ -112,9 +116,61 @@ describe("sourceReportPayload", () => {
 
   // The outbox dedupes identical pending payloads by hash, so two boots before
   // a successful drain must not produce two rows.
+  // No timestamp anywhere in here, deliberately: the outbox dedupes identical
+  // PENDING payloads by hash, and a `collectedAtUtc` would make every boot
+  // produce a different hash and defeat it. The report has no time of its own —
+  // it describes the running version, and reported_at is stamped server-side.
   it("is stable for the same report, so the outbox can dedupe it", () => {
     const a = sourceReportPayload({ version: "1.1.49", servedBy: "dp" });
     const b = sourceReportPayload({ version: "1.1.49", servedBy: "dp" });
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    expect(JSON.stringify(a)).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+// ⚠️ THE ENVELOPE, NOT JUST THE NAMESPACE.
+//
+// The control plane rejects a FACTS payload with no top-level `schemaVersion`
+// — with status 2, which is PERMANENT, so the outbox discards the event and
+// never retries. Three fleet-wide runs of this feature were built, enqueued and
+// sent perfectly and then thrown away at the door, leaving one ACK line in the
+// agent log as the only evidence.
+//
+// The cause was writing this payload by hand instead of copying the shape the
+// real producer emits. So these tests read the real producer.
+describe("sourceReportPayload — the envelope the backend demands", () => {
+  const BUILDER = readFileSync(
+    path.join(process.cwd(), "src/domain/device-facts-builder.ts"),
+    "utf8"
+  );
+
+  it("declares schemaVersion, without which the payload is rejected outright", () => {
+    const payload = sourceReportPayload({ version: "1.1.51", servedBy: "dp" }) as any;
+    expect(payload.schemaVersion).toBeTruthy();
+  });
+
+  // Pinned against buildDeviceFacts — the only other thing that builds this
+  // envelope. If it moves to 2.0 and this does not, the drift is caught here
+  // rather than by a silent rejection in production.
+  it("uses the same schemaVersion as the real facts builder", () => {
+    const match = BUILDER.match(/schemaVersion:\s*"([^"]+)"/);
+    expect(match, "buildDeviceFacts no longer declares a literal schemaVersion").toBeTruthy();
+    expect(FACTS_SCHEMA_VERSION).toBe(match![1]);
+  });
+
+  it("carries the two fields the envelope validator requires", () => {
+    const payload = sourceReportPayload({ version: "1.1.51", servedBy: "dp" }) as any;
+    // Exactly what controlplane.ts checks, in order, before anything else.
+    expect(payload.schemaVersion).toBeTruthy();
+    expect(payload.namespaces).toBeTypeOf("object");
+    expect(Array.isArray(payload.namespaces)).toBe(false);
+  });
+
+  it("still nests the report under its namespace", () => {
+    const payload = sourceReportPayload({ version: "1.1.51", servedBy: "origin" }) as any;
+    expect(payload.namespaces[NAMESPACE]).toEqual({
+      version: "1.1.51",
+      servedBy: "origin",
+    });
   });
 });
