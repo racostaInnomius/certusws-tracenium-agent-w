@@ -226,11 +226,39 @@ build_screencap_helper() {
   <string>1.0</string>
   <key>LSMinimumSystemVersion</key>
   <string>12.3</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>LSUIElement</key>
   <true/>
 </dict>
 </plist>
 PLIST
+
+  # Icono. En el diálogo de Grabación de Pantalla y en Ajustes aparece el
+  # icono del bundle, y ahí es donde una PERSONA decide si confía. Sin icono
+  # macOS pinta un genérico gris que no dice nada.
+  #
+  # Se reutiliza el mismo PNG que la app de estado — el del fondo del portal,
+  # no el glifo blanco de la barra de menús: ese último desaparece sobre el
+  # fondo claro de Ajustes, que es justo el problema que appicon-source.png
+  # existe para resolver (ver comentario de STATUS_APPICON_PNG arriba).
+  if [ -f "$STATUS_APPICON_PNG" ]; then
+    mkdir -p "$app_dir/Contents/Resources"
+    local helper_iconset="$BUILD_DIR/screencap-icon.iconset"
+    rm -rf "$helper_iconset"; mkdir -p "$helper_iconset"
+    for spec in "16 16x16" "32 16x16@2x" "32 32x32" "64 32x32@2x" \
+                "128 128x128" "256 128x128@2x" "256 256x256" "512 256x256@2x" \
+                "512 512x512" "1024 512x512@2x"; do
+      set -- $spec
+      sips -z "$1" "$1" "$STATUS_APPICON_PNG" \
+        --out "$helper_iconset/icon_$2.png" >/dev/null
+    done
+    iconutil --convert icns "$helper_iconset" \
+      --output "$app_dir/Contents/Resources/AppIcon.icns"
+    rm -rf "$helper_iconset"
+  else
+    echo "WARNING: $STATUS_APPICON_PNG no encontrado — el helper saldrá con icono genérico en Ajustes" >&2
+  fi
 
   local tmp; tmp="$(mktemp -d)"
   echo "→ building tracenium-screencap (arm64 + x86_64, target macos12.3)"
