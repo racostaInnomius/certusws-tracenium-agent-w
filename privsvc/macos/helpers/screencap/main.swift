@@ -194,6 +194,73 @@ func parseQuality() -> Int {
 
 let quality = parseQuality()
 
+// ── Desvincularse del proceso responsable ────────────────────────────
+//
+// TCC no mira quién llama: mira el RESPONSIBLE PROCESS, que se hereda del
+// padre. Este helper lo lanza el privsvc (Node), así que macOS atribuía la
+// petición a "node" — el usuario final veía un diálogo alarmante pidiendo
+// grabar su pantalla en nombre de "node", y el permiso quedaba anclado a
+// nuestro binario de Node, concediendo captura de pantalla a TODO lo que
+// corre ahí dentro en vez de solo a este helper.
+//
+// `responsibility_spawnattrs_setdisclaim` rompe esa herencia: el proceso
+// resultante es responsable de sus propios permisos. No está documentada —
+// se descubrió en LLDB y la usan Qt y otros — así que se resuelve por dlsym
+// y CUALQUIER fallo degrada a seguir en este proceso: peor atribución, pero
+// captura funcionando. Nunca romper por esto.
+//
+// Nos re-ejecutamos y ESPERAMOS al hijo en vez de salir: el privsvc lanza un
+// proceso por captura y espera su stdout y su código de salida. Los
+// descriptores se heredan, así que el hijo escribe directamente en la tubería
+// del privsvc y este no nota la diferencia.
+private func reexecDisclaimed() {
+    // El hijo lleva la marca para no re-ejecutarse en bucle.
+    if ProcessInfo.processInfo.environment["TRACENIUM_SCREENCAP_DISCLAIMED"] == "1" {
+        return
+    }
+    guard let exePath = Bundle.main.executablePath ?? CommandLine.arguments.first else {
+        return
+    }
+    typealias SetDisclaimFn =
+        @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
+    guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                          "responsibility_spawnattrs_setdisclaim") else {
+        FileHandle.standardError.write(
+            "responsibility_spawnattrs_setdisclaim no disponible; sigo sin desvincular\n"
+                .data(using: .utf8)!)
+        return
+    }
+    let setDisclaim = unsafeBitCast(sym, to: SetDisclaimFn.self)
+
+    var attrs: posix_spawnattr_t?
+    guard posix_spawnattr_init(&attrs) == 0 else { return }
+    defer { posix_spawnattr_destroy(&attrs) }
+    guard setDisclaim(&attrs, 1) == 0 else { return }
+
+    var argv: [UnsafeMutablePointer<CChar>?] =
+        CommandLine.arguments.map { strdup($0) }
+    argv.append(nil)
+    defer { for a in argv where a != nil { free(a) } }
+
+    var env = ProcessInfo.processInfo.environment
+    env["TRACENIUM_SCREENCAP_DISCLAIMED"] = "1"
+    var envp: [UnsafeMutablePointer<CChar>?] = env.map { strdup("\($0.key)=\($0.value)") }
+    envp.append(nil)
+    defer { for e in envp where e != nil { free(e) } }
+
+    var pid: pid_t = 0
+    // fileActions nil ⇒ el hijo hereda stdin/stdout/stderr tal cual, que es
+    // justo lo que queremos: escribe en la tubería del privsvc sin puentes.
+    guard posix_spawn(&pid, exePath, nil, &attrs, argv, envp) == 0 else { return }
+
+    var status: Int32 = 0
+    waitpid(pid, &status, 0)
+    // Propagar el código de salida: el privsvc distingue ok de fallo por él.
+    exit((status & 0x7f) == 0 ? (status >> 8) & 0xff : 1)
+}
+
+reexecDisclaimed()
+
 // TCC: consultar y, si hace falta, PEDIR una vez.
 //
 // Pedir no es opcional aunque parezca intrusivo:
