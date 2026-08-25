@@ -8,6 +8,7 @@ using System.IO;
 using System.Diagnostics;
 using System.Text;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Grpc.Net.Client;
 using Grpc.Core;
 using Tracenium.Control; // namespace generado por proto
@@ -359,48 +360,103 @@ private BridgeState _state = BridgeState.Disconnected;
     // gRPC write lock: ensures only one WriteAsync happens at a time
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
-    // Centralized safe write helper to guarantee serialization of all gRPC writes
-    private async Task SafeWriteAsync(ControlMessage message, CancellationToken ct)
+    /// <summary>
+    /// THE ONLY PLACE THAT WRITES TO THE REQUEST STREAM.
+    ///
+    /// gRPC forbids concurrent writes on an IClientStreamWriter, and this class
+    /// had eleven call sites going straight to RequestStream.WriteAsync while
+    /// only three used the lock that exists for exactly this. Two heartbeat
+    /// paths alone were enough to collide: the PrivSvc's own periodic loop
+    /// (locked) and the one agent-core drives over IPC (unlocked). The result
+    /// on the wire was
+    ///     "Can't write the message because the previous write is in progress"
+    /// which agent-core reads as a dead heartbeat, tears the stream down, and
+    /// reconnects. One endpoint logged 38 reconnects in a single day, 12 of
+    /// them from this race.
+    ///
+    /// NO AVAILABILITY GUARD HERE, DELIBERATELY. The direct writers were not
+    /// avoiding the lock — they were avoiding SafeWriteAsync's `_closeRequested`
+    /// check, which silently drops messages during transient state transitions
+    /// (see the comment SendAck carried: "direct write to reduce chances of ACK
+    /// being dropped"). Serialization and delivery are separate concerns, so
+    /// this helper only serializes; SafeWriteAsync keeps the guard for the
+    /// callers that want it.
+    ///
+    /// A COMPLETED STREAM IS NOT A FAILURE. Writing to a call the server has
+    /// already finished throws RpcException with StatusCode.OK — a status that
+    /// says, literally, that nothing went wrong. It was travelling all the way
+    /// to agent-core as `heartbeat_failed`, and accounted for 21 of those 38
+    /// reconnects. It surfaces as GrpcStreamCompletedException so callers can
+    /// tell "the stream ended" from "the wire broke".
+    /// </summary>
+    private async Task WriteSerializedAsync(
+        ControlMessage message,
+        CancellationToken ct = default,
+        [CallerMemberName] string who = "")
     {
         var call = _call;
-        // Allow HELLO to be sent even if IsConnected == false (handshake phase)
-        var isHello = message.Hello != null;
+        if (call is null)
+        {
+            // Callers all null-check before building their message; this is the
+            // narrow race where the stream died in between. Same outcome as
+            // before: log and return, no exception.
+            Log($"{who}: write skipped, no active call");
+            return;
+        }
 
-        if (call is null || (_closeRequested) || _cts == null || _cts.IsCancellationRequested)
+        await _writeLock.WaitAsync(ct);
+        try
+        {
+            await call.RequestStream.WriteAsync(message).WaitAsync(TimeSpan.FromSeconds(30), ct);
+            _lastSendUtc = DateTime.UtcNow;
+        }
+        catch (TimeoutException)
+        {
+            Log($"{who}: write timed out — triggering reconnect");
+            Close();
+            ScheduleReconnect("write_timeout");
+            throw new GrpcStreamCompletedException($"{who}: write timeout");
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.OK || ex.StatusCode == StatusCode.Cancelled)
+        {
+            Log($"{who}: stream already completed ({ex.StatusCode}) — reconnecting");
+            Close();
+            ScheduleReconnect("stream_completed");
+            throw new GrpcStreamCompletedException($"{who}: stream completed ({ex.StatusCode})");
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Serialized write that never throws and honours the shutdown guard.
+    ///
+    /// For callers with nobody to report to — the send loop, the periodic
+    /// heartbeat — where a message lost during shutdown is the right outcome.
+    /// Callers that must surface failure to agent-core use
+    /// WriteSerializedAsync directly.
+    /// </summary>
+    private async Task SafeWriteAsync(ControlMessage message, CancellationToken ct)
+    {
+        if (_call is null || _closeRequested || _cts == null || _cts.IsCancellationRequested)
         {
             Log("SafeWriteAsync skipped: stream not available");
             return;
         }
 
-        // Do not block writes based on IsConnected; rely on actual stream availability
-        // (HELLO/ACK/CONTROL messages must be allowed during transient state transitions)
-
-        await _writeLock.WaitAsync(ct);
         try
         {
-            try
-            {
-                await call.RequestStream.WriteAsync(message).WaitAsync(TimeSpan.FromSeconds(30), ct);
-            }
-            catch (TimeoutException)
-            {
-                Log("SafeWriteAsync timeout — triggering reconnect");
-                Close();
-                ScheduleReconnect("write_timeout");
-                return;
-            }
-            catch (ObjectDisposedException)
-            {
-                Log("SafeWriteAsync disposed during shutdown");
-            }
-            catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled)
-            {
-                Log("SafeWriteAsync cancelled due to stream shutdown");
-            }
+            await WriteSerializedAsync(message, ct);
         }
-        finally
+        catch (GrpcStreamCompletedException)
         {
-            _writeLock.Release();
+            // Already logged, and the reconnect is scheduled. Nothing to report.
+        }
+        catch (ObjectDisposedException)
+        {
+            Log("SafeWriteAsync disposed during shutdown");
         }
     }
 
@@ -1717,8 +1773,10 @@ private const int MaxPendingPushEvents = 50;
     /// when the agent is running fine.
     ///
     /// Mirrors SendAck in ordering: log + validate + build ControlMessage
-    /// + direct RequestStream.WriteAsync. If the stream disappeared mid-
-    /// send we swallow (the agent's IPC-level "no active call" response
+    /// + WriteSerializedAsync. It used to write straight to the request
+    /// stream, which raced every other writer on the same call — see
+    /// WriteSerializedAsync for what that cost. If the stream disappeared
+    /// mid-send we swallow (the agent's IPC-level "no active call" response
     /// already triggered its own reconnect path).
     /// </summary>
     public async Task SendHeartbeat(
@@ -1756,7 +1814,7 @@ private const int MaxPendingPushEvents = 50;
             var call = _call;
             if (call != null)
             {
-                await call.RequestStream.WriteAsync(hbMsg);
+                await WriteSerializedAsync(hbMsg);
             }
             else
             {
@@ -1790,7 +1848,7 @@ private const int MaxPendingPushEvents = 50;
 
         try
         {
-            await _call.RequestStream.WriteAsync(new ControlMessage
+            await WriteSerializedAsync(new ControlMessage
             {
                 CatalogRequest = new CatalogRequest { EventId = eventId ?? string.Empty }
             });
@@ -1820,7 +1878,7 @@ private const int MaxPendingPushEvents = 50;
 
         try
         {
-            await _call.RequestStream.WriteAsync(new ControlMessage
+            await WriteSerializedAsync(new ControlMessage
             {
                 SelfInstallRequest = new SelfInstallRequest
                 {
@@ -1869,7 +1927,7 @@ private const int MaxPendingPushEvents = 50;
             var call = _call;
             if (call != null)
             {
-                await call.RequestStream.WriteAsync(ackMsg);
+                await WriteSerializedAsync(ackMsg);
             }
             else
             {
@@ -1904,7 +1962,7 @@ private const int MaxPendingPushEvents = 50;
         if (string.IsNullOrWhiteSpace(sessionId)) { Log("SendRemoteSessionAnswer skipped: empty sessionId"); return; }
         try
         {
-            await _call.RequestStream.WriteAsync(new ControlMessage
+            await WriteSerializedAsync(new ControlMessage
             {
                 RemoteSessionAnswer = new RemoteSessionAnswer
                 {
@@ -1924,7 +1982,7 @@ private const int MaxPendingPushEvents = 50;
         if (string.IsNullOrWhiteSpace(sessionId)) { Log("SendRemoteSessionIce skipped: empty sessionId"); return; }
         try
         {
-            await _call.RequestStream.WriteAsync(new ControlMessage
+            await WriteSerializedAsync(new ControlMessage
             {
                 RemoteSessionIce = new RemoteSessionIce
                 {
@@ -1945,7 +2003,7 @@ private const int MaxPendingPushEvents = 50;
         if (string.IsNullOrWhiteSpace(sessionId)) { Log("SendRemoteSessionClose skipped: empty sessionId"); return; }
         try
         {
-            await _call.RequestStream.WriteAsync(new ControlMessage
+            await WriteSerializedAsync(new ControlMessage
             {
                 RemoteSessionClose = new RemoteSessionClose
                 {
@@ -1965,7 +2023,7 @@ private const int MaxPendingPushEvents = 50;
         if (string.IsNullOrWhiteSpace(sessionId)) { Log("SendRemoteSessionError skipped: empty sessionId"); return; }
         try
         {
-            await _call.RequestStream.WriteAsync(new ControlMessage
+            await WriteSerializedAsync(new ControlMessage
             {
                 RemoteSessionError = new RemoteSessionError
                 {
@@ -1989,7 +2047,7 @@ private const int MaxPendingPushEvents = 50;
         if (string.IsNullOrWhiteSpace(sessionId)) return;
         try
         {
-            await _call.RequestStream.WriteAsync(new ControlMessage
+            await WriteSerializedAsync(new ControlMessage
             {
                 RemoteSessionTranscript = new RemoteSessionTranscript
                 {
@@ -2017,7 +2075,7 @@ private const int MaxPendingPushEvents = 50;
         if (string.IsNullOrWhiteSpace(sessionId)) return;
         try
         {
-            await _call.RequestStream.WriteAsync(new ControlMessage
+            await WriteSerializedAsync(new ControlMessage
             {
                 RemoteFileTransferAudit = new RemoteFileTransferAudit
                 {
@@ -2049,7 +2107,7 @@ private const int MaxPendingPushEvents = 50;
         if (string.IsNullOrWhiteSpace(sessionId)) return;
         try
         {
-            await _call.RequestStream.WriteAsync(new ControlMessage
+            await WriteSerializedAsync(new ControlMessage
             {
                 RemoteScreenAudit = new RemoteScreenAudit
                 {
@@ -2068,6 +2126,21 @@ private const int MaxPendingPushEvents = 50;
     }
 
     public void Dispose() => Close();
+}
+
+/// <summary>
+/// The stream finished — it did not break.
+///
+/// Writing to a call the server has already completed throws RpcException with
+/// StatusCode.OK: a status that says nothing went wrong. Without a type of its
+/// own that travelled to agent-core as `heartbeat_failed`, indistinguishable
+/// from a dead wire, and tore down a connection that had simply ended. The
+/// reconnect is already scheduled by the time this is thrown; callers only need
+/// to decide whether to alarm.
+/// </summary>
+public sealed class GrpcStreamCompletedException : Exception
+{
+    public GrpcStreamCompletedException(string message) : base(message) { }
 }
 
 public sealed class GrpcBridgeConnectOptions

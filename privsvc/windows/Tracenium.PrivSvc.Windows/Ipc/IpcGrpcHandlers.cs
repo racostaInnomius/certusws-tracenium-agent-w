@@ -706,6 +706,16 @@ public static class IpcGrpcHandlers
 
             return PrivSvcResponse.Success(req.Id, new { ok = true });
         }
+        catch (GrpcStreamCompletedException ex)
+        {
+            // The stream ENDED; it did not break. Writing to a call the server
+            // already completed throws RpcException with StatusCode.OK, and
+            // reporting that as `grpc_heartbeat_error` made agent-core tear
+            // down a healthy agent — 21 of one endpoint's 38 reconnects in a
+            // day came from this. Its own code lets agent-core reconnect
+            // without treating the wire as broken.
+            return PrivSvcResponse.Fail(req.Id, "grpc_stream_completed", ex.Message);
+        }
         catch (Exception ex)
         {
             return PrivSvcResponse.Fail(req.Id, "grpc_heartbeat_error", ex.Message);

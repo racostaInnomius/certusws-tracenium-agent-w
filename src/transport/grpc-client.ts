@@ -802,6 +802,31 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
             if (!resp?.ok) {
               const errorCode = String(resp?.error?.code || "");
               const errorMessage = String(resp?.error?.message || resp?.error || "heartbeat failed");
+              // A stream that ENDED is not a wire that broke. Writing to a call
+              // the server already completed throws StatusCode.OK — a status
+              // that says nothing went wrong — and the bridge has already
+              // scheduled its own reconnect by the time it tells us. Reported
+              // as a failure it accounted for 21 of one endpoint's 38
+              // reconnects in a single day, each one tearing down a healthy
+              // agent and re-running the whole handshake.
+              //
+              // We still drop `connected` and let the reconnect happen: the
+              // stream really is gone. What changes is that it stops being
+              // logged and emitted as a fault, so the noise floor reflects
+              // actual faults.
+              // ⚠️ The reconnect still has to happen — a completed stream is
+              // gone either way, and skipping the emit would leave us waiting
+              // on the bridge to notice. What changes is that it stops being
+              // reported as a fault.
+              if (errorCode === "grpc_stream_completed") {
+                ctx.logger?.info("[grpc-client] stream completed cleanly — reconnecting", {
+                  errorMessage
+                });
+                connected = false;
+                connectPromise = null;
+                safeEmitError(new Error("stream_completed"));
+                return;
+              }
               ctx.logger?.warn("[grpc-client] heartbeat IPC rejected — marking connection broken", {
                 errorCode,
                 errorMessage

@@ -122,6 +122,88 @@ describe("grpc-client — heartbeat failure emit safety", () => {
   });
 });
 
+// ── un stream terminado no es un cable roto ───────────────────────────────
+//
+// Escribir sobre una llamada que el servidor ya completó lanza RpcException
+// con StatusCode.OK — un estado que dice, literalmente, que no pasó nada malo.
+// El puente lo reportaba como `grpc_heartbeat_error` y el agente lo trataba
+// como cable muerto: 21 de las 38 reconexiones de un equipo en UN día salieron
+// de ahí, cada una derribando un agente sano.
+//
+// La reconexión sigue haciendo falta (el stream se fue igualmente); lo que
+// cambia es que deja de contarse como avería.
+
+describe("grpc-client — cierre limpio del stream", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function ctxWith(heartbeatError: any) {
+    const ctx = makeCtx();
+    ctx.priv.call = vi.fn(async (req: any) => {
+      if (req.method === "grpc.connect") {
+        return { ok: true, result: { connected: true, ready: true } };
+      }
+      if (req.method === "grpc.heartbeat") {
+        return { ok: false, error: heartbeatError };
+      }
+      return { ok: true };
+    });
+    return ctx;
+  }
+
+  it("no lo registra como avería cuando el stream simplemente terminó", async () => {
+    const ctx = ctxWith({ code: "grpc_stream_completed", message: "SendHeartbeat: stream completed (OK)" });
+    const stream = createGrpcClient(ctx).Connect();
+    stream.on("error", vi.fn());
+
+    stream.write({
+      heartbeat: { deviceId: "device-1", uptimeSeconds: 1, agentVersion: "1.1.33-test", policyVersion: "pv1" }
+    });
+
+    await waitForCall(ctx.logger.info, (args) =>
+      String(args[0]).includes("stream completed cleanly")
+    );
+    // Lo decisivo: nada de "marking connection broken" en el log de avisos.
+    const warned = ctx.logger.warn.mock.calls.some((c: any[]) =>
+      String(c[0]).includes("marking connection broken")
+    );
+    expect(warned).toBe(false);
+  });
+
+  // Si nos saltáramos el emit, la reconexión quedaría a expensas de que el
+  // puente se diera cuenta solo — y un agente que no reconecta es peor que uno
+  // que reconecta de más.
+  it("aun así reconecta: el stream se fue de todas formas", async () => {
+    const ctx = ctxWith({ code: "grpc_stream_completed", message: "stream completed (OK)" });
+    const stream = createGrpcClient(ctx).Connect();
+    const onError = vi.fn();
+    stream.on("error", onError);
+
+    stream.write({
+      heartbeat: { deviceId: "device-1", uptimeSeconds: 1, agentVersion: "1.1.33-test", policyVersion: "pv1" }
+    });
+
+    await waitForCall(onError);
+    expect(String(onError.mock.calls[0][0]?.message || "")).toBe("stream_completed");
+  });
+
+  // Una avería de verdad tiene que seguir sonando igual de fuerte.
+  it("un fallo real sigue marcando la conexión como rota", async () => {
+    const ctx = ctxWith({ code: "grpc_heartbeat_error", message: "Can't write the message because the previous write is in progress." });
+    const stream = createGrpcClient(ctx).Connect();
+    const onError = vi.fn();
+    stream.on("error", onError);
+
+    stream.write({
+      heartbeat: { deviceId: "device-1", uptimeSeconds: 1, agentVersion: "1.1.33-test", policyVersion: "pv1" }
+    });
+
+    await waitForCall(onError);
+    expect(String(onError.mock.calls[0][0]?.message || "")).toContain("heartbeat_failed");
+  });
+});
+
 // ── pins de CA aceptables (Fase 0.5 de la rotación de CA) ─────────────────
 //
 // El privsvc de Windows valida al servidor exigiendo que la cadena contenga
