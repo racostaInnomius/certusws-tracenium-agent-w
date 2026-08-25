@@ -29,6 +29,7 @@ import { handlePmpReadCheckState, handlePmpRemediate } from "./pmp-remediation";
 import { handleSecurityPosture } from "./security-posture";
 import { handleMdmEnrollmentState, handleMdmObserveSettings } from "./mdm-state";
 import { handleScreenCapture } from "./screen-capture";
+import { handleInputInject } from "./input-injection";
 import {
   handleSdpDetect,
   handleSdpDownload,
@@ -179,6 +180,11 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     // RCP M3.S1 — screen capture (Node.js → PrivSvc → Swift helper).
     // PrivSvc owns spawning the capture helper into the user's GUI
     // session; result is a base64 JPEG. Mirror of Windows Router.cs:121.
+    // RCP — control remoto. Va por el helper, que es quien vive en la sesión
+    // gráfica y quien tiene (o pide) el permiso de Accesibilidad.
+    case "input.inject":
+      return handleInputInject(req);
+
     case "screen.capture":
       return handleScreenCapture(req);
 

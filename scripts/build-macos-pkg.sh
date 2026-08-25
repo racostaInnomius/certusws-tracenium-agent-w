@@ -262,8 +262,16 @@ PLIST
 
   local tmp; tmp="$(mktemp -d)"
   echo "→ building tracenium-screencap (arm64 + x86_64, target macos12.3)"
-  swiftc -O -target arm64-apple-macos12.3  "$src" -o "$tmp/screencap.arm64"
-  swiftc -O -target x86_64-apple-macos12.3 "$src" -o "$tmp/screencap.x86_64"
+  # input.swift lleva la inyección de teclado/ratón. Va en fichero aparte
+  # porque main.swift es código top-level (Swift le da trato especial) y no
+  # admite las definiciones que necesita.
+  local src_input="$ROOT_DIR/privsvc/macos/helpers/screencap/input.swift"
+  if [ ! -f "$src_input" ]; then
+    echo "ERROR: missing screencap input source: $src_input" >&2
+    exit 1
+  fi
+  swiftc -O -target arm64-apple-macos12.3  "$src" "$src_input" -o "$tmp/screencap.arm64"
+  swiftc -O -target x86_64-apple-macos12.3 "$src" "$src_input" -o "$tmp/screencap.x86_64"
   lipo -create "$tmp/screencap.arm64" "$tmp/screencap.x86_64" -output "$out"
   rm -rf "$tmp"
   chmod 0755 "$out"

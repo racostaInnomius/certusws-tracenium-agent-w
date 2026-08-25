@@ -214,6 +214,84 @@ let quality = parseQuality()
 // descriptores se heredan, así que el hijo escribe directamente en la tubería
 // del privsvc y este no nota la diferencia.
 private func reexecDisclaimed() {
+
+// ── Modo inyección de entrada ────────────────────────────────────────
+// Proceso de VIDA LARGA, a diferencia de la captura (que es one-shot por
+// fotograma). Un proceso por evento sería inviable: el operador genera
+// decenas de movimientos de ratón por segundo y cada arranque cuesta
+// launchctl + sudo + spawn. Se lanza uno por sesión de control y se le
+// escriben líneas.
+if CommandLine.arguments.contains("--input-serve") {
+    // Accesibilidad es un permiso DISTINTO del de Grabación de Pantalla. Se
+    // pide una vez al arrancar, por el mismo motivo que la captura: consultar
+    // no registra el binario en Ajustes y el permiso quedaría inalcanzable.
+    if !ensureAccessibility(requestIfNeeded: true) {
+        emitError(
+            "accessibility_permission_pending",
+            "Remote control needs the Accessibility permission, which is separate from Screen Recording. macOS has been asked for it and Tracenium Screen Helper now appears in System Settings > Privacy & Security > Accessibility — someone at the Mac has to enable it there."
+        )
+    }
+
+    let stdoutHandle = FileHandle.standardOutput
+    func reply(_ obj: [String: Any]) {
+        if let d = try? JSONSerialization.data(withJSONObject: obj),
+           var line = String(data: d, encoding: .utf8) {
+            line += "\n"
+            stdoutHandle.write(line.data(using: .utf8)!)
+        }
+    }
+
+    while let line = readLine(strippingNewline: true) {
+        guard !line.isEmpty,
+              let data = line.data(using: .utf8),
+              let msg = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let op = msg["op"] as? String else {
+            reply(["ok": false, "code": "bad_request", "message": "unparseable input op"])
+            continue
+        }
+
+        let x = (msg["x"] as? NSNumber)?.doubleValue ?? 0
+        let y = (msg["y"] as? NSNumber)?.doubleValue ?? 0
+        let button = (msg["button"] as? NSNumber)?.intValue ?? 0
+
+        switch op {
+        case "mouseMove":
+            injectMouseMove(x: x, y: y)
+            reply(["ok": true])
+        case "mouseDown":
+            injectMouseButton(jsButton: button, x: x, y: y, down: true)
+            reply(["ok": true])
+        case "mouseUp":
+            injectMouseButton(jsButton: button, x: x, y: y, down: false)
+            reply(["ok": true])
+        case "wheel":
+            injectWheel(deltaX: (msg["deltaX"] as? NSNumber)?.doubleValue ?? 0,
+                        deltaY: (msg["deltaY"] as? NSNumber)?.doubleValue ?? 0)
+            reply(["ok": true])
+        case "keyDown", "keyUp":
+            let code = msg["code"] as? String ?? ""
+            if injectKey(code: code, down: op == "keyDown") {
+                reply(["ok": true])
+            } else {
+                // Una tecla sin mapear no puede tumbar la sesión: el operador
+                // pulsó algo exótico, no hay avería. Se reporta y se sigue.
+                reply(["ok": false, "code": "input_unmapped_key",
+                       "message": "no macOS key code for \(code)"])
+            }
+        case "releaseAll":
+            injectReleaseAll()
+            reply(["ok": true])
+        default:
+            reply(["ok": false, "code": "input_unknown_op", "message": "unknown op: \(op)"])
+        }
+    }
+
+    // stdin cerrado = el privsvc terminó o la sesión murió. No dejamos teclas
+    // ni botones trabados en el equipo de otra persona.
+    injectReleaseAll()
+    exit(0)
+}
+
     // El hijo lleva la marca para no re-ejecutarse en bucle.
     if ProcessInfo.processInfo.environment["TRACENIUM_SCREENCAP_DISCLAIMED"] == "1" {
         return
