@@ -40,6 +40,65 @@ import { hashNamespace, buildScpStateForHash, buildPmpStateForHash } from "./nam
 // Hitting 30 min on any of these means something is unrecoverable.
 const WORKER_STUCK_TIMEOUT_MS = 30 * 60 * 1000;
 
+/**
+ * Espera mínima antes del primer inventario tras arrancar.
+ *
+ * ⚠️ Este arranque rápido existe porque su ausencia se vio en producción: dos
+ * Macs actualizadas a 1.1.52 seguían mostrándose en 1.1.50 y 1.1.51 en el
+ * portal media hora después. El agente correcto ya estaba corriendo y
+ * conectado — lo que faltaba era el snapshot que lleva la versión, y ése sólo
+ * sale en el tick de inventario, que por defecto es cada SEIS HORAS.
+ *
+ * El scheduler ya tenía dos disparadores para justo este caso
+ * (`forceInitialSnapshot` y `versionChanged`), y los dos funcionan; el problema
+ * es que sólo se evalúan CUANDO CORRE EL TICK. Adelantar el primero es lo que
+ * hace que sirvan.
+ *
+ * No es cero: el agente acaba de arrancar y conviene dejarlo estabilizar la
+ * conexión gRPC y el privsvc antes de pedirle un inventario completo.
+ */
+const INITIAL_INVENTORY_DELAY_MS = 45 * 1000;
+
+/**
+ * Ventana sobre la que se reparte ese primer tick.
+ *
+ * ⚠️ Cinco minutos, no treinta segundos como el jitter de régimen. Una
+ * actualización de flota reinicia muchos agentes casi a la vez, y todos
+ * arrancarían su primer inventario en la misma ventana: el arreglo del dato
+ * viejo se convertiría en una tormenta de snapshots contra el backend.
+ */
+const INITIAL_TICK_SPREAD_MS = 5 * 60 * 1000;
+
+/**
+ * Cuánto esperar antes del siguiente tick de un pipeline.
+ *
+ * Exportada y pura porque aquí vive la decisión, y la decisión tiene dos
+ * regímenes que es fácil confundir:
+ *
+ *   primer tick  →  espera corta (45 s) repartida en una ventana ANCHA (5 min)
+ *   en régimen   →  intervalo completo repartido en una ventana estrecha (30 s)
+ *
+ * ⚠️ Las ventanas resuelven problemas distintos y por eso no se comparten. La
+ * estrecha desincroniza agentes que llevan horas corriendo. La ancha existe
+ * porque una actualización de flota reinicia muchos agentes casi a la vez: sin
+ * ella, el arreglo de un dato viejo se convertiría en una tormenta de
+ * snapshots contra el backend en la misma ventana de 30 s.
+ */
+export function computeTickDelay(opts: {
+  baseIntervalMs: number;
+  jitterRangeMs: number;
+  /** Presente SÓLO en el primer armado de un pipeline. */
+  firstDelayMs?: number;
+  /** Inyectable para que los tests no dependan del azar. */
+  random?: () => number;
+}): number {
+  const rnd = opts.random ?? Math.random;
+  const isFirst = opts.firstDelayMs !== undefined;
+  const spreadMs = isFirst ? INITIAL_TICK_SPREAD_MS : opts.jitterRangeMs;
+  const base = isFirst ? opts.firstDelayMs! : opts.baseIntervalMs;
+  return base + Math.floor(rnd() * spreadMs);
+}
+
 class Scheduler {
 
   private timers: Map<string, NodeJS.Timeout> = new Map();
@@ -253,12 +312,12 @@ class Scheduler {
     key: string,
     baseIntervalMs: number,
     jitterRangeMs: number,
-    run: () => void
+    run: () => void,
+    firstDelayMs?: number
   ): void {
     if (!this.pipelineActive.has(key)) return;
 
-    const jitter = Math.floor(Math.random() * jitterRangeMs);
-    const delayMs = baseIntervalMs + jitter;
+    const delayMs = computeTickDelay({ baseIntervalMs, jitterRangeMs, firstDelayMs });
 
     const timer = setTimeout(() => {
       // Clear the stored handle before running — a tick already in
@@ -272,6 +331,7 @@ class Scheduler {
       }
 
       // Re-arm with a fresh jitter sample. Drift accumulates naturally.
+      // Sin firstDelayMs: el arranque rápido es una sola vez.
       this.armJitteredPipeline(key, baseIntervalMs, jitterRangeMs, run);
     }, delayMs);
 
@@ -298,7 +358,11 @@ class Scheduler {
         this.runInventory(ctx).catch(err =>
           logger.error("Inventory error", { err })
         );
-      });
+      // ⚠️ Sólo el inventario adelanta su primer tick. Es el único cuya
+      // demora es visible para el operador: la versión del agente, el
+      // software y el hardware que muestra el portal salen de aquí. El resto
+      // de pipelines pueden esperar su turno.
+      }, INITIAL_INVENTORY_DELAY_MS);
     }
 
     // update pipeline
