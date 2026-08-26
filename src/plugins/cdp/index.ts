@@ -117,6 +117,19 @@ async function collectOnce(
       result = await collectWindowsCdp(ctx);
     } else if (platform === "darwin") {
       result = await collectMacosCdp();
+      // Que el sintoma llegue al log y no se quede en el tipo. Si root
+      // no pudiera leer los login keychains de otros usuarios —el caso
+      // de produccion, que no se ha podido verificar en un Mac de un
+      // solo perfil— esto lo dice en vez de devolver cero en silencio.
+      {
+        const lk = (result as any).loginKeychains;
+        if (lk && lk.discovered > 0 && lk.read < lk.discovered) {
+          ctx.logger?.warn?.("CDP: login keychains encontrados pero no leidos", {
+            discovered: lk.discovered,
+            read: lk.read
+          });
+        }
+      }
     } else if (platform === "linux") {
       result = await collectLinuxCdp();
     } else {
