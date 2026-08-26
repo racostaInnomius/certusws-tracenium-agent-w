@@ -577,6 +577,45 @@ public static class Dp
         return matches.Count > 0 ? matches[0] : null;
     }
 
+    /// <summary>
+    /// Relight the blob server at service start if this endpoint is a DP.
+    ///
+    /// ⚠️ THE CACHE SURVIVES A REBOOT; THE LISTENER DOES NOT. EnsureServer runs
+    /// only from the two prefetch paths, so after any restart — an agent update,
+    /// Windows Update, a power cut — this machine holds every cached blob on
+    /// disk and answers on none of them. Nothing notices: the control plane
+    /// reads "a prefetch completed recently" as "the DP is warm", which is a
+    /// claim about the FILE, not about the port.
+    ///
+    /// Measured cost of that gap: a DP cached 1.1.53 at 01:41, self-updated at
+    /// 01:43, and by 01:47 the endpoints behind it found a warm cache behind a
+    /// dead port. 28 of 28 fell back to the internet, and the five with no WAN
+    /// route failed outright. Left alone it would have stayed silent until the
+    /// 24-hour re-assert prefetch came round.
+    ///
+    /// Gated on the cache having content, so a plain agent never opens a port
+    /// it has no use for — the same rule TryEnsureFirewallRule already follows.
+    /// Best effort: a DP that cannot listen is exactly today's behaviour, and
+    /// the service must start regardless.
+    /// </summary>
+    public static void EnsureServerOnStartup(Action<string>? log = null)
+    {
+        try
+        {
+            if (!Directory.Exists(CacheDir)) return;
+            if (!Directory.EnumerateFiles(CacheDir).Any()) return;
+
+            var reason = EnsureServer();
+            log?.Invoke(reason == null
+                ? $"DP blob server relit on startup (port {Port})"
+                : $"DP blob server could not start: {reason}");
+        }
+        catch (Exception ex)
+        {
+            log?.Invoke($"DP blob server startup check failed: {ex.Message}");
+        }
+    }
+
     private static void TryDelete(string path)
     {
         try { if (File.Exists(path)) File.Delete(path); } catch { }
