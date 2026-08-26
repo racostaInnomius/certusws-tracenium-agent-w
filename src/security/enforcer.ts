@@ -318,12 +318,30 @@ const SECURITY_CAPABILITY_REMEDIATORS: RemediatorEntry[] = [
 //   1. capability.mode if set
 //   2. security.defaultMode if set
 //   3. "report-only" as the hardcoded floor (= safest fallback).
-function effectiveMode(cap: any, policy: SecurityPolicy): SecurityMode {
-  if (cap?.mode === "auto" || cap?.mode === "report-only" || cap?.mode === "off") {
-    return cap.mode;
-  }
-  if (policy.defaultMode) return policy.defaultMode;
-  return "report-only";
+//   4. F2 del plan de gates por tier: `auto` hace que el agente ESCRIBA en el
+//      endpoint (pmp.remediate), y remediar lo habilita PMP. Sin ese plugin el
+//      modo cae a "report-only" — NUNCA a "off": la detección de drift sí
+//      corresponde al plan que sólo incluye compliance, y apagarla le quitaría
+//      al tenant algo que sí ha pagado.
+//
+// Es un CINTURÓN, no el cierre principal: el backend ya degrada el modo al
+// proyectar la política (policies.service::applyEntitlements), así que en
+// condiciones normales aquí nunca llega un `auto` sin derecho. Si llega, es que
+// aquel cierre falló — por eso el llamador lo registra.
+export function effectiveMode(
+  cap: any,
+  policy: SecurityPolicy,
+  mayRemediate: boolean = true
+): SecurityMode {
+  const resolved: SecurityMode =
+    cap?.mode === "auto" || cap?.mode === "report-only" || cap?.mode === "off"
+      ? cap.mode
+      : policy.defaultMode
+        ? policy.defaultMode
+        : "report-only";
+
+  if (resolved === "auto" && !mayRemediate) return "report-only";
+  return resolved;
 }
 
 type EnforceOutcome =
@@ -379,6 +397,17 @@ export async function runSecurityEnforce(
       ? policy.cooldownMinutes * 60 * 1000
       : COOLDOWN_DEFAULT_MS;
 
+  // F2 — remediar exige PMP. Se resuelve una vez por pase para que una recarga
+  // de política a media ejecución no deje unas capacidades escribiendo y otras
+  // no dentro del mismo pase.
+  //
+  // Ojo: NO se corta el pase entero. Leer estado y reportar drift es
+  // compliance y corresponde al plan que sí incluye SCP; lo único que exige
+  // PMP es la ESCRITURA. Apagar el enforcer aquí le quitaría al tenant la
+  // detección que ha pagado.
+  const mayRemediate = ctx.policyRuntime.pluginEnabled?.("pmp") !== false;
+  const degradedCapabilities: string[] = [];
+
   // Iterate every potential remediator. We do this serially because
   // (a) the privsvc lock makes parallelism a no-op anyway, and
   // (b) the per-pass deadline lets us cut a long pass short
@@ -398,7 +427,14 @@ export async function runSecurityEnforce(
       continue;
     }
 
-    const mode = effectiveMode(cap, policy);
+    const mode = effectiveMode(cap, policy, mayRemediate);
+    if (!mayRemediate && cap?.mode === "auto") {
+      // Llegó `auto` sin derecho a PMP: el degradado del backend no actuó.
+      // No es fatal —acabamos de bajarlo a report-only— pero SÍ es señal de
+      // que applyEntitlements no hizo su trabajo, y sin esta línea el síntoma
+      // (nadie remedia) es indistinguible de "así está configurado".
+      degradedCapabilities.push(entry.capability);
+    }
 
     if (mode === "off") {
       results.push({
@@ -611,6 +647,16 @@ export async function runSecurityEnforce(
     items: results.length,
     summary: summarize(results),
   });
+
+  // F2 — si aquí hubo algo que degradar, el cierre del backend no actuó: la
+  // política llegó con `auto` a un tenant sin PMP. No es fatal (ya lo bajamos a
+  // report-only), pero sin esta línea el síntoma —nadie remedia— es
+  // indistinguible de "así está configurado".
+  if (degradedCapabilities.length > 0) {
+    ctx.logger?.warn?.("[security] `auto` recibido sin derecho a pmp; degradado a report-only", {
+      capabilities: degradedCapabilities,
+    });
+  }
 
   // Emit audit events for outcomes that changed since the previous
   // pass. Failures here are swallowed — audit-event emission must
