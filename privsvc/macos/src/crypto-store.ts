@@ -4,7 +4,15 @@ import https from "https";
 import os from "os";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { certPaths, ensurePrivSvcDirs } from "./paths";
+import { certPaths, ensurePrivSvcDirs, CERT_DIR } from "./paths";
+import {
+  evaluateAnchorPins,
+  loadAnchorPins,
+  saveAnchorPins,
+  describeAnchorVerdict,
+  type AnchorPinMode,
+  type AnchorPinVerdict
+} from "./anchor-pin";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
@@ -68,8 +76,72 @@ function buildFullCaBundlePem(caBundlePem: string): { fullBundlePem: string; iss
   };
 }
 
-async function installCaCertificatesToSystemKeychain(bundlePem: string): Promise<void> {
-  const certs = splitPemCertificates(bundlePem);
+
+/**
+ * Modo del pin de anclas. `observe` por defecto — ver anchor-pin.ts para
+ * por qué NO bloquea de salida (hay una rotacion de CA en curso, y un pin
+ * estricto en mitad de una rotacion legitima deja equipos incomunicados).
+ */
+function anchorPinMode(): AnchorPinMode {
+  return process.env.TRACENIUM_ANCHOR_PIN === "enforce" ? "enforce" : "observe";
+}
+
+/** Huellas de los certificados AUTOFIRMADOS del bundle: las que se instalan como raiz. */
+function rootFingerprintsOf(bundlePem: string): string[] {
+  const out: string[] = [];
+  for (const pem of splitPemCertificates(bundlePem)) {
+    try {
+      const cert = new crypto.X509Certificate(pem);
+      if (cert.subject === cert.issuer) out.push(certFingerprintPem(pem));
+    } catch {
+      continue;
+    }
+  }
+  return out;
+}
+
+/**
+ * Evalua el bundle contra los pines, lo registra RUIDOSAMENTE y persiste
+ * la linea base. Devuelve el veredicto para que el llamante pueda
+ * incluirlo en la respuesta IPC — un veredicto que solo va al log se
+ * pierde, y esta ruta ya tiene un historial de tragarse errores.
+ */
+function applyAnchorPin(bundlePem: string): AnchorPinVerdict {
+  const mode = anchorPinMode();
+  const verdict = evaluateAnchorPins(loadAnchorPins(CERT_DIR), rootFingerprintsOf(bundlePem), mode);
+  const message = describeAnchorVerdict(verdict);
+
+  if (verdict.unpinned.length > 0) {
+    logger.warn(message);
+  } else {
+    logger.info(message);
+  }
+
+  // Se fija lo que efectivamente se va a confiar. En `enforce` lo
+  // rechazado no entra, para no legitimar en el fichero lo que se acaba
+  // de negar.
+  const accepted = verdict.incoming.filter((fp) => !verdict.rejected.includes(fp));
+  try {
+    saveAnchorPins(CERT_DIR, [...verdict.pinned, ...accepted]);
+  } catch (err) {
+    logger.warn(`anchor-pin: no se pudo persistir la linea base: ${String(err)}`);
+  }
+
+  return verdict;
+}
+
+async function installCaCertificatesToSystemKeychain(
+  bundlePem: string,
+  rejectedFingerprints: string[] = []
+): Promise<void> {
+  const certs = splitPemCertificates(bundlePem).filter((pem) => {
+    if (rejectedFingerprints.length === 0) return true;
+    try {
+      return !rejectedFingerprints.includes(certFingerprintPem(pem));
+    } catch {
+      return true;
+    }
+  });
   if (certs.length === 0) return;
 
   const tempDir = fs.mkdtempSync("/tmp/tracenium-ca-");
@@ -436,7 +508,13 @@ export async function handleInstallCert(req: PrivSvcRequest): Promise<PrivSvcRes
     fs.writeFileSync(paths.clientCert, clientCertPem, { encoding: "utf8", mode: 0o600 });
     fs.writeFileSync(paths.caBundle, fullBundlePem, { encoding: "utf8", mode: 0o644 });
 
-    await installCaCertificatesToSystemKeychain(fullBundlePem).catch(() => undefined);
+    // El pin se evalua ANTES de instalar, y el fallo deja de ser mudo:
+    // el `.catch(() => undefined)` que habia aqui se tragaba tanto un
+    // error de instalacion como un ancla inesperada.
+    const anchorVerdict = applyAnchorPin(fullBundlePem);
+    await installCaCertificatesToSystemKeychain(fullBundlePem, anchorVerdict.rejected).catch(
+      (err) => logger.warn(`install CA anchors failed: ${String(err)}`)
+    );
 
     // Also install the client identity (cert + private key) into the
     // System Keychain as a secondary store. Runtime still reads from
@@ -631,7 +709,13 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
     const clientCertThumbprint = certFingerprintPem(clientCertPem);
     const x509 = new crypto.X509Certificate(clientCertPem);
 
-    await installCaCertificatesToSystemKeychain(fullBundlePem).catch(() => undefined);
+    // El pin se evalua ANTES de instalar, y el fallo deja de ser mudo:
+    // el `.catch(() => undefined)` que habia aqui se tragaba tanto un
+    // error de instalacion como un ancla inesperada.
+    const anchorVerdict = applyAnchorPin(fullBundlePem);
+    await installCaCertificatesToSystemKeychain(fullBundlePem, anchorVerdict.rejected).catch(
+      (err) => logger.warn(`install CA anchors failed: ${String(err)}`)
+    );
 
     // Re-install the rotated identity into System Keychain. The install
     // helper deletes any prior entry with the same label first, so we

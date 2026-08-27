@@ -71,7 +71,7 @@ const MIN_INTERACTIVE_UID = 500;
  * relative to __dirname. `TRACENIUM_SCREENCAP_HELPER` overrides both for
  * the build/test harness.
  */
-function helperPath(): string {
+export function helperPath(): string {
   const override = process.env.TRACENIUM_SCREENCAP_HELPER;
   if (override && override.trim()) return override.trim();
   // dist/screen-capture.js → ./tracenium-screencap (installed sibling)
@@ -103,7 +103,7 @@ function helperPath(): string {
  * logged in, and by root at the login window. `stat -f "%u %Su"` gives
  * both the numeric uid and the name in one shot.
  */
-function activeConsoleUser(): Promise<{ uid: number; name: string } | null> {
+export function activeConsoleUser(): Promise<{ uid: number; name: string } | null> {
   return new Promise((resolve) => {
     execFile("/usr/bin/stat", ["-f", "%u %Su", "/dev/console"], { timeout: 2000 }, (err, stdout) => {
       if (err) {

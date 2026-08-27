@@ -49,7 +49,11 @@ function encodeReport(report: unknown): string {
 function kv(pairs: Record<string, string | number | boolean | null | undefined>): string {
   return Object.entries(pairs)
     .filter(([, v]) => v !== undefined && v !== null && v !== "")
-    .map(([k, v]) => `${k}=${String(v).replace(/[;=]/g, "_")}`)
+    // `;` and `=` are the field separators. Newlines matter just as much: an
+    // ACK is a single line by contract, and a message that carries one — a
+    // relayed PrivSvc error, say — would split the ACK in two and truncate
+    // everything the reader expected after it.
+    .map(([k, v]) => `${k}=${String(v).replace(/[;=\r\n]/g, "_")}`)
     .join(";");
 }
 

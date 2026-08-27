@@ -30,6 +30,13 @@ public sealed class Worker : BackgroundService
         // already-deployed hosts without needing an upgrade.
         ServiceRecovery.EnsureConfigured(_logger);
 
+        // Relight the DP blob server if this endpoint holds a cache. The
+        // listener only ever started from a prefetch, so every restart left a
+        // designated DP holding its files and serving none of them until the
+        // next prefetch — up to 24 hours later. Same shape as the repair above:
+        // earliest point it can land, and it reaches deployed hosts.
+        Ipc.Dp.EnsureServerOnStartup(m => _logger.LogInformation("{Message}", m));
+
         _ = Task.Run(async () =>
         {
             try

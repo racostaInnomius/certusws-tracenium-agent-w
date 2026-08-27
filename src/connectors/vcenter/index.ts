@@ -239,6 +239,19 @@ export interface CredentialProvisionPayload {
  * arrive in either order. Storing a credential on a device that never becomes a
  * gateway is inert — nobody else can open the envelope anyway.
  */
+/**
+ * The message PrivSvc sent with a coded failure, if it sent one.
+ *
+ * Bounded and stripped of separators because it travels inside a `k=v;k=v`
+ * ACK line — an unescaped `;` would split into a field nobody parses, and an
+ * unbounded string would push the real fields off the end.
+ */
+function reasonFrom(e: any): string | undefined {
+  const msg = typeof e?.message === "string" ? e.message.trim() : "";
+  if (!msg) return undefined;
+  return msg.replace(/[;\r\n]+/g, " ").slice(0, 120);
+}
+
 export async function runVcenterCredentialProvision(
   deps: ConnectorDeps,
   payload: CredentialProvisionPayload
@@ -263,11 +276,27 @@ export async function runVcenterCredentialProvision(
           reason: "sealed against a rotated certificate; re-enter the credential",
         });
       case "decrypt_failed":
-        return buildProvisionAck("decrypt_failed");
+        // PrivSvc distinguishes three very different failures behind this one
+        // code, and dropping its message left the admin with "decrypt_failed"
+        // and nowhere to go:
+        //
+        //   "certificate has no usable private key" → the cert is in the store
+        //      without its key, or the service account cannot reach the KSP.
+        //      Nothing about the password is wrong; re-entering it cannot help.
+        //   "could not unwrap the envelope key"     → the key does not match
+        //      the certificate the browser sealed against.
+        //   "envelope failed authentication"        → key fine, contents or
+        //      fingerprint binding wrong.
+        //
+        // Safe to pass through: these are our own fixed strings. PrivSvc
+        // replaces any raw crypto or IO detail with "could not store the
+        // credential" before it leaves the device, precisely so this cannot
+        // become an oracle.
+        return buildProvisionAck("decrypt_failed", { reason: reasonFrom(e) });
       case "unsupported_version":
-        return buildProvisionAck("unsupported_version");
+        return buildProvisionAck("unsupported_version", { reason: reasonFrom(e) });
       case "malformed":
-        return buildProvisionAck("malformed");
+        return buildProvisionAck("malformed", { reason: reasonFrom(e) });
       case "store_unavailable":
         return buildProvisionAck("store_unavailable", { reason: "os credential store unavailable" });
       default:

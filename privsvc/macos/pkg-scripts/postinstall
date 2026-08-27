@@ -127,8 +127,16 @@ chmod 700 "$PRIVSVC_DIR/certs"
 # (el spawn-helper de node-pty en macOS y en Linux fueron las otras dos).
 if [ -d "$PRIVSVC_DIR/macos" ]; then
   chmod 755 "$PRIVSVC_DIR/macos"
+  # El helper vive ahora dentro de un bundle. El ejecutable suelto de versiones
+  # anteriores se queda huérfano en la actualización: nadie lo lanza, pero sigue
+  # firmado con nuestra identidad y puede recibir su propia concesión de TCC,
+  # que es una entrada de más pidiendo grabar la pantalla y una confusión
+  # gratuita para quien audite los permisos del equipo.
   if [ -f "$PRIVSVC_DIR/macos/tracenium-screencap" ]; then
-    chmod 755 "$PRIVSVC_DIR/macos/tracenium-screencap"
+    rm -f "$PRIVSVC_DIR/macos/tracenium-screencap"
+  fi
+  if [ -d "$PRIVSVC_DIR/macos/Tracenium Screen Helper.app" ]; then
+    chmod -R 755 "$PRIVSVC_DIR/macos/Tracenium Screen Helper.app"
   fi
 fi
 chmod 755 "$LOG_DIR"

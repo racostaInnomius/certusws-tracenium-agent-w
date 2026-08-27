@@ -120,7 +120,25 @@ build_agent_bundle() {
       --outfile="$BUILD_DIR/Agent/agent-core.js"
   )
 
-  if ! grep -qF "env/file/registry" "$BUILD_DIR/Agent/agent-core.js"; then
+  # Canario: comprueba que el bundle trae de verdad la lógica de espera del
+  # token de enrollment, y no un árbol viejo o un bundle que la perdió.
+  #
+  # Antes buscaba "env/file/registry", que era parte de un MENSAJE DE ERROR
+  # ("enrollment token not found in env/file/registry"). Ese mensaje
+  # desapareció en 81508db —el commit cuyo propósito era justamente dejar de
+  # morir con él y esperar—, así que el canario empezó a fallar el build de
+  # macOS por una reescritura que era correcta. Linux y Windows no llevan esta
+  # comprobación, así que solo se cayó macOS.
+  #
+  # Ahora se ancla al NOMBRE DE LA FUNCIÓN. Un texto de cara al usuario es lo
+  # más reescrito de un repo: es la peor cosa a la que anclar un canario.
+  # `waitForEnrollmentToken` es la unidad que el canario quiere proteger, es
+  # ASCII y sobrevive al bundle (esbuild aquí no minifica).
+  #
+  # Sobre el ASCII: se probó también "Tracenium Agent — NOT ENROLLED" y NO
+  # aparece en el bundle, porque el guion largo sale escapado. Un canario con
+  # caracteres no-ASCII falla aunque el código esté.
+  if ! grep -qF "waitForEnrollmentToken" "$BUILD_DIR/Agent/agent-core.js"; then
     echo "Generated Agent Core bundle does not include the current enrollment token logic." >&2
     exit 1
   fi
@@ -226,16 +244,52 @@ build_screencap_helper() {
   <string>1.0</string>
   <key>LSMinimumSystemVersion</key>
   <string>12.3</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>LSUIElement</key>
   <true/>
 </dict>
 </plist>
 PLIST
 
+  # Icono. En el diálogo de Grabación de Pantalla y en Ajustes aparece el
+  # icono del bundle, y ahí es donde una PERSONA decide si confía. Sin icono
+  # macOS pinta un genérico gris que no dice nada.
+  #
+  # Se reutiliza el mismo PNG que la app de estado — el del fondo del portal,
+  # no el glifo blanco de la barra de menús: ese último desaparece sobre el
+  # fondo claro de Ajustes, que es justo el problema que appicon-source.png
+  # existe para resolver (ver comentario de STATUS_APPICON_PNG arriba).
+  if [ -f "$STATUS_APPICON_PNG" ]; then
+    mkdir -p "$app_dir/Contents/Resources"
+    local helper_iconset="$BUILD_DIR/screencap-icon.iconset"
+    rm -rf "$helper_iconset"; mkdir -p "$helper_iconset"
+    for spec in "16 16x16" "32 16x16@2x" "32 32x32" "64 32x32@2x" \
+                "128 128x128" "256 128x128@2x" "256 256x256" "512 256x256@2x" \
+                "512 512x512" "1024 512x512@2x"; do
+      set -- $spec
+      sips -z "$1" "$1" "$STATUS_APPICON_PNG" \
+        --out "$helper_iconset/icon_$2.png" >/dev/null
+    done
+    iconutil --convert icns "$helper_iconset" \
+      --output "$app_dir/Contents/Resources/AppIcon.icns"
+    rm -rf "$helper_iconset"
+  else
+    echo "WARNING: $STATUS_APPICON_PNG no encontrado — el helper saldrá con icono genérico en Ajustes" >&2
+  fi
+
   local tmp; tmp="$(mktemp -d)"
   echo "→ building tracenium-screencap (arm64 + x86_64, target macos12.3)"
-  swiftc -O -target arm64-apple-macos12.3  "$src" -o "$tmp/screencap.arm64"
-  swiftc -O -target x86_64-apple-macos12.3 "$src" -o "$tmp/screencap.x86_64"
+  # input.swift lleva la inyección de teclado/ratón. Va en fichero aparte
+  # porque main.swift es código top-level (Swift le da trato especial) y no
+  # admite las definiciones que necesita.
+  local src_input="$ROOT_DIR/privsvc/macos/helpers/screencap/input.swift"
+  if [ ! -f "$src_input" ]; then
+    echo "ERROR: missing screencap input source: $src_input" >&2
+    exit 1
+  fi
+  swiftc -O -target arm64-apple-macos12.3  "$src" "$src_input" -o "$tmp/screencap.arm64"
+  swiftc -O -target x86_64-apple-macos12.3 "$src" "$src_input" -o "$tmp/screencap.x86_64"
   lipo -create "$tmp/screencap.arm64" "$tmp/screencap.x86_64" -output "$out"
   rm -rf "$tmp"
   chmod 0755 "$out"

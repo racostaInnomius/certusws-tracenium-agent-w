@@ -176,7 +176,32 @@ public static class IpcGrpcHandlers
                 ReplayBufferedPushes(connectionId, push);
 
                 // Wait explicitly for bridge readiness (HELLO ACK) instead of relying only on push delivery
-                var ready = await GrpcBridgeSingleton.Instance.WaitForReadyAsync(TimeSpan.FromSeconds(35));
+                //
+                // ── W2 (2026-08-27) — 35 s → 20 s. Timeout ordering. ────────
+                //
+                // The chain for grpc.connect is:
+                //
+                //   IPC client budget (privsvc-client-windows)   60 s
+                //   THIS handler                                 35 s  ← was
+                //   agent CONNECT_READY_TIMEOUT_MS               30 s
+                //
+                // The recorded invariant is job > IPC client > privsvc
+                // handler, and the first pair was fine. The last one is
+                // inverted: the handler outlived by five seconds the agent
+                // watchdog that is waiting on what the handler produces. So on
+                // any slow connect the agent gave up FIRST and forced a full
+                // close+reconnect — including the case where the bridge had
+                // already recovered on its own (its internal backoff works).
+                //
+                // Lower THIS end, not the agent's: raising the agent watchdog
+                // would lengthen every real outage instead. 20 s is generous
+                // against the field data — successful connects on this host
+                // land in 0.7-2.1 s; only the multi-attempt TLS-reset storms
+                // ran long, and those are exactly the ones the agent watchdog
+                // should be allowed to arbitrate.
+                //
+                // This is the sixth appearance of this same inversion.
+                var ready = await GrpcBridgeSingleton.Instance.WaitForReadyAsync(TimeSpan.FromSeconds(20));
                 Console.WriteLine($"[IpcGrpcHandlers] Bridge ready={ready} connectionId={connectionId}");
 
                 // As a safety net: emit grpc.connected directly via IPC delegate

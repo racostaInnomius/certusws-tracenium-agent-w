@@ -75,8 +75,18 @@ vi.mock("../../src/bootstrap/enrollment-store", () => ({
 
 // token-source — siempre hay token (no es modo local).
 vi.mock("../../src/bootstrap/token-source", () => ({
+  resolveEnrollmentToken: () => ({ token: "bootstrap-token-xyz", attempts: [] }),
   readEnrollmentToken: () => "bootstrap-token-xyz",
+  describeTokenLookup: () => "",
   clearEnrollmentTokenFile: () => {}
+}));
+
+// La espera por el token vive aparte (token-wait) y tiene sus propias pruebas.
+// Aquí se sustituye entera: este archivo mide el reintento del CSR, y una
+// espera real convertiría un fallo en un test colgado.
+vi.mock("../../src/bootstrap/token-wait", () => ({
+  waitForEnrollmentToken: async () => "bootstrap-token-xyz",
+  clearBlockedMarker: () => {}
 }));
 
 vi.mock("../../src/platform/device-id", () => ({

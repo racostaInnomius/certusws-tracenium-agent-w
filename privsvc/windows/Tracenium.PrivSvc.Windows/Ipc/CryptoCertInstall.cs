@@ -80,6 +80,42 @@ public static class CryptoCertInstall
                 }
             }
 
+            // ── Pin de anclas (ADR-0011 fase 0) ─────────────────────
+            //
+            // Ultima comprobacion antes de que una raiz entre en el trust
+            // store DEL SISTEMA. En `observe` (por defecto) solo avisa;
+            // en `enforce` niega la instalacion de un ancla que este
+            // equipo no habia visto nunca.
+            //
+            // Va aqui, en el privsvc, y no en el backend: un gate en el
+            // control plane no defiende de un control plane comprometido,
+            // que es justo el adversario de esta ruta.
+            if (rootCert != null)
+            {
+                var pinVerdict = AnchorPin.Evaluate(
+                    AnchorPin.Load(),
+                    new List<string> { rootCert.Thumbprint },
+                    AnchorPin.IsEnforcing());
+
+                Console.WriteLine($"[PrivSvc][Crypto] {AnchorPin.Describe(pinVerdict)}");
+
+                if (pinVerdict.Rejected.Count > 0)
+                {
+                    // Se niega el ancla, NO el enrolamiento: la identidad
+                    // de cliente y las intermedias siguen instalandose.
+                    // Romper el enrolamiento entero por esto dejaria al
+                    // equipo incomunicado, que es peor que el riesgo que
+                    // se intenta evitar.
+                    Console.WriteLine(
+                        $"[PrivSvc][Crypto] Root CA RECHAZADA por anchor-pin: {rootCert.Subject}");
+                    rootCert = null;
+                }
+                else
+                {
+                    AnchorPin.Save(pinVerdict.Pinned.Concat(pinVerdict.Incoming));
+                }
+            }
+
             if (rootCert != null)
             {
                 Console.WriteLine($"[PrivSvc][Crypto] Installing Root CA: {rootCert.Subject}");
