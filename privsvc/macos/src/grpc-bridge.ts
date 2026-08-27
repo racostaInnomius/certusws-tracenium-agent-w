@@ -46,6 +46,27 @@ const PROTO_PATH = path.resolve(__dirname, "../proto/controlplane.proto");
 // initiated pings even on an active stream. The server therefore
 // never sees a strike from a Windows agent — only from us.
 //
+// ⚠️ CORRECTION (2026-08-27): the paragraph above is wrong about
+// Windows, and it is the premise the rest of Patch M was reasoned
+// from. Those ARE the .NET defaults, but our Windows bridge does not
+// use them: GrpcBridge.cs:720 sets
+//
+//   KeepAlivePingDelay   = TimeSpan.FromSeconds(20)
+//   KeepAlivePingTimeout = TimeSpan.FromSeconds(10)
+//
+// so Windows pings every 20 s on an active stream — MORE often than
+// the 30 s cadence that got macOS strikes. Whatever protects Windows,
+// it is not the absence of client pings.
+//
+// Left as-is rather than re-adding client keepalive here, because the
+// symptom this patch was chasing did not go away and it is not
+// macOS-specific: measured 2026-08-27, sessions on BOTH platforms die
+// at exactly 80 s = the server's keepalive_time (60 s) + its pong
+// deadline (20 s), including two Windows 11 hosts. See the OPEN block
+// in certusws-tracenium modules/grpc/server.ts for the three
+// hypotheses that were tested and killed. Changing the ping cadence
+// here without that answer would be Patch N chasing Patch M.
+//
 // Fix: revert to upstream @grpc/grpc-js defaults (no client-side
 // keepalive). The bridge's liveness now relies on:
 //
