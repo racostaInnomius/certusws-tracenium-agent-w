@@ -502,24 +502,68 @@ private const int MaxPendingPushEvents = 50;
 
         var effectiveTimeout = timeout ?? _helloAckTimeout;
 
-        try
-        {
-            await _helloAckTcs.Task.WaitAsync(effectiveTimeout, cancellationToken);
-            return IsReady;
-        }
-        catch (TimeoutException)
-        {
-            Log($"WaitForReadyAsync timeout after {effectiveTimeout.TotalSeconds}s");
-            return false;
-        }
-        catch (OperationCanceledException)
-        {
-            if (cancellationToken.IsCancellationRequested)
-                throw;
+        // ── W1 (2026-08-27) — do not pin to one HELLO-ACK gate ──────────
+        //
+        // This used to be a single `await _helloAckTcs.Task.WaitAsync(...)`.
+        // `_helloAckTcs` is REPLACED on every session (see Connect), so the
+        // expression captured the Task belonging to whichever attempt was
+        // current when the wait began, and the bridge's own internal
+        // reconnects then swapped the field underneath it. When a LATER
+        // attempt succeeded it completed a different gate, and this wait sat
+        // on one nobody would ever complete until the timeout expired.
+        //
+        // From MSIG-WSUS, grpcbridge-20260827.log — the arithmetic is exact:
+        //
+        //   04:45:26.69  grpc.connect arrives, this wait starts (35 s)
+        //   04:45:26.76  attempt 1 → TLS reset
+        //   04:45:34.84  attempt 2 → TLS reset
+        //   04:45:56.39  attempt 3 → "HELLO ACK received — stream ready"
+        //   04:46:01.70  "WaitForReadyAsync timeout after 35s"
+        //                └─ 04:45:26.69 + 35.01, five seconds AFTER ready
+        //
+        // Two fixes, and the second matters as much as the first: re-read the
+        // field each slice so a swapped gate is picked up, and answer with
+        // IsReady rather than a hardcoded false — the old timeout branch
+        // reported failure while IsReady was already true.
+        var deadline = DateTime.UtcNow + effectiveTimeout;
+        var slice = TimeSpan.FromSeconds(1);
 
-            Log("WaitForReadyAsync canceled");
-            return false;
+        while (true)
+        {
+            if (IsReady)
+                return true;
+
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+                break;
+
+            // Snapshot of the CURRENT gate — this is the line the old code
+            // was missing.
+            var gate = _helloAckTcs;
+
+            try
+            {
+                await gate.Task.WaitAsync(remaining < slice ? remaining : slice, cancellationToken);
+            }
+            catch (TimeoutException)
+            {
+                // Expected once a second while we wait. Loop and re-read.
+            }
+            catch (OperationCanceledException)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    throw;
+
+                Log("WaitForReadyAsync canceled");
+                return IsReady;
+            }
         }
+
+        if (IsReady)
+            return true;
+
+        Log($"WaitForReadyAsync timeout after {effectiveTimeout.TotalSeconds}s");
+        return false;
     }
 
     public void RegisterPushSink(string sinkId, Action<object> push)
@@ -698,6 +742,44 @@ private const int MaxPendingPushEvents = 50;
                 _lastConnectOptions = opt;
                 _closeRequested = false;
                 Log($"Connect requested. Target={opt.Target} DeviceId={opt.DeviceId} ReconnectAttempt={_reconnectAttempt}");
+
+                // ── W3 (2026-08-27) — cancel the PREVIOUS session's loops ──
+                //
+                // Every reconnect used to orphan four background loops.
+                // `_cts` was only cancelled on the Close path; the reconnect
+                // path is explicitly "scheduling reconnect WITHOUT force
+                // close", so it landed here and simply overwrote the field.
+                // SenderLoop, WatchdogLoop, HeartbeatLoop and HelloTimeoutLoop
+                // kept running on a token nobody would ever cancel.
+                //
+                // HeartbeatLoop is the one that hurts: its exit condition is
+                // the token it captured, but its guard and its write read the
+                // CURRENT `IsConnected` / `_call`. So every orphan wakes up
+                // again on the NEXT session and writes heartbeats into it.
+                //
+                // Measured on MSIG-WSUS, grpcbridge-20260827.log — one loop at
+                // 30 s should produce 120 heartbeats an hour:
+                //
+                //   00:00-03:00   240/h   ~2 loops
+                //   05:00         805/h   ~6.7 loops
+                //   06:00-08:00  1200/h   ~10 loops
+                //   14:00         191/h   ~1.6 loops  (service restarted)
+                //
+                // It grows monotonically with reconnects and only ever resets
+                // when the service restarts. This is also the mechanism behind
+                // the "device green in the portal with a dead AgentCore"
+                // incident documented in HeartbeatLoop below — those heartbeats
+                // had several loops keeping them alive.
+                //
+                // Cancel, do NOT dispose: a loop parked in Task.Delay(ct) on a
+                // disposed source throws ObjectDisposedException. The Close
+                // path has always done the same (cancel, then drop the ref).
+                var previousCts = _cts;
+                if (previousCts != null)
+                {
+                    try { previousCts.Cancel(); } catch { }
+                    Log("Previous session loops cancelled before reconnect");
+                }
 
                 _cts = new CancellationTokenSource();
                 _connectedAtUtc = DateTime.UtcNow;
