@@ -62,10 +62,13 @@ const PROTO_PATH = path.resolve(__dirname, "../proto/controlplane.proto");
 // symptom this patch was chasing did not go away and it is not
 // macOS-specific: measured 2026-08-27, sessions on BOTH platforms die
 // at exactly 80 s = the server's keepalive_time (60 s) + its pong
-// deadline (20 s), including two Windows 11 hosts. See the OPEN block
-// in certusws-tracenium modules/grpc/server.ts for the three
-// hypotheses that were tested and killed. Changing the ping cadence
-// here without that answer would be Patch N chasing Patch M.
+// deadline (20 s), including two Windows 11 hosts.
+//
+// The actual dominant fault turned out to be one layer over, in
+// watchChannelState, and had nothing to do with pings: the bridge tore
+// itself down on the first TRANSIENT_FAILURE and rebuilt the channel
+// every ~5 s with no backoff. See Patch N there. Client keepalive was
+// never the lever — it just looked like one from the wire.
 //
 // Fix: revert to upstream @grpc/grpc-js defaults (no client-side
 // keepalive). The bridge's liveness now relies on:
@@ -191,6 +194,12 @@ type BridgeState = {
     namespaces: string[];
   }>;
   channelWatchGen: number;
+  // Grace timer armed the first time the channel reports
+  // TRANSIENT_FAILURE. See watchChannelState — the bridge no longer
+  // tears down on that state, it gives gRPC's own backoff a window to
+  // recover first. Cleared when the channel comes back or on teardown.
+  channelGraceTimer?: NodeJS.Timeout | null;
+  channelDegradedSinceMs?: number;
   // Dead-stream watchdog state. Set on connection start, updated on
   // every recv/send, used by watchdogTick() to detect zombies.
   connectedAtMs?: number;
@@ -219,6 +228,7 @@ const state: BridgeState = {
   connecting: false,
   chunks: new Map(),
   channelWatchGen: 0,
+  channelGraceTimer: null,
   watchdogTimer: null,
   alivePushTimer: null,
   everConnected: false,
@@ -529,6 +539,11 @@ function teardownBridge(reason: string, details?: Record<string, any>) {
   // emit a spurious "dead_stream_watchdog" alongside whatever real
   // reason actually triggered teardown.
   stopWatchdog();
+  // Patch N — drop any pending channel-grace timer. The generation bump
+  // above already makes it a no-op, but leaving a live timer around on a
+  // dead bridge is how a "harmless" no-op becomes a leak across the
+  // hundreds of reconnects this daemon does in a day.
+  clearChannelGrace();
   // Patch K — stop liveness pushes too. If we kept pushing `grpc.alive`
   // here, the agent's lastServerActivityMs would stay fresh while the
   // bridge is actually dead, suppressing the agent-side watchdog
@@ -864,6 +879,24 @@ function write(msg: any): Promise<void> {
   });
 }
 
+// How long the channel is allowed to sit in TRANSIENT_FAILURE before the
+// bridge gives up on it. See watchChannelState for why this exists at all.
+//
+// 75 s is chosen against the two clocks that already govern this stream: the
+// server pings every 60 s and cuts at 80 s, and the dead-stream watchdog here
+// fires at 150 s. Sitting between them means a channel that recovers on its
+// own is never torn down, and one that is genuinely gone is still declared
+// dead before the watchdog would have to do it.
+const CHANNEL_GRACE_MS = 75_000;
+
+function clearChannelGrace() {
+  if (state.channelGraceTimer) {
+    try { clearTimeout(state.channelGraceTimer); } catch {}
+  }
+  state.channelGraceTimer = null;
+  state.channelDegradedSinceMs = undefined;
+}
+
 function watchChannelState(client: any, generation: number) {
   const channel: grpc.Channel | undefined = client?.getChannel?.();
   if (!channel) return;
@@ -879,15 +912,84 @@ function watchChannelState(client: any, generation: number) {
       return;
     }
 
-    // TRANSIENT_FAILURE means the gRPC runtime tried to keep the
-    // connection alive (via keepalive pings) and failed — this is the
-    // signal we want to act on when the network drops.
-    if (
-      current === grpc.connectivityState.TRANSIENT_FAILURE ||
-      current === grpc.connectivityState.SHUTDOWN
-    ) {
-      teardownBridge("channel_transient_failure", { state: current });
+    // ── Patch N (2026-08-27) — do NOT tear down on TRANSIENT_FAILURE ──
+    //
+    // The previous code tore the whole bridge down the first time the
+    // channel reported TRANSIENT_FAILURE, on the premise (written in the
+    // comment it replaced) that the state means "gRPC tried to keep the
+    // connection alive via keepalive pings and failed". It does not. It is
+    // also the state of a channel whose FIRST connection attempt failed,
+    // and it is — by name and by contract — transient: the channel retries
+    // on its own with exponential backoff and moves to READY when it gets
+    // through.
+    //
+    // Tearing down destroyed the channel just before gRPC would have done
+    // its job, and built a fresh one whose backoff started from zero. What
+    // that produced, measured in this machine's own privsvc log:
+    //
+    //   540 of 703 teardowns were channel_transient_failure, median
+    //   session life 0.0 s. The worst burst was 162 reconnect attempts
+    //   over 826 s, with intervals of 0.5–11 s that never grew — no
+    //   backoff at all, for fourteen minutes.
+    //
+    // And the control plane could not see any of it: across that same
+    // half hour it recorded exactly ONE event for this device (the final
+    // successful reconnect), because a teardown at t≈0 never reaches
+    // HELLO. The "device idle for 15 minutes" gaps in security_events
+    // were this loop, not an idle agent.
+    //
+    // Now: the first TRANSIENT_FAILURE arms a grace window and we keep
+    // watching. Recovery cancels it. Only a channel still down when the
+    // window closes is torn down.
+    //
+    // SHUTDOWN is still immediate — that one is terminal, not transient.
+    if (current === grpc.connectivityState.SHUTDOWN) {
+      clearChannelGrace();
+      teardownBridge("channel_shutdown", { state: current });
       return;
+    }
+
+    if (current === grpc.connectivityState.TRANSIENT_FAILURE) {
+      if (!state.channelGraceTimer) {
+        state.channelDegradedSinceMs = Date.now();
+        logger.warn("grpc_bridge_channel_degraded", {
+          state: current,
+          graceMs: CHANNEL_GRACE_MS
+        });
+        state.channelGraceTimer = setTimeout(() => {
+          state.channelGraceTimer = null;
+          // The generation guard matters: a teardown for some OTHER reason
+          // may have happened while we were waiting, and this timer must
+          // not tear down the connection that replaced it.
+          if (state.channelWatchGen !== generation) return;
+          let now: grpc.connectivityState | undefined;
+          try { now = channel.getConnectivityState(false); } catch {}
+          if (now === grpc.connectivityState.READY) {
+            clearChannelGrace();
+            return;
+          }
+          teardownBridge("channel_transient_failure", {
+            state: now,
+            degradedMs: Date.now() - (state.channelDegradedSinceMs || Date.now())
+          });
+        }, CHANNEL_GRACE_MS);
+        state.channelGraceTimer.unref?.();
+      }
+      // Fall through and keep watching — only READY cancels the timer.
+    } else if (current === grpc.connectivityState.READY && state.channelGraceTimer) {
+      // The blip healed itself. This is the case the old code could never
+      // reach, and the whole point of the patch.
+      //
+      // ONLY READY counts. gRPC's own retry cycle is
+      // TRANSIENT_FAILURE → CONNECTING → TRANSIENT_FAILURE, so treating
+      // CONNECTING as recovery would restart the grace window on every
+      // attempt and the timer would never fire — trading a bridge that
+      // tore down too eagerly for one that never tears down at all.
+      logger.warn("grpc_bridge_channel_recovered", {
+        state: current,
+        degradedMs: Date.now() - (state.channelDegradedSinceMs || Date.now())
+      });
+      clearChannelGrace();
     }
 
     // Re-arm the watch for the next state change. Deadline 5 min from now —
@@ -1463,3 +1565,16 @@ export async function handleRemoteScreenAudit(req: PrivSvcRequest): Promise<Priv
   }
   return success(req.id, { ok: true });
 }
+
+// Test seam for the channel-state machine (Patch N). Exported because the
+// TRANSIENT_FAILURE handling has more paths than it looks like — the first
+// draft of the patch treated CONNECTING as recovery, which would have reset
+// the grace window on every one of gRPC's own retry attempts and produced a
+// bridge that never tore down at all. That class of mistake is invisible in
+// review and obvious in a test.
+export const __test__ = {
+  watchChannelState,
+  clearChannelGrace,
+  state,
+  CHANNEL_GRACE_MS
+};
