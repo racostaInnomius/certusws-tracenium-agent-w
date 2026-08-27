@@ -10,7 +10,12 @@ import {
 } from "../bootstrap/paths";
 import { loadPmpState } from "../plugins/pmp/state";
 import { loadUpdateState } from "../update/update-state";
-import type { TrayCatalogItem, TrayDeviceInfo, TrayStatusSnapshot } from "./tray-status-types";
+import type {
+  TrayCatalogItem,
+  TrayDeviceInfo,
+  TrayRemoteSession,
+  TrayStatusSnapshot
+} from "./tray-status-types";
 
 const TRAY_STATUS_FILE_NAME = "tray-status.json";
 
@@ -360,6 +365,22 @@ export class TrayStatusStore {
         catalogVersion,
         items
       }
+    }));
+  }
+
+  /**
+   * Publica (o retira) la sesión de control remoto en curso.
+   *
+   * Se escribe en CADA transición — inicio, cambio de control, fin — porque el
+   * indicador de la bandeja es lo único que le dice a la persona que la están
+   * viendo. Un snapshot que se queda con `active:true` tras cerrar la sesión es
+   * peor que no tener indicador: enseña una alarma falsa y entrena a la gente a
+   * ignorarla.
+   */
+  setRemoteSession(session: TrayRemoteSession | null) {
+    return this.update((current) => ({
+      ...(current || this.emptySnapshot()),
+      remoteSession: session ?? undefined
     }));
   }
 

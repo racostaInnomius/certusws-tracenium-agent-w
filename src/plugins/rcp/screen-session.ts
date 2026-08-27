@@ -60,6 +60,7 @@
 // can persist session-level audit rows.
 
 import type { AgentContext } from "../../core/agent-context";
+import { consumeRevokeRequest } from "../../status/remote-session-revoke";
 
 export type ScreenAuditPayload = {
   event: string;      // "started" | "stopped" | "error"
@@ -93,6 +94,15 @@ const FRAME_CHUNK_MAX = 48_000;
 // fires every 500 ms. It is NOT a failure: the browser still has the last
 // frame painted on its canvas, so we stay quiet and let the loop poll again.
 const NO_FRAME_CODE = "screen_capture_no_frame";
+
+// Cada cuánto se mira si la persona pulsó "detener" en su bandeja.
+//
+// 500 ms, no los 5 s del canal del catálogo. Esto es una REVOCACIÓN: el retraso
+// entre pulsar y dejar de compartir es tiempo en el que siguen viendo una
+// pantalla que ya no autorizan. Medio segundo se percibe como inmediato; cinco
+// se perciben como que el botón no funciona, y esa es justo la sensación que un
+// control de privacidad no puede permitirse.
+const REVOKE_POLL_MS = 500;
 
 // Codes meaning "this endpoint will not produce a frame until something
 // changes on it" (someone logs in, an MDM profile lands, the session moves
@@ -160,6 +170,7 @@ export class ScreenSession {
   private readonly dc: any;
   private readonly args: ScreenSessionArgs;
   private disposed = false;
+  private revokeTimer: NodeJS.Timeout | null = null;
   private captureTimer: NodeJS.Timeout | null = null;
   private fps = DEFAULT_FPS;
   private quality = DEFAULT_QUALITY;
@@ -209,11 +220,73 @@ export class ScreenSession {
       this.stopCapture("data_channel_closed");
     });
 
+    // ADR-0012 — indicador permanente en el equipo del usuario. Se publica
+    // ANTES del primer fotograma: nadie debe ver su pantalla sin que el
+    // indicador ya esté encendido, ni siquiera durante un instante.
+    this.publishIndicator();
+    this.startRevokeWatch();
+
     // Start the capture loop after a tick so the constructor returns
     // cleanly before the first async capture fires.
     setImmediate(() => {
       if (!this.disposed) this.scheduleNext();
     });
+  }
+
+  /** Enciende el indicador de la bandeja para esta sesión. */
+  private publishIndicator(): void {
+    try {
+      this.args.ctx.trayStatus?.setRemoteSession?.({
+        active: true,
+        sessionId: this.args.sessionId,
+        capability: "rcp.screen",
+        startedAtUtc: new Date().toISOString()
+      });
+    } catch (err: any) {
+      // No tumbar la sesión porque el indicador no se pueda escribir, pero
+      // dejarlo MUY visible en el log: significa que hay alguien viendo una
+      // pantalla sin que su dueño tenga forma de saberlo.
+      this.args.ctx.logger?.warn?.(
+        "[rcp.screen] no se pudo publicar el indicador de sesión",
+        { sessionId: this.args.sessionId, err: err?.message }
+      );
+    }
+  }
+
+  /** Apaga el indicador. Un indicador que se queda encendido tras cerrar la
+   *  sesión enseña una alarma falsa y entrena a la gente a ignorarla. */
+  private clearIndicator(): void {
+    try {
+      this.args.ctx.trayStatus?.setRemoteSession?.(null);
+    } catch {
+      /* el proceso se está cerrando; nada que hacer */
+    }
+  }
+
+  private startRevokeWatch(): void {
+    const poll = () => {
+      if (this.disposed) return;
+      let req = null;
+      try {
+        req = consumeRevokeRequest(this.args.sessionId);
+      } catch {
+        /* consumeRevokeRequest no lanza, pero el bucle de captura no es
+           sitio para averiguarlo por las malas */
+      }
+      if (req) {
+        this.args.ctx.logger?.info?.("[rcp.screen] sesión revocada en el endpoint", {
+          sessionId: this.args.sessionId,
+          by: req.by
+        });
+        // El motivo viaja al operador y al registro de auditoría: no fue un
+        // fallo de red, fue una persona retirando su consentimiento. Que esos
+        // dos casos se distingan es la mitad del valor de tener el control.
+        this.stopCapture("revoked_by_user");
+        return;
+      }
+      this.revokeTimer = setTimeout(poll, REVOKE_POLL_MS);
+    };
+    this.revokeTimer = setTimeout(poll, REVOKE_POLL_MS);
   }
 
   // ── Internal helpers ───────────────────────────────────────────────────────
@@ -575,6 +648,11 @@ export class ScreenSession {
       clearTimeout(this.captureTimer);
       this.captureTimer = null;
     }
+    if (this.revokeTimer) {
+      clearTimeout(this.revokeTimer);
+      this.revokeTimer = null;
+    }
+    this.clearIndicator();
     if (this.auditStartedSent) {
       this.args.sendScreenAudit({
         event: "stopped",

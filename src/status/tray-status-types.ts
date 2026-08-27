@@ -103,6 +103,32 @@ export type TrayPatchStatus = {
   lastError?: string;
 };
 
+/**
+ * Sesión de control remoto en curso. La bandeja la usa para mostrar un
+ * indicador PERMANENTE mientras dure.
+ *
+ * Por qué existe (ADR-0012): un aviso que se cierra no informa de nada — la
+ * persona lo descarta y se olvida de que la están viendo. Lo que protege de
+ * verdad no es el diálogo inicial sino saber, en todo momento, que hay alguien
+ * mirando y poder cortarlo. Un consentimiento que no se puede retirar es una
+ * casilla, no un consentimiento.
+ *
+ * Ausente = no hay sesión. La bandeja trata la ausencia y `active:false`
+ * igual, para que un snapshot viejo no deje el indicador encendido.
+ */
+export type TrayRemoteSession = {
+  active: boolean;
+  sessionId: string;
+  /** rcp.screen | rcp.shell | rcp.file — hoy solo screen muestra indicador. */
+  capability: string;
+  startedAtUtc: string;
+  /** El operador puede estar controlando además de viendo. */
+  controlling?: boolean;
+  /** Si el tenant tiene la grabación activa. La persona tiene derecho a
+   *  saberlo mientras ocurre, no solo al aceptar. */
+  recording?: boolean;
+};
+
 export type TrayStatusSnapshot = {
   updatedAtUtc: string;
   agentVersion: string;
@@ -119,4 +145,7 @@ export type TrayStatusSnapshot = {
   // Absent on older snapshots (pre self-service catalog) — the tray
   // treats a missing block the same as an empty catalog.
   catalog?: TrayCatalogStatus;
+  // Ausente en snapshots anteriores al indicador de sesión; la bandeja lo
+  // trata como "sin sesión".
+  remoteSession?: TrayRemoteSession;
 };
