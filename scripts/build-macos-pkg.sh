@@ -120,7 +120,25 @@ build_agent_bundle() {
       --outfile="$BUILD_DIR/Agent/agent-core.js"
   )
 
-  if ! grep -qF "env/file/registry" "$BUILD_DIR/Agent/agent-core.js"; then
+  # Canario: comprueba que el bundle trae de verdad la lógica de espera del
+  # token de enrollment, y no un árbol viejo o un bundle que la perdió.
+  #
+  # Antes buscaba "env/file/registry", que era parte de un MENSAJE DE ERROR
+  # ("enrollment token not found in env/file/registry"). Ese mensaje
+  # desapareció en 81508db —el commit cuyo propósito era justamente dejar de
+  # morir con él y esperar—, así que el canario empezó a fallar el build de
+  # macOS por una reescritura que era correcta. Linux y Windows no llevan esta
+  # comprobación, así que solo se cayó macOS.
+  #
+  # Ahora se ancla al NOMBRE DE LA FUNCIÓN. Un texto de cara al usuario es lo
+  # más reescrito de un repo: es la peor cosa a la que anclar un canario.
+  # `waitForEnrollmentToken` es la unidad que el canario quiere proteger, es
+  # ASCII y sobrevive al bundle (esbuild aquí no minifica).
+  #
+  # Sobre el ASCII: se probó también "Tracenium Agent — NOT ENROLLED" y NO
+  # aparece en el bundle, porque el guion largo sale escapado. Un canario con
+  # caracteres no-ASCII falla aunque el código esté.
+  if ! grep -qF "waitForEnrollmentToken" "$BUILD_DIR/Agent/agent-core.js"; then
     echo "Generated Agent Core bundle does not include the current enrollment token logic." >&2
     exit 1
   fi
