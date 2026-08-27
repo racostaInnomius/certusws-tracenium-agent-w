@@ -190,18 +190,32 @@ static string CaptureOnce(int quality, bool forceFull)
     var src = result.Result;
     object? Prop(string name) => src.GetType().GetProperty(name)?.GetValue(src);
 
+    // ⚠️ full/x/y/rw/rh NO son opcionales: son el contrato de los rects sucios.
+    //
+    // `full:false` significa que `data` es SOLO la región cambiada, y (x,y)
+    // dice dónde pegarla sobre lo que el canvas ya tiene. Perder esos campos
+    // no degrada la imagen: la corrompe. El consumidor recibe un recorte,
+    // cree que es la pantalla entera y lo pinta desde el origen — ventanas
+    // duplicadas y desplazadas, que es justo lo que se vio en campo al tomar
+    // el control (cuando DXGI empieza a emitir parciales de verdad).
+    //
+    // La versión anterior de este bloque buscaba una propiedad "dirty" que no
+    // existe en la respuesta del capturador, así que los cinco campos se caían
+    // en silencio y el JSON salía siempre como fotograma completo.
     var payload = new Dictionary<string, object?>
     {
         ["ok"] = true,
         ["data"] = Prop("data") ?? "",
         ["width"] = Prop("width") ?? 0,
         ["height"] = Prop("height") ?? 0,
+        ["full"] = Prop("full") ?? true,
+        ["x"] = Prop("x") ?? 0,
+        ["y"] = Prop("y") ?? 0,
+        ["rw"] = Prop("rw") ?? Prop("width") ?? 0,
+        ["rh"] = Prop("rh") ?? Prop("height") ?? 0,
         ["cursorX"] = Prop("cursorX") ?? -1,
         ["cursorY"] = Prop("cursorY") ?? -1
     };
-    // Los rects sucios son opcionales: solo viajan si el capturador los emitió.
-    var dirty = Prop("dirty");
-    if (dirty is not null) payload["dirty"] = dirty;
     return JsonSerializer.Serialize(payload);
 }
 
