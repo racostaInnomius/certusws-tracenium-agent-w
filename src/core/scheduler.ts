@@ -772,9 +772,15 @@ class Scheduler {
       //      cadence too — every 30 min would hammer hosts, every
       //      24h would be too lax to catch drift before audit.
       //   3. The compliance gate (isComplianceEnabled +
-      //      pluginEnabled("scp")) is the same conceptual gate the
-      //      enforcer needs — there's no value enforcing posture
-      //      on a tenant that hasn't opted into compliance.
+      //      pluginEnabled("scp")) is the right gate for RUNNING the
+      //      pass — leer estado y reportar drift es compliance.
+      //
+      // ⚠️ Lo que ese gate NO cubre es la ESCRITURA. Con el modelo de tiers,
+      // remediar en el endpoint lo habilita PMP (enterprise), no SCP
+      // (professional). Ese corte vive dentro del enforcer
+      // (`effectiveMode`, que degrada `auto` a `report-only` sin pmp) y NO
+      // aquí: apagar el pase entero le quitaría al tenant la detección de
+      // drift, que sí ha pagado.
       //
       // The enforcer is fail-soft: any error inside swallows here
       // so a busted privsvc call doesn't take down the compliance

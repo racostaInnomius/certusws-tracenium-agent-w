@@ -221,7 +221,21 @@ export async function collectJavaStores(
   for (const { javaHome, cacertsPath } of cacertsList) {
     const store: CdpStoreInfo = {
       id: storeIdFor("cacerts", cacertsPath),
-      name: `Java cacerts — ${cacertsPath}`,
+      // Separador ASCII a propósito. El guion largo que había aquí
+      // llegaba destrozado a la base de datos en una fila de cada
+      // varios cientos — `Java cacerts ??` y `Java cacerts ???` —, y
+      // como los agregados de la UI se agrupan por NOMBRE, cada
+      // destrozo aparecía como un store distinto que no existe.
+      //
+      // El literal del fuente era UTF-8 correcto, así que el daño
+      // ocurre en tránsito y es intermitente. Perseguirlo por toda la
+      // pila cuesta mucho más de lo que vale un guion: un carácter no
+      // ASCII dentro de un identificador legible no aporta nada y sí
+      // abre esta clase de fallo. La identidad de la fila es `id`
+      // (derivado de la ruta), así que cambiar el nombre no huérfana
+      // nada; las filas ya destrozadas se reemplazan en el siguiente
+      // escaneo.
+      name: `Java cacerts - ${cacertsPath}`,
       scope: "system-roots"
     };
 

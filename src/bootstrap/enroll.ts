@@ -5,7 +5,8 @@ import { EnrollmentStore } from "./enrollment-store";
 import { EnrollmentState } from "./enrollment-state";
 import { buildEnrollmentPayload } from "./enroll-payload";
 import { config } from "./config";
-import { clearEnrollmentTokenFile, readEnrollmentToken } from "./token-source";
+import { clearEnrollmentTokenFile } from "./token-source";
+import { clearBlockedMarker, waitForEnrollmentToken } from "./token-wait";
 import { execSync } from "child_process";
 import { getDeviceId } from "../platform/device-id";
 import { writeEnrollmentMetadata } from "../platform/enrollment-meta";
@@ -331,10 +332,13 @@ export async function ensureEnrolled(): Promise<EnrollmentState> {
     store.clear();
   }
 
-  const enrollmentToken = readEnrollmentToken();
+  // ⚠️ Antes esto era `throw`, y el gestor de servicios reciclaba el proceso:
+  // 3722 arranques en cinco días sin avanzar un milímetro. Ahora espera —el
+  // token puede aparecer sin que nadie reinicie nada— y explica por qué, una
+  // sola vez y en la máquina. Ver token-wait.ts.
+  const enrollmentToken = await waitForEnrollmentToken();
 
   if (!enrollmentToken) {
-    console.error("[Enroll] enrollment token not found in env/file/registry.");
     throw new Error("Missing enrollment token. Agent is not enrolled.");
   }
 
@@ -537,6 +541,9 @@ export async function ensureEnrolled(): Promise<EnrollmentState> {
       }
 
       clearEnrollmentTokenFile();
+      // El aviso de "no enrolado" que quedó en disco de un arranque anterior
+      // dejaría a alguien persiguiendo un problema ya resuelto.
+      clearBlockedMarker();
 
       return state;
 
