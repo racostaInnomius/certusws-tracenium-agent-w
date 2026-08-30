@@ -122,6 +122,15 @@ export type TrayRemoteSession = {
   /** rcp.screen | rcp.shell | rcp.file — hoy solo screen muestra indicador. */
   capability: string;
   startedAtUtc: string;
+  /**
+   * Quién está mirando. Vacío = backend anterior al campo; la bandeja dice
+   * "un operador" en vez de inventarse un nombre.
+   *
+   * La identidad es buena parte de lo que hace que el indicador sea un
+   * control y no decoración: poder ver QUIÉN entró, en el momento en que
+   * ocurre, es lo que permite decir "yo no pedí esto".
+   */
+  operator?: string;
   /** El operador puede estar controlando además de viendo. */
   controlling?: boolean;
   /** Si el tenant tiene la grabación activa. La persona tiene derecho a

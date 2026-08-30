@@ -89,6 +89,11 @@ export class SessionManager {
     // Empty/absent on legacy backends (before the proto field existed),
     // in which case we fall back to no iceServers and behave like
     // before (host-only candidates, ICE works only on the same LAN).
+    // Quién abrió la sesión, para el indicador del endpoint (ADR-0012).
+    // Vacío en backends anteriores a este campo: el indicador degrada a "un
+    // operador" en vez de inventarse un nombre.
+    const operator = String(params?.operator || "").trim();
+
     const iceServersJson = String(params?.iceServersJson || "").trim();
     let iceServers: any[] = [];
     if (iceServersJson) {
@@ -295,6 +300,7 @@ export class SessionManager {
       sid: sessionId.slice(-8)
     });
     const peer = new PeerSession({
+      operator,
       sessionId,
       capability,
       ctx: this.ctx,

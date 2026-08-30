@@ -73,6 +73,8 @@ export type ScreenAuditPayload = {
 type ScreenSessionArgs = {
   sessionId: string;
   ctx: AgentContext;
+  /** Operador que abrió la sesión, para el indicador del endpoint. */
+  operator?: string;
   sendScreenAudit: (audit: ScreenAuditPayload) => void;
   onTeardown: (reason: string) => void;
 };
@@ -240,6 +242,7 @@ export class ScreenSession {
         active: true,
         sessionId: this.args.sessionId,
         capability: "rcp.screen",
+        operator: this.args.operator || "",
         startedAtUtc: new Date().toISOString()
       });
     } catch (err: any) {
