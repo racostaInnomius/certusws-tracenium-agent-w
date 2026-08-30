@@ -180,6 +180,44 @@ export class ScreenSession {
   private lastWidth = 0;
   private lastHeight = 0;
   private auditStartedSent = false;
+
+  /**
+   * Si en esta sesión ha llegado a inyectarse entrada (ADR-0012).
+   *
+   * POR QUÉ SE DEDUCE Y NO SE PREGUNTA
+   *
+   *   El botón "Controlling" de la UI solo decide si el NAVEGADOR del operador
+   *   envía eventos; al agente no le llega ninguna señal de modo. Podríamos
+   *   añadir un mensaje de control al canal, y sería peor: el indicador
+   *   dependería de que el lado del operador dijera la verdad sobre lo que
+   *   está haciendo el lado del operador.
+   *
+   *   Deducirlo de que llegó un evento real es más difícil de eludir. Lo que
+   *   se le enseña a la persona es lo que le ha pasado a su equipo, no lo que
+   *   la otra parte declara.
+   *
+   * POR QUÉ NO VUELVE A false
+   *
+   *   Se queda encendido el resto de la sesión. Apagarlo tras unos segundos
+   *   sin eventos convertiría cada pausa del técnico —leer la pantalla, mirar
+   *   un ticket— en "solo está viendo", que es justo el minuto en que la
+   *   persona podría bajar la guardia y escribir una contraseña. El error se
+   *   comete hacia avisar de más.
+   *
+   *   Cuando exista la segunda puerta de consentimiento (paso 2 del ADR), el
+   *   permiso explícito sustituirá a esta deducción.
+   */
+  private inputSeen = false;
+
+  /**
+   * Instante de arranque, fijado UNA vez.
+   *
+   * El indicador se republica cuando cambia algo (el primer evento de entrada,
+   * mañana la grabación). Si cada republicación recalculara la fecha, el
+   * "lleva conectado desde…" saltaría hacia adelante en cada cambio y la
+   * sesión parecería recién empezada justo cuando acaba de escalar a control.
+   */
+  private readonly startedAtUtc = new Date().toISOString();
   // Failure bookkeeping — see reportCaptureFailure.
   private consecutiveFailures = 0;
   // Last code pushed to the browser, so a persistent condition reports once
@@ -243,7 +281,8 @@ export class ScreenSession {
         sessionId: this.args.sessionId,
         capability: "rcp.screen",
         operator: this.args.operator || "",
-        startedAtUtc: new Date().toISOString()
+        controlling: this.inputSeen,
+        startedAtUtc: this.startedAtUtc
       });
     } catch (err: any) {
       // No tumbar la sesión porque el indicador no se pueda escribir, pero
@@ -364,6 +403,14 @@ export class ScreenSession {
   // to take inside InputInjection.Inject.
   private forwardInput(op: string, msg: any): void {
     const { ctx, sessionId } = this.args;
+
+    // Primer evento de entrada de la sesión: subir el indicador de "viendo" a
+    // "viendo y controlando". Una sola vez — republicar en cada movimiento de
+    // ratón escribiría el fichero de estado cientos de veces por minuto.
+    if (!this.inputSeen) {
+      this.inputSeen = true;
+      this.publishIndicator();
+    }
     const params: Record<string, any> = { op };
     // Mouse fields (coordinates + button)
     if ("x" in msg)      params.x      = Number(msg.x);
@@ -675,6 +722,18 @@ export class ScreenSession {
       clearTimeout(this.captureTimer);
       this.captureTimer = null;
     }
+    // ⚠️ Estas dos líneas faltaban, y este es el camino de salida MÁS común:
+    // el operador cierra la pestaña, se cae el peer y el plugin llama aquí,
+    // no a stopCapture. Sin ellas la banda de "te están viendo la pantalla" se
+    // quedaba encendida para siempre después de cada sesión —peor que no
+    // tenerla, porque una alarma que no se apaga enseña a ignorarla— y el
+    // sondeo de revocación seguía leyendo disco dos veces por segundo durante
+    // toda la vida del proceso. Lo encontró un test, no el campo.
+    if (this.revokeTimer) {
+      clearTimeout(this.revokeTimer);
+      this.revokeTimer = null;
+    }
+    this.clearIndicator();
     if (this.auditStartedSent) {
       this.args.sendScreenAudit({
         event: "stopped",

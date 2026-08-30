@@ -18,6 +18,12 @@ internal sealed class TrayStatus
     // Self-service Software Catalog. Null on snapshots from older agents
     // (pre self-service catalog) — treated the same as an empty catalog.
     public TrayCatalogStatus? Catalog { get; set; }
+
+    /// <summary>
+    /// Sesión de control remoto en curso, o null si no hay ninguna (ADR-0012).
+    /// Ausente en snapshots de agentes anteriores al indicador.
+    /// </summary>
+    public TrayRemoteSession? RemoteSession { get; set; }
 }
 
 /// <summary>
@@ -122,4 +128,28 @@ internal sealed class TrayPatchStatus
     public DateTime? LastScanAtUtc { get; set; }
     public bool? RebootRequired { get; set; }
     public string? LastError { get; set; }
+}
+
+/// <summary>
+/// Sesión de control remoto viva en este equipo.
+///
+/// La bandeja la usa para mostrar un indicador PERMANENTE mientras dure. No es
+/// un aviso que se descarta: lo que protege a la persona no es enterarse una
+/// vez, sino poder ver en todo momento que la están mirando y cortarlo.
+/// </summary>
+internal sealed class TrayRemoteSession
+{
+    public bool Active { get; set; }
+    public string SessionId { get; set; } = "";
+    public string Capability { get; set; } = "";
+    public DateTime? StartedAtUtc { get; set; }
+
+    /// <summary>
+    /// Quién está mirando. Vacío en backends anteriores al campo; la UI dice
+    /// "un operador" antes que inventarse un nombre.
+    /// </summary>
+    public string? Operator { get; set; }
+
+    public bool Controlling { get; set; }
+    public bool Recording { get; set; }
 }
