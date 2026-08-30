@@ -61,6 +61,8 @@ type PeerSessionArgs = {
   sessionId: string;
   capability: string;
   ctx: AgentContext;
+  /** Operador que abrió la sesión. Vacío en backends antiguos. */
+  operator?: string;
   // ICE servers (STUN + TURN) for the agent's own peer connection,
   // extracted from the offer's iceServersJson field. Without them
   // the agent only emits `host` candidates from its NIC, which is
@@ -341,6 +343,7 @@ export class PeerSession {
         this.screenSession = new ScreenSession(dc, {
           sessionId,
           ctx,
+          operator: args.operator,
           sendScreenAudit: args.sendScreenAudit,
           onTeardown: (reason) => {
             this.screenSession = null;

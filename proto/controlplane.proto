@@ -147,6 +147,18 @@ message RemoteSessionOffer {
   // the field, agent-w proto didn't, PrivSvc never knew the field
   // existed, AgentCore got iceServersCount: 0 on every offer).
   string iceServersJson = 5;
+
+  // Quién abrió la sesión. Viaja hasta el indicador que ve la persona en su
+  // propio equipo (ADR-0012).
+  //
+  // No es cosmética: "alguien está viendo tu pantalla" y "Javier Pacheco está
+  // viendo tu pantalla" protegen cosas distintas. Lo primero informa; lo
+  // segundo hace que el hecho sea atribuible ahí donde ocurre, sin que la
+  // persona tenga que fiarse de un registro de auditoría que no puede leer.
+  //
+  // Vacío = agente o backend anteriores a este campo. El indicador degrada a
+  // "un operador" en vez de mentir con un nombre inventado.
+  string operator = 6;
 }
 
 // Agent → Backend. The agent's SDP answer in response to a

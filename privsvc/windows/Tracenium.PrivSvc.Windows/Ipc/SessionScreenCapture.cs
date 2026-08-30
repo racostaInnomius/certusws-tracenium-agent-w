@@ -209,19 +209,29 @@ internal static class SessionScreenCapture
         int Int(string name, int fallback) =>
             root.TryGetProperty(name, out var el) && el.TryGetInt32(out var v) ? v : fallback;
 
+        // full/x/y/rw/rh son el contrato de los rects sucios y tienen que
+        // llegar enteros hasta el navegador. Con full:false, `data` es SOLO la
+        // región cambiada y (x,y) dice dónde pegarla; sin esos campos el
+        // canvas pinta un recorte creyendo que es la pantalla completa. Este
+        // bloque también los perdía —buscaba una propiedad "dirty" que no
+        // existe— y el resultado era el mismo que en el helper: ventanas
+        // duplicadas y desplazadas al tomar el control.
+        var full = !root.TryGetProperty("full", out var fEl) ||
+                   fEl.ValueKind != JsonValueKind.False;
+
         var payload = new Dictionary<string, object?>
         {
             ["data"] = root.TryGetProperty("data", out var d) ? d.GetString() ?? "" : "",
             ["width"] = Int("width", 0),
             ["height"] = Int("height", 0),
+            ["full"] = full,
+            ["x"] = Int("x", 0),
+            ["y"] = Int("y", 0),
+            ["rw"] = Int("rw", Int("width", 0)),
+            ["rh"] = Int("rh", Int("height", 0)),
             ["cursorX"] = Int("cursorX", -1),
             ["cursorY"] = Int("cursorY", -1)
         };
-        if (root.TryGetProperty("dirty", out var dirty) &&
-            dirty.ValueKind != JsonValueKind.Null)
-        {
-            payload["dirty"] = JsonSerializer.Deserialize<object>(dirty.GetRawText());
-        }
 
         return PrivSvcResponse.Success(reqId, payload);
     }
