@@ -39,6 +39,13 @@ export type PrivSvcMethod =
   // NEVER exports private key material — hasPrivateKey is the store
   // attribute only. Same read-only class as security.compliance.
   | "cdp.certs.read"
+  // Faltaba en la union aunque el cliente ya le daba presupuesto: el
+  // tipo se quedo atras cuando se anadio el metodo.
+  | "cdp.certs.readUser"
+  // ADR-0011 decision 10 — quitar la confianza a un ancla. DESCONFIAR,
+  // no borrar: en Windows se anade a `Disallowed`, en macOS es un trust
+  // setting de denegacion. Ver CdpAnchorDistrust.cs.
+  | "cdp.anchor.distrust"
   | "crypto.csr.generate" // enrollment CSR generation
   | "crypto.cert.install" // install client cert (bind to existing key)
   // gRPC bridge (PrivSvc owns mTLS private key + channel)

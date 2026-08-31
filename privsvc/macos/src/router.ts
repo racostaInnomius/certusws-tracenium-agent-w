@@ -39,6 +39,7 @@ import {
 } from "./sdp";
 import { handleDpPrefetch, handleDpStatus } from "./dp";
 import { logger } from "./logger";
+import { distrustAnchor } from "./anchor-distrust";
 
 function isRoot() {
   return typeof process.getuid === "function" ? process.getuid() === 0 : false;
@@ -121,6 +122,17 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "crypto.cert.install":
       return handleInstallCert(req);
+
+    // ADR-0011 decision 10 — desconfiar de un ancla. En macOS no se
+    // borra (SIP lo impide en el llavero de Apple): es un trust setting
+    // de denegacion.
+    case "cdp.anchor.distrust": {
+      const sha1 = String((req.params as any)?.sha1 || "");
+      const out = await distrustAnchor(sha1);
+      return out.ok
+        ? success(req.id, { distrusted: true, sha1: out.sha1, subject: out.subject })
+        : fail(req.id, out.code, out.message);
+    }
 
     case "crypto.cert.renew":
       return handleRenewCert(req);

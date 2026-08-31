@@ -122,6 +122,10 @@ export function getTimeoutForMethod(method: string): number {
     // has, so this sits above it with margin.
     case "cdp.certs.read":
       return 60 * 1000; // privsvc: 45s + margin
+    // Escritura corta: enumera Root/AuthRoot y anade a Disallowed. El
+    // margen es para la COLA del carril serial, no para el handler.
+    case "cdp.anchor.distrust":
+      return 30_000;
     case "cdp.certs.readUser":
       // Mismo techo que el handler de maquina (45s) y misma holgura. La
       // lectura es de registro en vez de X509Store, pero recorre un

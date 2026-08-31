@@ -594,6 +594,61 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       };
     }
 
+    // ADR-0011 decision 10 — quitar la confianza a un ancla.
+    //
+    // La AUTORIZACION ya ocurrio en el control plane (regimen de
+    // ADR-0009): si este job llego hasta aqui, alguien con permiso lo
+    // pidio y, si la politica lo exigia, otra persona dio el visto
+    // bueno. Lo que se comprueba en el agente son las salvaguardas
+    // ESTRUCTURALES —jamas la cadena propia, jamas un ancla ausente— y
+    // esas viven en el PrivSvc, no aqui: un gate en el control plane no
+    // defiende de un control plane comprometido.
+    case "cdp_anchor_distrust": {
+      if (!ctx.policyRuntime.pluginEnabled("cdp")) {
+        return {
+          status: 2,
+          message: "cdp_anchor_distrust rejected: cdp plugin disabled by policy"
+        };
+      }
+
+      const thumbprint = String(payload?.thumbprint || "").trim();
+      const sha1 = String(payload?.sha1 || "").trim();
+      if (!thumbprint && !sha1) {
+        return { status: 2, message: "cdp_anchor_distrust rejected: no anchor identifier" };
+      }
+
+      const resp = await ctx.priv.call({
+        v: 1,
+        id: `cdpdistrust_${Date.now()}`,
+        method: "cdp.anchor.distrust",
+        // Windows empareja por thumbprint (SHA-1 de X509Certificate2);
+        // macOS por la huella SHA-1 del llavero. Se mandan las dos y
+        // cada plataforma lee la suya.
+        params: { thumbprint: thumbprint || sha1, sha1: sha1 || thumbprint },
+        meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+      });
+
+      if (!resp?.ok) {
+        return {
+          status: 2,
+          message: `cdp_anchor_distrust failed: ${resp?.error?.code || "unknown"} ${resp?.error?.message || ""}`.trim()
+        };
+      }
+
+      // Rescan forzado: el inventario es la verificacion (ADR-0011
+      // decision 7). Sin el, el portal seguiria mostrando el ancla como
+      // confiada hasta el siguiente tick de 12h y nadie sabria si la
+      // remediacion sirvio.
+      collectFactsSnapshot(ctx, `runJob:${jobId}:post_distrust`, "cdp").catch((err) =>
+        ctx.logger?.warn?.("rescan tras desconfiar fallo (no fatal)", { err })
+      );
+
+      return {
+        status: 0,
+        message: `anchor distrusted: ${resp.result?.subject || thumbprint || sha1}`
+      };
+    }
+
     case "patch_scan": {
       if (!ctx.policyRuntime.isPatchEnabled()) {
         return {

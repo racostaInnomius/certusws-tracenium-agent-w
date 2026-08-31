@@ -169,6 +169,11 @@ public sealed class Router
             // contra un PrivSvc antiguo recibe `not_supported` y sigue
             // con los stores de maquina.
             "cdp.certs.readUser" => CdpUserCertificates.Handle(req),
+            // ADR-0011 decision 10. DESCONFIAR, no borrar: se anade a
+            // Disallowed y NO se quita de Root, porque el trust store de
+            // Windows se repuebla bajo demanda y un borrado se desharia
+            // solo.
+            "cdp.anchor.distrust" => CdpAnchorDistrust.Handle(req),
             "patch.scan" => PatchManagement.HandleScan(req),
             "patch.install" => PatchManagement.HandleInstall(req),
 
