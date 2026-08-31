@@ -6,6 +6,11 @@ final class StatusBarController {
     private let reader = StatusSnapshotReader()
     private let contentController = StatusPopoverViewController()
     private var timer: Timer?
+    /// Indicador de sesión de control remoto (ADR-0012). Vive fuera del
+    /// popover a propósito: el popover se cierra al hacer clic fuera, y esto
+    /// tiene que verse SIN que la persona vaya a buscarlo.
+    private let remoteBanner = RemoteSessionBanner()
+    private var snapshotWatcher: SnapshotChangeWatcher?
     /// CoreLocation can only be reached from this process (signed bundle, user
     /// session) — never from the root daemon. See LocationProvider.
     private let locationProvider = LocationProvider()
@@ -80,11 +85,24 @@ final class StatusBarController {
         timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             self?.refresh()
         }
+
+        // Refresco inmediato al escribir el snapshot, solo por el indicador de
+        // sesión remota. Ver SnapshotChangeWatcher.
+        let watcher = SnapshotChangeWatcher { [weak self] in
+            self?.refresh()
+        }
+        watcher.start(watching: reader.snapshotPath)
+        snapshotWatcher = watcher
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
+        snapshotWatcher?.stop()
+        snapshotWatcher = nil
+        // Retirar la banda al parar: dejarla encendida sin nadie que la
+        // actualice sería una alarma falsa fija en pantalla.
+        remoteBanner.render(nil)
         locationProvider.stop()
         Logger.shared.info("Status bar controller stopped")
     }
@@ -104,6 +122,13 @@ final class StatusBarController {
     private func refresh() {
         let status = reader.read()
         contentController.render(status)
+
+        // El indicador NO se gatea por policy, al contrario que el widget de
+        // device info. Saber que te están viendo la pantalla no es una función
+        // que un tenant pueda apagar: si se pudiera, el primero en apagarla
+        // sería quien más motivos tiene para mirar sin que se note. El único
+        // interruptor es que haya sesión o no la haya.
+        remoteBanner.render(status?.remoteSession)
 
         // Driven straight off the snapshot poll: apply() is idempotent, so an
         // unchanged switch costs nothing and a flipped one takes effect within

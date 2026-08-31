@@ -36,10 +36,14 @@ struct TrayStatus: Decodable {
     // same reason as device: absent on snapshots from an agent that
     // predates this feature.
     var catalog: TrayCatalogStatus?
+    // Sesión de control remoto viva (ADR-0012). Ausente en agentes
+    // anteriores y —lo normal— siempre que nadie esté mirando.
+    var remoteSession: TrayRemoteSession?
 
     private enum CodingKeys: String, CodingKey {
         case updatedAtUtc, agentVersion, coreVersion, deviceId, tenantId
         case hostname, grpc, policy, jobs, update, patch, device, catalog
+        case remoteSession
     }
 
     init(from decoder: Decoder) throws {
@@ -62,6 +66,59 @@ struct TrayStatus: Decodable {
         patch  = ((try? c.decodeIfPresent(TrayPatchStatus.self, forKey: .patch)) ?? nil) ?? TrayPatchStatus()
         device = (try? c.decodeIfPresent(TrayDeviceInfo.self, forKey: .device)) ?? nil
         catalog = (try? c.decodeIfPresent(TrayCatalogStatus.self, forKey: .catalog)) ?? nil
+        remoteSession = (try? c.decodeIfPresent(TrayRemoteSession.self, forKey: .remoteSession)) ?? nil
+    }
+}
+
+/// Sesión de control remoto viva en este equipo (ADR-0012).
+///
+/// Alimenta el indicador PERMANENTE: no un aviso que se descarta, sino algo
+/// que sigue ahí mientras dure. Lo que protege a la persona no es enterarse
+/// una vez, sino poder ver en todo momento que la están mirando y cortarlo.
+///
+/// La decodificación degrada campo a campo como el resto del fichero, con una
+/// asimetría deliberada: si `active` no se puede leer, vale `false`. Es el
+/// único sitio del modelo donde el valor por defecto apaga una alarma, y es
+/// correcto — encender la banda por un campo ilegible enseñaría un aviso falso
+/// cada vez que el JSON cambie de forma, y una alarma falsa entrena a la gente
+/// a ignorar la de verdad. El indicador se enciende porque el agente lo dice,
+/// no porque no se le entienda.
+struct TrayRemoteSession: Decodable {
+    var active: Bool
+    var sessionId: String
+    var capability: String
+    var startedAtUtc: Date?
+    /// Quién está mirando. Vacío en backends anteriores al campo; la banda
+    /// dice "un operador" antes que inventarse un nombre.
+    var `operator`: String?
+    var controlling: Bool
+    var recording: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case active, sessionId, capability, startedAtUtc, `operator`, controlling, recording
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        active = ((try? c.decodeIfPresent(Bool.self, forKey: .active)) ?? nil) ?? false
+        sessionId = ((try? c.decodeIfPresent(String.self, forKey: .sessionId)) ?? nil) ?? ""
+        capability = ((try? c.decodeIfPresent(String.self, forKey: .capability)) ?? nil) ?? ""
+        startedAtUtc = (try? c.decodeIfPresent(Date.self, forKey: .startedAtUtc)) ?? nil
+        `operator` = (try? c.decodeIfPresent(String.self, forKey: .operator)) ?? nil
+        controlling = ((try? c.decodeIfPresent(Bool.self, forKey: .controlling)) ?? nil) ?? false
+        recording = ((try? c.decodeIfPresent(Bool.self, forKey: .recording)) ?? nil) ?? false
+    }
+
+    init(active: Bool, sessionId: String, capability: String = "rcp.screen",
+         startedAtUtc: Date? = nil, operator op: String? = nil,
+         controlling: Bool = false, recording: Bool = false) {
+        self.active = active
+        self.sessionId = sessionId
+        self.capability = capability
+        self.startedAtUtc = startedAtUtc
+        self.`operator` = op
+        self.controlling = controlling
+        self.recording = recording
     }
 }
 
