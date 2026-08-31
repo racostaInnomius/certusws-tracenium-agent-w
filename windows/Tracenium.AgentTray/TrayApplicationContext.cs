@@ -112,7 +112,20 @@ internal sealed class TrayApplicationContext : ApplicationContext
             // pantalla. Tocar .Handle crea la ventana sin mostrarla.
             _ = _statusForm.Handle;
 
-            _statusWatcher = new FileSystemWatcher(dir, Path.GetFileName(_reader.StatusPath))
+            // ⚠️ SIN filtro de nombre: se vigila el DIRECTORIO entero.
+            //
+            // La primera versión filtraba por tray-status.json, que era
+            // correcto cuando el watcher existía solo para el indicador. Desde
+            // ADR-0012 paso 2 en ese mismo directorio aparece también
+            // consent-request.json, y con el filtro puesto la bandeja NO se
+            // habría despertado al publicarse una petición de consentimiento:
+            // el aviso habría esperado hasta 5 s, o hasta vencer, y el
+            // resultado visible sería un permiso denegado por plazo que nadie
+            // decidió.
+            //
+            // El directorio es de tráfico bajo —unos pocos ficheros del propio
+            // agente—, así que vigilarlo entero no cuesta nada.
+            _statusWatcher = new FileSystemWatcher(dir)
             {
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size
             };
@@ -214,6 +227,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         // primero en apagarla sería quien más motivos tiene para mirar sin que
         // se note. El único interruptor es que haya sesión o no la haya.
         _remoteBanner.Render(status?.RemoteSession);
+
+        // ADR-0012 — las dos puertas de consentimiento. Va en el mismo
+        // refresco que el indicador: el watcher del fichero de estado ya
+        // despierta esto en ~150 ms cuando AgentCore publica la petición.
+        // Handle() es idempotente, así que llamarlo en cada tick es lo
+        // normal.
+        ConsentPrompt.Handle(ConsentPrompt.Read(_reader.StatusPath));
 
         // Flyout top-center gateado por policy: solo visible cuando el
         // tenant activó features.deviceInfoWidget. Show() sin robar foco

@@ -90,6 +90,16 @@ enum ConsentPrompt {
         alert.messageText = request.title
         alert.informativeText = request.lines.joined(separator: "\n")
 
+        // El icono de la app. El texto lo puede copiar cualquiera; el icono
+        // que macOS asocia al bundle firmado, no. Es la única parte del
+        // diálogo que la persona puede comparar con lo que ve en su barra de
+        // menús para convencerse de que se lo pide el software que cree.
+        if let url = Bundle.main.url(forResource: "Tracenium_tryicon", withExtension: "png"),
+           let icon = NSImage(contentsOf: url) {
+            icon.size = NSSize(width: 64, height: 64)
+            alert.icon = icon
+        }
+
         // ⚠️ El PRIMER botón de un NSAlert es el de por defecto: se activa con
         // Return y es donde va la mano. Aquí el primero es DENEGAR a
         // propósito. En un diálogo que concede acceso a la pantalla de alguien,

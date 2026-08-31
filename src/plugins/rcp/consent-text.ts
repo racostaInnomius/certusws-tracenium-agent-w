@@ -53,6 +53,13 @@ export function consentLines(args: ConsentTextArgs): string[] {
     lines.push("This also lets them use your mouse and keyboard.");
   }
 
+  // La procedencia va en el CUERPO, no solo en el título: no todas las
+  // plataformas enseñan el título con la misma prominencia —el MessageBox de
+  // Windows lo pone en la barra, el NSAlert de macOS lo destaca— y la línea
+  // que no se puede perder es esta. Va al final, junto a la grabación, porque
+  // lo primero que la persona necesita saber es qué le están pidiendo.
+  lines.push(`Requested through ${PRODUCT_NAME}, your IT management software.`);
+
   if (args.recording) {
     // ⚠️ No es un detalle de redacción: grabar a alguien sin avisarle es
     // ilegal en varias jurisdicciones y, en todas, la vía rápida a perder la
@@ -64,9 +71,31 @@ export function consentLines(args: ConsentTextArgs): string[] {
   return lines;
 }
 
+/**
+ * Título del diálogo. SIEMPRE lleva el nombre del producto.
+ *
+ * ⚠️ No es marca, es seguridad. Un aviso que aparece de la nada diciendo que
+ * alguien quiere controlar tu equipo, sin decir QUÉ software lo muestra, es
+ * indistinguible de un intento de estafa — y la reacción sana ante eso es
+ * pulsar cualquier cosa para que desaparezca.
+ *
+ * Nombrar el producto hace dos cosas a la vez: permite creer el aviso legítimo
+ * (esta empresa instaló Tracenium, tiene sentido) y permite RECHAZAR el que no
+ * lo sea (yo no tengo eso instalado). Sin el nombre, la persona no puede hacer
+ * ninguna de las dos, y un consentimiento que no se puede evaluar no es un
+ * consentimiento.
+ *
+ * Lo encontró el usuario probando el diálogo real: aceptó sin saber qué se lo
+ * estaba pidiendo.
+ */
 export function consentTitle(kind: ConsentKind): string {
-  return kind === "view" ? "Screen sharing request" : "Remote control request";
+  return kind === "view"
+    ? `${PRODUCT_NAME} — Screen sharing request`
+    : `${PRODUCT_NAME} — Remote control request`;
 }
+
+/** El nombre que la persona ve, y con el que puede verificar el aviso. */
+export const PRODUCT_NAME = "Tracenium";
 
 /** Etiquetas de los botones. */
 export function consentButtons(kind: ConsentKind): { allow: string; deny: string } {

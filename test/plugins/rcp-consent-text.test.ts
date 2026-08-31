@@ -13,6 +13,7 @@ import { describe, it, expect } from "vitest";
 import {
   consentLines,
   consentButtons,
+  consentTitle,
   kindForCapability
 } from "../../src/plugins/rcp/consent-text";
 
@@ -93,5 +94,39 @@ describe("kindForCapability", () => {
     expect(kindForCapability("rcp.screen")).toBe("view");
     expect(kindForCapability("rcp.shell")).toBe("view");
     expect(kindForCapability("rcp.file")).toBe("view");
+  });
+});
+
+describe("procedencia del aviso", () => {
+  // Lo encontró el usuario probando el diálogo real: aceptó sin saber qué se
+  // lo estaba pidiendo. Un aviso que sale de la nada diciendo que alguien
+  // quiere controlar tu equipo, sin decir QUÉ software lo muestra, es
+  // indistinguible de una estafa — y la reacción sana ante eso es pulsar
+  // cualquier cosa para que desaparezca.
+
+  it("el título nombra el producto", () => {
+    expect(consentTitle("view")).toContain("Tracenium");
+    expect(consentTitle("control")).toContain("Tracenium");
+  });
+
+  it("el CUERPO también lo nombra, no solo el título", () => {
+    // El MessageBox de Windows manda el título a la barra de la ventana, donde
+    // se lee menos. La línea que no se puede perder va en el cuerpo.
+    expect(consentLines({ kind: "view" }).join(" ")).toContain("Tracenium");
+    expect(consentLines({ kind: "control" }).join(" ")).toContain("Tracenium");
+  });
+
+  it("dice qué ES el producto, no solo su nombre", () => {
+    // "Tracenium" a secas no ayuda a quien no sepa que lo tiene instalado.
+    expect(consentLines({ kind: "view" }).join(" ")).toContain("IT management software");
+  });
+
+  it("la procedencia va DESPUÉS de qué se pide", () => {
+    // Lo primero que la persona necesita saber es qué le están pidiendo; de
+    // dónde viene el aviso es la verificación, no el titular.
+    const lines = consentLines({ kind: "control" });
+    const askIdx = lines.findIndex((l) => l.includes("CONTROL"));
+    const srcIdx = lines.findIndex((l) => l.includes("Tracenium"));
+    expect(askIdx).toBeLessThan(srcIdx);
   });
 });
