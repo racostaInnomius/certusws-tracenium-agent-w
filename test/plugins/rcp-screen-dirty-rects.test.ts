@@ -39,8 +39,17 @@ function makeSession(results: (call: any) => any) {
   const ctx: any = {
     logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     priv: {
+      // Sólo las capturas. Este fichero afirma sobre `calls[0]`, `calls[1]`…
+      // y todo lo que mira es `params.forceFull`, que únicamente existe en
+      // `screen.capture`.
+      //
+      // Sin el filtro las aserciones dependen de la plataforma del runner:
+      // en Linux la sesión emite además `rcp.indicator.show` (screen-session
+      // .ts:359) ANTES del primer fotograma, así que `calls[0]` pasaba a ser
+      // el indicador y `forceFull` llegaba `undefined`. Verde en macOS,
+      // rojo en el ubuntu-latest del CI.
       call: vi.fn(async (req: any) => {
-        calls.push(req);
+        if (req?.method === "screen.capture") calls.push(req);
         return results(req);
       })
     }

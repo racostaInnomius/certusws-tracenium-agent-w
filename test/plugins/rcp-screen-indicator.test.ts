@@ -19,6 +19,13 @@ function pretendLinux() {
   prevPlatform = Object.getOwnPropertyDescriptor(process, "platform");
   Object.defineProperty(process, "platform", { value: "linux" });
 }
+// El simétrico. Un test que afirma sobre "Windows/macOS" NO puede heredar la
+// plataforma del runner: pasaba en el Mac de quien lo escribió y fallaba en
+// el ubuntu-latest del CI, donde la sesión sí emite el indicador nativo.
+function pretendNotLinux() {
+  prevPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: "darwin" });
+}
 afterEach(() => {
   if (prevPlatform) Object.defineProperty(process, "platform", prevPlatform);
   prevPlatform = undefined;
@@ -205,6 +212,7 @@ describe("indicador de sesión de pantalla", () => {
     // La bandeja ya vive en la sesión del usuario en esas dos plataformas;
     // este IPC no existe en sus PrivSvc y llamarlo sería un error por método
     // desconocido en cada sesión.
+    pretendNotLinux();
     const { ctx, session, captures } = makeSession();
     await waitFor(() => captures.length >= 1);
 
