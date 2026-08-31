@@ -361,3 +361,179 @@ describe("indicador en Linux — puerta fail-closed", () => {
     expect(methods).toContain("rcp.indicator.hide");
   });
 });
+
+// ── Segunda puerta: CONTROLAR (ADR-0012) ────────────────────────────
+describe("puerta de control en la sesión", () => {
+  function makeConsentSession(opts: {
+    required: boolean;
+    decision?: "approved" | "denied" | "timeout";
+    throws?: boolean;
+  }) {
+    const dc = new FakeDataChannel();
+    const injected: any[] = [];
+    const asked: any[] = [];
+
+    const ctx: any = {
+      logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+      trayStatus: { setRemoteSession: () => {} },
+      policyRuntime: { isFeatureEnabled: (f: string) => f === "remoteRequireConsent" && opts.required },
+      consentPrompter: {
+        available: () => true,
+        request: async (r: any) => {
+          asked.push(r);
+          if (opts.throws) throw new Error("prompter roto");
+          return opts.decision ?? "approved";
+        }
+      },
+      priv: {
+        call: vi.fn(async (req: any) => {
+          if (req.method === "input.inject") injected.push(req.params);
+          return okFrame();
+        })
+      }
+    };
+
+    const session = new ScreenSession(dc as any, {
+      sessionId: "sess-consent", ctx, operator: "Javier Pacheco",
+      sendScreenAudit: () => {}, onTeardown: () => {}
+    } as any);
+
+    return { dc, session, injected, asked };
+  }
+
+  it("sin política de consentimiento, la entrada pasa como siempre", async () => {
+    const { dc, injected, session } = makeConsentSession({ required: false });
+    dc.emit({ op: "mouseDown", button: 0, x: 5, y: 5 });
+    await waitFor(() => injected.length >= 1);
+    expect(injected.length).toBe(1);
+    session.dispose("test");
+  });
+
+  it("el primer evento pide permiso y NO se inyecta", async () => {
+    // Regalar "solo el primero" sería regalar justo el clic que puede pulsar
+    // Aceptar en un diálogo del sistema.
+    const { dc, injected, asked, session } = makeConsentSession({
+      required: true, decision: "approved"
+    });
+    dc.emit({ op: "mouseDown", button: 0, x: 5, y: 5 });
+    await waitFor(() => asked.length >= 1);
+
+    expect(asked[0].capability).toBe("rcp.screen.control");
+    expect(asked[0].operator).toBe("Javier Pacheco");
+    expect(injected.length).toBe(0);
+    session.dispose("test");
+  });
+
+  it("tras el sí, la entrada fluye", async () => {
+    const { dc, injected, asked, session } = makeConsentSession({
+      required: true, decision: "approved"
+    });
+
+    // Primer evento: dispara el aviso y se tira.
+    dc.emit({ op: "mouseMove", x: 1, y: 1 });
+    await waitFor(() => asked.length >= 1);
+    expect(injected.length).toBe(0);
+
+    // El permiso se resuelve de forma asíncrona; esperamos a que la puerta
+    // esté abierta antes de mandar el siguiente. Sin esta espera el test
+    // pasaría por accidente o fallaría por carrera, según el día.
+    dc.emit({ op: "mouseDown", button: 0, x: 5, y: 5 });
+    await waitFor(() => injected.length >= 1);
+
+    expect(injected.length).toBe(1);
+    expect(injected[0].op).toBe("mouseDown");
+    session.dispose("test");
+  });
+
+  it("una ráfaga de ratón lanza UN solo aviso, no uno por evento", async () => {
+    // 60 eventos por segundo ⇒ 60 diálogos. La persona vería su pantalla
+    // sepultada y no podría ni contestar al primero.
+    const { dc, asked, session } = makeConsentSession({
+      required: true, decision: "approved"
+    });
+    for (let i = 0; i < 40; i++) dc.emit({ op: "mouseMove", x: i, y: i });
+    await waitFor(() => asked.length >= 1);
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(asked.length).toBe(1);
+    session.dispose("test");
+  });
+
+  it("tras el NO, la entrada no pasa y la sesión SIGUE VIVA", async () => {
+    // Lo importante es la segunda mitad: la persona consintió que la vieran.
+    // Tumbar la sesión por rechazar el control castigaría un "no" razonable y
+    // empujaría a decir que sí a todo para que el técnico pueda seguir.
+    const { dc, injected, session } = makeConsentSession({
+      required: true, decision: "denied"
+    });
+    dc.emit({ op: "mouseDown", button: 0, x: 5, y: 5 });
+    await waitFor(() => dc.sent.some((s) => s.includes("control_consent_denied")));
+
+    for (let i = 0; i < 5; i++) dc.emit({ op: "mouseMove", x: i, y: i });
+    await new Promise((r) => setTimeout(r, 60));
+
+    expect(injected.length).toBe(0);
+    const err = dc.sent.map((s) => JSON.parse(s)).find((m) => m.op === "error");
+    expect(err.code).toBe("control_consent_denied");
+    expect(err.terminal).toBe(false);   // ← la sesión sigue viéndose
+    session.dispose("test");
+  });
+
+  it("al operador se le explica UNA vez, no con cada clic", async () => {
+    const { dc, session } = makeConsentSession({ required: true, decision: "denied" });
+    dc.emit({ op: "mouseDown", button: 0, x: 5, y: 5 });
+    await waitFor(() => dc.sent.some((s) => s.includes("control_consent_denied")));
+    for (let i = 0; i < 10; i++) dc.emit({ op: "mouseMove", x: i, y: i });
+    await new Promise((r) => setTimeout(r, 60));
+
+    const errs = dc.sent.map((s) => JSON.parse(s))
+      .filter((m) => m.op === "error" && m.code === "control_consent_denied");
+    expect(errs.length).toBe(1);
+    session.dispose("test");
+  });
+
+  it("el timeout se trata como negativa", async () => {
+    const { dc, injected, session } = makeConsentSession({
+      required: true, decision: "timeout"
+    });
+    dc.emit({ op: "mouseDown", button: 0, x: 5, y: 5 });
+    await waitFor(() => dc.sent.some((s) => s.includes("control_consent_timeout")));
+    expect(injected.length).toBe(0);
+    session.dispose("test");
+  });
+
+  it("un prompter que LANZA deniega, no concede", async () => {
+    // Un aviso roto no puede convertirse en un permiso concedido.
+    const { dc, injected, session } = makeConsentSession({ required: true, throws: true });
+    dc.emit({ op: "mouseDown", button: 0, x: 5, y: 5 });
+    await waitFor(() => dc.sent.some((s) => s.includes("control_consent_denied")));
+    expect(injected.length).toBe(0);
+    session.dispose("test");
+  });
+
+  it("sin prompter registrado, deniega (fail-closed)", async () => {
+    // El default de consent-prompt.ts. Una plataforma sin diálogo nativo no
+    // puede conceder control por omisión.
+    const dc = new FakeDataChannel();
+    const injected: any[] = [];
+    const ctx: any = {
+      logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+      policyRuntime: { isFeatureEnabled: (f: string) => f === "remoteRequireConsent" },
+      priv: {
+        call: vi.fn(async (req: any) => {
+          if (req.method === "input.inject") injected.push(req.params);
+          return okFrame();
+        })
+      }
+    };
+    const session = new ScreenSession(dc as any, {
+      sessionId: "sess-noprompter", ctx,
+      sendScreenAudit: () => {}, onTeardown: () => {}
+    } as any);
+
+    dc.emit({ op: "mouseDown", button: 0, x: 5, y: 5 });
+    await waitFor(() => dc.sent.some((s) => s.includes("control_consent_denied")));
+    expect(injected.length).toBe(0);
+    session.dispose("test");
+  });
+});

@@ -61,6 +61,16 @@
 
 import type { AgentContext } from "../../core/agent-context";
 import { consumeRevokeRequest } from "../../status/remote-session-revoke";
+import {
+  failClosedConsentPrompter,
+  type ConsentDecision
+} from "./consent-prompt";
+import {
+  controlGate,
+  stateAfterDecision,
+  shouldNotifyOperator,
+  type ControlConsentState
+} from "./control-consent";
 
 export type ScreenAuditPayload = {
   event: string;      // "started" | "stopped" | "error"
@@ -105,6 +115,14 @@ const NO_FRAME_CODE = "screen_capture_no_frame";
 // se perciben como que el botón no funciona, y esa es justo la sensación que un
 // control de privacidad no puede permitirse.
 const REVOKE_POLL_MS = 500;
+
+// Cuánto se espera a que la persona conteste al aviso de CONTROL.
+//
+// Más largo que el de abrir sesión: allí la persona acaba de pedir soporte y
+// está mirando la pantalla. Aquí puede llevar diez minutos explicando el
+// problema por teléfono cuando aparece el segundo aviso, y un tiempo corto
+// convertiría una duda normal en una negativa.
+const CONTROL_CONSENT_TIMEOUT_S = 90;
 
 // Codes meaning "this endpoint will not produce a frame until something
 // changes on it" (someone logs in, an MDM profile lands, the session moves
@@ -214,6 +232,9 @@ export class ScreenSession {
    *   permiso explícito sustituirá a esta deducción.
    */
   private inputSeen = false;
+
+  /** Estado de la segunda puerta (ADR-0012). Ver control-consent.ts. */
+  private controlConsent: ControlConsentState = "not_asked";
 
   /**
    * Instante de arranque, fijado UNA vez.
@@ -342,6 +363,90 @@ export class ScreenSession {
     }
 
     if (!this.disposed) this.scheduleNext();
+  }
+
+  /** ¿Exige el tenant consentimiento del usuario? */
+  private consentRequired(): boolean {
+    return Boolean(
+      this.args.ctx.policyRuntime?.isFeatureEnabled?.("remoteRequireConsent")
+    );
+  }
+
+  /**
+   * Pide permiso para CONTROLAR y aplica la respuesta.
+   *
+   * Reutiliza el mismo seam que la puerta de ver (consent-prompt.ts), con una
+   * capacidad distinta para que cada plataforma pueda redactar su texto: "va a
+   * ver tu pantalla" y "va a poder usar tu equipo" no son la misma frase, y
+   * enseñar la primera cuando pasa la segunda sería mentir.
+   *
+   * No lanza nunca. Cualquier fallo cuenta como negativa — un aviso roto no
+   * puede convertirse en un permiso concedido.
+   */
+  private async askForControlConsent(): Promise<void> {
+    const { ctx, sessionId } = this.args;
+    const prompter = ctx.consentPrompter ?? failClosedConsentPrompter;
+
+    let decision: ConsentDecision;
+    try {
+      decision = await prompter.request({
+        sessionId,
+        capability: "rcp.screen.control",
+        operator: this.args.operator || null,
+        timeoutSeconds: CONTROL_CONSENT_TIMEOUT_S
+      });
+    } catch (err: any) {
+      ctx.logger?.error?.("[rcp.screen] el aviso de control falló; se deniega", {
+        sessionId,
+        err: err?.message || String(err)
+      });
+      decision = "denied";
+    }
+
+    if (this.disposed) return;
+
+    const prev = this.controlConsent;
+    this.controlConsent = stateAfterDecision(decision);
+
+    if (this.controlConsent === "granted") {
+      ctx.logger?.info?.("[rcp.screen] control autorizado por el usuario", { sessionId });
+      // El indicador pasa a "viendo y controlando" en cuanto hay permiso, no
+      // al llegar el primer evento que sí se reenvía: la persona acaba de
+      // decir que sí y la banda tiene que reflejar lo que aceptó.
+      this.inputSeen = true;
+      this.publishIndicator();
+      return;
+    }
+
+    ctx.logger?.info?.("[rcp.screen] control denegado por el usuario", {
+      sessionId,
+      decision
+    });
+
+    if (shouldNotifyOperator(prev, this.controlConsent)) {
+      // El operador tiene que saber POR QUÉ sus clics no hacen nada. Sin esto
+      // vería una pantalla que se mueve sola —porque la persona sigue
+      // trabajando— y sus propios eventos sin efecto, que se diagnostica como
+      // "el control remoto está roto".
+      //
+      // terminal:false a propósito: la sesión sigue viva y viéndose. Solo el
+      // control quedó fuera.
+      //
+      // Se envía con `send` directo y NO por el reportador de fallos de
+      // captura: aquel deduplica con lastReportedCode, que es estado de la
+      // salud de la captura. Mezclar ahí un mensaje de consentimiento haría
+      // que un fallo de captura posterior con el mismo código se tragara, o
+      // al revés. Aquí la deduplicación ya la hace shouldNotifyOperator.
+      this.send({
+        op: "error",
+        code: decision === "timeout" ? "control_consent_timeout" : "control_consent_denied",
+        message:
+          decision === "timeout"
+            ? "The person at the device did not respond to the request to control it. Viewing continues."
+            : "The person at the device declined to let you control it. Viewing continues.",
+        terminal: false
+      });
+    }
   }
 
   /** Retira el indicador nativo de Linux. No lanza: corre en el cierre. */
@@ -488,6 +593,21 @@ export class ScreenSession {
   // to take inside InputInjection.Inject.
   private forwardInput(op: string, msg: any): void {
     const { ctx, sessionId } = this.args;
+
+    // ADR-0012, segunda puerta: CONTROLAR se consiente aparte de VER.
+    //
+    // Va aquí, en el reenvío de cada evento, porque es el único punto por el
+    // que pasa todo lo que llega a actuar sobre el equipo. Ponerlo donde la UI
+    // del operador pulsa "Controlling" no serviría: eso es un botón en el
+    // navegador de la otra parte, y la puerta no puede depender de que quien
+    // pide permiso se lo pida a sí mismo.
+    const gate = controlGate(this.consentRequired(), this.controlConsent);
+    if (gate.kind === "ask") {
+      this.controlConsent = "pending";
+      void this.askForControlConsent();
+      return; // este evento se tira: aún no hay permiso
+    }
+    if (gate.kind === "drop") return;
 
     // Primer evento de entrada de la sesión: subir el indicador de "viendo" a
     // "viendo y controlando". Una sola vez — republicar en cada movimiento de
