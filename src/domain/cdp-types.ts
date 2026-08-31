@@ -47,6 +47,20 @@ export type CdpCertItem = {
    *  post-quantum in particular. See ADR-0004. */
   publicKeyOid?: string;
   signatureOid?: string;
+  /**
+   * La mitad alternativa de un certificado híbrido "catalyst" (ITU-T
+   * X.509 2019): clave y firma post-cuánticas en tres extensiones no
+   * críticas, junto a las clásicas de siempre.
+   *
+   * Ausentes en un certificado normal. Se mandan como OID crudo, igual
+   * que los otros dos: la clasificación es server-side.
+   *
+   * ⚠️ Su presencia dice que el certificado DECLARA una mitad
+   * post-cuántica, NO que esa mitad se verifique. Ver extractHybridOids.
+   */
+  altSignatureOid?: string;
+  altPublicKeyOid?: string;
+  hasAltSignature?: boolean;
   /** sha256 of the DER SubjectPublicKeyInfo (same value as openssl's
    *  pin-sha256, in hex). Identifies the KEY, not the certificate —
    *  the control plane uses it to spot copied private keys. */

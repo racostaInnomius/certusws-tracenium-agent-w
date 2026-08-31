@@ -242,6 +242,29 @@ const TAG_CONTEXT_6 = 0x86; // [6] IMPLICIT IA5String — GeneralName.uniformRes
 /** X.509 extension OIDs we read. */
 export const EXT_CRL_DISTRIBUTION_POINTS = "2.5.29.31";
 export const EXT_AUTHORITY_INFO_ACCESS = "1.3.6.1.5.5.7.1.1";
+
+// ── Certificados híbridos "catalyst" (ITU-T X.509 2019) ────────────
+//
+// Un certificado híbrido lleva la clave y la firma CLÁSICAS en los
+// campos normales de X.509, y una SEGUNDA clave y firma post-cuánticas
+// en tres extensiones no críticas. Así un verificador antiguo lo trata
+// como un certificado corriente y lo acepta, mientras que uno moderno
+// puede comprobar además la mitad PQC.
+//
+// ⚠️ POR QUÉ ESTO IMPORTA PARA NOSOTROS, medido el 2026-08-27: en toda
+// la flota hay 10.277 certificados y los 10.277 salen clasificados como
+// `quantum_broken`. Si alguno fuera híbrido, hoy lo diríamos igual —
+// leemos su mitad clásica y la PQC es invisible. Sería un FALSO
+// NEGATIVO en la herramienta que vendemos como inventario PQC, y el
+// peor momento para descubrirlo es cuando un cliente ya tenga híbridos
+// y le digamos que no tiene ninguno.
+//
+// Sólo se leen los OID: qué algoritmo declara la mitad alternativa.
+// NO se verifica la firma alternativa, y eso es deliberado — ver el
+// comentario de extractHybridOids.
+export const EXT_SUBJECT_ALT_PUBLIC_KEY_INFO = "2.5.29.72";
+export const EXT_ALT_SIGNATURE_ALGORITHM = "2.5.29.73";
+export const EXT_ALT_SIGNATURE_VALUE = "2.5.29.74";
 /** AccessDescription.accessMethod for an OCSP responder. */
 const ACCESS_METHOD_OCSP = "1.3.6.1.5.5.7.48.1";
 
@@ -281,6 +304,77 @@ export function extractExtension(der: Buffer, oid: string): Tlv | null {
   }
 
   return null;
+}
+
+export type HybridOids = {
+  /** altSignatureAlgorithm.algorithm — el algoritmo de la firma alternativa. */
+  altSignatureOid: string | null;
+  /** subjectAltPublicKeyInfo.algorithm.algorithm — la clave alternativa. */
+  altPublicKeyOid: string | null;
+  /** Hay firma alternativa presente (aunque su OID no se pueda decodificar). */
+  hasAltSignatureValue: boolean;
+};
+
+/**
+ * Los OID de la mitad alternativa de un certificado híbrido catalyst.
+ *
+ * ⚠️ ESTO NO VERIFICA NADA, y es a propósito. Se lee QUÉ algoritmo
+ * declara la mitad PQC, no si su firma es válida.
+ *
+ * La razón está documentada en la literatura y es incómoda: las pilas de
+ * validación desplegadas tratan estas extensiones como no críticas y las
+ * ignoran, así que un certificado catalyst con la firma alternativa
+ * FALSIFICADA se acepta igual. BouncyCastle mismo la acepta en su ruta
+ * por defecto y sólo la rechaza mediante una llamada opt-in aparte.
+ *
+ * Un inventario que dijera "híbrido, luego protegido" estaría afirmando
+ * algo que la infraestructura del cliente no comprueba. Lo que sí es
+ * cierto —y lo que reportamos— es que el certificado DECLARA una mitad
+ * post-cuántica. El juicio sobre si eso protege es del servidor, con el
+ * catálogo de familias, y ahí se puede matizar sin desplegar la flota.
+ */
+export function extractHybridOids(der: Buffer): HybridOids {
+  const empty: HybridOids = {
+    altSignatureOid: null,
+    altPublicKeyOid: null,
+    hasAltSignatureValue: false
+  };
+  if (!Buffer.isBuffer(der) || der.length < 8) return empty;
+
+  const result: HybridOids = { ...empty };
+
+  // altSignatureAlgorithm ::= AlgorithmIdentifier — el extnValue ES la
+  // SEQUENCE, sin envoltorio adicional.
+  const altSigAlg = extractExtension(der, EXT_ALT_SIGNATURE_ALGORITHM);
+  if (altSigAlg) {
+    const seq = children(der, altSigAlg)[0];
+    if (seq && seq.tag === TAG_SEQUENCE) {
+      const oidTlv = children(der, seq)[0];
+      if (oidTlv) result.altSignatureOid = decodeOid(der, oidTlv);
+    }
+  }
+
+  // subjectAltPublicKeyInfo ::= SubjectPublicKeyInfo — misma forma que el
+  // SPKI normal: SEQUENCE { AlgorithmIdentifier, BIT STRING }.
+  const altSpki = extractExtension(der, EXT_SUBJECT_ALT_PUBLIC_KEY_INFO);
+  if (altSpki) {
+    const seq = children(der, altSpki)[0];
+    if (seq && seq.tag === TAG_SEQUENCE) {
+      const algId = children(der, seq)[0];
+      if (algId && algId.tag === TAG_SEQUENCE) {
+        const oidTlv = children(der, algId)[0];
+        if (oidTlv) result.altPublicKeyOid = decodeOid(der, oidTlv);
+      }
+    }
+  }
+
+  // La presencia del VALOR se reporta aparte de su OID: un certificado
+  // con altSignatureValue pero sin altSignatureAlgorithm legible sigue
+  // siendo híbrido, y decir "no hay nada" ahí sería la misma clase de
+  // falso negativo que este módulo viene a cerrar.
+  result.hasAltSignatureValue = extractExtension(der, EXT_ALT_SIGNATURE_VALUE) !== null;
+
+  return result;
 }
 
 /** Every IA5String / [6] URI nested anywhere under `parent`. */

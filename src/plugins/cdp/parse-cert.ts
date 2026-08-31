@@ -14,6 +14,7 @@
 import crypto from "crypto";
 import {
   extractAlgorithmOids,
+  extractHybridOids,
   extractSpkiDer,
   extractCrlUrls,
   extractOcspUrls
@@ -159,6 +160,9 @@ export function parseCertToItem(
   // `cert.raw` is the DER Node already parsed, so this costs no re-decode
   // of the input and works whether we were handed PEM or DER.
   const oids = extractAlgorithmOids(cert.raw);
+  // Extensiones catalyst. En un certificado corriente los tres campos
+  // salen vacíos y no viaja nada.
+  const hybrid = extractHybridOids(cert.raw);
 
   // sha256 over the SubjectPublicKeyInfo — the standard identity for
   // "the same key", byte-identical to `openssl ... | pin-sha256`. Two
@@ -190,6 +194,12 @@ export function parseCertToItem(
     // be named and judged without a fleet rollout.
     publicKeyOid: oids.publicKeyOid ?? undefined,
     signatureOid: oids.signatureOid ?? undefined,
+    altSignatureOid: hybrid.altSignatureOid ?? undefined,
+    altPublicKeyOid: hybrid.altPublicKeyOid ?? undefined,
+    // Sólo se manda cuando es cierto: un `false` en cada uno de los
+    // 10.277 certificados de la flota engorda el payload sin decir nada,
+    // y el payload ya tiene tope (por eso existe `truncated`).
+    hasAltSignature: hybrid.hasAltSignatureValue || undefined,
     publicKeyHash,
     // Revocation pointers. These plus the serial number let the CONTROL
     // PLANE answer "was this revoked?" without any certificate bytes
