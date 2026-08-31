@@ -130,6 +130,13 @@ final class StatusBarController {
         // interruptor es que haya sesión o no la haya.
         remoteBanner.render(status?.remoteSession)
 
+        // ADR-0012 — las dos puertas de consentimiento. Va en el mismo refresco
+        // que el indicador porque el watcher del directorio de estado ya lo
+        // despierta en ~150 ms cuando el agente publica la petición; montar un
+        // segundo canal para un evento que ocurre una vez por sesión no se
+        // paga. handle() es idempotente: se la puede llamar en cada tick.
+        ConsentPrompt.handle(ConsentRequestReader.read())
+
         // Driven straight off the snapshot poll: apply() is idempotent, so an
         // unchanged switch costs nothing and a flipped one takes effect within
         // one poll instead of waiting for a restart.

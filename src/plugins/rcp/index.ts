@@ -18,6 +18,7 @@
 import type { AgentContext } from "../../core/agent-context";
 import { SessionManager } from "./session-manager";
 import { createLinuxConsentPrompter } from "./consent-prompter-linux";
+import { createTrayConsentPrompter } from "./consent-prompter-tray";
 
 let manager: SessionManager | null = null;
 let nativeBroken = false;
@@ -123,8 +124,15 @@ function registerConsentPrompter(ctx: AgentContext): void {
       ctx.logger?.info?.("[rcp] consent prompter: linux/x11");
       return;
     }
-    // Windows y macOS: pendientes. Dejarlo sin registrar mantiene el
-    // fail-closed en vez de anunciar una capacidad que no existe.
+    if (process.platform === "win32" || process.platform === "darwin") {
+      // Ambas tienen ya algo corriendo en la sesión del usuario (bandeja .NET
+      // / app de estado Swift), así que el aviso viaja por el canal de
+      // ficheros que esas dos ya usan. Ver consent-prompter-tray.ts.
+      ctx.consentPrompter = createTrayConsentPrompter(ctx);
+      ctx.logger?.info?.("[rcp] consent prompter: tray", { platform: process.platform });
+      return;
+    }
+
     ctx.logger?.info?.("[rcp] sin prompter nativo para esta plataforma", {
       platform: process.platform
     });
