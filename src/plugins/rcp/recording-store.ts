@@ -101,6 +101,13 @@ export type RecordingResult = {
 };
 
 export function recordingsDir(): string {
+  // Override explícito, como el de los helpers nativos
+  // (TRACENIUM_SCREENCAP_HELPER, TRACENIUM_INDICATOR_HELPER). Sin él los tests
+  // escribirían en el directorio de datos REAL de la máquina que los corre —o
+  // no escribirían nada y pasarían en verde sin probar nada, que es peor.
+  const override = process.env.TRACENIUM_RECORDINGS_DIR;
+  if (override && override.trim()) return override.trim();
+
   // Dentro del directorio de datos del agente: modo 700 y ya denegado por la
   // jaula de rutas de rcp.file, así que un operador no puede sacarlo por el
   // gestor de ficheros de la propia herramienta.

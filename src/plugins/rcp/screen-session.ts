@@ -72,6 +72,7 @@ import {
   type ControlConsentState
 } from "./control-consent";
 import { recordingEnabled } from "./recording-policy";
+import { ScreenRecorder } from "./screen-recorder";
 
 export type ScreenAuditPayload = {
   event: string;      // "started" | "stopped" | "error"
@@ -234,6 +235,9 @@ export class ScreenSession {
    */
   private inputSeen = false;
 
+  /** Grabación de esta sesión (ADR-0012). null si el tenant no la activó. */
+  private recorder: ScreenRecorder | null = null;
+
   /** Estado de la segunda puerta (ADR-0012). Ver control-consent.ts. */
   private controlConsent: ControlConsentState = "not_asked";
 
@@ -293,6 +297,7 @@ export class ScreenSession {
     // indicador ya esté encendido, ni siquiera durante un instante.
     this.publishIndicator();
     this.startRevokeWatch();
+    this.startRecording();
 
     // Start the capture loop after a tick so the constructor returns
     // cleanly before the first async capture fires.
@@ -446,6 +451,78 @@ export class ScreenSession {
             ? "The person at the device did not respond to the request to control it. Viewing continues."
             : "The person at the device declined to let you control it. Viewing continues.",
         terminal: false
+      });
+    }
+  }
+
+  /**
+   * Abre la grabación si el tenant la tiene activada.
+   *
+   * No arrancar NO es un error de la sesión: se sigue dando soporte, sin
+   * grabar, y el motivo queda registrado. La alternativa —negarse a dar
+   * soporte porque no cabe el vídeo— castigaría a quien pidió ayuda por un
+   * problema de disco que no es suyo.
+   */
+  private startRecording(): void {
+    if (!recordingEnabled(this.args.ctx)) return;
+    try {
+      const rec = new ScreenRecorder(this.args.sessionId, this.args.ctx.logger as any);
+      if (rec.start()) {
+        this.recorder = rec;
+        this.args.ctx.logger?.info?.("[rcp.screen] grabando la sesión", {
+          sessionId: this.args.sessionId
+        });
+      }
+    } catch (err: any) {
+      this.args.ctx.logger?.warn?.("[rcp.screen] no se pudo iniciar la grabación", {
+        sessionId: this.args.sessionId,
+        err: err?.message || String(err)
+      });
+    }
+  }
+
+  /**
+   * Cierra la grabación y deja constancia de CÓMO acabó.
+   *
+   * La auditoría tiene que poder distinguir tres cosas que se parecen y no lo
+   * son: "no se grabó", "se grabó entera" y "se grabó a medias". Meses
+   * después, para quien revise un incidente, la diferencia entre la segunda y
+   * la tercera es si puede fiarse de lo que ve.
+   *
+   * ⚠️ La clave se queda AQUÍ, en el resultado, sin persistir. Mandarla al
+   * control plane es el siguiente trozo del paso 3; hasta entonces la
+   * grabación es ilegible a propósito, que es mejor que legible por cualquiera
+   * que abra el portátil.
+   */
+  private stopRecording(): void {
+    const rec = this.recorder;
+    this.recorder = null;
+    if (!rec) return;
+
+    try {
+      const res = rec.stop();
+      this.args.ctx.logger?.info?.("[rcp.screen] grabación cerrada", {
+        sessionId: this.args.sessionId,
+        frames: res.frames,
+        bytes: res.bytes,
+        stopReason: res.stopReason,
+        truncated: res.truncated
+      });
+      if (res.truncated) {
+        // Que quede en la auditoría del backend, no solo en el log local: el
+        // log local vive en el equipo del usuario y nadie lo mira.
+        this.args.sendScreenAudit({
+          event: "error",
+          width: this.lastWidth,
+          height: this.lastHeight,
+          fps: this.fps,
+          errorMessage: `recording_truncated:${res.stopReason}`
+        });
+      }
+    } catch (err: any) {
+      this.args.ctx.logger?.warn?.("[rcp.screen] fallo cerrando la grabación", {
+        sessionId: this.args.sessionId,
+        err: err?.message || String(err)
       });
     }
   }
@@ -786,6 +863,22 @@ export class ScreenSession {
       const frameSeq = this.seq++;
       const region = { full, x: rx, y: ry, rw, rh };
       this.recordFrameStats(full, data.length);
+
+      // ADR-0012 — grabación. Se ofrece el MISMO fotograma que va al operador,
+      // así que la grabación es exactamente lo que se vio, no una captura
+      // aparte que podría diferir. El grabador decide solo si le toca
+      // guardarlo, y nunca lanza: un fallo grabando no puede tumbar la sesión
+      // de soporte que está grabando.
+      this.recorder?.offer({
+        payload: Buffer.from(data, "base64"),
+        full,
+        x: rx,
+        y: ry,
+        rw,
+        rh,
+        w: width,
+        h: height
+      });
       if (data.length <= FRAME_CHUNK_MAX) {
         this.send({ op: "frame", seq: frameSeq, width, height, data, cursorX, cursorY, ...region });
       } else {
@@ -914,6 +1007,7 @@ export class ScreenSession {
     }
     this.clearIndicator();
     this.hideLinuxIndicator();
+    this.stopRecording();
     if (this.auditStartedSent) {
       this.args.sendScreenAudit({
         event: "stopped",
@@ -946,6 +1040,7 @@ export class ScreenSession {
     }
     this.clearIndicator();
     this.hideLinuxIndicator();
+    this.stopRecording();
     if (this.auditStartedSent) {
       this.args.sendScreenAudit({
         event: "stopped",
