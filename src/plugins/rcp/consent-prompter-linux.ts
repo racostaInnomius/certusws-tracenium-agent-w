@@ -27,6 +27,7 @@ import {
   consentLines,
   kindForCapability
 } from "./consent-text";
+import { recordingEnabled } from "./recording-policy";
 
 export function createLinuxConsentPrompter(ctx: AgentContext): ConsentPrompter {
   return {
@@ -47,10 +48,7 @@ export function createLinuxConsentPrompter(ctx: AgentContext): ConsentPrompter {
             text: consentLines({
               kind,
               operator: req.operator,
-              // TODO(ADR-0012 paso 3): cuando exista el toggle de grabación
-              // por tenant, se pasa aquí. Hoy no hay grabación, así que decir
-              // que la hay sería mentir en la otra dirección.
-              recording: false
+              recording: recordingEnabled(ctx)
             }).join("\n"),
             allow: buttons.allow,
             deny: buttons.deny,

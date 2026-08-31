@@ -71,6 +71,7 @@ import {
   shouldNotifyOperator,
   type ControlConsentState
 } from "./control-consent";
+import { recordingEnabled } from "./recording-policy";
 
 export type ScreenAuditPayload = {
   event: string;      // "started" | "stopped" | "error"
@@ -472,6 +473,10 @@ export class ScreenSession {
         capability: "rcp.screen",
         operator: this.args.operator || "",
         controlling: this.inputSeen,
+        // El derecho a saber que te graban no se agota al aceptar: dura lo que
+        // dure la grabación. Se lee de la política en cada publicación, no se
+        // fija al abrir, porque el tenant puede cambiarlo con la sesión viva.
+        recording: recordingEnabled(this.args.ctx),
         startedAtUtc: this.startedAtUtc
       });
     } catch (err: any) {

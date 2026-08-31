@@ -137,6 +137,20 @@ export type RuntimePolicy = {
     // prompt). The backend fail-closes if the agent can't prompt (doesn't
     // advertise rcp.consent).
     remoteRequireConsent?: boolean;
+    // Grabación de sesiones de pantalla (ADR-0012, decisión 2).
+    //
+    // ⚠️ APAGADO por defecto y así debe quedarse. Un tenant que no ha decidido
+    // grabar no debe tener vídeo de las pantallas de sus usuarios en ningún
+    // sitio, ni siquiera temporalmente en el disco del propio equipo — de ahí
+    // que se descartara "grabar siempre y usar el toggle solo para retener".
+    //
+    // Afecta SOLO a rcp.screen. El shell ya deja transcript y el gestor de
+    // ficheros deja auditoría de transferencias; ninguno de los dos expone lo
+    // que la persona tiene delante en ese instante.
+    //
+    // El texto del consentimiento DEPENDE de este flag: si se graba, el
+    // diálogo lo dice. Ver consent-text.ts.
+    remoteRecordScreen?: boolean;
     selfUpdate?: boolean;
     // Device-info widget: when true, the Windows AgentTray shows the
     // always-visible top-center flyout with device info for support
@@ -178,6 +192,7 @@ export type RuntimePolicy = {
       remoteFile?: boolean;
       remoteScreen?: boolean;
       remoteRequireConsent?: boolean;
+      remoteRecordScreen?: boolean;
       selfUpdate?: boolean;
       deviceInfoWidget?: boolean;
       locationTracking?: boolean;
@@ -569,6 +584,9 @@ const DEFAULT_POLICY: RuntimePolicy = {
     remoteFile:  false,
     remoteScreen: false,
     remoteRequireConsent: false,
+    // Fail closed, y aquí "cerrado" es NO grabar: un agente que no puede leer
+    // su política no debe empezar a guardar vídeo de la pantalla de nadie.
+    remoteRecordScreen: false,
     selfUpdate: true,
     deviceInfoWidget: false,
     // Fail closed. An agent that cannot read its policy must not start

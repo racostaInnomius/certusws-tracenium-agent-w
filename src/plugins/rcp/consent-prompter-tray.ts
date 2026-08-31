@@ -43,6 +43,7 @@ import type {
 } from "./consent-prompt";
 import { consentButtons, consentLines, consentTitle, kindForCapability } from "./consent-text";
 import { getTrayStatusFilePath } from "../../bootstrap/paths";
+import { recordingEnabled } from "./recording-policy";
 
 const REQUEST_FILE = "consent-request.json";
 const RESPONSE_FILE = "consent-response.json";
@@ -172,10 +173,7 @@ export function createTrayConsentPrompter(ctx: AgentContext): ConsentPrompter {
         lines: consentLines({
           kind,
           operator: req.operator,
-          // TODO(ADR-0012 paso 3): pasar el toggle de grabación del tenant
-          // cuando exista. Hoy no se graba, y decir que sí sería mentir en la
-          // otra dirección.
-          recording: false
+          recording: recordingEnabled(ctx)
         }),
         allowLabel: buttons.allow,
         denyLabel: buttons.deny,
