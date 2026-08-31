@@ -129,7 +129,13 @@ const TERMINAL_CAPTURE_CODES = new Set([
   "screen_capture_no_display",      // no display attached at all
   "screen_capture_unsupported_adapter", // Windows — adapter can't do Desktop Duplication
   "screen_capture_access_denied",   // Windows — secure desktop / session isolation
-  "x11_connect_failed"              // Linux — helper can't reach the X server
+  "x11_connect_failed",             // Linux — helper can't reach the X server
+  // Linux — el aviso en pantalla que le dice a la persona que la están viendo
+  // se cayó a mitad de sesión (ADR-0012). Terminal a propósito: PrivSvc no lo
+  // resucita solo, así que reintentar cada 200 ms no arregla nada y solo
+  // mantiene viva una sesión que ya no puede dar imagen. El operador abre otra
+  // y eso vuelve a pasar por la puerta de arranque.
+  "indicator_gone"
 ]);
 
 // Consecutive non-terminal failures absorbed before we bother the browser. A

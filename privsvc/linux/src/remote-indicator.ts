@@ -62,6 +62,78 @@ type Live = { child: ChildProcess; sessionId: string };
  */
 let live: Live | null = null;
 
+/**
+ * Estado del indicador, para la PUERTA que mira cada fotograma.
+ *
+ *   never_shown — este PrivSvc no ha enseñado ninguno todavía.
+ *   live        — hay uno en pantalla.
+ *   died        — hubo uno y se murió sin que nadie lo mandara retirar.
+ *
+ * POR QUÉ NO BASTA CON LA PUERTA DE ARRANQUE
+ *
+ *   `showIndicator` espera a que el helper confirme que la ventana está
+ *   pintada, y solo entonces se autoriza la sesión. Eso cubre "el aviso nunca
+ *   salió". NO cubre "el aviso salió y se cayó a los dos minutos": el servidor
+ *   X se reinicia, la persona cierra la sesión gráfica, el helper revienta.
+ *
+ *   En ese hueco la pantalla seguiría saliendo del equipo con el aviso ya
+ *   apagado — exactamente el estado que este ADR existe para impedir, solo que
+ *   llegando por otro camino. Comprobar una vez y confiar el resto de la
+ *   sesión convierte la garantía en un gesto.
+ *
+ * POR QUÉ `never_shown` DEJA PASAR
+ *
+ *   Fallar cerrado aquí sería fallar cerrado en el sitio equivocado: la puerta
+ *   de verdad es `showIndicator`, que corre ANTES de la primera captura y ya
+ *   rechaza la sesión si el aviso no aparece. Bloquear también el caso "aún no
+ *   se ha pedido ninguno" rompería cualquier captura que llegue por otro
+ *   camino sin añadir garantía, porque una sesión de pantalla SIEMPRE pasa
+ *   primero por la puerta de arranque.
+ */
+type IndicatorState = "never_shown" | "live" | "died";
+let state: IndicatorState = "never_shown";
+
+/** Decide si la captura puede continuar. Pura, para poder probarla de verdad. */
+export function indicatorGate(s: IndicatorState): { allowed: boolean; code: string } {
+  if (s === "died") {
+    return {
+      allowed: false,
+      code: "indicator_gone"
+    };
+  }
+  return { allowed: true, code: "" };
+}
+
+/** Estado actual. Lo consulta handleScreenCapture en cada fotograma. */
+export function indicatorState(): IndicatorState {
+  return state;
+}
+
+/**
+ * A qué estado lleva la muerte de un proceso indicador.
+ *
+ * `isCurrent` dice si el que murió era el que estábamos mostrando. Y ahí está
+ * la sutileza que hace falta aislar para poder probarla:
+ *
+ *   Cuando llega un `show` nuevo, lo primero que hace es retirar el anterior
+ *   —o sea, MATARLO—. Ese exit llega después, ya con el indicador nuevo
+ *   montado. Si se contara como muerte, la puerta se cerraría sobre una sesión
+ *   que está perfectamente anunciada, y el síntoma sería que la segunda sesión
+ *   de pantalla del día nunca funciona.
+ */
+export function nextStateOnChildExit(
+  isCurrent: boolean,
+  prev: IndicatorState
+): IndicatorState {
+  return isCurrent ? "died" : prev;
+}
+
+/** Solo para tests: devuelve el módulo a su estado inicial. */
+export function __resetIndicatorStateForTests(): void {
+  state = "never_shown";
+  live = null;
+}
+
 function helperPath(): string {
   const override = process.env.TRACENIUM_INDICATOR_HELPER;
   if (override && override.trim()) return override.trim();
@@ -72,6 +144,11 @@ function helperPath(): string {
 export function hideIndicator(): void {
   const cur = live;
   live = null;
+  // Retirada DELIBERADA: vuelve a "nunca mostrado", no a "muerto". La
+  // distinción es todo el punto — "lo mandé cerrar" y "se cayó solo" tienen
+  // que llevar a sitios distintos, o la puerta bloquearía la siguiente sesión
+  // por el cierre limpio de la anterior.
+  state = "never_shown";
   if (!cur) return;
   try {
     // Cerrar stdin es la vía limpia: el helper sale al ver EOF. El kill es el
@@ -177,12 +254,19 @@ export async function showIndicator(args: {
   }
 
   live = { child, sessionId: args.sessionId };
+  state = "live";
 
   // Si el helper muere por su cuenta —X se reinicia, el usuario cierra
-  // sesión— hay que soltar la referencia. Que se quede apuntando a un proceso
-  // muerto haría que el siguiente `show` creyera que ya hay uno vivo.
+  // sesión— hay que soltar la referencia Y cerrar la puerta.
+  //
+  // El `live?.child === child` no es paranoia: si mientras tanto llegó otro
+  // `show`, este exit es el del indicador VIEJO que hideIndicator acaba de
+  // matar a propósito. Marcarlo como "muerto" ahí cerraría la puerta sobre la
+  // sesión nueva, que está perfectamente anunciada.
   child.once("exit", (code) => {
-    if (live?.child === child) {
+    const isCurrent = live?.child === child;
+    state = nextStateOnChildExit(isCurrent, state);
+    if (isCurrent) {
       logger.warn("indicator_exited_unexpectedly", { code, sessionId: args.sessionId });
       live = null;
     }

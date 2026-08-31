@@ -36,6 +36,7 @@ import fs from "fs";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
+import { indicatorGate, indicatorState } from "./remote-indicator";
 // El descubrimiento de la sesión gráfica y el salto a ella viven en un módulo
 // aparte desde ADR-0012: el indicador de sesión remota necesita exactamente la
 // misma maniobra, y dos copias se habrían separado con el tiempo.
@@ -131,6 +132,24 @@ export async function handleScreenCapture(req: PrivSvcRequest): Promise<PrivSvcR
       "wayland_unsupported",
       "The active session is Wayland, which is not supported for screen sharing in this release. " +
         "Switch the session to X11 (Xorg) to enable screen capture."
+    );
+  }
+
+  // ADR-0012 — no se captura mientras el aviso al usuario esté caído.
+  //
+  // La puerta de arranque (rcp.indicator.show) cubre "el aviso nunca salió".
+  // Esta cubre "salió y se cayó a mitad de sesión", que deja la pantalla
+  // saliendo del equipo con el indicador apagado. Va aquí, en el camino de
+  // cada fotograma, porque es el único sitio por el que pasa TODO lo que sale
+  // de la pantalla.
+  const gate = indicatorGate(indicatorState());
+  if (!gate.allowed) {
+    logger.warn("screencap_blocked_indicator_gone");
+    return fail(
+      req.id,
+      gate.code,
+      "The on-screen indicator that tells the user they are being viewed is no longer running. " +
+        "Screen capture is refused until it can be shown again."
     );
   }
 
