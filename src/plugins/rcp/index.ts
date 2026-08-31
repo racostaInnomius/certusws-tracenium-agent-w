@@ -19,6 +19,7 @@ import type { AgentContext } from "../../core/agent-context";
 import { SessionManager } from "./session-manager";
 import { createLinuxConsentPrompter } from "./consent-prompter-linux";
 import { createTrayConsentPrompter } from "./consent-prompter-tray";
+import { purgeUnconfirmed } from "./recording-handoff";
 
 let manager: SessionManager | null = null;
 let nativeBroken = false;
@@ -100,8 +101,42 @@ export function initRcp(ctx: AgentContext): SessionManager {
   if (manager) return manager;
   manager = new SessionManager(ctx);
   registerConsentPrompter(ctx);
+  purgeOrphanRecordings(ctx);
   ctx.logger?.info?.("[rcp] initialized");
   return manager;
+}
+
+/**
+ * Barre las grabaciones cuya clave se perdió (ADR-0012).
+ *
+ * La clave de una grabación no se persiste NUNCA en el endpoint: vive en
+ * memoria y viaja al control plane al cerrar la sesión. Así que cualquier
+ * fichero que sobreviva a un reinicio sin su marca de confirmación viene de un
+ * proceso que murió antes de entregarla — y ya no lo puede descifrar nadie.
+ *
+ * Dejarlo sería lo peor de las dos opciones: vídeo de la pantalla de una
+ * persona ocupando su disco sin servirle a nadie. Se barre al arrancar, que es
+ * el único momento en que se sabe con certeza que el proceso anterior ya no va
+ * a entregar nada.
+ *
+ * Un número alto aquí no es rutina: significa que el agente está muriendo a
+ * mitad de sesión de forma repetida, y eso es un problema distinto que merece
+ * verse en el log.
+ */
+function purgeOrphanRecordings(ctx: AgentContext): void {
+  try {
+    const removed = purgeUnconfirmed();
+    if (removed > 0) {
+      ctx.logger?.warn?.(
+        "[rcp] grabaciones sin clave retiradas al arrancar",
+        { removed }
+      );
+    }
+  } catch (err: any) {
+    ctx.logger?.warn?.("[rcp] fallo barriendo grabaciones huérfanas", {
+      err: err?.message || String(err)
+    });
+  }
 }
 
 /**

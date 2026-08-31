@@ -73,6 +73,11 @@ import {
 } from "./control-consent";
 import { recordingEnabled } from "./recording-policy";
 import { ScreenRecorder } from "./screen-recorder";
+import {
+  fileSha256,
+  removeRecording,
+  writeConfirmedMarker
+} from "./recording-handoff";
 
 export type ScreenAuditPayload = {
   event: string;      // "started" | "stopped" | "error"
@@ -88,7 +93,25 @@ type ScreenSessionArgs = {
   /** Operador que abrió la sesión, para el indicador del endpoint. */
   operator?: string;
   sendScreenAudit: (audit: ScreenAuditPayload) => void;
+  /**
+   * Entrega la clave de la grabación al control plane (ADR-0012). Opcional
+   * porque las sesiones de shell y de ficheros no graban.
+   */
+  sendRecordingReady?: (r: RecordingReadyPayload) => void;
   onTeardown: (reason: string) => void;
+};
+
+export type RecordingReadyPayload = {
+  sessionId: string;
+  keyBase64: string;
+  bytes: number;
+  frames: number;
+  width: number;
+  height: number;
+  durationMs: number;
+  truncated: boolean;
+  stopReason: string;
+  sha256: string;
 };
 
 const DEFAULT_FPS = 5;
@@ -508,6 +531,8 @@ export class ScreenSession {
         stopReason: res.stopReason,
         truncated: res.truncated
       });
+
+      this.handOffRecording(res);
       if (res.truncated) {
         // Que quede en la auditoría del backend, no solo en el log local: el
         // log local vive en el equipo del usuario y nadie lo mira.
@@ -524,6 +549,65 @@ export class ScreenSession {
         sessionId: this.args.sessionId,
         err: err?.message || String(err)
       });
+    }
+  }
+
+  /**
+   * Entrega la clave, o borra el fichero si no hay a quién entregársela.
+   *
+   * ⚠️ El borrado NO es limpieza opcional. La clave solo existe en memoria; si
+   * no sale de aquí, ese fichero queda indescifrable para siempre y lo único
+   * que hace es ocupar el disco de la persona a la que se grabó. Guardarlo
+   * "por si acaso" no tiene caso: no hay ningún futuro en el que esa clave
+   * reaparezca.
+   *
+   * Se envía y se marca en el mismo paso. La marca es lo que salva al fichero
+   * del barrido de arranque; sin ella, el próximo inicio del agente lo tratará
+   * —correctamente— como huérfano.
+   */
+  private handOffRecording(res: {
+    path: string | null;
+    bytes: number;
+    frames: number;
+    keyBase64: string;
+    stopReason: string;
+    truncated: boolean;
+  }): void {
+    if (!res.path) return; // no se grabó nada
+
+    const send = this.args.sendRecordingReady;
+    if (!send) {
+      // Sin canal de entrega no hay grabación posible. Es el caso de una
+      // versión del agente con grabación activada y un session-manager que no
+      // la cablea — mejor borrarlo que dejarlo.
+      this.args.ctx.logger?.warn?.(
+        "[rcp.screen] no hay canal para entregar la clave; se descarta la grabación",
+        { sessionId: this.args.sessionId }
+      );
+      removeRecording(res.path);
+      return;
+    }
+
+    try {
+      send({
+        sessionId: this.args.sessionId,
+        keyBase64: res.keyBase64,
+        bytes: res.bytes,
+        frames: res.frames,
+        width: this.lastWidth,
+        height: this.lastHeight,
+        durationMs: Date.now() - Date.parse(this.startedAtUtc),
+        truncated: res.truncated,
+        stopReason: res.stopReason,
+        sha256: fileSha256(res.path)
+      });
+      writeConfirmedMarker(res.path, { sessionId: this.args.sessionId });
+    } catch (err: any) {
+      this.args.ctx.logger?.warn?.(
+        "[rcp.screen] falló la entrega de la clave; se descarta la grabación",
+        { sessionId: this.args.sessionId, err: err?.message || String(err) }
+      );
+      removeRecording(res.path);
     }
   }
 

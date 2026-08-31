@@ -19,7 +19,7 @@ import { TranscriptBuffer } from "./transcript-buffer";
 import { FileSession } from "./file-session";
 import type { FileTransferAuditPayload } from "./file-session";
 import { ScreenSession } from "./screen-session";
-import type { ScreenAuditPayload } from "./screen-session";
+import type { ScreenAuditPayload, RecordingReadyPayload } from "./screen-session";
 
 // Native module load. This is the historical hotspot for "AgentCore goes
 // silent" — `node-datachannel` is a C++ binding around libdatachannel +
@@ -83,6 +83,10 @@ type PeerSessionArgs = {
   sendFileTransferAudit: (audit: FileTransferAuditPayload) => void;
   // M3.S1 — screen share audit uploader (rcp.screen only).
   sendScreenAudit: (audit: ScreenAuditPayload) => void;
+  // ADR-0012 — entrega de la clave de la grabación (rcp.screen only). El
+  // VÍDEO no va por aquí: sube al blob aparte, para que quien obtenga el
+  // almacenamiento no obtenga también con qué descifrarlo.
+  sendRecordingReady?: (r: RecordingReadyPayload) => void;
   onTeardown: (reason: string) => void;
   sessionTimeoutSeconds: number;
 };
@@ -345,6 +349,7 @@ export class PeerSession {
           ctx,
           operator: args.operator,
           sendScreenAudit: args.sendScreenAudit,
+          sendRecordingReady: args.sendRecordingReady,
           onTeardown: (reason) => {
             this.screenSession = null;
             if (!this.disposed) args.onTeardown(reason);

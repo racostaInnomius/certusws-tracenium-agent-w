@@ -281,6 +281,58 @@ message RemoteScreenAudit {
   string errorMessage = 6;
 }
 
+// ---------------- RCP — GRABACIÓN DE SESIONES (ADR-0012) ----------------
+//
+// La grabación se origina en el AGENTE, se cifra en disco con una clave
+// aleatoria por sesión, y se sube DESPUÉS de la sesión para no quitarle ancho
+// de banda a la persona a la que se está dando soporte.
+//
+// ⚠️ LA CLAVE VIAJA POR AQUÍ Y EL VÍDEO NO. Es deliberado: si ambos fueran por
+// el mismo sitio, quien obtuviera el almacenamiento obtendría las dos mitades.
+// La clave acaba en la base del control plane; el vídeo, en el blob del
+// tenant. Hacen falta las dos para leer nada.
+//
+// El intercambio es de dos mensajes:
+//   1. El agente manda RemoteRecordingReady al terminar: clave, tamaño, hash.
+//   2. El servidor responde RemoteRecordingUpload con el destino, o negándose.
+//
+// Mientras el servidor no confirme, el fichero local es ILEGIBLE para siempre
+// —nadie más tiene la clave—, así que si la confirmación no llega el agente lo
+// borra en vez de dejar bytes indescifrables en el disco de alguien.
+message RemoteRecordingReady {
+  string sessionId    = 1;
+  // Clave AES-256 en base64. NO se persiste en el endpoint.
+  string keyBase64    = 2;
+  int64  bytes        = 3;
+  int32  frames       = 4;
+  // Tamaño del escritorio grabado, para que el reproductor dimensione sin
+  // tener que descifrar nada.
+  int32  width        = 5;
+  int32  height       = 6;
+  int64  durationMs   = 7;
+  // true si la grabación NO cubre la sesión entera. "Se grabó a medias" y "se
+  // grabó entera" significan cosas distintas para quien revise un incidente.
+  bool   truncated    = 8;
+  // session_ended | session_cap | total_cap | disk_low | write_error
+  string stopReason   = 9;
+  // SHA-256 del fichero cifrado, en hex. Permite al backend comprobar que lo
+  // que llegó al blob es lo que el agente dijo haber grabado.
+  string sha256       = 10;
+}
+
+// Respuesta del servidor. `accepted=false` es una respuesta legítima —el
+// tenant apagó la grabación entre medias, el almacenamiento no está
+// disponible— y el agente responde borrando el fichero local.
+message RemoteRecordingUpload {
+  string sessionId     = 1;
+  bool   accepted      = 2;
+  // URL con SAS donde subir. Vacía si accepted=false.
+  string uploadUrl     = 3;
+  string expiresAtUtc  = 4;
+  // Motivo del rechazo, para el log del endpoint.
+  string reason        = 5;
+}
+
 // ---------------- SOFTWARE CATALOG (self-service) ----------------
 //
 // Every other job dispatch in this system is admin-push (see RunJob) —
@@ -383,6 +435,8 @@ message ControlMessage {
     RemoteSessionTranscript remoteSessionTranscript = 25; // agent -> server (M1.S3)
     RemoteFileTransferAudit remoteFileTransferAudit  = 26; // agent -> server (M2.S1)
     RemoteScreenAudit       remoteScreenAudit        = 27; // agent -> server (M3.S1)
+    RemoteRecordingReady    remoteRecordingReady     = 28; // agent -> server (ADR-0012)
+    RemoteRecordingUpload   remoteRecordingUpload    = 29; // server -> agent (ADR-0012)
 
     // Software Catalog self-service (see message docs above).
     // Field numbers 30-33 — next free block after RCP's 20-29.

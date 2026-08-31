@@ -255,3 +255,61 @@ describe("la sesión solo graba si el tenant lo activó", () => {
     expect((session as any).recorder).toBeNull();
   });
 });
+
+describe("entrega de la clave al cerrar", () => {
+  function sessionWithHandoff(opts: { send?: any; throws?: boolean } = {}) {
+    process.env.TRACENIUM_RECORDINGS_DIR = dir;
+    const dc = new FakeDataChannel();
+    const sent: any[] = [];
+    const ctx: any = {
+      logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+      policyRuntime: { isFeatureEnabled: (f: string) => f === "remoteRecordScreen" },
+      priv: { call: vi.fn(async () => okFrame()) }
+    };
+    const session = new ScreenSession(dc as any, {
+      sessionId: "sess-key", ctx,
+      sendScreenAudit: () => {},
+      sendRecordingReady: opts.send === null ? undefined : (r: any) => {
+        if (opts.throws) throw new Error("stream caído");
+        sent.push(r);
+      },
+      onTeardown: () => {}
+    } as any);
+    return { session, sent };
+  }
+
+  it("manda la clave y deja la marca que salva al fichero", async () => {
+    const { session, sent } = sessionWithHandoff();
+    await new Promise((r) => setTimeout(r, 300));
+    session.dispose("test");
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(sent.length).toBe(1);
+    expect(sent[0].keyBase64).toMatch(/^[A-Za-z0-9+/=]{44}$/);
+    expect(sent[0].sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(sent[0].sessionId).toBe("sess-key");
+
+    // La marca es lo único que separa este fichero del barrido de arranque.
+    expect(fs.readdirSync(dir).some((n) => n.endsWith(".ok"))).toBe(true);
+  });
+
+  it("si la entrega LANZA, se borra el fichero", async () => {
+    // La clave solo vive en memoria: sin entrega, ese vídeo es indescifrable
+    // para siempre y solo ocupa el disco de la persona a la que se grabó.
+    const { session } = sessionWithHandoff({ throws: true });
+    await new Promise((r) => setTimeout(r, 300));
+    session.dispose("test");
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(fs.readdirSync(dir).filter((n) => n.endsWith(".trec"))).toEqual([]);
+  });
+
+  it("sin canal de entrega, tampoco se conserva", async () => {
+    const { session } = sessionWithHandoff({ send: null });
+    await new Promise((r) => setTimeout(r, 300));
+    session.dispose("test");
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(fs.readdirSync(dir).filter((n) => n.endsWith(".trec"))).toEqual([]);
+  });
+});

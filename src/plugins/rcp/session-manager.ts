@@ -313,6 +313,7 @@ export class SessionManager {
         this.sendFileTransferAudit(sessionId, audit),
       sendScreenAudit: (audit) =>
         this.sendScreenAudit(sessionId, audit),
+      sendRecordingReady: (r) => this.sendRecordingReady(r),
       onTeardown: (reason) => {
         this.sessions.delete(sessionId);
         this.sendClose(sessionId, reason);
@@ -600,5 +601,33 @@ export class SessionManager {
         errorMessage: audit.errorMessage
       }
     });
+  }
+
+  /**
+   * Entrega la clave de una grabación al control plane (ADR-0012).
+   *
+   * ⚠️ Este mensaje es lo único que separa una grabación de auditoría de un
+   * fichero indescifrable. La clave no se persiste en el endpoint, así que si
+   * esto no sale, ese vídeo no lo lee nadie nunca — ni nosotros ni el cliente
+   * que lo necesite para un incidente.
+   *
+   * Va por el canal de control, que es el mismo mTLS ya autenticado por el que
+   * viaja todo lo demás. El VÍDEO no va por aquí: sube al blob del tenant,
+   * aparte, para que quien obtenga el almacenamiento no obtenga también la
+   * clave.
+   */
+  private sendRecordingReady(r: {
+    sessionId: string;
+    keyBase64: string;
+    bytes: number;
+    frames: number;
+    width: number;
+    height: number;
+    durationMs: number;
+    truncated: boolean;
+    stopReason: string;
+    sha256: string;
+  }): void {
+    this.ctx.sendControl?.({ remoteRecordingReady: r });
   }
 }
