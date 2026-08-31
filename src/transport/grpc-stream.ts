@@ -12,6 +12,9 @@ import { runRemediation } from "../plugins/pmp/remediation";
 // ctx.plugins.run("sdp.install", ...) so it goes through the
 // PluginManager policy gate uniformly with the other plugins.
 import { runUpdateTask } from "../update/update-task";
+// Imports nothing itself, so it cannot join the cycle that forces the lazy
+// `require("../update/update-task")` further down.
+import { describeError } from "../update/describe-error";
 import { consumePendingCatalogInstallRequest } from "../status/catalog-install-request-watcher";
 
 const ACK_TIMEOUT_MS = 60_000;
@@ -1953,13 +1956,16 @@ stream = client.Connect();
           })
           .catch((err: any) => {
             ctx.logger?.error?.("agentUpdate execution failed", {
-              err: err?.message || err
+              err: describeError(err)
             });
+            // `err?.message || "update_failed"` hid the same thing the task's
+            // own catch did: an empty message fell through to a fixed literal,
+            // so a rejection here reported no reason whatsoever.
             return sendControlAck(
               ctx,
               eventId,
               2,
-              err?.message || "update_failed"
+              `update_failed: ${describeError(err)}`
             );
           })
           .finally(() => {

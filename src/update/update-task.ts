@@ -15,6 +15,7 @@ import {
   performLinuxUpdate
 } from "./update-service";
 import { compareSemver, looksLikeSemver } from "./semver";
+import { describeError } from "./describe-error";
 
 /**
  * Which tier served the installer for the attempt that just ran.
@@ -366,7 +367,14 @@ export async function runUpdateTask(
     return { status: "started", version: effectiveVersion, servedBy: servedTier() };
 
   } catch (err: any) {
-    const error = err?.message || String(err);
+    // ⚠️ NOT `err?.message || String(err)`. This string becomes the ACK the
+    // control plane stores in `device_jobs.last_error`, and an AggregateError
+    // — what Node throws when every candidate address of a host refuses the
+    // connection — has an EMPTY message, so that idiom reported the literal
+    // word "AggregateError" and discarded `err.errors[]`. Nine failures in
+    // tenant 111 looked like a new fault and were the same TCP timeout to
+    // Azure Blob we had already seen eighteen times with a single address.
+    const error = describeError(err);
     markUpdateFailed(error);
 
     logger?.error?.("[update] update task failed", {

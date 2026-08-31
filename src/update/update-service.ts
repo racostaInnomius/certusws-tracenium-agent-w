@@ -22,6 +22,7 @@ import { runMacosPkgUpdate, runWindowsMsiUpdate } from "./updater-runner";
 import { evaluateSignatureGate, normalizeVerifyResponse } from "../plugins/sdp/signature-gate";
 import { detectFamily } from "../platform/linux/distro";
 import { compareSemver, looksLikeSemver } from "./semver";
+import { describeError } from "./describe-error";
 
 function resolveBaseDir() {
   if (process.platform === "win32") {
@@ -883,7 +884,9 @@ export async function performWindowsMsiUpdate(
       });
     } catch (err: any) {
       console.warn("[update] distribution point unusable; downloading directly", {
-        error: err?.message || String(err),
+        // The DP leg is where a fleet of unreachable LAN peers shows up as a
+        // pile of connect failures — precisely the aggregate shape.
+        error: describeError(err),
         dpCount: dpSources.length,
       });
     }
@@ -1020,7 +1023,9 @@ export async function performMacosPkgUpdate(
       });
     } catch (err: any) {
       console.warn("[update] distribution point unusable; downloading directly", {
-        error: err?.message || String(err),
+        // The DP leg is where a fleet of unreachable LAN peers shows up as a
+        // pile of connect failures — precisely the aggregate shape.
+        error: describeError(err),
         dpCount: dpSources.length,
       });
     }
@@ -1232,7 +1237,9 @@ export async function performLinuxUpdate(
       });
     } catch (err: any) {
       console.warn("[update] distribution point unusable; downloading directly", {
-        error: err?.message || String(err),
+        // The DP leg is where a fleet of unreachable LAN peers shows up as a
+        // pile of connect failures — precisely the aggregate shape.
+        error: describeError(err),
         dpCount: dpSources.length,
       });
     }

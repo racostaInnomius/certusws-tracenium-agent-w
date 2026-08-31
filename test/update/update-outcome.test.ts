@@ -104,6 +104,33 @@ describe("runUpdateTask outcome contract", () => {
     expect((outcome as any).error).toContain("PrivSvc timeout");
   });
 
+  // ⚠️ PINS THE CALL SITE, NOT THE HELPER.
+  //
+  // describe-error.test.ts proves the formatter works. It does NOT prove that
+  // runUpdateTask uses it — reverting this one line to `err?.message ||
+  // String(err)` leaves all fourteen of those tests green while the ACK goes
+  // back to reporting the bare word "AggregateError". That is exactly how the
+  // defect reached tenant 111, so the assertion belongs here too.
+  //
+  // The input is the literal shape Node produced on DanielA-PC: two candidate
+  // addresses for the Azure Blob host, both refused, an empty own message.
+  it("reports WHY when the failure is an AggregateError with no message", async () => {
+    metadataOffering("1.1.54");
+    performWindowsMsiUpdate.mockRejectedValue(
+      new AggregateError([
+        new Error("connect ETIMEDOUT 20.60.178.4:443"),
+        new Error("connect ENETUNREACH 2620:1ec::4:443"),
+      ])
+    );
+
+    const outcome = await runUpdateTask(ctx, { force: true, targetVersion: "1.1.54" });
+
+    expect(outcome.status).toBe("failed");
+    expect((outcome as any).error).toContain("connect ETIMEDOUT 20.60.178.4:443");
+    // The regression: the whole diagnosis collapsed to this one word.
+    expect((outcome as any).error).not.toBe("AggregateError");
+  });
+
   it("reports `started` only when the installer was actually launched", async () => {
     metadataOffering("1.1.30");
     performWindowsMsiUpdate.mockResolvedValue({ command: "msiexec", args: ["/i"] });
