@@ -269,8 +269,87 @@ export class ScreenSession {
     // Start the capture loop after a tick so the constructor returns
     // cleanly before the first async capture fires.
     setImmediate(() => {
-      if (!this.disposed) this.scheduleNext();
+      if (this.disposed) return;
+      void this.startAfterIndicator();
     });
+  }
+
+  /**
+   * En Linux, ENCIENDE el indicador antes de capturar y aborta si no aparece.
+   *
+   * POR QUÉ AQUÍ HAY UNA PUERTA Y EN WINDOWS/macOS NO
+   *
+   *   En Windows y macOS el indicador lo pinta un proceso que YA vive en la
+   *   sesión del usuario (la bandeja) leyendo el fichero de estado. Publicar
+   *   el estado no puede fallar de forma que deje a alguien mirando sin aviso:
+   *   si la bandeja no corre, tampoco corre nada más del lado del usuario.
+   *
+   *   Linux no tiene nada nuestro en la sesión gráfica. El aviso lo lanza
+   *   PrivSvc a propósito para esta sesión, y ESO sí puede fallar por su
+   *   cuenta: sin fuente utilizable, sin cookie X, con el helper ausente en un
+   *   paquete construido sin libX11. En ese caso la elección es real —
+   *   compartir pantalla sin que nadie pueda saberlo, o no compartirla.
+   *
+   *   ADR-0012 dice que el valor por defecto pasa a ser el seguro. Así que no
+   *   se comparte.
+   *
+   *   El alcance de esa negativa es pequeño: la captura en Linux ya rechaza
+   *   headless (`no_interactive_desktop`) y Wayland (`wayland_unsupported`)
+   *   antes de llegar aquí. Lo único nuevo que se rechaza es "hay escritorio
+   *   X11 pero el aviso no arranca", que es exactamente el caso que no
+   *   queremos dejar pasar.
+   */
+  private async startAfterIndicator(): Promise<void> {
+    if (process.platform === "linux") {
+      const who = this.args.operator?.trim() || "A remote operator";
+      let res: any = null;
+      try {
+        res = await this.args.ctx.priv?.call?.({
+          id: `rcp.indicator.show.${this.args.sessionId}`,
+          method: "rcp.indicator.show",
+          params: {
+            sessionId: this.args.sessionId,
+            text: `${who} is viewing this screen`,
+            button: "Stop sharing"
+          }
+        });
+      } catch (err: any) {
+        res = { ok: false, code: "indicator_call_failed", message: err?.message };
+      }
+
+      if (!res || res.ok !== true) {
+        const code = String(res?.code || res?.error?.code || "indicator_unavailable");
+        this.args.ctx.logger?.warn?.(
+          "[rcp.screen] sin indicador visible: no se comparte pantalla",
+          { sessionId: this.args.sessionId, code }
+        );
+        this.args.sendScreenAudit({
+          event: "error",
+          width: 0,
+          height: 0,
+          fps: this.fps,
+          errorMessage: `indicator_unavailable:${code}`
+        });
+        this.stopCapture("indicator_unavailable");
+        return;
+      }
+    }
+
+    if (!this.disposed) this.scheduleNext();
+  }
+
+  /** Retira el indicador nativo de Linux. No lanza: corre en el cierre. */
+  private hideLinuxIndicator(): void {
+    if (process.platform !== "linux") return;
+    try {
+      void this.args.ctx.priv?.call?.({
+        id: `rcp.indicator.hide.${this.args.sessionId}`,
+        method: "rcp.indicator.hide",
+        params: {}
+      });
+    } catch {
+      /* el proceso se está cerrando */
+    }
   }
 
   /** Enciende el indicador de la bandeja para esta sesión. */
@@ -703,6 +782,7 @@ export class ScreenSession {
       this.revokeTimer = null;
     }
     this.clearIndicator();
+    this.hideLinuxIndicator();
     if (this.auditStartedSent) {
       this.args.sendScreenAudit({
         event: "stopped",
@@ -734,6 +814,7 @@ export class ScreenSession {
       this.revokeTimer = null;
     }
     this.clearIndicator();
+    this.hideLinuxIndicator();
     if (this.auditStartedSent) {
       this.args.sendScreenAudit({
         event: "stopped",

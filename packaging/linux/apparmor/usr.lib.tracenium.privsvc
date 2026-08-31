@@ -388,6 +388,34 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   # mismo, se le pasa a node como argumento — por eso se instala 0644.
   /usr/lib/tracenium/privsvc/tracenium-rcp-pty      r,
 
+  # ── RCP — captura de pantalla e indicador de sesion (ADR-0012) ───
+  # Las dos cosas que privsvc tiene que poner en el escritorio del usuario
+  # pasan por el mismo salto: `runuser -u <user> -- env DISPLAY=... helper`.
+  #
+  # Ux y no ix: el helper habla con el servidor X del usuario y necesita sus
+  # sockets, sus fuentes y su cookie. Confinarlo bajo ESTE perfil —escrito
+  # para un demonio sin cara— le negaria todo eso, y el sintoma seria una
+  # captura en negro o un indicador que no aparece, sin mencionar AppArmor
+  # por ningun lado.
+  #
+  # Ux es legitimo aqui porque quien lanza es privsvc, que corre con
+  # NoNewPrivileges=no. El agente no podria (ver la nota de snap/flatpak
+  # arriba), pero el agente no lanza esto.
+  #
+  # ⚠️ Sin estas lineas, al pasar el perfil a enforce se rompen a la vez la
+  # comparticion de pantalla en Linux y —peor— el aviso de ADR-0012 que le
+  # dice a la persona que le estan mirando. Hoy el perfil va en complain, asi
+  # que esto solo se ve como apparmor="ALLOWED" en el log; se declara ahora
+  # para que ese cambio no se lleve la funcion por delante.
+  /usr/bin/runuser                                  Ux,
+  /usr/bin/su                                       Ux,
+  /bin/su                                           Ux,
+  # `r` y no `x`: privsvc no los ejecuta, comprueba que existan antes de
+  # pasarselos a runuser (fs.existsSync). Quien los ejecuta es runuser, ya
+  # fuera de este perfil.
+  /usr/lib/tracenium/privsvc/tracenium-screencap    r,
+  /usr/lib/tracenium/privsvc/tracenium-indicator    r,
+
   # ── RCP remote shell ─────────────────────────────────────────────
   # ⚠️ Este perfil se ancla a /usr/lib/tracenium/node, que es el MISMO
   # binario con el que arranca el AgentCore (ExecStart=/usr/lib/tracenium/node

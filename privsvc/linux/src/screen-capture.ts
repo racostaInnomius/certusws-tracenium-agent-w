@@ -36,163 +36,25 @@ import fs from "fs";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
+// El descubrimiento de la sesión gráfica y el salto a ella viven en un módulo
+// aparte desde ADR-0012: el indicador de sesión remota necesita exactamente la
+// misma maniobra, y dos copias se habrían separado con el tiempo.
+import type { GraphicalSession } from "./x11-session";
+import {
+  activeGraphicalSession,
+  buildEnvAssignments,
+  buildRunuserArgs,
+  homeForUser,
+  resolveXauthority
+} from "./x11-session";
 
 const HELPER_TIMEOUT_MS = 5000;
 const HELPER_MAX_STDOUT = 16 * 1024 * 1024;
-
-type GraphicalSession = {
-  uid: number;
-  user: string;
-  display: string;
-  type: string; // "x11" | "wayland" | "tty" | ...
-};
 
 function helperPath(): string {
   const override = process.env.TRACENIUM_SCREENCAP_HELPER;
   if (override && override.trim()) return override.trim();
   return path.resolve(__dirname, "tracenium-screencap");
-}
-
-function execText(cmd: string, args: string[], timeout = 2500): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile(cmd, args, { timeout, maxBuffer: 1024 * 1024 }, (err, stdout) => {
-      if (err) return resolve(null);
-      resolve(String(stdout || ""));
-    });
-  });
-}
-
-/**
- * Parse `loginctl show-session <id> -p Key` output (`Key=Value` lines).
- */
-function parseLoginctlProps(text: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const raw of text.split("\n")) {
-    const idx = raw.indexOf("=");
-    if (idx <= 0) continue;
-    out[raw.slice(0, idx).trim()] = raw.slice(idx + 1).trim();
-  }
-  return out;
-}
-
-/**
- * Find the active graphical session via logind. Picks the first local,
- * active session that has a usable Display. Returns its type so the
- * caller can short-circuit Wayland.
- */
-async function activeGraphicalSession(): Promise<GraphicalSession | null> {
-  const list = await execText("loginctl", ["list-sessions", "--no-legend"]);
-  if (!list) {
-    logger.warn("screencap_loginctl_unavailable");
-    return null;
-  }
-
-  // Columns: SESSION UID USER SEAT TTY  (whitespace separated)
-  const sessionIds: string[] = [];
-  for (const line of list.split("\n")) {
-    const cols = line.trim().split(/\s+/);
-    if (cols[0]) sessionIds.push(cols[0]);
-  }
-
-  let fallback: GraphicalSession | null = null;
-
-  for (const id of sessionIds) {
-    const props = await execText("loginctl", [
-      "show-session",
-      id,
-      "-p",
-      "Active",
-      "-p",
-      "Remote",
-      "-p",
-      "Type",
-      "-p",
-      "Display",
-      "-p",
-      "Name",
-      "-p",
-      "User"
-    ]);
-    if (!props) continue;
-    const p = parseLoginctlProps(props);
-
-    if (p.Remote === "yes") continue; // SSH / remote — no local framebuffer
-    const uid = Number(p.User);
-    const user = p.Name || "";
-    const type = (p.Type || "").toLowerCase();
-    const display = p.Display || "";
-
-    if (!Number.isInteger(uid) || !user) continue;
-
-    // A Wayland session still reports here; we keep it so the caller can
-    // emit `wayland_unsupported` rather than silently moving on and
-    // claiming "no desktop".
-    if (type === "wayland") {
-      const candidate = { uid, user, display, type };
-      if (p.Active === "yes") return candidate;
-      fallback ||= candidate;
-      continue;
-    }
-
-    if (type === "x11" || display) {
-      const candidate = { uid, user, display: display || ":0", type: type || "x11" };
-      if (p.Active === "yes") return candidate;
-      fallback ||= candidate;
-    }
-  }
-
-  return fallback;
-}
-
-/**
- * Best-effort XAUTHORITY discovery for an X11 session.
- *
- * Strategy, most-reliable first:
- *   1. Parse `-auth <path>` from the running Xorg/X process cmdline —
- *      display managers (gdm/lightdm/sddm) always pass this and it's the
- *      cookie that actually authorises us.
- *   2. Probe well-known per-DM locations.
- *   3. Give up and return null — the helper then tries $HOME/.Xauthority
- *      on its own, and as a last resort an unauthenticated local connect.
- */
-async function resolveXauthority(session: GraphicalSession, home: string | null): Promise<string | null> {
-  // 1. Xorg -auth
-  const ps = await execText("pgrep", ["-a", "-x", "Xorg"]);
-  const psFallback = ps || (await execText("pgrep", ["-af", "X"]));
-  if (psFallback) {
-    for (const line of psFallback.split("\n")) {
-      if (session.display && !line.includes(session.display)) {
-        // Prefer the line matching our display, but don't hard-require it.
-      }
-      const m = line.match(/-auth\s+(\S+)/);
-      if (m && fs.existsSync(m[1])) return m[1];
-    }
-  }
-
-  // 2. Known locations
-  const candidates = [
-    `/run/user/${session.uid}/gdm/Xauthority`,
-    `/run/user/${session.uid}/.Xauthority`,
-    session.display ? `/var/run/lightdm/root/${session.display}` : "",
-    home ? path.join(home, ".Xauthority") : ""
-  ].filter(Boolean) as string[];
-
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
-  }
-
-  return null;
-}
-
-function homeForUser(user: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile("getent", ["passwd", user], { timeout: 2000 }, (err, stdout) => {
-      if (err) return resolve(null);
-      // name:x:uid:gid:gecos:home:shell
-      const parts = String(stdout).trim().split(":");
-      resolve(parts[5] || null);
-    });
-  });
 }
 
 type HelperRun = { code: number | null; stdout: string; stderr: string };
@@ -212,8 +74,10 @@ function runHelper(
   helper: string,
   quality: number
 ): Promise<HelperRun> {
-  const envArgs = [`DISPLAY=${session.display || ":0"}`];
-  if (xauthority) envArgs.push(`XAUTHORITY=${xauthority}`);
+  const args = buildRunuserArgs(session, xauthority, [helper, "--quality", String(quality)]);
+  // `su` recibe una línea de shell en vez de argv, así que necesita las
+  // mismas asignaciones de entorno por separado.
+  const envArgs = buildEnvAssignments(session, xauthority);
 
   return new Promise((resolve) => {
     const finish = (err: any, stdout: string, stderr: string) => {
@@ -222,7 +86,6 @@ function runHelper(
       resolve({ code, stdout: String(stdout || ""), stderr: String(stderr || "") });
     };
 
-    const args = ["-u", session.user, "--", "env", ...envArgs, helper, "--quality", String(quality)];
     execFile(
       "runuser",
       args,
@@ -250,7 +113,9 @@ export async function handleScreenCapture(req: PrivSvcRequest): Promise<PrivSvcR
   if (!Number.isFinite(quality)) quality = 80;
   quality = Math.max(1, Math.min(100, Math.round(quality)));
 
-  const session = await activeGraphicalSession();
+  const session = await activeGraphicalSession(() =>
+    logger.warn("screencap_loginctl_unavailable")
+  );
   if (!session) {
     return fail(
       req.id,

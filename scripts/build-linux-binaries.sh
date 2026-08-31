@@ -344,6 +344,37 @@ if ! "${CC:-cc}" -O2 -Wall "$SCREENCAP_SRC" -o "$SCREENCAP_OUT" -lX11 -ljpeg; th
 fi
 [ -f "$SCREENCAP_OUT" ] && chmod 0755 "$SCREENCAP_OUT"
 
+# ── RCP — indicador de sesión de control remoto (ADR-0012) ────────
+# Linux no tiene bandeja donde poner el aviso de "te están viendo la
+# pantalla", así que PrivSvc lanza esta ventanita X11 dentro de la sesión
+# del usuario mientras dure la sesión remota. Va junto a privsvc/index.js
+# porque remote-indicator.ts lo resuelve con path.resolve(__dirname, ...),
+# igual que el de screencap. Solo libX11 — sin Xft, para no arrastrar
+# freetype+fontconfig al paquete por dibujar dos líneas de texto.
+INDICATOR_SRC="$ROOT_DIR/privsvc/linux/helpers/indicator.c"
+INDICATOR_OUT="$PKG_ROOT/privsvc/tracenium-indicator"
+if [ ! -f "$INDICATOR_SRC" ]; then
+  echo "ERROR: missing indicator helper source: $INDICATOR_SRC" >&2
+  exit 1
+fi
+echo "→ cc indicator helper (X11)"
+if ! "${CC:-cc}" -O2 -Wall "$INDICATOR_SRC" -o "$INDICATOR_OUT" -lX11; then
+  if [ "${TRACENIUM_SKIP_SCREENCAP:-}" = "1" ]; then
+    # El stub NO es cosmético: al fallar, la puerta de ADR-0012 rechaza la
+    # sesión de pantalla entera. Es deliberado — un paquete construido sin
+    # X11 no puede avisar a nadie de que le están mirando, así que tampoco
+    # comparte pantalla. Fallar cerrado, no abierto.
+    echo "WARNING: indicator helper failed to build and TRACENIUM_SKIP_SCREENCAP=1 — installing a stub. Screen sharing will be REFUSED on this build (no way to show the on-screen indicator)." >&2
+    printf '#!/bin/sh\nprintf "{\\"ok\\":false,\\"code\\":\\"indicator_helper_missing\\",\\"message\\":\\"remote session indicator not built into this package\\"}\\n"\n' > "$INDICATOR_OUT"
+  else
+    echo "ERROR: failed to compile indicator helper. Install libx11-dev" >&2
+    echo "       (Debian) or libX11-devel (RHEL), or set TRACENIUM_SKIP_SCREENCAP=1" >&2
+    echo "       to build without screen sharing." >&2
+    exit 1
+  fi
+fi
+[ -f "$INDICATOR_OUT" ] && chmod 0755 "$INDICATOR_OUT"
+
 # ── RCP — helper del shell remoto privilegiado ────────────────────
 # JS plano, sin compilar ni empaquetar: carga node-pty (nativo) desde el árbol
 # del agente en tiempo de ejecución, así que no puede ir dentro del bundle de

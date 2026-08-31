@@ -43,6 +43,7 @@ import {
 } from "./grpc-bridge";
 import { handleSecurityPosture } from "./security-posture";
 import { handleScreenCapture } from "./screen-capture";
+import { handleIndicatorShow, handleIndicatorHide } from "./remote-indicator";
 import { handlePatchScan, handlePatchInstall } from "./patch-management";
 import { handlePmpReadCheckState, handlePmpRemediate } from "./pmp-remediation";
 import {
@@ -204,6 +205,17 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "screen.capture":
       return handleScreenCapture(req);
+
+    // ADR-0012 — indicador de sesión de control remoto. Linux no tiene
+    // bandeja donde ponerlo, así que PrivSvc lo lanza dentro de la sesión
+    // gráfica y lo mantiene vivo mientras dure. `show` no vuelve hasta
+    // saber si la ventana está en pantalla: si no lo está, el agente
+    // rechaza la sesión en vez de compartir pantalla en silencio.
+    case "rcp.indicator.show":
+      return handleIndicatorShow(req);
+
+    case "rcp.indicator.hide":
+      return handleIndicatorHide(req);
 
     // ── SCP — security posture (Phase 5) ──────────────────────────
     // Both method names route to the same handler. Schema 2.0 uses

@@ -11,8 +11,18 @@
 // CONTRATO temporal: encendido antes del primer fotograma, apagado al
 // terminar, y escalado a "controlando" en cuanto entra el primer evento.
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { ScreenSession } from "../../src/plugins/rcp/screen-session";
+
+let prevPlatform: PropertyDescriptor | undefined;
+function pretendLinux() {
+  prevPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: "linux" });
+}
+afterEach(() => {
+  if (prevPlatform) Object.defineProperty(process, "platform", prevPlatform);
+  prevPlatform = undefined;
+});
 
 class FakeDataChannel {
   private msgCb: ((raw: any) => void) | null = null;
@@ -191,6 +201,18 @@ describe("indicador de sesión de pantalla", () => {
     session.dispose("test");
   });
 
+  it("en Windows/macOS NO llama al indicador nativo de Linux", async () => {
+    // La bandeja ya vive en la sesión del usuario en esas dos plataformas;
+    // este IPC no existe en sus PrivSvc y llamarlo sería un error por método
+    // desconocido en cada sesión.
+    const { ctx, session, captures } = makeSession();
+    await waitFor(() => captures.length >= 1);
+
+    const methods = ctx.priv.call.mock.calls.map((c: any[]) => c[0].method);
+    expect(methods).not.toContain("rcp.indicator.show");
+    session.dispose("test");
+  });
+
   it("funciona con un ctx sin bandeja", async () => {
     // Linux headless y los tests de otros módulos construyen sesiones sin
     // trayStatus. El optional-chaining está ahí a propósito.
@@ -205,5 +227,137 @@ describe("indicador de sesión de pantalla", () => {
       sendScreenAudit: () => {},
       onTeardown: () => {}
     } as any).dispose("test")).not.toThrow();
+  });
+});
+
+// ── La puerta de Linux ──────────────────────────────────────────────
+//
+// En Windows y macOS el aviso lo pinta la bandeja, que ya vive en la sesión
+// del usuario. Linux no tiene nada nuestro ahí, así que PrivSvc lanza el aviso
+// a propósito para cada sesión — y eso puede fallar por su cuenta. Cuando
+// falla, la elección es real: compartir pantalla sin que nadie pueda saberlo,
+// o no compartirla. ADR-0012 dice que no se comparte.
+describe("indicador en Linux — puerta fail-closed", () => {
+  /** Sesión en Linux cuyo PrivSvc responde `indicator` según `indicatorReply`. */
+  function makeLinuxSession(indicatorReply: any) {
+    pretendLinux();
+    const dc = new FakeDataChannel();
+    const captures: any[] = [];
+    const methods: string[] = [];
+    const audits: any[] = [];
+
+    const ctx: any = {
+      logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+      trayStatus: { setRemoteSession: () => {} },
+      priv: {
+        call: vi.fn(async (req: any) => {
+          methods.push(req.method);
+          if (req.method === "rcp.indicator.show") return indicatorReply;
+          if (req.method === "rcp.indicator.hide") return { ok: true };
+          // Contar SOLO screen.capture: cualquier método futuro que se añada
+          // al cierre se colaría aquí como si fuera un fotograma capturado.
+          if (req.method === "screen.capture") captures.push(req);
+          return okFrame();
+        })
+      }
+    };
+
+    const session = new ScreenSession(dc as any, {
+      sessionId: "sess-linux-1",
+      ctx,
+      operator: "Javier Pacheco",
+      sendScreenAudit: (a: any) => audits.push(a),
+      onTeardown: () => {}
+    } as any);
+
+    return { dc, session, captures, methods, audits, ctx };
+  }
+
+  it("enciende el indicador ANTES de capturar el primer fotograma", async () => {
+    const { methods, captures, session } = makeLinuxSession({ ok: true });
+    await waitFor(() => captures.length >= 1);
+
+    expect(methods[0]).toBe("rcp.indicator.show");
+    session.dispose("test");
+  });
+
+  it("le pasa al helper el nombre del operador", async () => {
+    const { ctx, captures, session } = makeLinuxSession({ ok: true });
+    await waitFor(() => captures.length >= 1);
+
+    const show = ctx.priv.call.mock.calls
+      .map((c: any[]) => c[0])
+      .find((r: any) => r.method === "rcp.indicator.show");
+    expect(show.params.text).toContain("Javier Pacheco");
+    expect(show.params.sessionId).toBe("sess-linux-1");
+    session.dispose("test");
+  });
+
+  it("NO captura ni un fotograma si el indicador no arranca", async () => {
+    // El caso que carga toda la garantía. Sin esto, un paquete construido sin
+    // libX11 compartiría pantalla en silencio.
+    const { captures, methods, session } = makeLinuxSession({
+      ok: false, code: "indicator_no_font", message: "no font"
+    });
+    await waitFor(() => methods.length >= 1);
+    await new Promise((r) => setTimeout(r, 250));
+
+    expect(captures.length).toBe(0);
+    session.dispose("test");
+  });
+
+  it("deja el motivo en la auditoría, no solo en el log", async () => {
+    // "La sesión no arrancó" sin causa manda a quien lo investigue a mirar
+    // WebRTC, que es donde no está el problema.
+    const { audits, session } = makeLinuxSession({
+      ok: false, code: "indicator_no_font", message: "no font"
+    });
+    await waitFor(() => audits.some((a) => a.event === "error"));
+
+    const err = audits.find((a) => a.event === "error");
+    expect(err.errorMessage).toContain("indicator_unavailable");
+    expect(err.errorMessage).toContain("indicator_no_font");
+    session.dispose("test");
+  });
+
+  it("tampoco captura si la llamada al indicador LANZA", async () => {
+    // PrivSvc caído o IPC roto. Un throw no puede ser más permisivo que un
+    // `ok:false`: sería la puerta abriéndose justo cuando algo va mal.
+    pretendLinux();
+    const dc = new FakeDataChannel();
+    const captures: any[] = [];
+    const ctx: any = {
+      logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+      priv: {
+        call: vi.fn(async (req: any) => {
+          if (req.method === "rcp.indicator.show") throw new Error("IPC caído");
+          // ⚠️ Filtrar por screen.capture, no "todo lo que no sea show". El
+          // cierre manda un rcp.indicator.hide, y contarlo como captura hacía
+          // fallar este test con la pantalla NUNCA capturada — un rojo que
+          // acusaba al código de lo que hacía mal el doble.
+          if (req.method === "screen.capture") captures.push(req);
+          return okFrame();
+        })
+      }
+    };
+    const session = new ScreenSession(dc as any, {
+      sessionId: "sess-linux-2", ctx,
+      sendScreenAudit: () => {}, onTeardown: () => {}
+    } as any);
+
+    await new Promise((r) => setTimeout(r, 250));
+    expect(captures.length).toBe(0);
+    session.dispose("test");
+  });
+
+  it("retira el indicador al cerrar la sesión", async () => {
+    // Un aviso huérfano diciendo "te están viendo" cuando ya nadie mira es una
+    // alarma falsa, y entrena a ignorar la siguiente.
+    const { methods, captures, session } = makeLinuxSession({ ok: true });
+    await waitFor(() => captures.length >= 1);
+    session.dispose("test");
+    await waitFor(() => methods.includes("rcp.indicator.hide"));
+
+    expect(methods).toContain("rcp.indicator.hide");
   });
 });

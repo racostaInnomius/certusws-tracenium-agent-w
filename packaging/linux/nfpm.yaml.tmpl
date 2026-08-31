@@ -159,6 +159,15 @@ contents:
     dst: /usr/lib/tracenium/privsvc/tracenium-screencap
     file_info:
       mode: 0755
+
+  # ADR-0012 — indicador de sesión de control remoto. Al lado de screencap y
+  # por el mismo motivo: remote-indicator.ts lo resuelve con
+  # path.resolve(__dirname, ...). Enlaza libX11, que ya es dependencia
+  # declarada por el helper de captura, así que no añade ninguna nueva.
+  - src: __BUILD_DIR__/privsvc/tracenium-indicator
+    dst: /usr/lib/tracenium/privsvc/tracenium-indicator
+    file_info:
+      mode: 0755
       owner: root
       group: root
 
