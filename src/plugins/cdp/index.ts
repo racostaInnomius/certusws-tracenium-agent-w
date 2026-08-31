@@ -179,6 +179,29 @@ async function collectOnce(
     });
   }
 
+  // Almacenes NSS (Firefox, Thunderbird). Fallo blando como los
+  // anteriores: Firefox tiene su PROPIO almacén de confianza, así que
+  // una CA importada ahí es invisible para todo lo demás — pero una
+  // base bloqueada no puede costar el escaneo del sistema operativo que
+  // acaba de funcionar.
+  try {
+    const { collectNssStores } = await import("./providers/nss");
+    const nss = await collectNssStores();
+    result.items.push(...nss.items);
+    result.stores.push(...nss.stores);
+    result.parseFailures += nss.parseFailures;
+    if (nss.unreadable.length > 0) {
+      // Se DICE. Un cert8.db heredado o una base bloqueada significan un
+      // almacen de confianza que no estamos mirando, y el silencio ahi
+      // seria el cuarto punto ciego de este plugin.
+      ctx.logger?.warn?.("CDP: bases NSS no leidas", { unreadable: nss.unreadable });
+    }
+  } catch (err: any) {
+    ctx.logger?.warn?.("CDP: coleccion NSS fallo (no fatal)", {
+      error: err?.message || String(err)
+    });
+  }
+
   // Certificates that live as files on disk. Opt-in via policy: an empty
   // path list means the feature is off, and there is no default set —
   // see the collector for why. Fail-soft like the Java stores: a bad

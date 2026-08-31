@@ -104,7 +104,7 @@ export type CdpCertItem = {
    *   "listener"   — captured from a live local TLS handshake, i.e. what
    *                  the service actually serves (may differ from any
    *                  store). */
-  source: "store" | "java-store" | "listener" | "file";
+  source: "store" | "java-store" | "listener" | "file" | "nss";
 };
 
 export type CdpDelta = {
