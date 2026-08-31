@@ -302,6 +302,13 @@ message RemoteScreenAudit {
 message RemoteRecordingReady {
   string sessionId    = 1;
   // Clave AES-256 en base64. NO se persiste en el endpoint.
+  //
+  // ⚠️ VACÍA significa "ya te la di, dame otro destino". Ocurre tras un
+  // reinicio del agente: la clave se fue con el proceso, pero el servidor la
+  // guardó y el fichero sigue en disco esperando subir. El servidor solo debe
+  // atender esa petición si YA tiene una clave para ese sessionId; si no,
+  // responder accepted=false y el agente borrará el fichero, que sin clave no
+  // lo puede leer nadie.
   string keyBase64    = 2;
   int64  bytes        = 3;
   int32  frames       = 4;

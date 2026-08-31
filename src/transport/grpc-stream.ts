@@ -2015,6 +2015,23 @@ stream = client.Connect();
       });
       return;
     }
+
+    // ADR-0012 — respuesta a una grabación entregada: destino de subida, o
+    // negativa. Va aparte del dispatch de señalización porque no es una
+    // sesión: llega cuando la sesión YA terminó, y puede llegar minutos
+    // después o tras un reinicio del agente.
+    if (msg.remoteRecordingUpload) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { handleRecordingUpload } = require("../plugins/rcp");
+      try {
+        handleRecordingUpload(ctx, msg.remoteRecordingUpload);
+      } catch (err: any) {
+        ctx.logger?.error?.("[rcp] fallo atendiendo remoteRecordingUpload", {
+          err: err?.message || String(err)
+        });
+      }
+      return;
+    }
   });
 
   stream.on("error", (err: any) => {

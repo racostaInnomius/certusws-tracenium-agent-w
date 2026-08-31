@@ -19,9 +19,13 @@ import type { AgentContext } from "../../core/agent-context";
 import { SessionManager } from "./session-manager";
 import { createLinuxConsentPrompter } from "./consent-prompter-linux";
 import { createTrayConsentPrompter } from "./consent-prompter-tray";
-import { purgeUnconfirmed } from "./recording-handoff";
+import path from "path";
+import { purgeUnconfirmed, pendingUploads } from "./recording-handoff";
+import { RecordingUploader } from "./recording-uploader";
+import { recordingsDir } from "./recording-store";
 
 let manager: SessionManager | null = null;
+let uploader: RecordingUploader | null = null;
 let nativeBroken = false;
 let nativeBrokenReason: string | null = null;
 
@@ -102,6 +106,7 @@ export function initRcp(ctx: AgentContext): SessionManager {
   manager = new SessionManager(ctx);
   registerConsentPrompter(ctx);
   purgeOrphanRecordings(ctx);
+  resumePendingUploads(ctx);
   ctx.logger?.info?.("[rcp] initialized");
   return manager;
 }
@@ -137,6 +142,72 @@ function purgeOrphanRecordings(ctx: AgentContext): void {
       err: err?.message || String(err)
     });
   }
+}
+
+/**
+ * Reanuda las subidas que quedaron a medias (ADR-0012).
+ *
+ * El estado duradero son los ficheros en disco con su marca, no una estructura
+ * en memoria: la cola se reconstruye desde ahí porque es lo único que
+ * sobrevive a un reinicio. No se sube nada todavía — la URL con SAS del
+ * proceso anterior caducó, así que se pide destino nuevo. La clave no hace
+ * falta reenviarla: el servidor ya la tiene, y eso es justo lo que significa
+ * la marca.
+ */
+function resumePendingUploads(ctx: AgentContext): void {
+  try {
+    uploader = new RecordingUploader({
+      logger: ctx.logger as any,
+      requestDestination: (sessionId) => {
+        // Clave vacía = "ya te la di, dame otro destino". Ver el comentario de
+        // keyBase64 en controlplane.proto.
+        ctx.sendControl?.({
+          remoteRecordingReady: { sessionId, keyBase64: "" }
+        });
+      }
+    });
+    const pending = pendingUploads();
+    if (pending.length > 0) {
+      ctx.logger?.info?.("[rcp] grabaciones pendientes de subir", {
+        count: pending.length
+      });
+      uploader.resume(pending);
+    }
+  } catch (err: any) {
+    ctx.logger?.warn?.("[rcp] no se pudo reanudar la cola de subidas", {
+      err: err?.message || String(err)
+    });
+  }
+}
+
+/**
+ * Respuesta del control plane a una grabación entregada (ADR-0012).
+ *
+ * `accepted=false` es una respuesta legítima —el tenant apagó la grabación
+ * entre medias, el almacenamiento no está— y se atiende retirando el fichero:
+ * dejarlo en el equipo del usuario no le sirve ya a nadie.
+ */
+export function handleRecordingUpload(ctx: AgentContext, params: any): void {
+  const sessionId = String(params?.sessionId || "");
+  if (!sessionId) return;
+  if (!uploader) resumePendingUploads(ctx);
+  if (!uploader) return;
+
+  if (!params?.accepted) {
+    uploader.reject(sessionId, String(params?.reason || "not accepted"));
+    return;
+  }
+
+  const url = String(params?.uploadUrl || "");
+  if (!url) {
+    // Aceptada pero sin destino: no hay nada que hacer con ella, y guardarla
+    // esperando un destino que nadie va a mandar es acumular vídeo ajeno.
+    uploader.reject(sessionId, "accepted without an upload url");
+    return;
+  }
+
+  const file = path.join(recordingsDir(), `${sessionId}.trec`);
+  uploader.enqueue(sessionId, file, url);
 }
 
 /**
