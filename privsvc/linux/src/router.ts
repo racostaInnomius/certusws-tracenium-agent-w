@@ -44,6 +44,7 @@ import {
 import { handleSecurityPosture } from "./security-posture";
 import { handleScreenCapture } from "./screen-capture";
 import { handleIndicatorShow, handleIndicatorHide } from "./remote-indicator";
+import { handleConsentRequest } from "./consent-dialog";
 import { handlePatchScan, handlePatchInstall } from "./patch-management";
 import { handlePmpReadCheckState, handlePmpRemediate } from "./pmp-remediation";
 import {
@@ -216,6 +217,11 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "rcp.indicator.hide":
       return handleIndicatorHide(req);
+
+    // ADR-0012 — las dos puertas de consentimiento (ver / controlar).
+    // Bloquea hasta que la persona decide o vence el plazo.
+    case "rcp.consent.request":
+      return handleConsentRequest(req);
 
     // ── SCP — security posture (Phase 5) ──────────────────────────
     // Both method names route to the same handler. Schema 2.0 uses

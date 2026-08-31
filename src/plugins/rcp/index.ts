@@ -17,6 +17,7 @@
 
 import type { AgentContext } from "../../core/agent-context";
 import { SessionManager } from "./session-manager";
+import { createLinuxConsentPrompter } from "./consent-prompter-linux";
 
 let manager: SessionManager | null = null;
 let nativeBroken = false;
@@ -97,8 +98,41 @@ export function probeRcpNative(ctx: AgentContext): void {
 export function initRcp(ctx: AgentContext): SessionManager {
   if (manager) return manager;
   manager = new SessionManager(ctx);
+  registerConsentPrompter(ctx);
   ctx.logger?.info?.("[rcp] initialized");
   return manager;
+}
+
+/**
+ * Registra el prompter nativo de esta plataforma (ADR-0012).
+ *
+ * Sin esto, `ctx.consentPrompter` queda vacío, el agente NO anuncia
+ * `rcp.consent` y toda sesión que requiera consentimiento se deniega. Eso es
+ * lo correcto como valor por defecto —fallar cerrado— y es inservible como
+ * estado final: la función existe pero nadie puede usarla.
+ *
+ * ⚠️ No se pisa un prompter ya registrado. Los tests inyectan el suyo, y una
+ * llamada a initRcp() después lo sustituiría por el real, que en el runner
+ * intentaría hablar con un PrivSvc que no existe.
+ */
+function registerConsentPrompter(ctx: AgentContext): void {
+  if (ctx.consentPrompter) return;
+  try {
+    if (process.platform === "linux") {
+      ctx.consentPrompter = createLinuxConsentPrompter(ctx);
+      ctx.logger?.info?.("[rcp] consent prompter: linux/x11");
+      return;
+    }
+    // Windows y macOS: pendientes. Dejarlo sin registrar mantiene el
+    // fail-closed en vez de anunciar una capacidad que no existe.
+    ctx.logger?.info?.("[rcp] sin prompter nativo para esta plataforma", {
+      platform: process.platform
+    });
+  } catch (err: any) {
+    ctx.logger?.warn?.("[rcp] no se pudo registrar el prompter de consentimiento", {
+      err: err?.message || String(err)
+    });
+  }
 }
 
 /**

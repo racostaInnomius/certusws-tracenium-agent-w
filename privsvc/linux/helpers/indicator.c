@@ -89,6 +89,7 @@ static char text_buf[512] = "A remote operator is viewing this screen";
 static char button_buf[64] = "Stop sharing";
 static char session_id[128] = "";
 static int stopping = 0;
+static int consent_mode = 0;
 
 static void emit_error(const char *code, const char *message) {
     printf("{\"ok\":false,\"code\":\"%s\",\"message\":\"%s\"}\n", code, message);
@@ -217,6 +218,170 @@ static unsigned long alloc_color(const char *spec, unsigned long fallback) {
     return fallback;
 }
 
+
+/* ─────────────────────────────────────────────────────────────────────
+ * MODO CONSENTIMIENTO (--consent)
+ *
+ * Diálogo modal para las DOS puertas de ADR-0012: ver y controlar. El mismo
+ * binario porque comparte todo lo caro —conexión X, fuente, colores,
+ * empaquetado— y separar habría añadido un segundo helper al .deb para
+ * repetirlo.
+ *
+ * Contrato (una línea JSON en stdout, nada más):
+ *   {"ok":true,"decision":"approved"}
+ *   {"ok":true,"decision":"denied"}
+ *   {"ok":true,"decision":"timeout"}
+ *
+ * ⚠️ Solo ratón, sin teclado. Un override_redirect no recibe foco de teclado,
+ * y dárselo con XSetInputFocus se lo QUITARÍA a la aplicación donde la
+ * persona está escribiendo — posiblemente a mitad de una contraseña. Escape
+ * para denegar sería cómodo, y no lo suficiente como para robar el foco: el
+ * plazo cubre a quien no quiera tocar el ratón, y el silencio ya cuenta como
+ * negativa.
+ * ───────────────────────────────────────────────────────────────────── */
+
+#define DLG_W 480
+#define DLG_H 190
+#define DLG_BTN_H 30
+
+static char dlg_lines[4][160];
+static int  dlg_line_count = 0;
+static char dlg_allow[48]  = "Allow";
+static char dlg_deny[48]   = "Don't allow";
+static int  dlg_timeout_s  = 60;
+
+static int allow_x, allow_w, deny_x, deny_w, dlg_btn_y;
+
+static void dlg_draw(Window w) {
+    XSetForeground(dpy, gc, col_bg);
+    XFillRectangle(dpy, w, gc, 0, 0, DLG_W, DLG_H);
+    XSetForeground(dpy, gc, col_fg);
+    XDrawRectangle(dpy, w, gc, 0, 0, DLG_W - 1, DLG_H - 1);
+
+    int y = 34;
+    for (int i = 0; i < dlg_line_count; i++) {
+        XDrawString(dpy, w, gc, 20, y, dlg_lines[i], (int)strlen(dlg_lines[i]));
+        y += 22;
+    }
+
+    dlg_btn_y = DLG_H - DLG_BTN_H - 16;
+
+    /* "Don't allow" a la derecha del todo y "Allow" a su izquierda.
+     * Deliberado: en un diálogo que concede acceso a la pantalla de alguien,
+     * la posición de reposo —donde cae la mano— no debe ser la que concede. */
+    deny_w  = XTextWidth(font, dlg_deny,  (int)strlen(dlg_deny))  + 28;
+    allow_w = XTextWidth(font, dlg_allow, (int)strlen(dlg_allow)) + 28;
+    deny_x  = DLG_W - deny_w - 20;
+    allow_x = deny_x - allow_w - 12;
+
+    XSetForeground(dpy, gc, col_btn);
+    XFillRectangle(dpy, w, gc, allow_x, dlg_btn_y, (unsigned)allow_w, DLG_BTN_H);
+    XFillRectangle(dpy, w, gc, deny_x,  dlg_btn_y, (unsigned)deny_w,  DLG_BTN_H);
+    XSetForeground(dpy, gc, col_fg);
+    XDrawRectangle(dpy, w, gc, allow_x, dlg_btn_y, (unsigned)allow_w, DLG_BTN_H);
+    XDrawRectangle(dpy, w, gc, deny_x,  dlg_btn_y, (unsigned)deny_w,  DLG_BTN_H);
+
+    int base = dlg_btn_y + (DLG_BTN_H + font->ascent - font->descent) / 2;
+    XDrawString(dpy, w, gc, allow_x + 14, base, dlg_allow, (int)strlen(dlg_allow));
+    XDrawString(dpy, w, gc, deny_x  + 14, base, dlg_deny,  (int)strlen(dlg_deny));
+    XFlush(dpy);
+}
+
+static void dlg_split_text(const char *text) {
+    /* El llamador manda las líneas ya partidas con '\n': envolver texto en
+     * Xlib sin métricas decentes da cortes peores que los que puede elegir
+     * quien redacta el mensaje. */
+    const char *p = text;
+    while (*p && dlg_line_count < 4) {
+        const char *nl = strchr(p, '\n');
+        size_t len = nl ? (size_t)(nl - p) : strlen(p);
+        if (len >= sizeof(dlg_lines[0])) len = sizeof(dlg_lines[0]) - 1;
+        memcpy(dlg_lines[dlg_line_count], p, len);
+        dlg_lines[dlg_line_count][len] = 0;
+        dlg_line_count++;
+        if (!nl) break;
+        p = nl + 1;
+    }
+}
+
+static int run_consent_dialog(void) {
+    int screen = DefaultScreen(dpy);
+    int sw = DisplayWidth(dpy, screen);
+    int sh = DisplayHeight(dpy, screen);
+
+    XSetWindowAttributes attrs;
+    memset(&attrs, 0, sizeof(attrs));
+    attrs.override_redirect = True;
+    attrs.background_pixel = col_bg;
+    attrs.save_under = True;
+
+    Window w = XCreateWindow(dpy, RootWindow(dpy, screen),
+                             (sw - DLG_W) / 2, (sh - DLG_H) / 3,
+                             DLG_W, DLG_H, 0,
+                             CopyFromParent, InputOutput, CopyFromParent,
+                             CWOverrideRedirect | CWBackPixel | CWSaveUnder, &attrs);
+    if (!w) {
+        emit_error("consent_window_failed", "Could not create consent dialog");
+        return 1;
+    }
+
+    gc = XCreateGC(dpy, w, 0, NULL);
+    XSetFont(dpy, gc, font->fid);
+    XSelectInput(dpy, w, ExposureMask | ButtonPressMask);
+    XMapRaised(dpy, w);
+    dlg_draw(w);
+    XFlush(dpy);
+
+    int xfd = ConnectionNumber(dpy);
+    time_t deadline = time(NULL) + dlg_timeout_s;
+    const char *decision = NULL;
+
+    while (!decision) {
+        while (XPending(dpy)) {
+            XEvent ev;
+            XNextEvent(dpy, &ev);
+            if (ev.type == Expose) {
+                dlg_draw(w);
+            } else if (ev.type == ButtonPress) {
+                int px = ev.xbutton.x, py = ev.xbutton.y;
+                if (py >= dlg_btn_y && py <= dlg_btn_y + DLG_BTN_H) {
+                    if (px >= allow_x && px <= allow_x + allow_w) decision = "approved";
+                    else if (px >= deny_x && px <= deny_x + deny_w) decision = "denied";
+                }
+            }
+        }
+        if (decision) break;
+
+        if (time(NULL) >= deadline) {
+            /* El silencio NO es un sí: si nadie contestó, la persona no está
+             * delante, y actuar en el equipo de quien no está es justo lo que
+             * esta puerta existe para impedir. */
+            decision = "timeout";
+            break;
+        }
+
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(xfd, &fds);
+        struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+        int r = select(xfd + 1, &fds, NULL, NULL, &tv);
+        if (r < 0 && errno != EINTR) break;
+        if (r == 0) {
+            /* Mantenerlo por encima, como la banda: una ventana que se abre a
+             * pantalla completa después podría taparlo, y un diálogo que no se
+             * ve se convierte en un timeout, o sea en una negativa que la
+             * persona nunca eligió. */
+            XRaiseWindow(dpy, w);
+            XFlush(dpy);
+        }
+    }
+
+    XDestroyWindow(dpy, w);
+    printf("{\"ok\":true,\"decision\":\"%s\"}\n", decision ? decision : "timeout");
+    fflush(stdout);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--session-id") && i + 1 < argc) {
@@ -225,6 +390,15 @@ int main(int argc, char **argv) {
             snprintf(text_buf, sizeof(text_buf), "%s", argv[++i]);
         } else if (!strcmp(argv[i], "--button") && i + 1 < argc) {
             snprintf(button_buf, sizeof(button_buf), "%s", argv[++i]);
+        } else if (!strcmp(argv[i], "--consent")) {
+            consent_mode = 1;
+        } else if (!strcmp(argv[i], "--allow") && i + 1 < argc) {
+            snprintf(dlg_allow, sizeof(dlg_allow), "%s", argv[++i]);
+        } else if (!strcmp(argv[i], "--deny") && i + 1 < argc) {
+            snprintf(dlg_deny, sizeof(dlg_deny), "%s", argv[++i]);
+        } else if (!strcmp(argv[i], "--timeout") && i + 1 < argc) {
+            dlg_timeout_s = atoi(argv[++i]);
+            if (dlg_timeout_s < 5) dlg_timeout_s = 5;
         }
     }
 
@@ -247,6 +421,13 @@ int main(int argc, char **argv) {
     col_bg = alloc_color(COLOR_BG, WhitePixel(dpy, screen));
     col_fg = alloc_color(COLOR_FG, BlackPixel(dpy, screen));
     col_btn = alloc_color(COLOR_BTN, WhitePixel(dpy, screen));
+
+    if (consent_mode) {
+        dlg_split_text(text_buf);
+        int rc = run_consent_dialog();
+        XCloseDisplay(dpy);
+        return rc;
+    }
 
     win_w = sw - 40;
     if (win_w > BANNER_MAX_WIDTH) win_w = BANNER_MAX_WIDTH;
