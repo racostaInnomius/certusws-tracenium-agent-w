@@ -212,6 +212,27 @@ public static class CredentialStore
         }
         catch
         {
+            // Two very different faults reach this catch, and telling an
+            // operator only that the unwrap failed sends them to re-type a
+            // password that was never the problem.
+            //
+            // So ask the certificate itself: encrypt a nonce with the public
+            // key in the store and try to open it with the private key the
+            // store hands back for it. If that round trip fails, this device's
+            // certificate and key simply do not correspond — nothing about the
+            // envelope, the credential, or the browser is wrong, and the only
+            // fix is re-enrolling the device.
+            //
+            // Seen on a gateway whose agent had been replaced by an MSI push
+            // over a running install: the certificate survived, its key
+            // container did not follow.
+            if (!CertificateKeyPairIsUsable(cert))
+            {
+                throw new CredentialException(
+                    "decrypt_failed",
+                    "this device's certificate and private key do not match — re-enrol the device; "
+                        + "re-entering the credential cannot help");
+            }
             throw new CredentialException("decrypt_failed", "could not unwrap the envelope key");
         }
 
@@ -277,6 +298,35 @@ public static class CredentialStore
     }
 
     /// <summary>base64url (RFC 4648 §5) — the wire format, not standard base64.</summary>
+    /// <summary>
+    /// Does the private key the store hands back for this certificate actually
+    /// belong to it?
+    ///
+    /// A cheap round trip with a random nonce, using the same padding the
+    /// envelope uses. Only ever called on a failure path, so it costs nothing
+    /// in the normal case and turns an ambiguous unwrap error into an
+    /// instruction.
+    /// </summary>
+    private static bool CertificateKeyPairIsUsable(X509Certificate2 cert)
+    {
+        try
+        {
+            using var pub = cert.GetRSAPublicKey();
+            using var priv = cert.GetRSAPrivateKey();
+            if (pub is null || priv is null) return false;
+
+            var nonce = RandomNumberGenerator.GetBytes(16);
+            var sealedNonce = pub.Encrypt(nonce, RSAEncryptionPadding.OaepSHA256);
+            var opened = priv.Decrypt(sealedNonce, RSAEncryptionPadding.OaepSHA256);
+            return CryptographicOperations.FixedTimeEquals(nonce, opened);
+        }
+        catch
+        {
+            // Any failure here IS the answer: the pair is not usable.
+            return false;
+        }
+    }
+
     private static byte[] FromBase64Url(string s)
     {
         var b64 = s.Replace('-', '+').Replace('_', '/');
