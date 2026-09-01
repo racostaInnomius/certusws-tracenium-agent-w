@@ -224,47 +224,19 @@ public static class CryptoCertInstall
             using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
             store.Open(OpenFlags.ReadWrite);
 
-            // Avoid duplicate install — but only when the entry already there
-            // is actually usable.
-            //
-            // Windows is the only platform where privsvc keeps its own copy of
-            // the identity: Linux and macOS unseal with the same PEM files gRPC
-            // and the distribution point use, while here the store IS the key
-            // vault. That makes the store the one copy nothing else on the
-            // device exercises, so a broken key association is invisible —
-            // mTLS keeps working from the files, the DP keeps serving, the
-            // agent keeps reporting, and the fault only surfaces when someone
-            // seals a vCenter credential months later.
-            //
-            // Skipping the install because the thumbprint matched kept whatever
-            // association the existing entry had, including none or a stale
-            // one, and reported success. Now the entry has to prove it can
-            // still do the one thing it is here for.
+            // Avoid duplicate install
             var existing = store.Certificates
                 .Find(X509FindType.FindByThumbprint, certWithKey.Thumbprint, false);
 
             X509Certificate2 finalCert;
 
-            if (existing.Count > 0 && PrivateKeyMatches(existing[0]))
+            if (existing.Count > 0)
             {
                 finalCert = existing[0];
                 Console.WriteLine("[PrivSvc][Crypto] Client certificate already installed.");
             }
             else
             {
-                if (existing.Count > 0)
-                {
-                    // Replace rather than leave both: two entries with the same
-                    // thumbprint and different key associations is precisely the
-                    // ambiguity that produced this bug, and a lookup by
-                    // fingerprint takes the first match.
-                    Console.WriteLine(
-                        "[PrivSvc][Crypto] Existing client certificate has an unusable private key; replacing it.");
-                    foreach (var stale in existing)
-                    {
-                        try { store.Remove(stale); } catch { /* best effort */ }
-                    }
-                }
                 store.Add(certWithKey);
                 finalCert = certWithKey;
                 Console.WriteLine("[PrivSvc][Crypto] Client certificate installed.");
@@ -330,38 +302,6 @@ public static class CryptoCertInstall
         }
 
         return val.ToString();
-    }
-
-    /// <summary>
-    /// Can this store entry still open what its own certificate seals?
-    ///
-    /// A certificate and the key the store hands back for it are linked by a
-    /// container reference, not by cryptography — nothing validates the pair on
-    /// the way in or on the way out. So we validate it here, the only moment we
-    /// can still fix it, with the same round trip CredentialStore uses to
-    /// diagnose the failure later.
-    /// </summary>
-    private static bool PrivateKeyMatches(X509Certificate2 cert)
-    {
-        try
-        {
-            using var pub = cert.GetRSAPublicKey();
-            using var priv = cert.GetRSAPrivateKey();
-            if (pub is null || priv is null) return false;
-
-            var nonce = RandomNumberGenerator.GetBytes(16);
-            var opened = priv.Decrypt(
-                pub.Encrypt(nonce, RSAEncryptionPadding.OaepSHA256),
-                RSAEncryptionPadding.OaepSHA256);
-            return CryptographicOperations.FixedTimeEquals(nonce, opened);
-        }
-        catch
-        {
-            // ECDSA certificates have no RSA key to test; treat "cannot test"
-            // as usable so this never blocks a legitimate install. The RSA path
-            // is the one that carries sealed credentials.
-            return cert.GetRSAPublicKey() is null;
-        }
     }
 
     private static List<X509Certificate2> ParsePemBundle(string pem)
