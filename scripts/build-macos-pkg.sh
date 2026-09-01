@@ -178,6 +178,40 @@ build_privsvc_bundle() {
   fi
 }
 
+build_keystore_helper() {
+  # ADR-0011 decisión 9.b — el almacén de claves NO EXTRAÍBLES.
+  #
+  # Ejecutable suelto, no bundle .app: a diferencia del de captura, aquí
+  # no interviene TCC ni hay ninguna persona aprobando nada en Ajustes.
+  # Solo habla con el llavero, y eso no pide identidad visible.
+  #
+  # ⚠️ Es OBLIGATORIO, sin la vía de escape que tiene el de captura.
+  # Ahí un `TRACENIUM_SKIP_SCREENCAP=1` degrada una funcionalidad —el
+  # operador se queda sin pantalla remota y se entera—; aquí degradaría
+  # una propiedad de SEGURIDAD en silencio, dejando la clave donde está
+  # hoy: un fichero exportable. Si falta swiftc, el paquete no sale.
+  local src="$ROOT_DIR/privsvc/macos/helpers/keystore/main.swift"
+  local out="$BUILD_DIR/PrivSvc/macos/tracenium-keystore"
+
+  if [ ! -f "$src" ]; then
+    echo "ERROR: missing keystore helper source: $src" >&2
+    exit 1
+  fi
+  if ! command -v swiftc >/dev/null 2>&1; then
+    echo "ERROR: swiftc not found (install Xcode Command Line Tools) — required" >&2
+    echo "       to build the non-extractable key store (ADR-0011 decision 9.b)." >&2
+    exit 1
+  fi
+
+  local tmp; tmp="$(mktemp -d)"
+  echo "→ building tracenium-keystore (arm64 + x86_64, target macos12.3)"
+  swiftc -O -target arm64-apple-macos12.3  "$src" -o "$tmp/keystore.arm64"
+  swiftc -O -target x86_64-apple-macos12.3 "$src" -o "$tmp/keystore.x86_64"
+  lipo -create "$tmp/keystore.arm64" "$tmp/keystore.x86_64" -output "$out"
+  rm -rf "$tmp"
+  chmod 0755 "$out"
+}
+
 build_screencap_helper() {
   # RCP M3.S1 — compile + sign the screen-capture helper that PrivSvc
   # spawns into the console user's GUI session (via launchctl asuser).
@@ -681,6 +715,7 @@ fi
 build_agent_bundle
 build_privsvc_bundle
 build_screencap_helper
+build_keystore_helper
 build_status_app_bundle
 
 # Stage native deps into the Agent payload.
@@ -903,6 +938,12 @@ else
 
   PKG_PREFIX="$PKG_ROOT/Library/Application Support/Tracenium"
   sign_internal_bin "$PKG_PREFIX/Runtime/node"
+  # El almacén de claves (ADR-0011 9.b). Explícito y no dependiente del
+  # barrido de Mach-O de más abajo: es el binario que decide si la clave
+  # privada de un endpoint es extraíble, y no conviene que su firma
+  # dependa de que un `find` siga alcanzándolo el día que alguien mueva
+  # una ruta.
+  sign_internal_bin "$PKG_PREFIX/PrivSvc/macos/tracenium-keystore"
 
   # Sign every .node native binding under the Agent's node_modules.
   # Sign EVERY Mach-O in the payload — not just *.node.

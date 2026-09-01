@@ -157,24 +157,22 @@ async function installCaCertificatesToSystemKeychain(
     });
 
     for (const entry of certFiles) {
-      if (entry.cert.subject === entry.cert.issuer) {
-        await execFileAsync("/usr/bin/security", [
-          "add-trusted-cert",
-          "-d",
-          "-r",
-          "trustRoot",
-          "-k",
-          "/Library/Keychains/System.keychain",
-          entry.file
-        ]).catch(() => undefined);
-      } else {
-        await execFileAsync("/usr/bin/security", [
-          "add-certificates",
-          "-k",
-          "/Library/Keychains/System.keychain",
-          entry.file
-        ]).catch(() => undefined);
-      }
+      // El fallo se REGISTRA. Estos dos `.catch(() => undefined)` eran
+      // el hallazgo menor del gate 1 de ADR-0011: plantar un ancla —o
+      // no plantarla— fallaba en silencio en las dos rutas. El aviso de
+      // fuera ya no se traga el error, pero sin esto seguiría sin poder
+      // decir CUÁL de los certificados del bundle falló.
+      const esRaiz = entry.cert.subject === entry.cert.issuer;
+      const args = esRaiz
+        ? ["add-trusted-cert", "-d", "-r", "trustRoot", "-k", KEYCHAIN_PATH, entry.file]
+        : ["add-certificates", "-k", KEYCHAIN_PATH, entry.file];
+
+      await execFileAsync("/usr/bin/security", args).catch((err) => {
+        logger.warn(
+          `${esRaiz ? "add-trusted-cert" : "add-certificates"} fallo para ` +
+            `${entry.cert.subject}: ${String(err?.stderr || err?.message || err).trim().split("\n")[0]}`
+        );
+      });
     }
   } finally {
     try {
@@ -192,6 +190,29 @@ async function installCaCertificatesToSystemKeychain(
 // the macOS Keychain at handshake time. A "proper" Keychain-native mTLS
 // stack would need a SecureTransport sidecar (C++/Rust) piping bytes into
 // Node, which is out of scope for this release.
+//
+// ⚠️ ADR-0011 decisión 9.b pedía llevar ESTA clave a un almacén no
+// extraíble, y no se puede mientras el transporte sea grpc-js. Se
+// enumeraron los consumidores en macOS, y son cinco:
+//
+//   grpc-bridge.ts:1046  grpc.credentials.createSsl(ca, key, cert)
+//   crypto-store.ts:562  https.request({ key })  — la renovación
+//   credential-store.ts  crypto.createPrivateKey(...)
+//   dp.ts:194            mTLS contra el distribution point
+//   sdp.ts:587           curl --key <RUTA>  ← ni siquiera admite bytes
+//
+// Los cinco necesitan el material; el último necesita además un FICHERO.
+// Una clave que no sale del llavero no puede alimentar a ninguno.
+//
+// Eso reencuadra la deuda que el ADR daba por «de macOS»: no lo es, es
+// del transporte. Windows se libra porque su puente es C# y SChannel
+// firma con un handle de CNG sin ver la clave nunca; macOS y Linux van
+// por grpc-js, que solo entiende buffers, así que la identidad del
+// agente es un fichero en LAS DOS.
+//
+// El almacén no extraíble sí existe ya, en `keystore.ts`, y es donde
+// nacerán las claves de la fase 2 (`cdp.csr.generate`) — nuevas, sin
+// este lastre.
 //
 // What we CAN do — and what P1-5 delivers — is dual-storage:
 //
