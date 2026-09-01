@@ -21,6 +21,14 @@ import { execFileSync, spawnSync } from "child_process";
 const req = (method: string, params: any) => ({ v: 1 as const, id: "t1", method, params });
 
 /** OpenSSL da el veredicto de -verify por STDERR, no por stdout. */
+// ⚠️ `/usr/bin/openssl` NO es el mismo binario en todas partes, y el formato
+// del subject depende de cuál sea: LibreSSL (el que trae macOS) imprime
+// `Subject: CN=web01.corp, O=Acme`, y OpenSSL 3.x —el del ubuntu-latest del
+// CI— mete espacios: `Subject: CN = web01.corp, O = Acme`.
+//
+// El CSR es idéntico y correcto en ambos casos; sólo cambia cómo se imprime.
+// Por eso las aserciones sobre el DN van con regex tolerante a los espacios
+// y no con `toContain`, que ataba el test al openssl de quien lo escribió.
 function verificaCsr(pem: string, dir: string) {
   const f = path.join(dir, `req-${Math.abs(hash(pem))}.pem`);
   fs.writeFileSync(f, pem);
@@ -74,7 +82,7 @@ describe("cdp.csr.generate — Linux (openssl real)", () => {
     const v = verificaCsr(r.result.csrPem, raiz);
     expect(v.status).toBe(0);
     expect(v.salida).toMatch(/verify OK/i);
-    expect(v.texto).toContain("CN=web01.corp");
+    expect(v.texto).toMatch(/CN\s*=\s*web01\.corp/);
     expect(v.texto).toContain("TLS Web Server Authentication");
     expect(v.texto).toContain("DNS:web01.corp, DNS:web01");
     expect(v.texto).toContain("URI:spiffe://acme/web01");
@@ -285,7 +293,7 @@ describe.runIf(enMac && haySwift)("cdp.csr.generate — macOS (llavero real)", (
     const v = verificaCsr(r.result.csrPem, dir);
     expect(v.status).toBe(0);
     expect(v.salida).toMatch(/verify OK/i);
-    expect(v.texto).toContain("CN=web01.corp");
+    expect(v.texto).toMatch(/CN\s*=\s*web01\.corp/);
     expect(v.texto).toContain("TLS Web Server Authentication");
     expect(v.texto).toContain("DNS:web01.corp");
   }, 60_000);

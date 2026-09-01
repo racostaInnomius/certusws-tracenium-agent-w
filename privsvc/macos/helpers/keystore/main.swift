@@ -61,6 +61,8 @@
 //   csr     --label L --subject "CN=a,O=b,OU=c"
 //           [--dns d]... [--uri u]... [--eku clientAuth|serverAuth]
 //                                    -> {"ok":true,"csrPem":"..."}
+//   install-cert --label L --cert <fichero>
+//                                    -> {"ok":true,"installed":true,"sha256":"..."}
 //   info    --label L                -> {"ok":true,"exists":true,"extractable":false}
 //   delete  --label L                -> {"ok":true,"deleted":N}
 //
@@ -68,6 +70,7 @@
 
 import Foundation
 import Security
+import CommonCrypto
 
 // ───────────────────────────── salida ──────────────────────────────
 
@@ -234,6 +237,122 @@ func cmdList(kc: SecKeychain, prefix: String) -> Never {
     keys.append(["label": String(texto.dropFirst("com.certusws.tracenium.".count))])
   }
   emit(["ok": true, "keys": keys])
+}
+
+/**
+ * Instala el certificado firmado y lo ata a la clave que ya existe.
+ *
+ * ADR-0011 fase 3 (`cdp.cert.install`). En macOS «atar» no es una
+ * operacion explicita: se añade el certificado al MISMO llavero y el
+ * sistema lo empareja con la clave privada por el hash de la clave
+ * publica, formando una identidad.
+ *
+ * ⚠️ Por eso se VERIFICA que la identidad se formo, en vez de dar por
+ * buena la insercion. Si el certificado no corresponde a esta clave
+ * —otro CSR, otra peticion, un cruce en el control plane— el `SecItemAdd`
+ * sale con exito igual y lo unico que queda es un certificado suelto en
+ * el llavero: la instalacion habria «funcionado» sin que nada use nunca
+ * esa clave.
+ *
+ * NO se tocan trust settings ni el llavero de anclas: aqui solo entra
+ * una hoja. Otorgar confianza es la amenaza que ADR-0011 gobierna, y la
+ * decision 1 la deja fuera por construccion.
+ */
+func cmdInstallCert(kc: SecKeychain, label: String, certPath: String) -> Never {
+  guard let priv = findKey(kc, label, priv: true) else {
+    die("key_not_found", "no hay clave con etiqueta \(label)")
+  }
+  guard let datos = FileManager.default.contents(atPath: certPath) else {
+    die("bad_request", "no se pudo leer el certificado en \(certPath)")
+  }
+
+  // Se acepta PEM o DER: el llamante escribe lo que le llego del control
+  // plane y no tiene por que normalizarlo.
+  var der = datos
+  if let texto = String(data: datos, encoding: .utf8), texto.contains("BEGIN CERTIFICATE") {
+    let cuerpo = texto
+      .components(separatedBy: "-----BEGIN CERTIFICATE-----").last?
+      .components(separatedBy: "-----END CERTIFICATE-----").first?
+      .replacingOccurrences(of: "\n", with: "")
+      .replacingOccurrences(of: "\r", with: "") ?? ""
+    guard let d = Data(base64Encoded: cuerpo) else {
+      die("bad_request", "el PEM no decodifica")
+    }
+    der = d
+  }
+
+  guard let cert = SecCertificateCreateWithData(nil, der as CFData) else {
+    die("bad_request", "el certificado no parsea")
+  }
+
+  // La clave publica del certificado tiene que ser la de NUESTRA clave.
+  // Se comprueba antes de escribir nada: es la diferencia entre «no se
+  // instalo» y «se instalo algo que no sirve».
+  guard let pubCert = SecCertificateCopyKey(cert),
+        let pubNuestra = SecKeyCopyPublicKey(priv) else {
+    die("cert_key_mismatch", "no se pudo comparar la clave publica")
+  }
+  var e1: Unmanaged<CFError>?
+  var e2: Unmanaged<CFError>?
+  let a = SecKeyCopyExternalRepresentation(pubCert, &e1) as Data?
+  let b = SecKeyCopyExternalRepresentation(pubNuestra, &e2) as Data?
+  guard let ra = a, let rb = b, ra == rb else {
+    die("cert_key_mismatch", "el certificado no corresponde a la clave \(label)")
+  }
+
+  let st = SecItemAdd([
+    kSecClass as String: kSecClassCertificate,
+    kSecValueRef as String: cert,
+    kSecUseKeychain as String: kc
+  ] as CFDictionary, nil)
+  // errSecDuplicateItem (-25299) es exito: reinstalar el mismo
+  // certificado no es un fallo, y tratarlo como tal haria que un
+  // reintento del job pareciera roto.
+  if st != errSecSuccess && st != errSecDuplicateItem {
+    die("cert_install_failed", "SecItemAdd: OSStatus \(st)")
+  }
+
+  // ¿Se formo la identidad? Es la unica pregunta que importa.
+  var salida: CFTypeRef?
+  let q: [String: Any] = [
+    kSecClass as String: kSecClassIdentity,
+    kSecMatchSearchList as String: [kc] as CFArray,
+    kSecMatchLimit as String: kSecMatchLimitAll,
+    kSecReturnRef as String: true
+  ]
+  var atada = false
+  if SecItemCopyMatching(q as CFDictionary, &salida) == errSecSuccess,
+     let ids = salida as? [SecIdentity] {
+    for id in ids {
+      var c: SecCertificate?
+      if SecIdentityCopyCertificate(id, &c) == errSecSuccess, let c = c,
+         (SecCertificateCopyData(c) as Data) == der {
+        atada = true
+        break
+      }
+    }
+  }
+  if !atada {
+    die("identity_not_formed", "el certificado entro pero no quedo atado a la clave")
+  }
+
+  let sha = SecCertificateCopyData(cert) as Data
+  emit([
+    "ok": true,
+    "label": label,
+    "installed": true,
+    "subject": (SecCertificateCopySubjectSummary(cert) as String?) ?? "",
+    "sha256": sha256Hex(sha)
+  ])
+}
+
+/// SHA-256 en hexadecimal, sin depender de CryptoKit.
+func sha256Hex(_ d: Data) -> String {
+  var hash = [UInt8](repeating: 0, count: 32)
+  d.withUnsafeBytes { buf in
+    _ = CC_SHA256(buf.baseAddress, CC_LONG(d.count), &hash)
+  }
+  return hash.map { String(format: "%02x", $0) }.joined()
 }
 
 func cmdInfo(kc: SecKeychain, label: String) -> Never {
@@ -428,6 +547,9 @@ case "info":
   cmdInfo(kc: keychain, label: label)
 case "delete":
   cmdDelete(kc: keychain, label: label)
+case "install-cert":
+  guard let cert = opt("cert") else { die("usage", "--cert es obligatorio") }
+  cmdInstallCert(kc: keychain, label: label, certPath: cert)
 case "csr":
   guard let subject = opt("subject") else { die("usage", "--subject es obligatorio") }
   let eku = (opt("eku") == "serverAuth") ? OID.serverAuth : OID.clientAuth

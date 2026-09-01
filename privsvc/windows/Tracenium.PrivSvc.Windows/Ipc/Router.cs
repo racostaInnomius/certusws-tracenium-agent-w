@@ -151,7 +151,7 @@ public sealed class Router
             "ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 service = "TraceniumPrivSvc",
-                version = "1.1.55",
+                version = "1.1.57",
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
@@ -198,6 +198,12 @@ public sealed class Router
             "cdp.csr.generate" => CdpKeys.HandleCsrGenerate(req),
             "cdp.key.destroy" => CdpKeys.HandleKeyDestroy(req),
             "cdp.key.list" => CdpKeys.HandleKeyList(req),
+            // ADR-0011 fase 3. Aqui CdpWriteGuard deja de estar sin
+            // cablear: allowlist {My, WebHosting} + cadena validada
+            // contra el trust store LOCAL. NO reutiliza
+            // CryptoCertInstall, que escribe en Root y es fontaneria de
+            // enrolamiento.
+            "cdp.cert.install" => CdpCertInstall.Handle(req),
 
             "crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),
             "crypto.cert.install" => CryptoCertInstall.HandleInstallCert(req),
