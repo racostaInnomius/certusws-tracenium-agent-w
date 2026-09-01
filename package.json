@@ -37,6 +37,7 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
+    "test:privsvc:windows": "dotnet test privsvc/windows/Tracenium.PrivSvc.Tests --nologo",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "build:privsvc:linux": "tsc -p privsvc/linux/tsconfig.json",

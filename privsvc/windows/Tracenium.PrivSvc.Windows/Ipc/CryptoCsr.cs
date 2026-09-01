@@ -46,9 +46,32 @@ public static class CryptoCsr
             dnsName ??= Environment.MachineName;
 
             // 1) Abrir/crear key persistente (CNG) - one key per device
-            string keyName = string.IsNullOrWhiteSpace(requestedKeyName)
-                ? $"tracenium-{deviceId}"
-                : requestedKeyName;
+            //
+            // ADR-0011 action item 9. El nombre se DERIVA: antes se usaba
+            // el del llamante tal cual, lo que permitia (a) borrar la
+            // identidad mTLS viva del agente pidiendo su nombre con
+            // reuseExistingKey:false —caida de flota sin arreglo remoto— y
+            // (b) apuntar a un contenedor CNG de otra aplicacion del
+            // equipo, sacando el daño fuera del producto. Ver CryptoKeyNames.
+            string keyName;
+            try
+            {
+                keyName = CryptoKeyNames.Resolve(requestedKeyName, deviceId);
+            }
+            catch (ArgumentException ex)
+            {
+                return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request", ex.Message));
+            }
+
+            if (CryptoKeyNames.WouldDestroyLiveIdentity(keyName, deviceId, reuse))
+            {
+                // La rotacion NO pasa por aqui: crea una clave pendiente
+                // aparte precisamente para no tocar la que esta en uso.
+                return Task.FromResult(PrivSvcResponse.Fail(req.Id, "refused",
+                    "no se destruye la identidad mTLS viva por peticion; " +
+                    "la rotacion usa una clave pendiente"));
+            }
+
             bool created;
 
             CertificateRequest reqCsr;

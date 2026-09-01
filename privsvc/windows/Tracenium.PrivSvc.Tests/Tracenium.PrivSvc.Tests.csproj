@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Pruebas del PrivSvc de Windows.
+
+       ⚠️ TFM `net8.0` a secas, y NO se referencia el proyecto del
+       servicio. Ese es `net8.0-windows`, asi que un test que lo
+       referenciara no podria EJECUTARSE fuera de Windows — y una suite
+       que solo corre en una maquina que nadie tiene delante acaba sin
+       correr.
+
+       En su lugar se compila el fichero concreto bajo prueba. Funciona
+       porque `CryptoKeyNames` es logica de texto pura, sin nada de
+       Windows dentro; el dia que deje de serlo, esto dejara de
+       compilar, que es el aviso correcto. -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+
+    <!-- El TFM se queda en net8.0, el MISMO que produccion: probar contra
+         otra version del framework probaria otra cosa. `LatestMajor` es
+         lo que permite ejecutarlo donde solo hay instalado el runtime de
+         .NET 10, que es el caso de la maquina de desarrollo. -->
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\CryptoKeyNames.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+</Project>

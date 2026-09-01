@@ -36,7 +36,19 @@ public static class CryptoCertInstall
                 return Task.FromResult(
                     PrivSvcResponse.Fail(req.Id, "bad_request", "deviceId required"));
 
-            string keyName = GetString(p, "keyName") ?? $"tracenium-{deviceId}";
+            // Mismo parametro, mismo tratamiento (ADR-0011 action item 9).
+            // Aqui no se borra nada —solo se abre el contenedor— pero
+            // dejarlo libre seria un arreglo a medias: es la otra mitad
+            // del mismo flujo y la misma superficie.
+            string keyName;
+            try
+            {
+                keyName = CryptoKeyNames.Resolve(GetString(p, "keyName"), deviceId);
+            }
+            catch (ArgumentException ex)
+            {
+                return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request", ex.Message));
+            }
 
             if (string.IsNullOrWhiteSpace(certPem))
                 return Task.FromResult(
