@@ -21,6 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { certPaths } from "./paths";
+import { readGatewayKey, readGatewayPrivateKeyPem } from "./gateway-key";
 import { success, fail, type PrivSvcRequest, type PrivSvcResponse } from "./protocol";
 
 const ENVELOPE_VERSION = 1;
@@ -110,11 +111,29 @@ function openEnvelope(env: SealedEnvelope): { username: string; password: string
     }
   }
 
-  // Distinguish "sealed to a cert we have since replaced" from "corrupt". They
-  // are cryptographically identical but mean different things to the admin: one
-  // says re-enter the credential, the other says something is wrong.
-  const current = currentCertFingerprint();
-  if (current.toLowerCase() !== env.certFingerprint.replace(/[:\s]/g, "").toLowerCase()) {
+  // La huella del sobre elige la clave, en lugar de darla por supuesta.
+  //
+  // ADR-0013 mete una segunda: la del gateway, que es la correcta y la
+  // única que existe para esto. La de enrolamiento se sigue aceptando
+  // durante el despliegue —un backend ya actualizado sirve el
+  // certificado de enrolamiento mientras el agente no haya publicado el
+  // suyo, y al revés— y ese solapamiento es justo lo que evita que un
+  // gateway que hoy funciona deje de hacerlo a mitad de la actualización.
+  //
+  // Si no casa con ninguna, se sella contra un certificado que este
+  // equipo ya no tiene: `stale_envelope` le dice al admin que vuelva a
+  // introducirla, en vez de un fallo de descifrado que no dice nada.
+  const wanted = env.certFingerprint.replace(/[:\s]/g, "").toLowerCase();
+  const gateway = readGatewayKey();
+
+  let privateKeyPem: string | null = null;
+  if (gateway && gateway.fingerprintSha256 === wanted) {
+    privateKeyPem = readGatewayPrivateKeyPem();
+  } else if (currentCertFingerprint().toLowerCase() === wanted) {
+    privateKeyPem = fs.readFileSync(certPaths().clientKey, "utf8");
+  }
+
+  if (!privateKeyPem) {
     throw Object.assign(
       new Error("credential was sealed to a different device certificate"),
       { code: "stale_envelope" }
@@ -126,7 +145,7 @@ function openEnvelope(env: SealedEnvelope): { username: string; password: string
   try {
     aesKey = crypto.privateDecrypt(
       {
-        key: crypto.createPrivateKey(fs.readFileSync(certPaths().clientKey, "utf8")),
+        key: crypto.createPrivateKey(privateKeyPem),
         padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
         oaepHash: "sha256",
       },

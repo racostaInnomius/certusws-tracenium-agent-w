@@ -48,6 +48,19 @@ export type PrivSvcMethod =
   | "cdp.anchor.distrust"
   | "crypto.csr.generate" // enrollment CSR generation
   | "crypto.cert.install" // install client cert (bind to existing key)
+  // ADR-0013 — la clave con la que se abre la credencial de vCenter.
+  //
+  // Separada de la de enrolamiento porque esa NO puede descifrar: en
+  // Windows se crea solo-firma y CNG lo hace cumplir, y en Linux/macOS
+  // descifrar con ella contradice su propia KeyUsage critica.
+  //
+  // Vive con el rol de gateway y no con el equipo: es la unica clave del
+  // parque capaz de descifrar, y solo existe donde hace falta.
+  //   * `crypto.gwkey.ensure`  — params { deviceId }. Idempotente.
+  //     Devuelve { certPem, fingerprintSha256, notAfter }.
+  //   * `crypto.gwkey.destroy` — params { deviceId }. Idempotente.
+  | "crypto.gwkey.ensure"
+  | "crypto.gwkey.destroy"
   // gRPC bridge (PrivSvc owns mTLS private key + channel)
   | "grpc.connect"
   | "grpc.facts.send"

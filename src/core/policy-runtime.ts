@@ -765,6 +765,11 @@ export class PolicyRuntime extends EventEmitter {
     this.emit("modulesChanged", this.listEnabledModules());
     this.emit("featuresChanged", this.policy.features);
     this.emit("securityPolicyChanged", this.getSecurityPolicy());
+    // ADR-0013 — el rol de gateway es tambien el interruptor de la clave
+    // que abre la credencial de vCenter. Se emite el bloque validado, no
+    // un booleano: el oyente necesita saber que cambio, no solo que hubo
+    // cambio.
+    this.emit("gatewayChanged", this.gatewayConfig());
   }
 
   // ---------- validation ----------

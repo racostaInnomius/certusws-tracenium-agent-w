@@ -60,6 +60,18 @@ public static class CryptoKeyNames
     public static string EnrollmentKeyName(string deviceId) => $"tracenium-{deviceId}";
 
     /// <summary>
+    /// El contenedor de la clave con la que se abre la credencial del
+    /// Infrastructure Gateway (ADR-0013).
+    ///
+    /// ⚠️ Se DERIVA aquí y `Resolve` no lo acepta a propósito: es la única
+    /// clave del equipo capaz de descifrar, y ninguna petición de CSR ni
+    /// de instalación debe poder nombrarla — ni para usarla, ni para
+    /// borrarla. Vive y muere con el rol de gateway, por
+    /// `crypto.gwkey.ensure` y `crypto.gwkey.destroy`, y por nada más.
+    /// </summary>
+    public static string GatewayEncryptionKeyName(string deviceId) => $"tracenium-{deviceId}-gwenc";
+
+    /// <summary>
     /// Resuelve el nombre del contenedor CNG.
     ///
     /// Vacio o nulo devuelve el de enrolamiento, que es el comportamiento

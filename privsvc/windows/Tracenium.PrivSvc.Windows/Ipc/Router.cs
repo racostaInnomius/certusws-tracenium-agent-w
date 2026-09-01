@@ -208,6 +208,10 @@ public sealed class Router
             "crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),
             "crypto.cert.install" => CryptoCertInstall.HandleInstallCert(req),
             "crypto.cert.renew" => CryptoCertRenew.HandleRenewCert(req),
+            // ADR-0013 — la clave que abre la credencial de vCenter. Nace y
+            // muere con el rol de gateway; ninguna otra ruta la nombra.
+            "crypto.gwkey.ensure" => CryptoGatewayKey.HandleEnsure(req),
+            "crypto.gwkey.destroy" => CryptoGatewayKey.HandleDestroy(req),
 
             // gRPC bridge (session mode)
             // NOTE: These handlers should enforce LocalSystem if required.

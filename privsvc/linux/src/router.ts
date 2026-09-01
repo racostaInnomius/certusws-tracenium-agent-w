@@ -19,6 +19,7 @@ import type { PrivSvcRequest, PrivSvcResponse, PushSink } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
 import { handleGenerateCsr, handleInstallCert, handleRenewCert } from "./crypto-store";
+import { handleGatewayKeyEnsure, handleGatewayKeyDestroy } from "./gateway-key";
 import {
   handleCredentialProvision,
   handleCredentialRetrieve,
@@ -144,6 +145,14 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "crypto.cert.install":
       return handleInstallCert(req);
+
+    // ADR-0013 — la clave que abre la credencial de vCenter. Nace con el
+    // rol de gateway y muere con el; no la nombra ninguna otra ruta.
+    case "crypto.gwkey.ensure":
+      return handleGatewayKeyEnsure(req);
+
+    case "crypto.gwkey.destroy":
+      return handleGatewayKeyDestroy(req);
 
     // ADR-0011 fase 2 — emision para certificados AJENOS al agente.
     //

@@ -72,6 +72,44 @@ public class CryptoKeyNamesTests
         Assert.Throws<ArgumentException>(() => CryptoKeyNames.Resolve(null, "  "));
     }
 
+    // ── ADR-0013: la clave del gateway ──────────────────────────────
+
+    [Fact]
+    public void Estrella_la_clave_del_gateway_es_inalcanzable_desde_un_CSR()
+    {
+        // La clave del gateway es la UNICA del equipo capaz de descifrar.
+        // `Resolve` es la puerta por la que entran los nombres de
+        // contenedor de `crypto.csr.generate` y `crypto.cert.install`; si
+        // aceptara este nombre, una peticion de CSR podria recrear el
+        // contenedor y dejar sin abrir toda credencial ya sellada, o
+        // firmar un CSR con el material de custodia.
+        //
+        // El nombre se DERIVA en los dos handlers de gwkey y no se pide
+        // nunca, asi que rechazarlo aqui no le quita nada a nadie.
+        var gateway = CryptoKeyNames.GatewayEncryptionKeyName(Device);
+        Assert.Throws<ArgumentException>(() => CryptoKeyNames.Resolve(gateway, Device));
+    }
+
+    [Fact]
+    public void La_clave_del_gateway_no_colisiona_con_las_otras_dos()
+    {
+        var gateway = CryptoKeyNames.GatewayEncryptionKeyName(Device);
+
+        Assert.NotEqual(Enrolamiento, gateway);
+        Assert.StartsWith("tracenium-", gateway);
+        // Dentro del espacio de nombres del producto y del propio equipo:
+        // un contenedor ajeno seria daño fuera de Tracenium.
+        Assert.Contains(Device, gateway);
+    }
+
+    [Fact]
+    public void Cada_equipo_tiene_la_suya()
+    {
+        Assert.NotEqual(
+            CryptoKeyNames.GatewayEncryptionKeyName(Device),
+            CryptoKeyNames.GatewayEncryptionKeyName("otro-device"));
+    }
+
     [Fact]
     public void Estrella_pedir_la_identidad_viva_con_reuse_false_es_destruirla()
     {

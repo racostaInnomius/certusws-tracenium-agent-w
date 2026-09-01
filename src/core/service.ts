@@ -7,6 +7,7 @@ import { outbox } from "../queue/sqlite-outbox";
 import type { AgentContext } from "./agent-context";
 import { maybeRenewClientCertificate } from "../bootstrap/cert-renewal";
 import { dumpWedgeState } from "../diag/wedge-dump";
+import { reconcileGatewayKey } from "../connectors/vcenter/gateway-key-sync";
 
 let shuttingDown = false;
 let currentCtx: AgentContext | null = null;
@@ -220,6 +221,44 @@ export async function startService() {
       remoteFile:   Boolean(ctx.policyRuntime.isFeatureEnabled("remoteFile")),
       remoteScreen: Boolean(ctx.policyRuntime.isFeatureEnabled("remoteScreen")),
     };
+    // ADR-0013 — la clave que abre la credencial de vCenter cuelga del mismo
+    // interruptor que el conector: la PRESENCIA de `policy.gateway.vcenter`.
+    // Nace al designar el gateway y muere al retirarlo, así que ningún equipo
+    // que no lo sea llega a tener una clave capaz de descifrar.
+    let gatewayKeyState: { publishedFingerprint: string | null } = { publishedFingerprint: null };
+    const syncGatewayKey = () => {
+      if (!ctx.priv) return;
+      const call = async (method: "crypto.gwkey.ensure" | "crypto.gwkey.destroy", deviceId: string) => {
+        const resp: any = await ctx.priv!.call({
+          v: 1,
+          id: `gwkey_${Date.now()}`,
+          method,
+          params: { deviceId },
+          meta: { tenantId: ctx.enrollment.tenantId, deviceId },
+        });
+        if (!resp?.ok) throw new Error(resp?.error?.message || `${method} failed`);
+        return resp.result;
+      };
+      reconcileGatewayKey(
+        {
+          isGateway: () => Boolean(ctx.policyRuntime.isGateway?.()),
+          deviceId: () => ctx.enrollment.deviceId,
+          ensureKey: (deviceId) => call("crypto.gwkey.ensure", deviceId),
+          destroyKey: async (deviceId) => { await call("crypto.gwkey.destroy", deviceId); },
+          logger: log,
+        },
+        gatewayKeyState
+      )
+        .then((next) => { gatewayKeyState = next; })
+        // reconcileGatewayKey ya se traga sus fallos; esto solo cubre que la
+        // propia llamada no exista en un build antiguo del servicio.
+        .catch(() => {});
+    };
+    ctx.policyRuntime.on("gatewayChanged", syncGatewayKey);
+    // Y una vez al arrancar: el rol pudo asignarse mientras el equipo estaba
+    // apagado, y en ese caso no habrá ningún `gatewayChanged` que lo cuente.
+    syncGatewayKey();
+
     ctx.policyRuntime.on("featuresChanged", () => {
       const next = {
         remoteShell:  Boolean(ctx.policyRuntime.isFeatureEnabled("remoteShell")),
