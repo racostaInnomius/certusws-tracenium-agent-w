@@ -111,6 +111,64 @@ internal static class SessionScreenCapture
     /// Arranca el helper si hace falta. Serializado por `Gate`: el pipe es un
     /// carril único y dos peticiones a la vez leerían la respuesta de la otra.
     /// </summary>
+    /// <summary>
+    /// Devuelve el token ELEVADO del mismo usuario, si lo hay.
+    ///
+    /// Solo tiene sentido cuando el token de entrada es el filtrado de un
+    /// administrador bajo UAC (TokenElevationTypeLimited). Un usuario estándar
+    /// —o un equipo con UAC apagado— no tiene token enlazado, y ahí devolver
+    /// false es la respuesta correcta, no un fallo.
+    ///
+    /// No lanza nunca. Perder la elevación cuesta no poder controlar ventanas
+    /// elevadas; lanzar costaría la sesión entera, que es peor.
+    /// </summary>
+    private static bool TryGetLinkedToken(IntPtr userToken, out IntPtr linked)
+    {
+        linked = IntPtr.Zero;
+        var buf = IntPtr.Zero;
+        try
+        {
+            // 1) ¿Es un token filtrado por UAC?
+            buf = Marshal.AllocHGlobal(sizeof(int));
+            if (!NativeMethods.GetTokenInformation(
+                    userToken, NativeMethods.TokenElevationType,
+                    buf, sizeof(int), out _))
+            {
+                return false;
+            }
+            var elevationType = Marshal.ReadInt32(buf);
+            if (elevationType != NativeMethods.TokenElevationTypeLimited)
+            {
+                // Ya elevado, o sin token dividido. En ninguno de los dos casos
+                // hay nada que pedir.
+                return false;
+            }
+            Marshal.FreeHGlobal(buf);
+
+            // 2) El token enlazado. Viene como HANDLE, así que el búfer es del
+            //    tamaño de un puntero — no de un int. En x64 pedir 4 bytes aquí
+            //    fallaría con ERROR_INSUFFICIENT_BUFFER y la elevación se
+            //    perdería en silencio.
+            buf = Marshal.AllocHGlobal(IntPtr.Size);
+            if (!NativeMethods.GetTokenInformation(
+                    userToken, NativeMethods.TokenLinkedToken,
+                    buf, IntPtr.Size, out _))
+            {
+                return false;
+            }
+            linked = Marshal.ReadIntPtr(buf);
+            return linked != IntPtr.Zero;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (buf != IntPtr.Zero) Marshal.FreeHGlobal(buf);
+        }
+    }
+
     private static (string? line, PrivSvcResponse? error) Exchange(string reqId, string requestJson)
     {
         lock (Gate)
@@ -261,13 +319,48 @@ internal static class SessionScreenCapture
         {
             // CreateProcessAsUser exige un token PRIMARIO; WTSQueryUserToken
             // devuelve uno de impersonación.
-            if (!NativeMethods.DuplicateTokenEx(userToken,
-                    NativeMethods.TOKEN_ALL_ACCESS, IntPtr.Zero,
-                    NativeMethods.SecurityImpersonation,
-                    NativeMethods.TokenPrimary, out primaryToken))
+            // ⚠️ El token que hay que duplicar NO es siempre el que devuelve
+            // WTSQueryUserToken.
+            //
+            // Para un administrador con UAC, ese token es el FILTRADO: integridad
+            // MEDIA. Y UIPI —User Interface Privilege Isolation— impide que un
+            // proceso de integridad media mande entrada sintética a una ventana
+            // ELEVADA. Resultado en campo: con la consola de servicios o un cmd
+            // "como administrador" en primer plano, el operador dejaba de poder
+            // mover el cursor; al cerrar esa ventana, el control volvía solo.
+            // SendInput devolvía 0 y nadie lo miraba, así que no había ni una
+            // línea de log que lo explicara.
+            //
+            // Se pide el token ENLAZADO (el elevado del mismo usuario) cuando
+            // existe. No es un privilegio nuevo para el producto: PrivSvc ya
+            // corre como LocalSystem, estrictamente por encima.
+            //
+            // Si el usuario NO es admin —o UAC está apagado— no hay token
+            // enlazado y se sigue con el filtrado. Es correcto: en ese equipo
+            // tampoco hay ventanas elevadas que controlar. Cualquier fallo aquí
+            // cae al camino de siempre; quedarse sin sesión por no poder elevar
+            // sería peor que no poder controlar una ventana de servicios.
+            var sourceToken = TryGetLinkedToken(userToken, out var linkedToken)
+                ? linkedToken
+                : userToken;
+
+            try
             {
-                throw new InvalidOperationException(
-                    $"DuplicateTokenEx failed (Win32 {Marshal.GetLastWin32Error()}).");
+                if (!NativeMethods.DuplicateTokenEx(sourceToken,
+                        NativeMethods.TOKEN_ALL_ACCESS, IntPtr.Zero,
+                        NativeMethods.SecurityImpersonation,
+                        NativeMethods.TokenPrimary, out primaryToken))
+                {
+                    throw new InvalidOperationException(
+                        $"DuplicateTokenEx failed (Win32 {Marshal.GetLastWin32Error()}).");
+                }
+            }
+            finally
+            {
+                if (linkedToken != IntPtr.Zero)
+                {
+                    NativeMethods.CloseHandle(linkedToken);
+                }
             }
 
             // Sin esto el helper heredaría el entorno de SYSTEM: TEMP, APPDATA
@@ -458,6 +551,23 @@ internal static class SessionScreenCapture
         public const int HANDLE_FLAG_INHERIT = 0x00000001;
         public const int SecurityImpersonation = 2;
         public const int TokenPrimary = 1;
+
+        // TOKEN_INFORMATION_CLASS
+        public const int TokenElevationType = 18;
+        public const int TokenLinkedToken = 19;
+
+        // TOKEN_ELEVATION_TYPE
+        public const int TokenElevationTypeDefault = 1; // sin token dividido
+        public const int TokenElevationTypeFull    = 2; // ya elevado
+        public const int TokenElevationTypeLimited = 3; // admin filtrado por UAC
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool GetTokenInformation(
+            IntPtr TokenHandle,
+            int TokenInformationClass,
+            IntPtr TokenInformation,
+            int TokenInformationLength,
+            out int ReturnLength);
 
         [DllImport("kernel32.dll")]
         public static extern uint WTSGetActiveConsoleSessionId();

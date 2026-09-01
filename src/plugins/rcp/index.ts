@@ -300,6 +300,22 @@ export function rcpScreenAdvertised(ctx: AgentContext): boolean {
 export function rcpConsentAdvertised(ctx: AgentContext): boolean {
   if (nativeBroken) return false;
   try {
+    // ⚠️ Se registra AQUÍ, no solo en initRcp, y el motivo lo destapó el campo:
+    //
+    //   línea 71 del log   → Agent hello, con las capacidades ya calculadas
+    //   línea 212 del log  → "[rcp] consent prompter: tray"
+    //
+    // El Hello sale ANTES de que initRcp corra, así que esta función veía
+    // siempre un ctx.consentPrompter vacío y el agente nunca anunciaba
+    // rcp.consent. Consecuencia: con la política de consentimiento encendida,
+    // el backend habría rechazado TODAS las sesiones —fallo cerrado, correcto—
+    // en vez de enseñar el aviso. Es decir: la función existía completa en las
+    // tres plataformas y era inalcanzable por un problema de orden de arranque.
+    //
+    // registerConsentPrompter es idempotente y no pisa uno ya puesto, así que
+    // llamarlo desde el camino de las capacidades es seguro y deja de depender
+    // de quién arranca primero.
+    registerConsentPrompter(ctx);
     return Boolean(ctx.consentPrompter?.available?.());
   } catch {
     return false;

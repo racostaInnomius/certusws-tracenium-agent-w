@@ -258,6 +258,9 @@ export class ScreenSession {
    */
   private inputSeen = false;
 
+  /** Ya se avisó de que la entrada está bloqueada. Una vez por sesión. */
+  private inputBlockedReported = false;
+
   /** Grabación de esta sesión (ADR-0012). null si el tenant no la activó. */
   private recorder: ScreenRecorder | null = null;
 
@@ -800,6 +803,18 @@ export class ScreenSession {
         method: "input.inject",
         params
       })
+      .then((res: any) => {
+        // ⚠️ El IPC devuelve Success aunque SendInput haya sido BLOQUEADO: el
+        // `ok` de la respuesta va DENTRO del resultado (ver InputInjection.cs,
+        // que hace soft-fail a propósito para no reintentar en bucle). Si no
+        // se mira aquí, el operador ve el cursor congelado y no hay ni una
+        // línea en ningún log que lo explique — que es exactamente lo que
+        // pasó en campo.
+        const inner = res?.result ?? res;
+        if (inner && inner.ok === false) {
+          this.reportInputBlocked(String(inner.hint || ""));
+        }
+      })
       .catch((err: any) => {
         ctx.logger?.debug?.("[rcp.screen] input.inject failed", {
           sessionId,
@@ -807,6 +822,40 @@ export class ScreenSession {
           err: err?.message
         });
       });
+  }
+
+  /**
+   * Avisa al operador de que su entrada NO está llegando al equipo.
+   *
+   * En Windows esto es casi siempre UIPI: un proceso de integridad media no
+   * puede mandar entrada sintética a una ventana ELEVADA. Con la consola de
+   * servicios, un cmd "como administrador" o cualquier ventana con escudo en
+   * primer plano, SendInput se descarta y devuelve 0.
+   *
+   * Se avisa UNA vez por sesión: los eventos de ratón llegan a decenas por
+   * segundo y repetirlo llenaría el canal. Y no es terminal — en cuanto la
+   * ventana elevada pierde el foco, el control vuelve solo.
+   */
+  private reportInputBlocked(hint: string): void {
+    if (this.inputBlockedReported) return;
+    this.inputBlockedReported = true;
+
+    this.args.ctx.logger?.warn?.("[rcp.screen] la entrada está siendo bloqueada", {
+      sessionId: this.args.sessionId,
+      hint
+    });
+
+    this.send({
+      op: "error",
+      code: "input_blocked_elevated",
+      message:
+        "Input is not reaching the device. On Windows this happens while an " +
+        "elevated window has focus (Services, an administrator command prompt, " +
+        "or a UAC prompt): the operating system blocks synthetic input to " +
+        "windows running with higher privileges. Ask the user to close or " +
+        "minimise it, and control resumes on its own.",
+      terminal: false
+    });
   }
 
   // M3.S2 — split a large base64 JPEG string into FRAME_CHUNK_MAX
