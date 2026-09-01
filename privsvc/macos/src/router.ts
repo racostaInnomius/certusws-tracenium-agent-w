@@ -40,6 +40,11 @@ import {
 import { handleDpPrefetch, handleDpStatus } from "./dp";
 import { logger } from "./logger";
 import { distrustAnchor } from "./anchor-distrust";
+import {
+  handleCdpCsrGenerate,
+  handleCdpKeyDestroy,
+  handleCdpKeyList
+} from "./cdp-keys";
 
 function isRoot() {
   return typeof process.getuid === "function" ? process.getuid() === 0 : false;
@@ -60,6 +65,12 @@ function requiresRoot(method: string) {
       || method.startsWith("grpc.")
       || method.startsWith("sdp.")
       || method.startsWith("pmp.")
+      // cdp.* faltaba, y no solo por los metodos nuevos de la fase 2 de
+      // ADR-0011: `cdp.anchor.distrust` ya escribia trust settings en el
+      // System.keychain sin pasar por aqui. La lectura del inventario
+      // podria discutirse, pero el repo evita a proposito una superficie
+      // de privilegio parcial — mismo argumento que sdp.* y pmp.*.
+      || method.startsWith("cdp.")
       // mdm.* es solo lectura, pero lee /Library/Managed Preferences y
       // consulta `profiles`. Se exige root por consistencia: el repo
       // evita a propósito una superficie de privilegio parcial.
@@ -133,6 +144,20 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
         ? success(req.id, { distrusted: true, sha1: out.sha1, subject: out.subject })
         : fail(req.id, out.code, out.message);
     }
+
+    // ADR-0011 fase 2 — emision para certificados AJENOS al agente.
+    //
+    // Metodos NUEVOS, no `crypto.csr.generate`: ese esta cableado a la
+    // identidad mTLS del propio agente y reutilizarlo sobrescribiria su
+    // clave de enrolamiento (correccion medida de ADR-0004).
+    case "cdp.csr.generate":
+      return handleCdpCsrGenerate(req);
+
+    case "cdp.key.destroy":
+      return handleCdpKeyDestroy(req);
+
+    case "cdp.key.list":
+      return handleCdpKeyList(req);
 
     case "crypto.cert.renew":
       return handleRenewCert(req);

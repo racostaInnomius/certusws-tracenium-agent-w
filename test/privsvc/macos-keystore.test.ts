@@ -94,7 +94,7 @@ describe("keystore: envoltorio del helper", () => {
 
   it("solo pasa las opciones que se le dan", async () => {
     fakeHelper(`echo '{"ok":true}'`);
-    await generateCsr("etq", "CN=a,O=b", { uri: "tracenium://x", eku: "serverAuth" });
+    await generateCsr("etq", "CN=a,O=b", { uris: ["tracenium://x"], eku: "serverAuth" });
     const a = args();
     expect(a).toContain("--uri");
     expect(a).toContain("serverAuth");
@@ -203,8 +203,8 @@ describe.runIf(enMac && haySwift)("keystore: la clave NO sale (llavero real)", (
 
   it("firma un CSR que OpenSSL da por bueno", async () => {
     const r = await generateCsr(etiqueta, "CN=tracenium-agent-abc,O=Tracenium,OU=T111", {
-      dns: "mac-prueba.local",
-      uri: "tracenium://tenant/T111/device/abc",
+      dnsNames: ["mac-prueba.local"],
+      uris: ["tracenium://tenant/T111/device/abc"],
       keychain: kc
     });
     expect(r.ok).toBe(true);

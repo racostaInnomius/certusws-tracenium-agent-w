@@ -59,7 +59,7 @@
 //
 //   create  --label L [--bits N]     -> {"ok":true,"label":L,"created":true}
 //   csr     --label L --subject "CN=a,O=b,OU=c"
-//           [--dns d] [--uri u] [--eku clientAuth|serverAuth]
+//           [--dns d]... [--uri u]... [--eku clientAuth|serverAuth]
 //                                    -> {"ok":true,"csrPem":"..."}
 //   info    --label L                -> {"ok":true,"exists":true,"extractable":false}
 //   delete  --label L                -> {"ok":true,"deleted":N}
@@ -194,6 +194,48 @@ func cmdCreate(kc: SecKeychain, label: String, bits: Int) -> Never {
   emit(["ok": true, "label": label, "created": true, "bits": bits])
 }
 
+/// Enumera las claves del almacen bajo un prefijo.
+///
+/// Existe por la decision 9.d: «una clave pendiente sin certificado es un
+/// item de primera clase del inventario». La cautela que la motiva sale
+/// de este mismo repositorio —`purge_after` se escribe y no lo barre
+/// nadie—, asi que el respaldo no puede ser solo un cron: tiene que
+/// poder MIRARSE. Sin enumeracion no hay nada que mirar.
+///
+/// ⚠️ NO devuelve fecha de creacion, y no por olvido: un llavero de
+/// FICHERO no la guarda para las claves. Se comprobo que atributos
+/// devuelve `SecItemCopyMatching` y la lista es
+/// `atag bsiz class decr drve encr esiz kcls klbl labl perm sign type
+/// unwp vrfy wrap` — no hay `cdat`. La edad, que es lo que de verdad
+/// pregunta el operador («¿hay alguna huerfana que lleve demasiado?»),
+/// la lleva el registro del lado TS, que ademas puede decir POR QUE
+/// existe la clave. Esta lista es la fuente de verdad de QUE hay.
+func cmdList(kc: SecKeychain, prefix: String) -> Never {
+  let q: [String: Any] = [
+    kSecClass as String: kSecClassKey,
+    kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
+    kSecMatchSearchList as String: [kc] as CFArray,
+    kSecMatchLimit as String: kSecMatchLimitAll,
+    kSecReturnAttributes as String: true
+  ]
+  var out: CFTypeRef?
+  let st = SecItemCopyMatching(q as CFDictionary, &out)
+  if st == errSecItemNotFound { emit(["ok": true, "keys": []]) }
+  guard st == errSecSuccess, let filas = out as? [[String: Any]] else {
+    die("list_failed", "OSStatus \(st)")
+  }
+
+  let completo = "com.certusws.tracenium.\(prefix)"
+  var keys: [[String: Any]] = []
+  for fila in filas {
+    guard let tag = fila[kSecAttrApplicationTag as String] as? Data,
+          let texto = String(data: tag, encoding: .utf8),
+          texto.hasPrefix(completo) else { continue }
+    keys.append(["label": String(texto.dropFirst("com.certusws.tracenium.".count))])
+  }
+  emit(["ok": true, "keys": keys])
+}
+
 func cmdInfo(kc: SecKeychain, label: String) -> Never {
   guard let key = findKey(kc, label, priv: true) else {
     emit(["ok": true, "exists": false])
@@ -271,7 +313,7 @@ func name(_ subject: String) -> [UInt8] {
   return DER.sequence(rdns)
 }
 
-func extensionsAttribute(dns: String?, uri: String?, eku: [UInt8]) -> [UInt8] {
+func extensionsAttribute(dns: [String], uri: [String], eku: [UInt8]) -> [UInt8] {
   var exts: [[UInt8]] = []
 
   // keyUsage critica = digitalSignature (bit 0): 7 bits sin usar.
@@ -285,8 +327,8 @@ func extensionsAttribute(dns: String?, uri: String?, eku: [UInt8]) -> [UInt8] {
 
   var generales: [[UInt8]] = []
   // GeneralName: dNSName es [2] IMPLICIT IA5String, uniformResourceIdentifier [6].
-  if let d = dns { generales.append(DER.context(2, constructed: false, Array(d.utf8))) }
-  if let u = uri { generales.append(DER.context(6, constructed: false, Array(u.utf8))) }
+  for d in dns { generales.append(DER.context(2, constructed: false, Array(d.utf8))) }
+  for u in uri { generales.append(DER.context(6, constructed: false, Array(u.utf8))) }
   if !generales.isEmpty {
     exts.append(DER.sequence([
       DER.oid(OID.subjectAltName), DER.octet(DER.sequence(generales))
@@ -299,7 +341,7 @@ func extensionsAttribute(dns: String?, uri: String?, eku: [UInt8]) -> [UInt8] {
   ])
 }
 
-func cmdCsr(kc: SecKeychain, label: String, subject: String, dns: String?, uri: String?, eku: [UInt8]) -> Never {
+func cmdCsr(kc: SecKeychain, label: String, subject: String, dns: [String], uri: [String], eku: [UInt8]) -> Never {
   guard let priv = findKey(kc, label, priv: true) else {
     die("key_not_found", "no hay clave con etiqueta \(label)")
   }
@@ -354,7 +396,29 @@ func opt(_ nombre: String) -> String? {
   return args[i + 1]
 }
 
+/// Todas las apariciones de una opcion.
+///
+/// Un certificado de servidor lleva varios nombres —el FQDN, el alias
+/// corto, a veces un comodin—, asi que `--dns` y `--uri` se repiten. Una
+/// sola aparicion habria obligado a inventar un separador y a lidiar con
+/// el nombre que lo contenga.
+func opts(_ nombre: String) -> [String] {
+  var out: [String] = []
+  var i = 0
+  while i < args.count - 1 {
+    if args[i] == "--\(nombre)" { out.append(args[i + 1]); i += 2 } else { i += 1 }
+  }
+  return out
+}
+
 let keychain = openKeychain(opt("keychain") ?? DEFAULT_KEYCHAIN)
+
+// `list` es el unico que NO opera sobre una clave concreta: pregunta por
+// las que hay. Se resuelve antes de exigir --label.
+if comando == "list" {
+  cmdList(kc: keychain, prefix: opt("prefix") ?? "")
+}
+
 guard let label = opt("label") else { die("usage", "--label es obligatorio") }
 
 switch comando {
@@ -367,7 +431,7 @@ case "delete":
 case "csr":
   guard let subject = opt("subject") else { die("usage", "--subject es obligatorio") }
   let eku = (opt("eku") == "serverAuth") ? OID.serverAuth : OID.clientAuth
-  cmdCsr(kc: keychain, label: label, subject: subject, dns: opt("dns"), uri: opt("uri"), eku: eku)
+  cmdCsr(kc: keychain, label: label, subject: subject, dns: opts("dns"), uri: opts("uri"), eku: eku)
 default:
   die("usage", "comando desconocido: \(comando)")
 }

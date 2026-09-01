@@ -131,7 +131,12 @@ public sealed class Router
         if (req.Method.StartsWith("grpc.", StringComparison.OrdinalIgnoreCase) ||
             req.Method.StartsWith("crypto.", StringComparison.OrdinalIgnoreCase) ||
             req.Method.StartsWith("sdp.", StringComparison.OrdinalIgnoreCase) ||
-            req.Method.StartsWith("pmp.", StringComparison.OrdinalIgnoreCase))
+            req.Method.StartsWith("pmp.", StringComparison.OrdinalIgnoreCase) ||
+            // cdp.* faltaba en las TRES plataformas. Aqui alcanza tanto a
+            // los metodos nuevos de la fase 2 de ADR-0011 como a
+            // `cdp.anchor.distrust`, que ya escribia en el store
+            // Disallowed de LocalMachine sin pasar por este gate.
+            req.Method.StartsWith("cdp.", StringComparison.OrdinalIgnoreCase))
         {
             if (!IsLocalSystem())
             {
@@ -184,6 +189,15 @@ public sealed class Router
             "credential.provision" => CredentialStore.HandleProvision(req),
             "credential.retrieve" => CredentialStore.HandleRetrieve(req),
             "credential.remove" => CredentialStore.HandleRemove(req),
+
+            // ADR-0011 fase 2 — emision para certificados AJENOS al
+            // agente. Metodos NUEVOS, y no por gusto: `crypto.csr.generate`
+            // acepta un `keyName` del llamante sin validar, asi que
+            // reutilizarlo permitiria borrar la clave de enrolamiento del
+            // propio agente. Ver la cabecera de CdpKeys.cs.
+            "cdp.csr.generate" => CdpKeys.HandleCsrGenerate(req),
+            "cdp.key.destroy" => CdpKeys.HandleKeyDestroy(req),
+            "cdp.key.list" => CdpKeys.HandleKeyList(req),
 
             "crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),
             "crypto.cert.install" => CryptoCertInstall.HandleInstallCert(req),

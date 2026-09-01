@@ -35,8 +35,17 @@ import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
 
-/** El llavero de la maquina. Mismo destino que el resto del PrivSvc. */
-export const SYSTEM_KEYCHAIN = "/Library/Keychains/System.keychain";
+/**
+ * El llavero de la maquina. Mismo destino que el resto del PrivSvc.
+ *
+ * La variable de entorno existe para poder ejercitar el ciclo completo
+ * contra un llavero temporal en las pruebas. Es el mismo patron que
+ * `TRACENIUM_KEYSTORE_BIN` de aqui al lado: sin ella, probar esto de
+ * verdad exigiria escribir en el llavero de la maquina, y una suite que
+ * ensucia la maquina acaba sin ejecutarse.
+ */
+export const SYSTEM_KEYCHAIN =
+  process.env.TRACENIUM_KEYCHAIN || "/Library/Keychains/System.keychain";
 
 /**
  * Tope de espera de cada invocacion.
@@ -141,16 +150,33 @@ export function keyInfo(label: string, keychain?: string) {
 export function generateCsr(
   label: string,
   subject: string,
-  opts?: { dns?: string; uri?: string; eku?: "clientAuth" | "serverAuth"; keychain?: string }
+  opts?: {
+    /** Repetibles: un certificado de servidor suele llevar varios. */
+    dnsNames?: string[];
+    uris?: string[];
+    eku?: "clientAuth" | "serverAuth";
+    keychain?: string;
+  }
 ) {
   return run([
     "csr",
     ...baseArgs(label, opts?.keychain),
     "--subject", subject,
-    ...(opts?.dns ? ["--dns", opts.dns] : []),
-    ...(opts?.uri ? ["--uri", opts.uri] : []),
+    ...(opts?.dnsNames || []).flatMap((d) => ["--dns", d]),
+    ...(opts?.uris || []).flatMap((u) => ["--uri", u]),
     ...(opts?.eku ? ["--eku", opts.eku] : [])
   ]);
+}
+
+/**
+ * Las claves del almacén bajo un prefijo.
+ *
+ * Es la fuente de verdad de QUÉ hay. El registro del lado TS solo la
+ * enriquece con cuándo y por qué — al revés, un registro desincronizado
+ * inventariaría claves que no existen.
+ */
+export function listKeys(prefix: string, keychain?: string) {
+  return run(["list", "--prefix", prefix, "--keychain", keychain || SYSTEM_KEYCHAIN]);
 }
 
 /**

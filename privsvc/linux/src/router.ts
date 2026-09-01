@@ -57,6 +57,11 @@ import {
 import { handleDpPrefetch, handleDpStatus } from "./dp";
 import { handleAgentInstall } from "./agent-install";
 import * as rcpPty from "./rcp-pty";
+import {
+  handleCdpCsrGenerate,
+  handleCdpKeyDestroy,
+  handleCdpKeyList
+} from "./cdp-keys";
 
 function isRoot() {
   return typeof process.getuid === "function" ? process.getuid() === 0 : false;
@@ -71,6 +76,10 @@ function requiresRoot(method: string) {
     method.startsWith("grpc.") ||
     method.startsWith("sdp.") ||
     method.startsWith("pmp.") ||
+    // cdp.* faltaba en las dos plataformas. Aqui la lista dice
+    // literalmente "keep this prefix list in lockstep with the macOS
+    // router.ts", y no lo estaba.
+    method.startsWith("cdp.") ||
     method === "patch.install" ||
     method === "agent.install" ||
     // RCP M3.S1 — screen.capture spawns the capture helper as the
@@ -134,6 +143,20 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "crypto.cert.install":
       return handleInstallCert(req);
+
+    // ADR-0011 fase 2 — emision para certificados AJENOS al agente.
+    //
+    // Metodos NUEVOS, no `crypto.csr.generate`: ese escribe a rutas
+    // fijas y reutilizarlo sobrescribiria la clave de enrolamiento del
+    // agente (correccion medida de ADR-0004).
+    case "cdp.csr.generate":
+      return handleCdpCsrGenerate(req);
+
+    case "cdp.key.destroy":
+      return handleCdpKeyDestroy(req);
+
+    case "cdp.key.list":
+      return handleCdpKeyList(req);
 
     case "crypto.cert.renew":
       return handleRenewCert(req);
