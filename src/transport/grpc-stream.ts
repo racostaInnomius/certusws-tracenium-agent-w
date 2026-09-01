@@ -312,10 +312,26 @@ function isOnCooldown(factType: string): { skip: boolean; ageMs: number | null }
   }
 }
 
+/**
+ * @param jobResult
+ *   Resultado ESTRUCTURADO de un job, si lo hay.
+ *
+ *   ⚠️ Existe porque el ACK de un job solo transporta `status` y
+ *   `message` — dos numeros y una cadena. Un job que tiene que DEVOLVER
+ *   algo (el CSR de `cdp.csr.generate` es el caso: sin el PEM el
+ *   operador se queda con una clave creada en el equipo y ninguna forma
+ *   de pedirle el certificado a su CA) no tiene por donde hacerlo.
+ *
+ *   El control plane YA sabe leer `{jobId, jobStatus, result}` del
+ *   envelope de facts —`controlplane.ts`, donde aterrizan los
+ *   resultados— pero ningun job del agente lo producia. Otra pieza
+ *   esperando a que alguien la llamara.
+ */
 async function collectFactsSnapshot(
   ctx: AgentContext,
   source: string,
-  factType = "inventory"
+  factType = "inventory",
+  jobResult?: { jobId: string; jobStatus: "completed" | "failed"; result?: any }
 ) {
   // Cooldown guard: if the scheduler already shipped a fact of this
   // type within CONTROL_FACTS_COOLDOWN_MS, skip the redundant collect.
@@ -428,9 +444,18 @@ async function collectFactsSnapshot(
   }
 
   const facts = await buildDeviceFacts(ctx, namespaces);
+
+  // Los campos del job viajan JUNTO a los facts, no en vez de ellos: el
+  // backend valida `schemaVersion` y `namespaces` antes de mirar el
+  // `jobId`, asi que un envelope que solo llevara el resultado se
+  // rechazaria como payload invalido.
+  const payload: any = jobResult
+    ? { ...(facts as any), jobId: jobResult.jobId, jobStatus: jobResult.jobStatus, result: jobResult.result ?? {} }
+    : facts;
+
   const outboxId = outbox.enqueue({
     type: "FACTS_SNAPSHOT",
-    payload: facts
+    payload
   });
 
   // Stamp the cooldown so a backend retry of this same job (or a
@@ -647,6 +672,127 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
         status: 0,
         message: `anchor distrusted: ${resp.result?.subject || thumbprint || sha1}`
       };
+    }
+
+    // ── ADR-0011 fases 2 y 3 ──────────────────────────────────────
+    //
+    // ⚠️ ESTOS DOS FALTABAN, y su ausencia dejaba las dos fases MUERTAS
+    // en campo. Los handlers del PrivSvc viajaban en el bundle desde
+    // 1.1.56 y 1.1.57, pero sin un `case` aqui el job runner respondia
+    // `unsupported jobType` y no llegaban a llamarse nunca.
+    //
+    // Es el mismo fallo que ya se cometio con los seis tipos del
+    // gateway —el backend tiene su propia lista, `isSupportedJobType`,
+    // y hay un test que la vigila— pero la lista del AGENTE es otra y
+    // nadie la miraba. Se descubrio ejercitando el flujo de verdad
+    // contra un equipo real; ninguna suite lo habria visto.
+
+    case "cdp_csr_generate": {
+      if (!ctx.policyRuntime.pluginEnabled("cdp")) {
+        return { status: 2, message: "cdp_csr_generate rejected: cdp plugin disabled by policy" };
+      }
+
+      const keyId = String(payload?.keyId || "").trim();
+      const subject = String(payload?.subject || "").trim();
+      if (!keyId || !subject) {
+        return { status: 2, message: "cdp_csr_generate rejected: keyId y subject son obligatorios" };
+      }
+
+      const resp = await ctx.priv.call({
+        v: 1,
+        id: `cdpcsr_${Date.now()}`,
+        method: "cdp.csr.generate",
+        params: {
+          keyId,
+          subject,
+          dnsNames: Array.isArray(payload?.dnsNames) ? payload.dnsNames : [],
+          uris: Array.isArray(payload?.uris) ? payload.uris : [],
+          eku: payload?.eku === "serverAuth" ? "serverAuth" : "clientAuth",
+          keyAlgorithm: payload?.keyAlgorithm || "RSA_2048",
+          requestId: payload?.requestId ?? null
+        },
+        meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+      });
+
+      if (!resp?.ok) {
+        return {
+          status: 2,
+          message: `cdp_csr_generate failed: ${resp?.error?.code || "unknown"} ${resp?.error?.message || ""}`.trim()
+        };
+      }
+
+      // ⚠️ El CSR NO cabe en el ACK: ese solo lleva status y message.
+      // Viaja por el envelope de facts, que es de donde el control plane
+      // lee `{jobId, jobStatus, result}`. Sin esto el operador se queda
+      // con una clave creada en el equipo y ninguna forma de pedirle el
+      // certificado a su CA — una huerfana de la decision 9.d nada mas
+      // nacer.
+      await collectFactsSnapshot(ctx, `runJob:${jobId}:csr`, "cdp", {
+        jobId,
+        jobStatus: "completed",
+        result: {
+          keyId: resp.result?.keyId ?? keyId,
+          csrPem: resp.result?.csrPem,
+          keyAlgorithm: resp.result?.keyAlgorithm,
+          keyStore: resp.result?.keyStore
+        }
+      }).catch((err) => ctx.logger?.warn?.("envio del CSR fallo", { err }));
+
+      return { status: 0, message: "csr_generated" };
+    }
+
+    case "cdp_cert_install": {
+      if (!ctx.policyRuntime.pluginEnabled("cdp")) {
+        return { status: 2, message: "cdp_cert_install rejected: cdp plugin disabled by policy" };
+      }
+
+      const keyId = String(payload?.keyId || "").trim();
+      const certPem = String(payload?.certPem || "");
+      if (!keyId || !certPem.includes("BEGIN CERTIFICATE")) {
+        return { status: 2, message: "cdp_cert_install rejected: keyId y certPem son obligatorios" };
+      }
+
+      const resp = await ctx.priv.call({
+        v: 1,
+        id: `cdpinstall_${Date.now()}`,
+        method: "cdp.cert.install",
+        params: {
+          keyId,
+          certPem,
+          chainPems: Array.isArray(payload?.chainPems) ? payload.chainPems : [],
+          ...(payload?.destination ? { destination: String(payload.destination) } : {})
+        },
+        meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+      });
+
+      if (!resp?.ok) {
+        return {
+          status: 2,
+          message: `cdp_cert_install failed: ${resp?.error?.code || "unknown"} ${resp?.error?.message || ""}`.trim()
+        };
+      }
+
+      // ⚠️ `installed: true` es lo que el control plane mira para
+      // encolar el rescan de verificacion (cert-install.service.ts). Si
+      // no viaja, la instalacion ocurre y nadie la comprueba — y ese
+      // rescan es justo lo que separa «el agente dijo que si» de «el
+      // certificado esta ahi».
+      //
+      // Y como el propio envio ES un escaneo de CDP recien recolectado,
+      // el certificado nuevo ya va dentro: la verificacion llega con el
+      // resultado, no despues.
+      await collectFactsSnapshot(ctx, `runJob:${jobId}:install`, "cdp", {
+        jobId,
+        jobStatus: "completed",
+        result: {
+          keyId,
+          installed: resp.result?.installed === true,
+          destination: resp.result?.destination,
+          sha256: resp.result?.sha256
+        }
+      }).catch((err) => ctx.logger?.warn?.("envio del resultado de instalacion fallo", { err }));
+
+      return { status: 0, message: `cert_installed: ${resp.result?.subject || keyId}` };
     }
 
     case "patch_scan": {
