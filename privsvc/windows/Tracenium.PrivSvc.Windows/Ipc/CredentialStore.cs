@@ -212,29 +212,20 @@ public static class CredentialStore
         }
         catch
         {
-            // Two very different faults reach this catch, and telling an
-            // operator only that the unwrap failed sends them to re-type a
-            // password that was never the problem.
+            // "Could not unwrap the envelope key" sent an operator to re-type a
+            // vCenter password on a gateway whose credential could never have
+            // been opened by any password: on Windows the enrollment key is
+            // created signing-only, so CNG refuses to decrypt with it at all.
             //
-            // So ask the certificate itself: encrypt a nonce with the public
-            // key in the store and try to open it with the private key the
-            // store hands back for it. If that round trip fails, this device's
-            // certificate and key simply do not correspond — nothing about the
-            // envelope, the credential, or the browser is wrong, and the only
-            // fix is re-enrolling the device.
-            //
-            // Seen on a healthy gateway — continuously reporting, ten clean
-            // agent updates, no reinstall — so this is not the aftermath of a
-            // botched install. One way to reach it without one: CryptoCertInstall
-            // skips adding the certificate when the store already holds that
-            // thumbprint, keeping whatever key association the existing entry
-            // has and reporting success either way.
-            if (!CertificateKeyPairIsUsable(cert))
+            // Say that, rather than implying the credential or the browser is
+            // at fault. Re-enrolling does not help either — a new enrollment
+            // produces another signing-only key.
+            if (!KeyMayDecrypt(rsa))
             {
                 throw new CredentialException(
-                    "decrypt_failed",
-                    "this device's certificate and private key do not match — re-enrol the device; "
-                        + "re-entering the credential cannot help");
+                    "key_cannot_decrypt",
+                    "this device's enrollment key is signing-only, so it cannot open a sealed "
+                        + "credential; the credential and the password are not at fault");
             }
             throw new CredentialException("decrypt_failed", "could not unwrap the envelope key");
         }
@@ -300,33 +291,37 @@ public static class CredentialStore
         return s;
     }
 
-    /// <summary>base64url (RFC 4648 §5) — the wire format, not standard base64.</summary>
     /// <summary>
-    /// Does the private key the store hands back for this certificate actually
-    /// belong to it?
+    /// Is this key allowed to decrypt at all?
     ///
-    /// A cheap round trip with a random nonce, using the same padding the
-    /// envelope uses. Only ever called on a failure path, so it costs nothing
-    /// in the normal case and turns an ambiguous unwrap error into an
-    /// instruction.
+    /// The enrollment key is created signing-only — CryptoCsr asks CNG for
+    /// <c>CngKeyUsages.Signing</c> and the CSR carries a critical Key Usage of
+    /// DigitalSignature alone. CNG enforces that: NCryptDecrypt refuses a key
+    /// without NCRYPT_ALLOW_DECRYPT_FLAG, so <c>rsa.Decrypt</c> throws even
+    /// though the certificate and key correspond perfectly.
+    ///
+    /// TLS client authentication only ever SIGNS with this key, so a
+    /// signing-only key leaves mTLS, the gRPC bridge and the distribution
+    /// point's listener working normally. The gap shows up in exactly one
+    /// place — unwrapping a sealed credential — which is why it went unnoticed
+    /// on a gateway that had never once failed.
+    ///
+    /// Asked directly, because a decrypt round trip cannot tell "refused by
+    /// policy" apart from "wrong key", and those two lead an operator to
+    /// completely different actions.
     /// </summary>
-    private static bool CertificateKeyPairIsUsable(X509Certificate2 cert)
+    private static bool KeyMayDecrypt(RSA rsa)
     {
+        // Only CNG enforces a usage policy; anything else is unrestricted.
+        if (rsa is not RSACng cng) return true;
         try
         {
-            using var pub = cert.GetRSAPublicKey();
-            using var priv = cert.GetRSAPrivateKey();
-            if (pub is null || priv is null) return false;
-
-            var nonce = RandomNumberGenerator.GetBytes(16);
-            var sealedNonce = pub.Encrypt(nonce, RSAEncryptionPadding.OaepSHA256);
-            var opened = priv.Decrypt(sealedNonce, RSAEncryptionPadding.OaepSHA256);
-            return CryptographicOperations.FixedTimeEquals(nonce, opened);
+            return (cng.Key.KeyUsage & CngKeyUsages.Decryption) != 0;
         }
         catch
         {
-            // Any failure here IS the answer: the pair is not usable.
-            return false;
+            // Cannot read the policy — do not accuse the key of anything.
+            return true;
         }
     }
 
