@@ -88,12 +88,32 @@ public static class CdpWriteGuard
     /// cada endpoint en un cliente OCSP (ADR-0004 lo dice explicitamente).
     /// Aqui solo se decide si la CADENA llega a un ancla local.
     /// </summary>
-    public static ChainVerdict ChainsToInstalledAnchor(X509Certificate2 cert)
+    /// <param name="extraStore">
+    /// Intermedias que acompanan al certificado.
+    ///
+    /// ⚠️ Hacen falta, y este parametro llego tarde: la fase 1 se
+    /// escribio sin el, mientras que los gemelos de macOS y Linux si
+    /// reciben la cadena desde el principio. Con `DisableCertificateDownloads`
+    /// puesto —que es lo que hace que esta comprobacion signifique lo que
+    /// dice— la cadena NO puede salir a buscar los eslabones que le
+    /// falten, asi que sin pasarlas este gate rechazaria TODO, incluido
+    /// lo legitimo. Medido asi en macOS con un certificado real.
+    /// </param>
+    public static ChainVerdict ChainsToInstalledAnchor(
+        X509Certificate2 cert,
+        X509Certificate2Collection? extraStore = null)
     {
         using var chain = new X509Chain();
         chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
         chain.ChainPolicy.DisableCertificateDownloads = true;
         chain.ChainPolicy.VerificationFlags = X509VerificationFlags.NoFlag;
+        if (extraStore != null && extraStore.Count > 0)
+        {
+            // `ExtraStore` NO otorga confianza: son eslabones candidatos
+            // para construir la cadena. La raiz tiene que seguir estando
+            // en el equipo, que es justo lo que la decision 2 exige.
+            chain.ChainPolicy.ExtraStore.AddRange(extraStore);
+        }
 
         var ok = chain.Build(cert);
         if (ok)

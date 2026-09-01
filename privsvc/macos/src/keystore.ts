@@ -169,6 +169,20 @@ export function generateCsr(
 }
 
 /**
+ * Instala el certificado firmado y comprueba que quedó atado a la clave.
+ *
+ * ⚠️ El helper VERIFICA que se formó la identidad, no solo que la
+ * inserción no falló. En macOS atar cert y clave no es una operación
+ * explícita —el sistema los empareja por el hash de la clave pública—,
+ * así que un certificado que no corresponde a esta clave se inserta con
+ * éxito y no sirve para nada: la instalación «funcionaría» sin que nada
+ * use nunca esa clave.
+ */
+export function installCert(label: string, certPath: string, keychain?: string) {
+  return run(["install-cert", ...baseArgs(label, keychain), "--cert", certPath]);
+}
+
+/**
  * Las claves del almacén bajo un prefijo.
  *
  * Es la fuente de verdad de QUÉ hay. El registro del lado TS solo la

@@ -223,9 +223,12 @@ public static class CredentialStore
             // envelope, the credential, or the browser is wrong, and the only
             // fix is re-enrolling the device.
             //
-            // Seen on a gateway whose agent had been replaced by an MSI push
-            // over a running install: the certificate survived, its key
-            // container did not follow.
+            // Seen on a healthy gateway — continuously reporting, ten clean
+            // agent updates, no reinstall — so this is not the aftermath of a
+            // botched install. One way to reach it without one: CryptoCertInstall
+            // skips adding the certificate when the store already holds that
+            // thumbprint, keeping whatever key association the existing entry
+            // has and reporting success either way.
             if (!CertificateKeyPairIsUsable(cert))
             {
                 throw new CredentialException(

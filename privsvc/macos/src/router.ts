@@ -45,6 +45,7 @@ import {
   handleCdpKeyDestroy,
   handleCdpKeyList
 } from "./cdp-keys";
+import { handleCdpCertInstall } from "./cdp-cert-install";
 
 function isRoot() {
   return typeof process.getuid === "function" ? process.getuid() === 0 : false;
@@ -158,6 +159,13 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "cdp.key.list":
       return handleCdpKeyList(req);
+
+    // ADR-0011 fase 3. Aqui es donde los guards de la fase 1 dejan de
+    // estar sin cablear: allowlist de destino + la cadena validada
+    // contra el trust store LOCAL, porque un backend comprometido
+    // afirmaria que la cadena es buena.
+    case "cdp.cert.install":
+      return handleCdpCertInstall(req);
 
     case "crypto.cert.renew":
       return handleRenewCert(req);
