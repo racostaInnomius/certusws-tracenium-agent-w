@@ -68,11 +68,17 @@ export type ChainVerdict = { trusted: boolean; reason: string };
  * asi que la respuesta es "este equipo ya confia en esto" y no "internet
  * dice que esta bien" — que es lo que pide la decision 2.
  *
- * ⚠️ NO verificado en un Linux real: esta Mac no tiene uno. La forma se
- * copio de la de macOS, que si se probo en vivo (leaf+intermedia -> ok,
- * leaf solo -> no, autofirmado ajeno -> no). Conviene repetir esa
- * comprobacion en un endpoint Linux antes de que la fase 3 dependa de
- * esto.
+ * ✅ VERIFICADO en un Ubuntu 26.04 real (OpenSSL 3.5), ejecutando este
+ * mismo modulo con el Node que empaqueta el agente:
+ *   leaf + intermedia -> trusted        (encadena a una raiz instalada)
+ *   solo el leaf      -> no             (falta la intermedia)
+ *   autofirmado ajeno -> no             (lo que este gate busca impedir)
+ *   basura            -> no
+ *
+ * ⚠️ Y una trampa que costo dos intentos: `openssl verify` SI devuelve
+ * codigo != 0 al fallar, pero medirlo con una tuberia (`| head`) da el
+ * codigo del ULTIMO comando y parece que siempre sale 0. Con esa lectura
+ * equivocada, este guard habria aprobado un autofirmado.
  */
 export async function chainsToInstalledAnchor(
   certPem: string,
@@ -98,12 +104,29 @@ export async function chainsToInstalledAnchor(
     await execFileAsync(OPENSSL_BIN, args, { timeout: VERIFY_TIMEOUT_MS });
     return { trusted: true, reason: "la cadena llega a un ancla instalada" };
   } catch (err: any) {
-    const detalle = String(err?.stdout || err?.stderr || err?.message || err)
-      .trim()
+    // El motivo util esta en STDOUT, no en stderr. MEDIDO en Ubuntu
+    // 26.04 con OpenSSL 3.5 contra un host real:
+    //   stdout: "error 20 at 0 depth lookup: unable to get local issuer
+    //            certificate"  -> falta la intermedia: ARREGLABLE
+    //   stdout: "error 18 at 0 depth lookup: self-signed certificate"
+    //            -> la raiz no esta: el caso que este gate existe para
+    //            impedir
+    //   stderr: "error <ruta>: verification failed"  -> generico, inutil
+    //
+    // La primera version se quedaba con el generico y perdia justo la
+    // distincion que hace accionable el rechazo.
+    const salida = `${err?.stdout || ""}\n${err?.stderr || ""}`;
+    const lineaUtil = salida
       .split("\n")
-      .filter(Boolean)
-      .pop();
-    return { trusted: false, reason: detalle || "la cadena no valida contra el trust store local" };
+      .map((l: string) => l.trim())
+      .find((l: string) => /^error \d+ at/.test(l));
+    return {
+      trusted: false,
+      reason:
+        lineaUtil ||
+        String(err?.stderr || err?.message || err).trim().split("\n")[0] ||
+        "la cadena no valida contra el trust store local"
+    };
   } finally {
     try {
       fs.rmSync(dir, { recursive: true, force: true });
