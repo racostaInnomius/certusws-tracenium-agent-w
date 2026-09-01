@@ -245,6 +245,21 @@ export async function startService() {
           deviceId: () => ctx.enrollment.deviceId,
           ensureKey: (deviceId) => call("crypto.gwkey.ensure", deviceId),
           destroyKey: async (deviceId) => { await call("crypto.gwkey.destroy", deviceId); },
+          // Sube como un namespace de facts, sin cambio de proto. Se encola en
+          // el outbox en vez de escribirse al stream: el rol puede asignarse
+          // con el equipo sin conexión, y el outbox es lo que hace que la
+          // publicación sobreviva a eso.
+          publish: async (material) => {
+            const { buildDeviceFacts } = await import("../domain/device-facts-builder");
+            const facts = await buildDeviceFacts(ctx, {
+              gateway_key: {
+                certPem: material.certPem,
+                fingerprintSha256: material.fingerprintSha256,
+                notAfter: material.notAfter ?? null,
+              },
+            });
+            outbox.enqueue({ type: "FACTS_SNAPSHOT", payload: facts });
+          },
           logger: log,
         },
         gatewayKeyState

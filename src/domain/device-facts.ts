@@ -66,4 +66,18 @@ export interface Namespaces {
   pmp?: PmpNamespace;
   cdp?: CdpNamespace;
   rcm?: unknown;
+  /**
+   * ADR-0013 — el certificado con el que hay que sellarle a este gateway la
+   * credencial de vCenter. Material PÚBLICO; la clave privada no sale de aquí.
+   *
+   * Viaja como un namespace de facts y no como un mensaje propio para no tocar
+   * el proto: `Facts` ya es genérico, que es la misma extensión aditiva que
+   * eligió ADR-0001 para no arrastrar a las tres implementaciones de agente en
+   * cada añadido.
+   */
+  gateway_key?: {
+    certPem: string;
+    fingerprintSha256: string;
+    notAfter?: string | null;
+  };
 }
