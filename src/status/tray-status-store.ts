@@ -13,6 +13,7 @@ import { loadUpdateState } from "../update/update-state";
 import type {
   TrayCatalogItem,
   TrayDeviceInfo,
+  TrayGatewayStatus,
   TrayRemoteSession,
   TrayStatusSnapshot
 } from "./tray-status-types";
@@ -250,6 +251,20 @@ export class TrayStatusStore {
       ...(current || this.emptySnapshot()),
       device
     }));
+  }
+
+  /**
+   * ADR-0013 (A). `null` retira el bloque: al quitarle el rol de gateway a un
+   * equipo, dejar ahí una huella de una clave ya destruida daría algo que
+   * comparar que no corresponde a nada.
+   */
+  markGatewayKey(gateway: TrayGatewayStatus | null) {
+    return this.update((current) => {
+      const next = { ...(current || this.emptySnapshot()) };
+      if (gateway) next.gateway = gateway;
+      else delete next.gateway;
+      return next;
+    });
   }
 
   markGrpcConnected() {

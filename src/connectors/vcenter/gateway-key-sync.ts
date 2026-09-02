@@ -53,6 +53,26 @@ export function shouldPublish(material: { fingerprintSha256: string }, published
   return Boolean(material.fingerprintSha256) && material.fingerprintSha256 !== published;
 }
 
+/**
+ * ADR-0013 (A) — la huella tal y como la enseña el portal: mayúsculas y pares
+ * separados por dos puntos.
+ *
+ * ⚠️ El formato NO es cosmética. Todo el mecanismo consiste en que una persona
+ * compare dos cadenas de 64 caracteres en dos pantallas distintas; si una sale
+ * en minúsculas y de corrido y la otra en mayúsculas y por pares, la
+ * comparación se abandona a la mitad y la casilla vuelve a ser un trámite.
+ *
+ * Es la misma función que `formatFingerprint` en el portal. Si una cambia, la
+ * otra tiene que cambiar con ella.
+ */
+export function formatFingerprint(hex: string): string {
+  return String(hex || "")
+    .toUpperCase()
+    .replace(/[^0-9A-F]/g, "")
+    .match(/../g)
+    ?.join(":") ?? "";
+}
+
 export interface GatewayKeyMaterial {
   certPem: string;
   fingerprintSha256: string;
@@ -75,6 +95,15 @@ export interface GatewayKeySyncDeps {
    * ocurre es que el navegador pueda sellar contra ella todavía.
    */
   publish?(material: GatewayKeyMaterial): Promise<void>;
+  /**
+   * ADR-0013 (A) — dejar la huella VISIBLE en el propio equipo.
+   *
+   * Es el otro extremo de la comparación que el portal lleva pidiendo desde
+   * ADR-0001 y que hasta ahora no tenía dónde hacerse. `null` la retira al
+   * perder el rol: una huella de una clave ya destruida es algo que comparar
+   * que no corresponde a nada.
+   */
+  announce?(material: GatewayKeyMaterial | null): void;
   logger?: { info?: Function; warn?: Function; error?: Function };
 }
 
@@ -103,11 +132,21 @@ export async function reconcileGatewayKey(
   try {
     if (action === "destroy") {
       await deps.destroyKey(deviceId);
+      deps.announce?.(null);
       deps.logger?.info?.("[gwkey] rol de gateway retirado — clave destruida");
       return { publishedFingerprint: null };
     }
 
     const material = await deps.ensureKey(deviceId);
+
+    // ⚠️ ANTES de decidir si hay que publicar, y a propósito.
+    //
+    // Lo local no depende de lo que el control plane sepa: al reiniciar, el
+    // fichero de estado se reconstruye vacío y la publicación NO se repite
+    // (la huella no cambió). Anunciar después del `return` de abajo dejaría
+    // sin huella visible justo a los gateways estables — los que llevan meses
+    // funcionando y para los que alguien acabará queriendo comprobarla.
+    deps.announce?.(material);
 
     if (!shouldPublish(material, state.publishedFingerprint)) return state;
 

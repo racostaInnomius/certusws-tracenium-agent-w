@@ -24,6 +24,29 @@ internal sealed class TrayStatus
     /// Ausente en snapshots de agentes anteriores al indicador.
     /// </summary>
     public TrayRemoteSession? RemoteSession { get; set; }
+
+    /// <summary>
+    /// ADR-0013 (A). Solo en un equipo con rol de gateway de vCenter; null en
+    /// todos los demás, que son casi todos.
+    /// </summary>
+    public TrayGatewayStatus? Gateway { get; set; }
+}
+
+/// <summary>
+/// La huella del certificado con el que el portal hace sellar la credencial de
+/// vCenter para este equipo.
+///
+/// Existe para que haya DÓNDE MIRAR. El diálogo del portal lleva desde
+/// ADR-0001 pidiendo comparar esta huella «con la que muestra el equipo del
+/// gateway», y el equipo no la enseñaba en ninguna parte: la casilla se marcaba
+/// porque había que marcarla. Lo que le da valor a esta pantalla es que el
+/// camino hasta ella no pasa por el control plane.
+/// </summary>
+internal sealed class TrayGatewayStatus
+{
+    /// <summary>Ya formateada por el agente, para que las dos pantallas coincidan carácter a carácter.</summary>
+    public string CredentialKeyFingerprint { get; set; } = "";
+    public string? CredentialKeyNotAfter { get; set; }
 }
 
 /// <summary>

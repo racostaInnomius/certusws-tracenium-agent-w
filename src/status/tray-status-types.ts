@@ -138,6 +138,29 @@ export type TrayRemoteSession = {
   recording?: boolean;
 };
 
+/**
+ * ADR-0013 (A) — la huella del certificado con el que el control plane hace
+ * sellar la credencial de vCenter para ESTE equipo.
+ *
+ * Existe para que haya DÓNDE MIRAR. El diálogo del portal lleva desde ADR-0001
+ * pidiendo comparar la huella «con la que muestra el equipo del gateway», y el
+ * equipo no la mostraba en ninguna parte: la casilla se marcaba porque había
+ * que marcarla. Este bloque es el otro extremo de esa comparación, y el camino
+ * hasta él —agente → fichero de estado en el propio host— no pasa por el
+ * control plane, que es exactamente lo que le da valor.
+ *
+ * Ausente en equipos que no son gateway, que son casi todos.
+ */
+export type TrayGatewayStatus = {
+  /**
+   * Formateada YA como la enseña el portal: mayúsculas, pares separados por
+   * dos puntos. Comparar dos cadenas con formatos distintos es donde una
+   * persona se rinde a la mitad, así que el formato no se deja a cada pantalla.
+   */
+  credentialKeyFingerprint: string;
+  credentialKeyNotAfter?: string | null;
+};
+
 export type TrayStatusSnapshot = {
   updatedAtUtc: string;
   agentVersion: string;
@@ -157,4 +180,6 @@ export type TrayStatusSnapshot = {
   // Ausente en snapshots anteriores al indicador de sesión; la bandeja lo
   // trata como "sin sesión".
   remoteSession?: TrayRemoteSession;
+  // ADR-0013 (A). Ausente salvo en un equipo con rol de gateway.
+  gateway?: TrayGatewayStatus;
 };

@@ -28,8 +28,8 @@ internal static class DeviceInfoProvider
             osText = $"{osText} (build {d!.OsBuild})";
         }
 
-        return
-        [
+        var fields = new List<Field>
+        {
             new Field("Logged user", LoggedUser()),
             new Field("Computer name", FirstNonEmpty(d?.Fqdn, d?.Hostname, status?.Hostname, Environment.MachineName)),
             new Field("Domain", FirstNonEmpty(d?.Domain, DomainFromEnvironment())),
@@ -42,7 +42,21 @@ internal static class DeviceInfoProvider
             new Field("Memory", d?.MemoryGb is { } gb ? $"{gb:0.0} GB" : "—"),
             new Field("Screen resolution", ScreenResolution()),
             new Field("Tracenium device ID", FirstNonEmpty(status?.DeviceId))
-        ];
+        };
+
+        // ADR-0013 (A) — solo en un gateway.
+        //
+        // Condicional a propósito: esta pantalla es el widget de soporte que ve
+        // un usuario final, y una huella de 64 caracteres no le dice nada a
+        // nadie que no esté configurando el gateway. Enseñarla en toda la flota
+        // sería ruido en la única pantalla que existe para reducirlo.
+        var fp = status?.Gateway?.CredentialKeyFingerprint;
+        if (!string.IsNullOrWhiteSpace(fp))
+        {
+            fields.Add(new Field("vCenter credential key", fp!));
+        }
+
+        return fields;
     }
 
     /// <summary>Plain-text block the user pastes into a support chat/ticket.</summary>

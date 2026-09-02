@@ -7,7 +7,7 @@ import { outbox } from "../queue/sqlite-outbox";
 import type { AgentContext } from "./agent-context";
 import { maybeRenewClientCertificate } from "../bootstrap/cert-renewal";
 import { dumpWedgeState } from "../diag/wedge-dump";
-import { reconcileGatewayKey } from "../connectors/vcenter/gateway-key-sync";
+import { reconcileGatewayKey, formatFingerprint } from "../connectors/vcenter/gateway-key-sync";
 
 let shuttingDown = false;
 let currentCtx: AgentContext | null = null;
@@ -259,6 +259,31 @@ export async function startService() {
               },
             });
             outbox.enqueue({ type: "FACTS_SNAPSHOT", payload: facts });
+          },
+          // ADR-0013 (A) — el otro extremo de la comparación que el portal
+          // pide. Va al fichero de estado, que en un gateway (casi siempre un
+          // servidor sin escritorio) es lo que de verdad se puede consultar,
+          // y a los logs con una línea reconocible para poder buscarla.
+          announce: (material) => {
+            try {
+              if (!material) {
+                ctx.trayStatus.markGatewayKey?.(null);
+                return;
+              }
+              const shown = formatFingerprint(material.fingerprintSha256);
+              ctx.trayStatus.markGatewayKey?.({
+                credentialKeyFingerprint: shown,
+                credentialKeyNotAfter: material.notAfter ?? null,
+              });
+              log?.info?.(
+                "[gwkey] vCenter credential key fingerprint (compare this with the portal): " +
+                  shown
+              );
+            } catch (err: any) {
+              log?.warn?.("[gwkey] no se pudo publicar la huella localmente", {
+                err: err?.message || String(err),
+              });
+            }
           },
           logger: log,
         },

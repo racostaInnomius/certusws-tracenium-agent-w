@@ -17,6 +17,7 @@ import {
   decideGatewayKeyAction,
   shouldPublish,
   reconcileGatewayKey,
+  formatFingerprint,
   type GatewayKeySyncDeps,
 } from "../../src/connectors/vcenter/gateway-key-sync";
 
@@ -29,6 +30,7 @@ function deps(over: Partial<GatewayKeySyncDeps> = {}): GatewayKeySyncDeps {
     ensureKey: vi.fn(async () => MATERIAL),
     destroyKey: vi.fn(async () => {}),
     publish: vi.fn(async () => {}),
+    announce: vi.fn(),
     ...over,
   };
 }
@@ -133,5 +135,65 @@ describe("un paso de reconciliación", () => {
     await reconcileGatewayKey(d, { publishedFingerprint: null });
 
     expect(d.ensureKey).not.toHaveBeenCalled();
+  });
+});
+
+describe("ADR-0013 (A) — que haya dónde mirar en el propio equipo", () => {
+  it("⭐ anuncia la huella aunque no haya nada que publicar", async () => {
+    // El caso que se escapa si se anuncia dentro del camino de publicación:
+    // tras un reinicio el fichero de estado se reconstruye vacío y la huella
+    // NO cambió, así que no se republica. Anunciar después dejaría sin huella
+    // visible justo a los gateways estables — los que llevan meses
+    // funcionando, que son para los que alguien querrá comprobarla.
+    const d = deps();
+    await reconcileGatewayKey(d, { publishedFingerprint: MATERIAL.fingerprintSha256 });
+
+    expect(d.publish).not.toHaveBeenCalled();
+    expect(d.announce).toHaveBeenCalledWith(MATERIAL);
+  });
+
+  it("la retira al perder el rol", async () => {
+    // Una huella de una clave ya destruida es algo que comparar que no
+    // corresponde a nada.
+    const d = deps({ isGateway: () => false });
+    await reconcileGatewayKey(d, { publishedFingerprint: "aa11" });
+
+    expect(d.announce).toHaveBeenCalledWith(null);
+  });
+
+  it("no anuncia nada en un equipo que no es gateway", async () => {
+    const d = deps({ isGateway: () => false });
+    await reconcileGatewayKey(d, { publishedFingerprint: null });
+
+    expect(d.announce).not.toHaveBeenCalled();
+  });
+});
+
+describe("⭐ el formato tiene que coincidir con el del portal", () => {
+  // Todo el mecanismo consiste en que una persona compare dos cadenas de 64
+  // caracteres en dos pantallas. Si una sale en minúsculas y de corrido y la
+  // otra en mayúsculas por pares, la comparación se abandona a la mitad y la
+  // casilla vuelve a ser un trámite. Copiado literal de `formatFingerprint`
+  // del portal (sealCredential.js): si divergen, esto lo caza.
+  const portal = (hex) =>
+    String(hex || "").toUpperCase().replace(/[^0-9A-F]/g, "").match(/../g)?.join(":") ?? "";
+
+  it("produce exactamente lo mismo", () => {
+    for (const hex of [
+      "a".repeat(64),
+      "0123456789abcdef".repeat(4),
+      "AA:BB:cc:dd" + "0".repeat(56),
+      "",
+    ]) {
+      expect(formatFingerprint(hex)).toBe(portal(hex));
+    }
+  });
+
+  it("sale en mayúsculas y por pares", () => {
+    expect(formatFingerprint("aabbcc")).toBe("AA:BB:CC");
+  });
+
+  it("no revienta con una huella ausente", () => {
+    expect(formatFingerprint("")).toBe("");
   });
 });
