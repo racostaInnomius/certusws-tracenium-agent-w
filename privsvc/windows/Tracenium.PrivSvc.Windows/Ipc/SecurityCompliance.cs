@@ -364,6 +364,9 @@ public static class SecurityCompliance
                 "Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, AMServiceEnabled, AntivirusEnabled, AMProductVersion, AMEngineVersion, AntivirusSignatureVersion, AntispywareSignatureVersion, QuickScanEndTime, FullScanEndTime | ConvertTo-Json -Depth 4"
             );
 
+            // Sin salida no hay lectura, y sin lectura no hay veredicto:
+            // "unknown" y nada más. Es el ÚNICO caso en el que omitir los
+            // campos es correcto — ver DefenderStatusShape.
             if (string.IsNullOrWhiteSpace(output))
                 return new { status = "unknown" };
 
@@ -379,34 +382,12 @@ public static class SecurityCompliance
                 obj = JsonSerializer.Deserialize<Dictionary<string, object>>(output);
             }
 
-            if (obj != null)
-            {
-                bool rtEnabled = false;
-                bool svcEnabled = false;
-
-                if (obj.TryGetValue("RealTimeProtectionEnabled", out var rtVal))
-                    bool.TryParse(rtVal?.ToString(), out rtEnabled);
-
-                if (obj.TryGetValue("AMServiceEnabled", out var svcVal))
-                    bool.TryParse(svcVal?.ToString(), out svcEnabled);
-
-                if (!svcEnabled)
-                    return new { status = "not_present" };
-
-                return new
-                {
-                    status = rtEnabled ? "enabled" : "disabled",
-                    realTimeProtectionEnabled = rtEnabled,
-                    serviceEnabled = svcEnabled,
-                    antivirusEnabled = GetBool(obj, "AntivirusEnabled"),
-                    productVersion = GetString(obj, "AMProductVersion"),
-                    engineVersion = GetString(obj, "AMEngineVersion"),
-                    signatureVersion = GetString(obj, "AntivirusSignatureVersion"),
-                    antispywareSignatureVersion = GetString(obj, "AntispywareSignatureVersion"),
-                    lastQuickScanUtc = GetDateString(obj, "QuickScanEndTime"),
-                    lastFullScanUtc = GetDateString(obj, "FullScanEndTime")
-                };
-            }
+            // La forma vive en DefenderStatusShape para poder probarla: el
+            // bug que escondía equipos sin antivirus estaba exactamente en
+            // la decisión que ahora se prueba allí.
+            var shaped = DefenderStatusShape.FromComputerStatus(obj);
+            if (shaped != null)
+                return shaped;
 
             return new { status = "unknown" };
         }
