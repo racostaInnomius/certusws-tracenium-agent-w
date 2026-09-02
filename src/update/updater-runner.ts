@@ -1,11 +1,12 @@
 // src/update/updater-runner.ts
 
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
 import type { RunUpdateResult } from "./update-types";
 import { updateUpdateState } from "./update-state";
+import { agentDataDir } from "../bootstrap/paths";
 
 /** How long a shim has to be untouched before we consider it abandoned. */
 const SHIM_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -87,9 +88,27 @@ export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
     `tracenium-update-${Date.now()}-${process.pid}.cmd`
   );
 
-  // Compute "start in ~1 minute" for the schtasks /st HH:MM time.
-  // schtasks accepts HH:mm only (no seconds), so we round up.
-  const startAt = new Date(Date.now() + 60_000);
+  // Log del MSI y resultado del shim. Van al directorio de datos del agente y
+  // no a TEMP: TEMP lo barre Windows y lo barre nuestro propio purgeOldShims,
+  // y estos dos tienen que SOBREVIVIR a la actualización para poder contar qué
+  // pasó cuando el agente vuelva.
+  const msiStem = path.basename(msiPath).replace(/\.msi$/i, "");
+  const msiLogPath = path.join(agentDataDir(), `update-msi-${msiStem}.log`);
+  const resultPath = path.join(agentDataDir(), "update-result.json");
+
+  // Hora de arranque para `schtasks /st HH:MM`.
+  //
+  // ⚠️ 90 segundos, no 60, y NO es una holgura arbitraria.
+  //
+  // schtasks solo acepta HH:mm, así que truncar pierde hasta 59 segundos. Con
+  // +60s la espera real quedaba entre 1 y 60 segundos: cuando cae en el
+  // extremo bajo, el minuto objetivo ya ha pasado para cuando la tarea se
+  // registra, y `/sc ONCE` con una hora pasada la programa para MAÑANA. El
+  // agente da el update por lanzado, la marca caduca, reintenta, y se repite —
+  // que es exactamente el bucle que se vio en campo.
+  //
+  // Con +90s la espera real queda entre 31 y 90 segundos: nunca en el pasado.
+  const startAt = new Date(Date.now() + 90_000);
   const hh = String(startAt.getHours()).padStart(2, "0");
   const mm = String(startAt.getMinutes()).padStart(2, "0");
   const startTime = `${hh}:${mm}`;
@@ -108,8 +127,18 @@ export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
     "rem msiexec starts hammering the install dir — therefore never happened.",
     "rem `ping` is the portable console-free sleep: -n 11 waits ~10s.",
     "ping -n 11 127.0.0.1 >nul",
-    `msiexec.exe /i "${msiPath}" /qn /norestart`,
+    // /l*v: log verboso del instalador. Sin él, un msiexec que falla —1618
+    // "otra instalación en curso", un rollback, un archivo bloqueado— no deja
+    // ni una pista: /qn no imprime nada y su salida iba a >nul. Cuando un
+    // equipo se queda atascado en una versión, este fichero es lo único que
+    // dice por qué.
+    `msiexec.exe /i "${msiPath}" /qn /norestart /l*v "${msiLogPath}"`,
     "set MSIEXEC_RC=%ERRORLEVEL%",
+    "rem Dejar el resultado donde el agente pueda leerlo al arrancar. Hasta",
+    "rem ahora el código de salida solo existía en el LastResult de Task",
+    "rem Scheduler, que nadie mira y que no viaja al control plane: un update",
+    "rem fallido era indistinguible de uno que nunca se programó.",
+    `> "${resultPath}" echo {"msi":"${msiStem}","exitCode":%MSIEXEC_RC%,"atLocal":"%DATE% %TIME%"}`,
     "rem Remove the one-shot task. The header of this file used to claim that",
     "rem `/z /sd /ed` did this, but those flags were never passed — so every",
     "rem update left a scheduled task behind, permanently, on every endpoint",
@@ -141,27 +170,58 @@ export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
   ];
 
   try {
-    const child = spawn("schtasks.exe", schArgs, {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true
+    // ⚠️ Se ESPERA a schtasks y se mira su código de salida.
+    //
+    // Antes se lanzaba con detached + stdio:"ignore" + unref() y se devolvía
+    // started:true pase lo que pase. Si schtasks fallaba —permisos, nombre
+    // inválido, hora rechazada— nadie se enteraba: el agente reportaba
+    // "update started", ponía la marca, la marca caducaba, y volvía a
+    // intentarlo. Un equipo podía quedarse así indefinidamente sin una sola
+    // línea que dijera por qué.
+    //
+    // Sigue siendo un proceso corto (schtasks devuelve en milisegundos), así
+    // que esperarlo no bloquea nada: lo que se quería evitar con detached era
+    // que msiexec heredara nuestro Job Object, y eso lo resuelve la propia
+    // Task Scheduler, no el detached de schtasks.
+    const res = spawnSync("schtasks.exe", schArgs, {
+      windowsHide: true,
+      encoding: "utf8"
     });
-
-    child.on("error", (err) => {
+    const code = res.error ? -1 : (res.status ?? -1);
+    if (res.error) {
       console.error("[update] schtasks spawn error", {
-        error: err?.message || err,
+        error: res.error.message,
         taskName,
         shimPath
       });
-    });
+    } else if (code !== 0) {
+      console.error("[update] schtasks refused to create the task", {
+        exitCode: code,
+        stderr: String(res.stderr || "").trim().slice(0, 500),
+        stdout: String(res.stdout || "").trim().slice(0, 200),
+        taskName,
+        startTime
+      });
+    }
 
-    child.unref();
+    if (code !== 0) {
+      // No se programó nada. Decirlo, en vez de reportar un arranque que no
+      // ocurrió: la diferencia decide si alguien va a mirar este equipo.
+      return {
+        started: false,
+        command: "schtasks.exe",
+        args: schArgs,
+        error: `schtasks_failed_rc_${code}`
+      } as any;
+    }
 
     console.log("[update] scheduled msiexec via Task Scheduler", {
       taskName,
       startTime,
       shimPath,
-      msiPath
+      msiPath,
+      msiLogPath,
+      resultPath
     });
 
     return {

@@ -1,4 +1,7 @@
 // src/core/bootstrap.ts
+import fs from "fs";
+import path from "path";
+import { agentDataDir } from "../bootstrap/paths";
 import { ensureEnrolled } from "../bootstrap/enroll";
 import { EnrollmentStore } from "../bootstrap/enrollment-store";
 import { AgentContext } from "./agent-context";
@@ -96,8 +99,58 @@ export async function bootstrapContext(): Promise<AgentContext> {
  * Best effort throughout. This is telemetry; an agent that cannot report where
  * its bytes came from must still finish starting up.
  */
+/**
+ * Lee y reporta el resultado del ÚLTIMO intento de actualización (Windows).
+ *
+ * El shim que lanza msiexec escribe su código de salida en un fichero del
+ * directorio de datos. Hasta ahora ese código solo existía en el LastResult de
+ * Task Scheduler: nadie lo mira, no viaja al control plane, y un update que
+ * falló era indistinguible de uno que nunca llegó a programarse.
+ *
+ * Eso costó días de un equipo atascado en 1.1.56 reintentando 1.1.57 sin que
+ * ningún log dijera por qué. Se lee UNA vez al arrancar —que es justo después
+ * de que el update haya ocurrido o fallado— y se consume: dejarlo haría que se
+ * reportara el mismo fallo en cada reinicio.
+ */
+function reportLastUpdateOutcome(): void {
+  if (process.platform !== "win32") return;
+  const file = path.join(agentDataDir(), "update-result.json");
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return; // no hubo intento previo: el caso normal
+  }
+  try {
+    fs.unlinkSync(file);
+  } catch {
+    /* si no se puede borrar se reportará dos veces; es preferible a perderlo */
+  }
+
+  try {
+    const r = JSON.parse(raw);
+    const exitCode = Number(r?.exitCode);
+    if (exitCode === 0) {
+      logger.info("[update] la instalación anterior terminó bien", { msi: r?.msi });
+    } else {
+      // warn, no info: un msiexec que falla deja al equipo en la versión
+      // vieja, y eso tiene que verse. 1618 = otra instalación en curso;
+      // 1603 = fallo genérico, casi siempre con la causa en el /l*v.
+      logger.warn("[update] la instalación anterior FALLÓ", {
+        msi: r?.msi,
+        exitCode,
+        atLocal: r?.atLocal,
+        hint: `revisa update-msi-${r?.msi}.log en el directorio de datos`
+      });
+    }
+  } catch {
+    logger.warn("[update] resultado de instalación ilegible", { raw: raw.slice(0, 200) });
+  }
+}
+
 function reportUpdateSource(runningVersion: string): void {
   try {
+    reportLastUpdateOutcome();
     const report = decideSourceReport(loadUpdateState(), runningVersion);
     if (!report) return;
 
