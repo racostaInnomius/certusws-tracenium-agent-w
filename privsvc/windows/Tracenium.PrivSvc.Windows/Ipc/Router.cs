@@ -244,6 +244,13 @@ public sealed class Router
             // forwarded from the operator's browser via the agent.
             "input.inject" => IpcGrpcHandlers.HandleInputInject(req),
 
+            // Relanza la bandeja si el usuario de consola se quedó sin ella.
+            // Tras cada auto-actualización el MSI la cierra —tiene que, para
+            // reemplazar su .exe— y nadie la reabre hasta el siguiente inicio
+            // de sesión. Desde ADR-0012 eso apaga el indicador de "te están
+            // viendo" y el diálogo de consentimiento. Ver TrayPresence.cs.
+            "tray.ensure" => Task.FromResult(TrayPresence.Ensure(req)),
+
             // SDP — Phase 1-E. See Ipc/Sdp.cs.
             "sdp.detect" => Sdp.HandleDetect(req),
             "sdp.download" => Sdp.HandleDownload(req),

@@ -329,7 +329,11 @@ describe("PathJail — excepciones a la denylist (logs)", () => {
 
   it("los logs del agente son alcanzables aunque su carpeta padre esté denegada", () => {
     const jail = new PathJail({}, winDeps);
-    const d = jail.check("C:\\ProgramData\\Tracenium\\logs\\privsvc-20260820.log");
+    // PrivSvc\logs, que es donde IpcLog.cs escribe de verdad. Antes este test
+    // apuntaba a Tracenium\logs, una ruta que NO EXISTE en ningún equipo:
+    // fijaba mi suposición en vez de la realidad, así que pasaba en verde
+    // mientras el operador veía ENOENT.
+    const d = jail.check("C:\\ProgramData\\Tracenium\\PrivSvc\\logs\\privsvc-20260820.log");
     expect(d.allowed).toBe(true);
   });
 
@@ -348,7 +352,7 @@ describe("PathJail — excepciones a la denylist (logs)", () => {
 
   it("una excepción no anula los segmentos prohibidos", () => {
     const jail = new PathJail({}, winDeps);
-    const d: any = jail.check("C:\\ProgramData\\Tracenium\\logs\\.ssh\\id_rsa");
+    const d: any = jail.check("C:\\ProgramData\\Tracenium\\PrivSvc\\logs\\.ssh\\id_rsa");
     expect(d.allowed).toBe(false);
     expect(d.code).toBe("PATH_DENIED");
   });
@@ -372,7 +376,10 @@ describe("PathJail — los logs son navegables, no solo permitidos", () => {
       tmpdir: "C:\\Windows\\Temp"
     });
     const roots = (jail).rootsForDisplay;
-    expect(roots).toContain("C:\\ProgramData\\Tracenium\\logs");
+    expect(roots).toContain("C:\\ProgramData\\Tracenium\\PrivSvc\\logs");
+    // Y NO la que no existe: dos raíces cuyo último componente es "logs"
+    // daban dos chips idénticos en el gestor de ficheros, uno de ellos roto.
+    expect(roots).not.toContain("C:\\ProgramData\\Tracenium\\logs");
     // Y el padre sigue sellado: la raíz no lo abre.
     const d = jail.check("C:\\ProgramData\\Tracenium\\mtls-client.crt.pem");
     expect(d.allowed).toBe(false);

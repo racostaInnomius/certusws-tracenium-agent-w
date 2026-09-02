@@ -542,7 +542,13 @@ internal static class SessionScreenCapture
 
     // ── P/Invoke ──────────────────────────────────────────────────────────
 
-    private static class NativeMethods
+    /// <summary>
+    /// internal, no private: TrayPresence.cs necesita el mismo salto a la
+    /// sesión de consola. Se deja aquí en vez de moverlo a un fichero propio
+    /// para no remover este justo antes de probar en campo el cambio del token
+    /// elevado; si aparece un tercer llamador, toca extraerlo.
+    /// </summary>
+    internal static class NativeMethods
     {
         public const int TOKEN_ALL_ACCESS = 0xF01FF;
         public const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;

@@ -614,6 +614,34 @@ export class ScreenSession {
     }
   }
 
+  /**
+   * Explica el final de la sesión por el canal de datos, si hay algo que
+   * explicar.
+   *
+   * Solo para los motivos que el operador NO puede deducir. Un cierre que
+   * pidió él mismo, o un canal que se cae, ya se explican solos; anunciarlos
+   * añadiría ruido a un cierre normal.
+   */
+  private sendStopReason(reason: string): void {
+    const known: Record<string, string> = {
+      revoked_by_user:
+        "The person using this device ended the session from the on-screen " +
+        "banner. This was their decision, not a connection problem — reopening " +
+        "without asking them first is not appropriate.",
+      indicator_unavailable:
+        "The session was refused because the device could not show the " +
+        "on-screen notice telling the user they are being viewed."
+    };
+    const message = known[reason];
+    if (!message) return;
+
+    try {
+      this.send({ op: "error", code: reason, message, terminal: true });
+    } catch {
+      /* el canal ya se fue; el motivo queda en la auditoría igualmente */
+    }
+  }
+
   /** Retira el indicador nativo de Linux. No lanza: corre en el cierre. */
   private hideLinuxIndicator(): void {
     if (process.platform !== "linux") return;
@@ -1141,6 +1169,21 @@ export class ScreenSession {
     this.clearIndicator();
     this.hideLinuxIndicator();
     this.stopRecording();
+
+    // ⚠️ Decirle al operador POR QUÉ se acabó, mientras el canal sigue vivo.
+    //
+    // Sin esto, el navegador solo ve caerse el WebSocket de señalización y
+    // muestra "Connection error: Signaling WebSocket closed unexpectedly."
+    // Para el caso que más importa —la persona pulsó "detener" en su banda—
+    // ese mensaje es directamente engañoso: sugiere una avería de red donde
+    // hubo una decisión, y empuja al operador a reintentar contra alguien que
+    // acaba de decir que no.
+    //
+    // Va AQUÍ y no antes: la captura ya está parada arriba, así que no se
+    // envía ni un fotograma de más, y al teardown le queda un tick de
+    // setImmediate para que el mensaje salga por el canal.
+    this.sendStopReason(reason);
+
     if (this.auditStartedSent) {
       this.args.sendScreenAudit({
         event: "stopped",

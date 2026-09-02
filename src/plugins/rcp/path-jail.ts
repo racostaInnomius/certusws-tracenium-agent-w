@@ -132,7 +132,15 @@ function defaultRoots(
       programFiles,
       programFilesX86,
       temp,
-      path.win32.join(traceniumData, "logs"),
+      // ⚠️ SOLO PrivSvc\logs. Aquí había también traceniumData\logs, que NO
+      // EXISTE: los logs de PrivSvc y del bridge van a
+      // ProgramData\Tracenium\PrivSvc\logs (ver IpcLog.cs) y los de
+      // AgentCore los escribe WinSW junto a su .exe, en Program Files.
+      //
+      // El resultado en campo fueron DOS chips llamados "logs" —el label es el
+      // último componente de la ruta— y uno de los dos daba ENOENT. Un atajo
+      // roto en una herramienta de soporte es peor que no ofrecer atajo: el
+      // operador no sabe si el fallo es suyo, del equipo o del producto.
       path.win32.join(traceniumData, "PrivSvc", "logs"),
       tmpdir
     ];
@@ -160,7 +168,6 @@ function defaultDenyExceptions(
   if (platform === "win32") {
     const programData = env.ProgramData || "C:\\ProgramData";
     return [
-      path.win32.join(programData, "Tracenium", "logs"),
       path.win32.join(programData, "Tracenium", "PrivSvc", "logs")
     ];
   }

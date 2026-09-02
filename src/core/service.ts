@@ -120,6 +120,18 @@ export async function startService() {
     } catch (e: any) {
       log.warn("RCP native probe wrapper threw", e?.message || e);
     }
+
+    // La bandeja se queda cerrada tras cada auto-actualización: el MSI la mata
+    // para reemplazar su .exe y solo vuelve en el siguiente inicio de sesión.
+    // Desde ADR-0012 eso apaga el indicador de sesión remota y el diálogo de
+    // consentimiento, así que hay que reabrirla. Ver status/tray-presence.ts.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { startTrayPresenceWatch } = require("../status/tray-presence");
+      startTrayPresenceWatch(ctx);
+    } catch (e: any) {
+      log.warn("tray presence watch failed to start", e?.message || e);
+    }
     log.info("Enrolled", {
       tenantId: ctx.enrollment.tenantId,
       deviceId: ctx.enrollment.deviceId
