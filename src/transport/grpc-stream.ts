@@ -795,6 +795,83 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       return { status: 0, message: `cert_installed: ${resp.result?.subject || keyId}` };
     }
 
+    // ADR-0011 decisiones 9.c y 9.d. Los metodos existian en los tres
+    // PrivSvc desde la fase 2 y no eran alcanzables: sin `case` aqui, el
+    // control plane no puede pedirlos. Es el MISMO agujero que dejo
+    // muertas las fases 2 y 3, encontrado al cerrar aquel.
+
+    case "cdp_key_list": {
+      if (!ctx.policyRuntime.pluginEnabled("cdp")) {
+        return { status: 2, message: "cdp_key_list rejected: cdp plugin disabled by policy" };
+      }
+
+      const resp = await ctx.priv.call({
+        v: 1,
+        id: `cdpkeylist_${Date.now()}`,
+        method: "cdp.key.list",
+        params: {},
+        meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+      });
+
+      if (!resp?.ok) {
+        return {
+          status: 2,
+          message: `cdp_key_list failed: ${resp?.error?.code || "unknown"} ${resp?.error?.message || ""}`.trim()
+        };
+      }
+
+      const keys = Array.isArray(resp.result?.keys) ? resp.result.keys : [];
+
+      // La lista va por el envelope de facts, igual que el CSR: el ACK
+      // no transporta datos. Sin esto la decision 9.d seguiria sin
+      // cumplirse — una lista que nadie puede LEER no hace visible
+      // nada.
+      await collectFactsSnapshot(ctx, `runJob:${jobId}:keylist`, "cdp", {
+        jobId,
+        jobStatus: "completed",
+        result: { keys, count: keys.length }
+      }).catch((err) => ctx.logger?.warn?.("envio de la lista de claves fallo", { err }));
+
+      return { status: 0, message: `key_list: ${keys.length}` };
+    }
+
+    case "cdp_key_destroy": {
+      if (!ctx.policyRuntime.pluginEnabled("cdp")) {
+        return { status: 2, message: "cdp_key_destroy rejected: cdp plugin disabled by policy" };
+      }
+
+      const keyId = String(payload?.keyId || "").trim();
+      if (!keyId) {
+        return { status: 2, message: "cdp_key_destroy rejected: keyId es obligatorio" };
+      }
+
+      const resp = await ctx.priv.call({
+        v: 1,
+        id: `cdpkeydel_${Date.now()}`,
+        method: "cdp.key.destroy",
+        params: { keyId },
+        meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+      });
+
+      if (!resp?.ok) {
+        return {
+          status: 2,
+          message: `cdp_key_destroy failed: ${resp?.error?.code || "unknown"} ${resp?.error?.message || ""}`.trim()
+        };
+      }
+
+      // Se devuelve el recuento porque distingue dos cosas que importan:
+      // `0` es "no habia nada que borrar" —idempotente, quiza un
+      // reintento— y `>0` es una destruccion real.
+      await collectFactsSnapshot(ctx, `runJob:${jobId}:keydestroy`, "cdp", {
+        jobId,
+        jobStatus: "completed",
+        result: { keyId, destroyed: resp.result?.destroyed ?? 0 }
+      }).catch((err) => ctx.logger?.warn?.("envio del borrado de clave fallo", { err }));
+
+      return { status: 0, message: `key_destroyed: ${keyId} (${resp.result?.destroyed ?? 0})` };
+    }
+
     case "patch_scan": {
       if (!ctx.policyRuntime.isPatchEnabled()) {
         return {

@@ -36,6 +36,8 @@ describe("enrutado de jobs de CDP en el agente", () => {
   it.each([
     ["cdp_csr_generate", "cdp.csr.generate"],
     ["cdp_cert_install", "cdp.cert.install"],
+    ["cdp_key_list", "cdp.key.list"],
+    ["cdp_key_destroy", "cdp.key.destroy"],
     // El que ya estaba, como control: si este cayera, el test estaría
     // midiendo otra cosa.
     ["cdp_anchor_distrust", "cdp.anchor.distrust"]
@@ -53,7 +55,7 @@ describe("enrutado de jobs de CDP en el agente", () => {
     // DEVOLVER algo —el CSR, o el `installed` que dispara el rescan de
     // verificación— necesita el otro camino, que es el único que el
     // control plane sabe leer.
-    for (const jobType of ["cdp_csr_generate", "cdp_cert_install"]) {
+    for (const jobType of ["cdp_csr_generate", "cdp_cert_install", "cdp_key_list", "cdp_key_destroy"]) {
       const bloque = despachador.slice(despachador.indexOf(`case "${jobType}"`));
       const finBloque = bloque.indexOf("\n    case ", 10);
       const cuerpo = bloque.slice(0, finBloque > 0 ? finBloque : undefined);
@@ -65,6 +67,26 @@ describe("enrutado de jobs de CDP en el agente", () => {
   it("el CSR viaja de verdad, no solo un acuse", () => {
     const bloque = despachador.slice(despachador.indexOf('case "cdp_csr_generate"'));
     expect(bloque.slice(0, bloque.indexOf("\n    case ", 10))).toContain("csrPem");
+  });
+
+  it("⭐ TODO método IPC de CDP del PrivSvc tiene su tipo de job", () => {
+    // Esta es la comprobación que habría evitado el fallo entero: un
+    // método que existe en el PrivSvc y no tiene `case` aquí es código
+    // privilegiado inalcanzable. Se lee el router de macOS como censo —
+    // los tres PrivSvc se mantienen paralelos a propósito.
+    const routerMac = fs.readFileSync(
+      path.join(__dirname, "../../privsvc/macos/src/router.ts"),
+      "utf8"
+    );
+    const metodos = [...routerMac.matchAll(/case "(cdp\.[a-z.]+)"/g)].map((m) => m[1]);
+    expect(metodos.length).toBeGreaterThanOrEqual(5);
+
+    for (const metodo of metodos) {
+      expect(
+        despachador.includes(metodo),
+        `el PrivSvc expone ${metodo} y el agent-core no lo enruta: es inalcanzable desde el control plane`
+      ).toBe(true);
+    }
   });
 
   it("la instalación reporta `installed`, que es lo que dispara el rescan", () => {
