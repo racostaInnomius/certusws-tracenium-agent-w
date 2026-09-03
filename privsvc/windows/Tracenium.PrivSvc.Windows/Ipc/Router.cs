@@ -205,6 +205,12 @@ public sealed class Router
             // enrolamiento.
             "cdp.cert.install" => CdpCertInstall.Handle(req),
 
+            // ADR-0011 fase 0, paso 1 — el estado del pin de anclas.
+            // ⚠️ NO es un job: lo pide el ciclo de facts, no el control
+            // plane. Es la excepcion consciente al censo de
+            // `cdp-job-routing.test.ts`.
+            "cdp.anchor.state" => CdpAnchorState.Handle(req),
+
             "crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),
             "crypto.cert.install" => CryptoCertInstall.HandleInstallCert(req),
             "crypto.cert.renew" => CryptoCertRenew.HandleRenewCert(req),

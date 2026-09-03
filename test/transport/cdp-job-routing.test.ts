@@ -69,24 +69,58 @@ describe("enrutado de jobs de CDP en el agente", () => {
     expect(bloque.slice(0, bloque.indexOf("\n    case ", 10))).toContain("csrPem");
   });
 
-  it("⭐ TODO método IPC de CDP del PrivSvc tiene su tipo de job", () => {
+  it("⭐ TODO método IPC de CDP del PrivSvc es alcanzable desde agent-core", () => {
     // Esta es la comprobación que habría evitado el fallo entero: un
-    // método que existe en el PrivSvc y no tiene `case` aquí es código
+    // método que existe en el PrivSvc y que nadie llama es código
     // privilegiado inalcanzable. Se lee el router de macOS como censo —
     // los tres PrivSvc se mantienen paralelos a propósito.
+    //
+    // ⚠️ Se busca en TODO `src/`, no solo en el despachador de jobs.
+    // Antes solo miraba ahí, y eso codificaba una suposición que dejó de
+    // ser cierta con `cdp.anchor.state`: que la única forma de llegar a
+    // un método privilegiado es un job del control plane. Ese método lo
+    // pide el ciclo de facts. Estrechar el censo al despachador habría
+    // obligado a elegir entre romper el test o no escribir la llamada —
+    // y la versión ancha comprueba lo que de verdad importa, que es que
+    // ALGUIEN lo invoque.
     const routerMac = fs.readFileSync(
       path.join(__dirname, "../../privsvc/macos/src/router.ts"),
       "utf8"
     );
     const metodos = [...routerMac.matchAll(/case "(cdp\.[a-z.]+)"/g)].map((m) => m[1]);
-    expect(metodos.length).toBeGreaterThanOrEqual(5);
+    expect(metodos.length).toBeGreaterThanOrEqual(6);
+
+    const src = path.join(__dirname, "../../src");
+    const fuentes: string[] = [];
+    const recorrer = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) recorrer(p);
+        else if (e.name.endsWith(".ts")) fuentes.push(fs.readFileSync(p, "utf8"));
+      }
+    };
+    recorrer(src);
+    const todo = fuentes.join("\n");
 
     for (const metodo of metodos) {
       expect(
-        despachador.includes(metodo),
-        `el PrivSvc expone ${metodo} y el agent-core no lo enruta: es inalcanzable desde el control plane`
+        todo.includes(`"${metodo}"`),
+        `el PrivSvc expone ${metodo} y agent-core no lo llama desde ningún sitio: es código privilegiado inalcanzable`
       ).toBe(true);
     }
+  });
+
+  it("⭐ el estado del pin se pide fuera del despachador de jobs, a propósito", () => {
+    // Si `cdp.anchor.state` acabara siendo un job, la telemetría del pin
+    // dependería de que el control plane la pidiera — y el control plane
+    // es justo el adversario del que la fase 0 desconfía. Tiene que
+    // salir sola, con el inventario.
+    expect(despachador).not.toContain("cdp.anchor.state");
+    const plugin = fs.readFileSync(
+      path.join(__dirname, "../../src/plugins/cdp/index.ts"),
+      "utf8"
+    );
+    expect(plugin).toContain('"cdp.anchor.state"');
   });
 
   it("la instalación reporta `installed`, que es lo que dispara el rescan", () => {

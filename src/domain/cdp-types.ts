@@ -140,4 +140,40 @@ export type CdpNamespace = {
   };
 
   collectorError?: CdpCollectorError;
+
+  /**
+   * Estado del pin de anclas de confianza (ADR-0011 fase 0, paso 1).
+   *
+   * Ausente = el PrivSvc de este equipo no conoce `cdp.anchor.state`
+   * todavía, que es lo que verá toda la flota hasta que la versión con
+   * el método llegue. Distinto de `applicable: false`, que es una
+   * plataforma donde no hay anclas que fijar (Linux, gate 1).
+   */
+  anchorPin?: CdpAnchorPinReport;
+};
+
+export type CdpAnchorPinReport = {
+  applicable: boolean;
+  platform: string;
+  /** Motivo, cuando `applicable` es false. */
+  reason?: string;
+  mode: "observe" | "enforce" | null;
+  pinnedCount: number;
+  pinned: string[];
+  /**
+   * Último veredicto, o null si este equipo no ha enrolado ni renovado
+   * desde que existe el mecanismo. `null` es «no ha evaluado», NO «no
+   * vio nada» — la diferencia es la que separa un inventario de una
+   * falsa tranquilidad.
+   */
+  last: {
+    at: string;
+    mode: "observe" | "enforce";
+    source: "enroll" | "renew";
+    incoming: string[];
+    unpinned: string[];
+    rejected: string[];
+    firstRun: boolean;
+    unpinnedSeenTotal: number;
+  } | null;
 };

@@ -34,9 +34,47 @@ function getDb(): Database.Database {
       item_json TEXT NOT NULL,
       detected_at_utc TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS cdp_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 
   return dbInstance;
+}
+
+// ── Memoria del pin de anclas (ADR-0011 fase 0, paso 1) ──────────────
+//
+// ⚠️ Existe por una trampa concreta del planificador: si `hasChanges` es
+// falso, el namespace CDP ENTERO se descarta y no llega nada al control
+// plane. Colgar el estado del pin de ese namespace sin más significaría
+// que una flota estable —que es la normal— no reportaría su pin casi
+// nunca. Sería reproducir, un nivel más arriba, el mismo fallo que este
+// paso viene a arreglar: un dato que existe y no se ve.
+//
+// Con esto, un pin que cambia es un cambio que merece envío, igual que
+// un certificado nuevo.
+
+export function cdpAnchorDigestChanged(digest: string): boolean {
+  const db = getDb();
+  const row = db
+    .prepare(`SELECT value FROM cdp_meta WHERE key = 'anchor_pin_digest'`)
+    .get() as { value?: string } | undefined;
+  return row?.value !== digest;
+}
+
+export function commitCdpAnchorDigest(digest: string): void {
+  getDb()
+    .prepare(
+      `INSERT INTO cdp_meta (key, value) VALUES ('anchor_pin_digest', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    )
+    .run(digest);
+}
+
+export function hashCdpAnchorState(state: unknown): string {
+  return crypto.createHash("sha256").update(stableStringify(state)).digest("hex");
 }
 
 function stableStringify(value: unknown): string {

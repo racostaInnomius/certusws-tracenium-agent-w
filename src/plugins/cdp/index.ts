@@ -13,8 +13,19 @@
 
 import os from "os";
 import type { AgentContext } from "../../core/agent-context";
-import type { CdpCertItem, CdpNamespace, CdpStoreInfo } from "../../domain/cdp-types";
-import { commitCdpBaseline, computeCdpDelta } from "../../domain/cdp-baseline-repo";
+import type {
+  CdpAnchorPinReport,
+  CdpCertItem,
+  CdpNamespace,
+  CdpStoreInfo
+} from "../../domain/cdp-types";
+import {
+  commitCdpAnchorDigest,
+  commitCdpBaseline,
+  cdpAnchorDigestChanged,
+  computeCdpDelta,
+  hashCdpAnchorState
+} from "../../domain/cdp-baseline-repo";
 import { collectWindowsCdp } from "./providers/windows";
 import { collectMacosCdp } from "./providers/macos";
 import { collectLinuxCdp } from "./providers/linux";
@@ -278,16 +289,35 @@ async function collectOnce(
   if (truncated && delta) {
     delta.removed = [];
   }
+  // ADR-0011 fase 0, paso 1 — el estado del pin de anclas viaja con el
+  // inventario de criptografía, que es donde un operador ya mira.
+  //
+  // Fallo blando como el resto de colectores: un PrivSvc antiguo
+  // responde `not_supported` y eso NO puede costar el escaneo que acaba
+  // de funcionar. Ausente ≠ «sin anclas»; el backend lo distingue.
+  const anchorPin = await collectAnchorPin(ctx);
+
   const isBaselineSend = delta === null;
+  const anchorChanged = anchorPin
+    ? cdpAnchorDigestChanged(hashCdpAnchorState(anchorPin))
+    : false;
   const hasChanges = isBaselineSend
     ? true
-    : delta.added.length > 0 || delta.removed.length > 0 || delta.updated.length > 0;
+    : anchorChanged ||
+      delta.added.length > 0 ||
+      delta.removed.length > 0 ||
+      delta.updated.length > 0;
 
   // Commit AFTER diffing so `removed` is computed against the previous
   // scan. Committing here (vs after enqueue) mirrors AMP: the outbox is
   // local SQLite and its enqueue effectively cannot fail.
   if (hasChanges) {
     commitCdpBaseline(items);
+    // El digest se confirma junto a la línea base y solo cuando de
+    // verdad se va a enviar: adelantarlo haría que un envío descartado
+    // aguas arriba se diera por reportado, y el cambio de pin se
+    // perdería para siempre.
+    if (anchorPin) commitCdpAnchorDigest(hashCdpAnchorState(anchorPin));
   }
 
   return {
@@ -299,6 +329,47 @@ async function collectOnce(
       count: items.length,
       ...(isBaselineSend ? { items } : {}),
       ...(!isBaselineSend && hasChanges ? { delta } : {})
-    }
+    },
+    ...(anchorPin ? { anchorPin } : {})
   };
+}
+
+/**
+ * Pide al PrivSvc el estado del pin de anclas.
+ *
+ * ⚠️ Va por IPC y no leyendo el fichero: en macOS `CERT_DIR` es 0700 de
+ * root, y el repo evita a propósito una superficie de privilegio
+ * parcial. El método es de solo lectura y aun así exige root, igual que
+ * el resto de `cdp.*`.
+ */
+async function collectAnchorPin(ctx: AgentContext): Promise<CdpAnchorPinReport | undefined> {
+  try {
+    const resp = await ctx.priv.call({
+      v: 1,
+      id: `cdpanchorstate_${Date.now()}`,
+      method: "cdp.anchor.state",
+      params: {},
+      meta: {
+        tenantId: ctx.enrollment?.tenantId,
+        deviceId: ctx.enrollment?.deviceId
+      }
+    });
+    if (!resp?.ok) {
+      // `not_supported` es lo esperado en un PrivSvc anterior a esto, y
+      // no merece un warn en cada ciclo de toda la flota.
+      if (resp?.error?.code !== "not_supported") {
+        ctx.logger?.warn?.("CDP: estado del pin de anclas no disponible", {
+          code: resp?.error?.code,
+          message: resp?.error?.message
+        });
+      }
+      return undefined;
+    }
+    return resp.result as CdpAnchorPinReport;
+  } catch (err: any) {
+    ctx.logger?.warn?.("CDP: fallo pidiendo el estado del pin de anclas (no fatal)", {
+      error: err?.message || String(err)
+    });
+    return undefined;
+  }
 }

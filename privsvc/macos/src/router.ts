@@ -47,6 +47,7 @@ import {
   handleCdpKeyList
 } from "./cdp-keys";
 import { handleCdpCertInstall } from "./cdp-cert-install";
+import { handleCdpAnchorState } from "./cdp-anchor-state";
 
 function isRoot() {
   return typeof process.getuid === "function" ? process.getuid() === 0 : false;
@@ -175,6 +176,15 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     // afirmaria que la cadena es buena.
     case "cdp.cert.install":
       return handleCdpCertInstall(req);
+
+    // ADR-0011 fase 0, paso 1 — el estado del pin de anclas.
+    //
+    // ⚠️ NO es un job: lo pide el ciclo de facts, no el control plane.
+    // Es la excepcion consciente al censo de `cdp-job-routing.test.ts`,
+    // que exige que todo metodo `cdp.*` sea alcanzable desde agent-core
+    // — y este lo es, por otro camino.
+    case "cdp.anchor.state":
+      return handleCdpAnchorState(req);
 
     case "crypto.cert.renew":
       return handleRenewCert(req);

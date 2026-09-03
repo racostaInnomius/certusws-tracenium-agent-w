@@ -89,7 +89,13 @@ public static class CryptoCertRenew
                     ["deviceId"] = deviceId,
                     ["clientCertPem"] = clientCertPem,
                     ["caBundlePem"] = caBundlePem,
-                    ["keyName"] = pendingKeyName
+                    ["keyName"] = pendingKeyName,
+                    // ADR-0011 fase 0, paso 1. La renovacion entra por el
+                    // mismo handler que el enrolamiento, asi que sin esto
+                    // la telemetria del pin no podria distinguir la
+                    // linea base de una repeticion — y esa distincion es
+                    // justo la que hace accionable un ancla no fijada.
+                    ["pinSource"] = "renew"
                 },
                 Meta = req.Meta ?? new PrivSvcMeta { TenantId = tenantId, DeviceId = deviceId }
             });

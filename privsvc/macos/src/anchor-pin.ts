@@ -131,6 +131,85 @@ export function saveAnchorPins(certDir: string, anchors: string[]): void {
   fs.renameSync(tmp, anchorPinPath(certDir));
 }
 
+// ── La observación tiene que SALIR del equipo (ADR-0011 fase 0, paso 1) ──
+//
+// Medido 2026-09-03: el modo `observe` observaba hacia un log local. El
+// backend no tenía una sola referencia a esto y agent-core no leía el
+// veredicto. Un modo cuyo único propósito es generar la evidencia para
+// decidir, y que no la entrega, es el mismo fallo de `purge_after`.
+//
+// ⚠️ Por qué un FICHERO y no la respuesta IPC: el veredicto se produce
+// en enrolamiento y renovación, que son raros —la renovación se dispara
+// por umbral de caducidad, no por reloj—. Si solo viajara en la
+// respuesta de esas llamadas, un equipo que no renueva en meses no
+// reportaría nada, y «no reporta» es indistinguible de «no ha visto
+// nada». Persistirlo lo convierte en estado consultable en cualquier
+// momento por el ciclo de facts.
+
+export type AnchorPinState = {
+  version: 1;
+  /** Cuándo se produjo el último veredicto. */
+  at: string;
+  mode: AnchorPinMode;
+  /** Qué ruta lo produjo: distingue la línea base de una repetición. */
+  source: "enroll" | "renew";
+  incoming: string[];
+  unpinned: string[];
+  rejected: string[];
+  firstRun: boolean;
+  /**
+   * Cuántas veces se ha visto ALGUNA ancla no fijada, desde siempre.
+   *
+   * Solo crece. El resto del fichero es el último veredicto y se
+   * sobrescribe, así que dos eventos entre dos ciclos de facts dejarían
+   * ver solo el segundo. Este contador sobrevive a eso: aunque se pierda
+   * el detalle, queda la prueba de que ocurrió — que es justo lo que el
+   * criterio de salida del paso 2 necesita («cero anclas no fijadas»).
+   */
+  unpinnedSeenTotal: number;
+};
+
+export function anchorStatePath(certDir: string): string {
+  return path.join(certDir, "anchor-pin-last.json");
+}
+
+export function loadAnchorState(certDir: string): AnchorPinState | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(anchorStatePath(certDir), "utf8"));
+    if (parsed?.version !== 1) return null;
+    return parsed as AnchorPinState;
+  } catch {
+    // Igual que los pines: ausente o ilegible no puede convertirse en
+    // una alarma. `null` significa «este equipo no ha reportado», que es
+    // distinto de «no ha visto nada» y así se dirá arriba.
+    return null;
+  }
+}
+
+export function saveAnchorState(
+  certDir: string,
+  verdict: AnchorPinVerdict,
+  mode: AnchorPinMode,
+  source: "enroll" | "renew"
+): void {
+  const previo = loadAnchorState(certDir);
+  const state: AnchorPinState = {
+    version: 1,
+    at: new Date().toISOString(),
+    mode,
+    source,
+    incoming: verdict.incoming,
+    unpinned: verdict.unpinned,
+    rejected: verdict.rejected,
+    firstRun: verdict.firstRun,
+    unpinnedSeenTotal:
+      (previo?.unpinnedSeenTotal ?? 0) + (verdict.unpinned.length > 0 ? 1 : 0)
+  };
+  const tmp = `${anchorStatePath(certDir)}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2), { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(tmp, anchorStatePath(certDir));
+}
+
 /** Texto para el log. Se separa para que el mensaje sea probable. */
 export function describeAnchorVerdict(v: AnchorPinVerdict): string {
   if (v.firstRun) {

@@ -11,9 +11,15 @@
 // cada endpoint por la ruta rutinaria.
 
 import { describe, it, expect } from "vitest";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import {
+  anchorStatePath,
   evaluateAnchorPins,
-  describeAnchorVerdict
+  describeAnchorVerdict,
+  loadAnchorState,
+  saveAnchorState
 } from "../../privsvc/macos/src/anchor-pin";
 
 const A = "aa11";
@@ -98,5 +104,55 @@ describe("describeAnchorVerdict — el veredicto tiene que poder leerse", () => 
   it("nombra las huellas concretas", () => {
     // Un aviso que no dice CUAL ancla obliga a ir a buscarla a mano.
     expect(describeAnchorVerdict(evaluateAnchorPins([A], [B], "observe"))).toContain(B);
+  });
+});
+
+// ── La observacion tiene que SALIR del equipo (fase 0, paso 1) ───────
+//
+// Medido 2026-09-03: el modo `observe` observaba hacia un log local. El
+// backend no tenia una sola referencia a esto y agent-core no leia el
+// veredicto, asi que el modo cuyo UNICO proposito es generar la
+// evidencia para decidir `enforce` no entregaba ninguna.
+
+describe("estado persistido del pin", () => {
+  const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), "anchorstate-"));
+
+  it("sin fichero devuelve null, que es «no ha evaluado» y no «no vio nada»", () => {
+    expect(loadAnchorState(dir())).toBeNull();
+  });
+
+  it("guarda el veredicto con su origen", () => {
+    const d = dir();
+    saveAnchorState(d, evaluateAnchorPins([A], [B], "observe"), "observe", "renew");
+    const s = loadAnchorState(d)!;
+    expect(s.unpinned).toEqual([B]);
+    expect(s.source).toBe("renew");
+    expect(s.mode).toBe("observe");
+  });
+
+  it("⭐ el contador de hallazgos SOLO crece, aunque el detalle se pise", () => {
+    // El resto del fichero es el ultimo veredicto y se sobrescribe. Si
+    // ocurren dos eventos entre dos ciclos de facts, del primero solo
+    // queda este numero — y el criterio de salida del paso 2 es «cero
+    // anclas no fijadas», que sin esto seria indemostrable.
+    const d = dir();
+    saveAnchorState(d, evaluateAnchorPins([A], [B], "observe"), "observe", "renew");
+    saveAnchorState(d, evaluateAnchorPins([A, B], [C], "observe"), "observe", "renew");
+    expect(loadAnchorState(d)!.unpinnedSeenTotal).toBe(2);
+
+    // Un veredicto limpio NO lo incrementa ni lo reinicia: el historico
+    // de que paso algo tiene que sobrevivir a que despues fuera bien.
+    saveAnchorState(d, evaluateAnchorPins([A], [A], "observe"), "observe", "renew");
+    const s = loadAnchorState(d)!;
+    expect(s.unpinnedSeenTotal).toBe(2);
+    expect(s.unpinned).toEqual([]);
+  });
+
+  it("un fichero corrupto no es una alarma", () => {
+    // Mismo fallo seguro que los pines: un JSON roto no puede
+    // convertirse en un hallazgo para toda la flota.
+    const d = dir();
+    fs.writeFileSync(anchorStatePath(d), "{ esto no es json");
+    expect(loadAnchorState(d)).toBeNull();
   });
 });

@@ -9,6 +9,7 @@ import {
   evaluateAnchorPins,
   loadAnchorPins,
   saveAnchorPins,
+  saveAnchorState,
   describeAnchorVerdict,
   type AnchorPinMode,
   type AnchorPinVerdict
@@ -101,12 +102,17 @@ function rootFingerprintsOf(bundlePem: string): string[] {
 }
 
 /**
- * Evalua el bundle contra los pines, lo registra RUIDOSAMENTE y persiste
- * la linea base. Devuelve el veredicto para que el llamante pueda
- * incluirlo en la respuesta IPC — un veredicto que solo va al log se
- * pierde, y esta ruta ya tiene un historial de tragarse errores.
+ * Evalua el bundle contra los pines, lo registra RUIDOSAMENTE, persiste
+ * la linea base y GUARDA el veredicto para que pueda salir del equipo.
+ *
+ * ⚠️ Correccion 2026-09-03: este comentario decia que el veredicto se
+ * devolvia «para que el llamante pueda incluirlo en la respuesta IPC».
+ * Ningun llamante lo hacia — los dos lo usaban solo para filtrar
+ * `rejected`. La intencion estaba escrita y el cableado no existia, que
+ * es como el modo `observe` acabo observando hacia un log local que
+ * nadie lee. Ahora se persiste aqui, y `cdp.anchor.state` lo sirve.
  */
-function applyAnchorPin(bundlePem: string): AnchorPinVerdict {
+function applyAnchorPin(bundlePem: string, source: "enroll" | "renew"): AnchorPinVerdict {
   const mode = anchorPinMode();
   const verdict = evaluateAnchorPins(loadAnchorPins(CERT_DIR), rootFingerprintsOf(bundlePem), mode);
   const message = describeAnchorVerdict(verdict);
@@ -125,6 +131,19 @@ function applyAnchorPin(bundlePem: string): AnchorPinVerdict {
     saveAnchorPins(CERT_DIR, [...verdict.pinned, ...accepted]);
   } catch (err) {
     logger.warn(`anchor-pin: no se pudo persistir la linea base: ${String(err)}`);
+  }
+
+  // ADR-0011 fase 0, paso 1. Persistir el veredicto es lo que permite
+  // que el ciclo de facts lo suba: el log local no lo lee nadie desde el
+  // control plane, y sin dato no se puede decidir el paso a `enforce`.
+  //
+  // Se guarda DESPUES de los pines y aparte: un fallo aqui no debe
+  // impedir que la linea base quede fijada, que es la defensa. La
+  // telemetria es lo accesorio de los dos.
+  try {
+    saveAnchorState(CERT_DIR, verdict, mode, source);
+  } catch (err) {
+    logger.warn(`anchor-pin: no se pudo persistir el veredicto: ${String(err)}`);
   }
 
   return verdict;
@@ -532,7 +551,7 @@ export async function handleInstallCert(req: PrivSvcRequest): Promise<PrivSvcRes
     // El pin se evalua ANTES de instalar, y el fallo deja de ser mudo:
     // el `.catch(() => undefined)` que habia aqui se tragaba tanto un
     // error de instalacion como un ancla inesperada.
-    const anchorVerdict = applyAnchorPin(fullBundlePem);
+    const anchorVerdict = applyAnchorPin(fullBundlePem, "enroll");
     await installCaCertificatesToSystemKeychain(fullBundlePem, anchorVerdict.rejected).catch(
       (err) => logger.warn(`install CA anchors failed: ${String(err)}`)
     );
@@ -733,7 +752,7 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
     // El pin se evalua ANTES de instalar, y el fallo deja de ser mudo:
     // el `.catch(() => undefined)` que habia aqui se tragaba tanto un
     // error de instalacion como un ancla inesperada.
-    const anchorVerdict = applyAnchorPin(fullBundlePem);
+    const anchorVerdict = applyAnchorPin(fullBundlePem, "renew");
     await installCaCertificatesToSystemKeychain(fullBundlePem, anchorVerdict.rejected).catch(
       (err) => logger.warn(`install CA anchors failed: ${String(err)}`)
     );

@@ -29,6 +29,12 @@
   <ItemGroup>
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\CryptoKeyNames.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\DefenderStatusShape.cs" />
+    <!-- ADR-0011 fase 0. `AnchorPin` tampoco tiene nada de Windows
+         dentro: System.IO y System.Text.Json. Se compila aqui para
+         poder probar de verdad la persistencia del veredicto, que es
+         codigo nuevo en la plataforma donde el hallazgo del ancla se
+         midio y donde una raiz plantada afecta a TODO el equipo. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\AnchorPin.cs" />
   </ItemGroup>
 
   <ItemGroup>

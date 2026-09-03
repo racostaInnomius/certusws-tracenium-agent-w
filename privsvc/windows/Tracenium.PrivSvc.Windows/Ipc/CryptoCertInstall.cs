@@ -126,6 +126,15 @@ public static class CryptoCertInstall
                 {
                     AnchorPin.Save(pinVerdict.Pinned.Concat(pinVerdict.Incoming));
                 }
+
+                // ADR-0011 fase 0, paso 1 — que el veredicto SALGA del
+                // equipo. Va fuera del if/else porque un ancla RECHAZADA
+                // es precisamente el evento que hay que poder ver desde
+                // el control plane; reportar solo las aceptadas dejaria
+                // invisible el unico caso que importa.
+                AnchorPin.SaveState(
+                    pinVerdict,
+                    GetString(p, "pinSource") == "renew" ? "renew" : "enroll");
             }
 
             if (rootCert != null)

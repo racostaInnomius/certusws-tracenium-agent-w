@@ -140,6 +140,88 @@ public static class AnchorPin
         };
     }
 
+    // ── La observacion tiene que SALIR del equipo (fase 0, paso 1) ────
+    //
+    // Medido 2026-09-03: el modo `observe` observaba hacia la consola del
+    // servicio. Ni agent-core leia el veredicto ni el backend sabia que
+    // esto existia, asi que el modo cuyo UNICO proposito es generar la
+    // evidencia para decidir `enforce` no entregaba ninguna.
+    //
+    // ⚠️ Se persiste en fichero y no se devuelve en la respuesta IPC
+    // porque el veredicto solo se produce al enrolar y al renovar, que
+    // son raros: un equipo que no renueva en meses no reportaria nada, y
+    // «no reporta» es indistinguible de «no ha visto nada».
+
+    public sealed class AnchorPinState
+    {
+        public int version { get; set; } = 1;
+        public string at { get; set; } = "";
+        public string mode { get; set; } = "observe";
+        public string source { get; set; } = "enroll";
+        public List<string> incoming { get; set; } = new();
+        public List<string> unpinned { get; set; } = new();
+        public List<string> rejected { get; set; } = new();
+        public bool firstRun { get; set; }
+
+        /// <summary>
+        /// Cuantas veces se ha visto ALGUNA ancla no fijada, desde
+        /// siempre. Solo crece: el resto del fichero se sobrescribe, asi
+        /// que dos eventos entre dos ciclos de facts dejarian ver solo el
+        /// segundo. Este contador sobrevive a eso, y el criterio de
+        /// salida del paso 2 («cero anclas no fijadas») lo necesita.
+        /// </summary>
+        public int unpinnedSeenTotal { get; set; }
+    }
+
+    private static string StatePath() =>
+        Path.Combine(AppContext.BaseDirectory, "anchor-pin-last.json");
+
+    public static AnchorPinState? LoadState()
+    {
+        try
+        {
+            var path = StatePath();
+            if (!File.Exists(path)) return null;
+            var parsed = JsonSerializer.Deserialize<AnchorPinState>(File.ReadAllText(path));
+            return parsed?.version == 1 ? parsed : null;
+        }
+        catch
+        {
+            // Igual que los pines: ilegible no puede volverse una alarma.
+            return null;
+        }
+    }
+
+    public static void SaveState(AnchorPinVerdict v, string source)
+    {
+        try
+        {
+            var previo = LoadState();
+            var state = new AnchorPinState
+            {
+                at = DateTime.UtcNow.ToString("o"),
+                mode = IsEnforcing() ? "enforce" : "observe",
+                source = source,
+                incoming = v.Incoming,
+                unpinned = v.Unpinned,
+                rejected = v.Rejected,
+                firstRun = v.FirstRun,
+                unpinnedSeenTotal = (previo?.unpinnedSeenTotal ?? 0) + (v.Unpinned.Count > 0 ? 1 : 0)
+            };
+
+            var path = StatePath();
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(state));
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            // La telemetria es lo accesorio: que falle no puede impedir
+            // que la linea base quede fijada, que es la defensa.
+            Console.WriteLine($"[PrivSvc][AnchorPin] no se pudo persistir el veredicto: {ex.Message}");
+        }
+    }
+
     /// <summary>Texto para el log. Separado para que el mensaje sea probable.</summary>
     public static string Describe(AnchorPinVerdict v)
     {

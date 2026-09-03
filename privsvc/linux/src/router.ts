@@ -64,6 +64,7 @@ import {
   handleCdpKeyList
 } from "./cdp-keys";
 import { handleCdpCertInstall } from "./cdp-cert-install";
+import { handleCdpAnchorState } from "./cdp-anchor-state";
 
 function isRoot() {
   return typeof process.getuid === "function" ? process.getuid() === 0 : false;
@@ -173,6 +174,12 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     // store LOCAL.
     case "cdp.cert.install":
       return handleCdpCertInstall(req);
+
+    // ADR-0011 fase 0, paso 1. En Linux responde «no aplica» con su
+    // motivo: callarse haria indistinguible una decision de diseno
+    // (gate 1) de un equipo que no reporta.
+    case "cdp.anchor.state":
+      return handleCdpAnchorState(req);
 
     case "crypto.cert.renew":
       return handleRenewCert(req);
