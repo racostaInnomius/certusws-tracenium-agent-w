@@ -441,25 +441,96 @@ async function remediateSshKex(): Promise<RemediateOutcome> {
   return remediateSshDirective("KexAlgorithms", SAFE_SSH_KEX_ALGORITHMS);
 }
 
+// ── ufw: SSH antes que el candado ──────────────────────────────────
+//
+// `ufw --force enable` con la política por defecto (deny incoming) y sin
+// reglas corta TODA conexión entrante nueva, SSH incluido. La versión
+// anterior de este handler asumía que ufw «traía permitido OpenSSH de
+// fábrica»; no es así en Ubuntu: ufw se instala sin reglas y sólo tiene
+// la de OpenSSH si un administrador la añadió. Las sesiones vivas
+// sobreviven (y el gRPC del agente es saliente), así que el equipo
+// seguiría alcanzable desde el shell remoto de Tracenium, pero a un
+// cliente le habríamos cortado el SSH en nombre del cumplimiento.
+//
+// Regla: si hay un sshd activo, se permite su puerto (el EFECTIVO, de
+// `sshd -T`, no el 22 por costumbre) ANTES de activar. `ufw allow` es
+// idempotente («Skipping adding existing rule»). Si no hay sshd, no se
+// abre nada: abrir 22 «por si acaso» sería inventarse superficie.
+
+/** Puertos que sshd escucha según `sshd -T` (líneas `port N`); [22] si no dice ninguno. */
+export function sshPortsFromSshdT(rendered: string): number[] {
+  const ports: number[] = [];
+  for (const line of String(rendered || "").split("\n")) {
+    const m = /^\s*port\s+(\d{1,5})\s*$/i.exec(line);
+    if (!m) continue;
+    const n = Number(m[1]);
+    if (n >= 1 && n <= 65535 && !ports.includes(n)) ports.push(n);
+  }
+  return ports.length ? ports : [22];
+}
+
+export type UfwStep = { bin: string; args: string[]; change: string | null };
+
+/**
+ * La secuencia de comandos para activar ufw sin cortar SSH. Pura, para
+ * poder fijarla en tests: primero las reglas de SSH (si sshd está
+ * activo), y el enable SIEMPRE el último.
+ */
+export function planUfwEnable(input: { sshdActive: boolean; sshdRendered: string }): UfwStep[] {
+  const steps: UfwStep[] = [];
+  if (input.sshdActive) {
+    for (const port of sshPortsFromSshdT(input.sshdRendered)) {
+      steps.push({
+        bin: "/usr/sbin/ufw",
+        args: ["allow", `${port}/tcp`, "comment", "Tracenium: keep SSH reachable"],
+        change: `ufw-allow-${port}/tcp`,
+      });
+    }
+  }
+  steps.push({ bin: "/usr/sbin/ufw", args: ["--force", "enable"], change: "ufw-enabled" });
+  return steps;
+}
+
+async function isSshdActive(): Promise<boolean> {
+  // Debian/Ubuntu llaman a la unidad `ssh`; el resto, `sshd`.
+  for (const unit of ["ssh", "sshd"]) {
+    const r = await runCmd("/usr/bin/systemctl", ["is-active", "--quiet", unit]);
+    if (r.code === 0) return true;
+  }
+  return false;
+}
+
 async function remediateFirewallEnable(): Promise<RemediateOutcome> {
   const t0 = Date.now();
   const distro = detectFamily();
 
   if (distro.family === "debian") {
-    // ufw --force enable: skips interactive "may disrupt SSH"
-    // confirmation. Pre-condition: SSH is in default-allow because
-    // ufw shipped ALLOW for OpenSSH on first install. Otherwise
-    // enabling ufw here could lock the operator out — but UFW's
-    // policy on first activation is to KEEP existing connections
-    // alive (`net.ipv4.tcp_keepalive_*` aside), so even a hostile
-    // ruleset wouldn't kill the agent's gRPC stream mid-flight.
-    const r = await runCmd("/usr/sbin/ufw", ["--force", "enable"]);
+    const sshdActive = await isSshdActive();
+    const sshd = sshdActive ? await loadSshdEffective() : { ok: false, rendered: "", stderr: "" };
+    const steps = planUfwEnable({ sshdActive, sshdRendered: sshd.ok ? sshd.rendered : "" });
+
+    const changes: string[] = [];
+    for (const step of steps) {
+      const r = await runCmd(step.bin, step.args);
+      if (r.code !== 0) {
+        // Si falla la regla de SSH NO se activa el firewall: activar sin
+        // la regla es exactamente lo que este bloque existe para evitar.
+        return {
+          exitCode: 1,
+          stderrExcerpt: excerpt(`${step.args.join(" ")}: ${r.stderr || r.stdout}`),
+          durationMs: Date.now() - t0,
+          requiresReboot: false,
+          changesApplied: changes,
+        };
+      }
+      if (step.change) changes.push(step.change);
+    }
     return {
-      exitCode: r.code === 0 ? 0 : 1,
-      stderrExcerpt: r.code === 0 ? undefined : excerpt(r.stderr),
+      exitCode: 0,
+      stderrExcerpt: undefined,
       durationMs: Date.now() - t0,
       requiresReboot: false,
-      changesApplied: r.code === 0 ? ["ufw-enabled"] : [],
+      changesApplied: changes,
     };
   }
 
