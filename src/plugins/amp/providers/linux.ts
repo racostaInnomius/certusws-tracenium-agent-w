@@ -24,6 +24,7 @@ import type { AmpNamespace } from "../../../domain/amp-types";
 import type { SoftwareApplication } from "../../../domain/normalize-app";
 
 import { normalizeApp } from "../../../domain/normalize-app";
+import { parsePackagePublisher } from "../../../domain/package-publisher";
 import { computeSoftwareDelta, toBaselineOps } from "../../../domain/software-inventory-delta";
 import {
   loadSoftwareBaseline,
@@ -367,7 +368,11 @@ async function collectDpkg(manualSet: Set<string> | null): Promise<SoftwareAppli
   // We don't ask for description here.
   const out = await run("/usr/bin/dpkg-query", [
     "-W",
-    "-f=${db:Status-Abbrev}\t${Package}\t${Version}\t${Architecture}\n",
+    // ⚠️ Maintainer se agrega al final a proposito: los campos previos ya
+    // tenian consumidores por indice, y anadir en medio los habria corrido.
+    // Puede traer espacios pero nunca tabuladores, asi que sigue siendo
+    // seguro partir por \t.
+    "-f=${db:Status-Abbrev}\t${Package}\t${Version}\t${Architecture}\t${Maintainer}\n",
   ]);
   const lines = out.split("\n").filter(Boolean);
   const res: SoftwareApplication[] = [];
@@ -384,6 +389,9 @@ async function collectDpkg(manualSet: Set<string> | null): Promise<SoftwareAppli
 
     const name = parts[1];
     const version = parts[2];
+    // dpkg SI tiene fabricante: el Maintainer. Ver package-publisher.ts —
+    // antes aqui viajaba la cadena "dpkg", que es el gestor y no el editor.
+    const publisher = parsePackagePublisher(parts[4]);
 
     // Hard noise filter — dropped completely from inventory. Patterns
     // documented at the top of the file.
@@ -401,7 +409,7 @@ async function collectDpkg(manualSet: Set<string> | null): Promise<SoftwareAppli
     const n = normalizeApp({
       name,
       version,
-      publisher: "dpkg",
+      publisher,
       installLocation: "/",
       packageFamilyName: name,
       source: "dpkg",
@@ -428,13 +436,13 @@ async function collectRpm(manualSet: Set<string> | null): Promise<SoftwareApplic
   const out = await run("/usr/bin/rpm", [
     "-qa",
     "--qf",
-    "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n",
+    "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\t%{VENDOR}\n",
   ]);
   const lines = out.split("\n").filter(Boolean);
   const res: SoftwareApplication[] = [];
 
   for (const line of lines) {
-    const [name, version] = line.split("\t");
+    const [name, version, , vendor] = line.split("\t");
     if (!name) continue;
 
     // Filter `gpg-pubkey-*`: rpm tracks imported GPG keys via the same
@@ -455,7 +463,9 @@ async function collectRpm(manualSet: Set<string> | null): Promise<SoftwareApplic
     const n = normalizeApp({
       name,
       version,
-      publisher: "rpm",
+      // rpm expone %{VENDOR}. Cuando el paquete no lo trae, rpm imprime
+      // literalmente "(none)", que parsePackagePublisher descarta.
+      publisher: parsePackagePublisher(vendor),
       installLocation: "/",
       packageFamilyName: name,
       source: "rpm",
@@ -492,7 +502,9 @@ async function collectSnap(): Promise<SoftwareApplication[]> {
     const n = normalizeApp({
       name,
       version,
-      publisher: "snap",
+      // snap no tiene concepto de fabricante en `snap list`. La ausencia es
+      // la respuesta correcta; mandar "snap" ponia el gestor en el ranking.
+      publisher: undefined,
       installLocation: "/snap",
       packageFamilyName: name,
       source: "snap",
@@ -523,13 +535,14 @@ async function collectFlatpak(): Promise<SoftwareApplication[]> {
   const res: SoftwareApplication[] = [];
 
   for (const line of lines) {
-    const [name, version] = line.split("\t");
+    const [name, version, , vendor] = line.split("\t");
     if (!name) continue;
 
     const n = normalizeApp({
       name,
       version,
-      publisher: "flatpak",
+      // Igual que snap: el remote no es un fabricante.
+      publisher: undefined,
       installLocation: "/var/lib/flatpak",
       packageFamilyName: name,
       source: "flatpak",
