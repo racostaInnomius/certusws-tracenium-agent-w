@@ -35,6 +35,11 @@
          codigo nuevo en la plataforma donde el hallazgo del ancla se
          midio y donde una raiz plantada afecta a TODO el equipo. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\AnchorPin.cs" />
+    <!-- Sondas de registro (CIS Windows). La parte pura -parseo de la
+         sonda, normalizacion del valor, extraccion de params- vive en
+         RegistryProbeShape.cs precisamente para poder compilarse aqui;
+         RegistryProbes.cs (Microsoft.Win32.Registry) se queda fuera. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\RegistryProbeShape.cs" />
   </ItemGroup>
 
   <ItemGroup>

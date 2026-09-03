@@ -41,6 +41,22 @@ export type RuntimePolicy = {
   };
   compliance?: {
     intervalSeconds?: number;
+    /**
+     * Claves de registro de Windows que el PrivSvc debe leer y reportar
+     * tal cual, con la forma `HKLM\Ruta\A\Clave:NombreDelValor`.
+     *
+     * La lista NO la conoce el agente: la deriva el control plane del
+     * catálogo de compliance (todo check cuyo evaluador lee
+     * `registry.<clave>`) y la inyecta en la policy al servirla. Así una
+     * versión nueva de un benchmark CIS es un cambio de backend y no una
+     * release del agente — que se auto-actualiza y tarda días en llegar
+     * a toda la flota.
+     *
+     * Sólo HKLM. Las 352 sondas de los tres benchmarks CIS de Windows
+     * viven ahí (medido 2026-09-03: 0 en HKCU), y el PrivSvc corre como
+     * SYSTEM, cuyo HKCU no es el del usuario.
+     */
+    registryProbes?: string[];
   };
   patch?: {
     intervalSeconds?: number;
@@ -595,6 +611,38 @@ const DEFAULT_POLICY: RuntimePolicy = {
   }
 };
 
+/**
+ * Deja pasar sólo lo que el PrivSvc puede leer sin sorpresas.
+ *
+ * La lista la escribe el control plane, no un operador, pero la policy
+ * viaja como JSON y cualquiera con el endpoint de "raw JSON" puede tocarla.
+ * Lo que se acota:
+ *   · sólo HKLM — el PrivSvc corre como SYSTEM y su HKCU no es el del
+ *     usuario; una sonda HKCU devolvería el valor equivocado en silencio.
+ *   · forma `HKLM\Ruta:Valor`, sin caracteres que puedan colarse en un
+ *     nombre de subclave con otra intención.
+ *   · tope de 2.000 entradas y 400 caracteres cada una. Los tres
+ *     benchmarks CIS de Windows suman 352; el margen es holgado y a la vez
+ *     impide que una policy corrupta convierta cada ciclo en un barrido
+ *     del registro entero.
+ */
+export function sanitizeRegistryProbes(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const probe = item.trim();
+    if (probe.length === 0 || probe.length > 400) continue;
+    if (!/^HKLM\\[^:*?"<>|\r\n]+:[^\\:*?"<>|\r\n]+$/i.test(probe)) continue;
+    if (seen.has(probe)) continue;
+    seen.add(probe);
+    out.push(probe);
+    if (out.length >= 2000) break;
+  }
+  return out;
+}
+
 export class PolicyRuntime extends EventEmitter {
 
   private policy: RuntimePolicy = DEFAULT_POLICY;
@@ -636,6 +684,16 @@ export class PolicyRuntime extends EventEmitter {
 
   getComplianceInterval(): number {
     return this.policy.compliance?.intervalSeconds || DEFAULT_POLICY.compliance!.intervalSeconds!;
+  }
+
+  /**
+   * Claves de registro que el colector SCP de Windows debe leer. Vacío
+   * si la policy no las trae — el PrivSvc entonces no emite el bloque
+   * `registry` y el catálogo resuelve esos controles como not_applicable,
+   * que es lo correcto para un agente que aún no las recibe.
+   */
+  getRegistryProbes(): string[] {
+    return this.policy.compliance?.registryProbes ?? [];
   }
 
   getPatchInterval(): number {
@@ -806,7 +864,12 @@ export class PolicyRuntime extends EventEmitter {
       intervalSeconds:
         fromSchedules.compliance?.intervalSeconds ??
         policy.compliance?.intervalSeconds ??
-        DEFAULT_POLICY.compliance!.intervalSeconds
+        DEFAULT_POLICY.compliance!.intervalSeconds,
+      // Este merge RECONSTRUYE `compliance` campo a campo, así que todo
+      // lo que no se nombre aquí desaparece de la policy validada. La
+      // lista de sondas de registro tiene que pasar explícitamente, o el
+      // backend la inyecta y el agente la tira sin dejar rastro.
+      registryProbes: sanitizeRegistryProbes(policy.compliance?.registryProbes)
     };
     const mergedPatch = {
       intervalSeconds:

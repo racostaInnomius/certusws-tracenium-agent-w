@@ -135,6 +135,13 @@ export type ScpNamespace = {
   selinux?: unknown;
   apparmor?: unknown;
   passwordPolicy?: unknown;
+  //   registry        Windows. Valores de registro leídos a petición del
+  //                   control plane (policy `compliance.registryProbes`),
+  //                   indexados por la sonda literal `HKLM\...:Valor`.
+  //                   Clave ausente → OMITIDA (nunca null): el evaluador
+  //                   la trata como `onMissing`. Un solo colector abre
+  //                   ~350 controles CIS sin tocar el agente por versión.
+  registry?: unknown;
   //   mounts          filesystem hardening for tmp-style mounts
   //                   (tmp / var_tmp / dev_shm): separate + nodev /
   //                   nosuid / noexec. Non-separate targets omit their

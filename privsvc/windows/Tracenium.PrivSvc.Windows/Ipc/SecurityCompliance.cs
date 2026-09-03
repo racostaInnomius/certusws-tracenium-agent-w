@@ -44,6 +44,19 @@ public static class SecurityCompliance
             // Get-MpComputerStatus times out — for byte-identical data.
             var defender = GetDefenderStatus();
 
+            // Claves de registro que pide el control plane (vienen en la
+            // policy, el agente las reenvía en params). Lista vacía = no
+            // se emite el bloque: el catálogo resuelve esos controles como
+            // not_applicable, que es lo correcto para un agente que aún no
+            // recibe sondas. Ver RegistryProbes.cs.
+            var registryProbes = RegistryProbeShape.FromParams(req.Params);
+            var probed = registryProbes.Count > 0 ? RegistryProbes.Read(registryProbes) : null;
+            // Ausente = omitido (nunca null): ver la cabecera de
+            // RegistryProbes.cs — un null aquí haría fallar los controles
+            // "4, o que la clave no exista" en equipos que cumplen.
+            var registry = probed is { Values.Count: > 0 } ? probed.Values : null;
+            var registryErrors = probed is { Errors.Count: > 0 } ? probed.Errors : null;
+
             var result = new
             {
                 bitlocker = GetBitlockerStatus(),
@@ -66,6 +79,14 @@ public static class SecurityCompliance
                 // while `net accounts` labels localize (this fleet runs
                 // Spanish Windows).
                 passwordPolicy = GetPasswordPolicyStatus(),
+                // Valores de registro pedidos por el control plane, sin
+                // juzgar. null cuando no se pidió ninguno — el serializador
+                // omite el bloque y el evaluador ve "no reportado".
+                registry,
+                // Sondas que no se pudieron leer (motivo por sonda). Como
+                // SYSTEM lee cualquier clave de directiva bajo HKLM, esto
+                // debería ir siempre vacío; si no, es un hallazgo.
+                registryErrors,
                 ciphers = GetEnabledCiphers(),
                 protocols = GetTlsProtocols(),
                 patches = GetInstalledSecurityPatches(),
