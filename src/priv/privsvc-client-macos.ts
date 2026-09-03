@@ -106,6 +106,14 @@ export function getTimeoutForMethod(method: string): number {
       // command_exit rules run operator-supplied probes; the privsvc caps
       // each at 15-30s.
       return 60 * 1000;
+      // pmp: HANDLER_TIMEOUT_MS 10s por comando en el privsvc de macOS
+      // (socketfilterfw, spctl, systemsetup — éste es lento). 7ª aparición del
+      // invariante (2026-09-03): la lectura previa del apply de firewall no cabía
+      // en los 8s del default y el agente contestó ACK_RETRY sin remediar.
+    case "pmp.read_check_state":
+      return 30 * 1000;
+    case "pmp.remediate":
+      return 90 * 1000;
     case "agent.install":
       return 1800 * 1000;
     default:

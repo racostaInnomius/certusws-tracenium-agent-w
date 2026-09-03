@@ -104,6 +104,14 @@ export function getTimeoutForMethod(method: string): number {
       // command_exit rules run operator-supplied probes; the privsvc caps
       // each at 15-30s.
       return 60 * 1000;
+      // pmp: lectores/remediadores del privsvc (HANDLER_TIMEOUT_MS 10s por comando;
+      // una remediación encadena hasta ~4: backup, edit, sshd -t, reload — o
+      // ufw allow ×N + enable). 7ª aparición del invariante (2026-09-03): con el
+      // default de 8s el agente devolvía ACK_RETRY sin llegar a llamar al remediador.
+    case "pmp.read_check_state":
+      return 30 * 1000;
+    case "pmp.remediate":
+      return 90 * 1000;
     case "agent.install":
       return 1800 * 1000;
     default:

@@ -62,6 +62,13 @@ const PRIVSVC_CEILING_MS: Record<string, { windows?: number; macos?: number; lin
   "cdp.certs.read": { windows: 45_000 },
   // Stores por usuario (HKEY_USERS). Windows-only por construccion.
   "cdp.certs.readUser": { windows: 45_000 },
+  // 7ª aparición (2026-09-03, campaña apply en el laboratorio): los dos métodos
+  // de pmp caían en el default de 8s. Techos: Windows lee shares/firewall por
+  // PowerShell a 30s y deshabilita SMBv1 con 120s; macOS/Linux ejecutan
+  // comandos a 10s cada uno y una remediación encadena hasta ~4 (backup,
+  // edit, sshd -t, reload; ufw allow ×N + enable).
+  "pmp.read_check_state": { windows: 30_000, macos: 10_000, linux: 10_000 },
+  "pmp.remediate": { windows: 120_000, macos: 40_000, linux: 40_000 },
 };
 
 const CLIENTS = {
@@ -91,6 +98,13 @@ describe("IPC client budgets outwait the privsvc handler", () => {
   it("patch.scan no longer falls into the 8s default", () => {
     for (const t of Object.values(CLIENTS)) {
       expect(t("patch.scan")).toBeGreaterThanOrEqual(240_000);
+    }
+  });
+
+  it("pmp.read_check_state / pmp.remediate are off the 8s default on every platform", () => {
+    for (const t of Object.values(CLIENTS)) {
+      expect(t("pmp.read_check_state")).toBeGreaterThan(8000);
+      expect(t("pmp.remediate")).toBeGreaterThan(t("pmp.read_check_state"));
     }
   });
 

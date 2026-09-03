@@ -108,6 +108,13 @@ export function getTimeoutForMethod(method: string): number {
       // command_exit rules run operator-supplied probes; the privsvc caps
       // each at 15-30s.
       return 60 * 1000;
+      // pmp: lecturas por PowerShell a 30s (shares, firewall) y la remediación de
+      // SMBv1 (Disable-WindowsOptionalFeature) a 120s, más el carril serial del
+      // pipe. 7ª aparición del invariante (2026-09-03).
+    case "pmp.read_check_state":
+      return 60 * 1000;
+    case "pmp.remediate":
+      return 180 * 1000;
     case "agent.install":
       return 1800 * 1000;
     // ── CDP ──────────────────────────────────────────────────────────
