@@ -105,6 +105,17 @@ export class PeerSession {
   private screenSession: ScreenSession | null = null;
   private hardTimer: NodeJS.Timeout | null = null;
   private disposed = false;
+  /**
+   * Separate from `disposed`, and that separation is the whole point.
+   *
+   * `disposed` goes true at the TOP of dispose() to make it re-entrant. The
+   * transcript, though, has to keep accepting and sending for the rest of
+   * that function — the final flush happens in there. Gating the transcript
+   * on `disposed` meant every session silently dropped whatever had been
+   * buffered since the last 5-second flush: the END of the session, which is
+   * the part an auditor is looking for.
+   */
+  private transcriptOpen = true;
 
   constructor(private readonly args: PeerSessionArgs) {
     const { ctx, sessionId } = args;
@@ -236,7 +247,7 @@ export class PeerSession {
       if (cap === "rcp.shell") {
         const sessionStartedAtMs = Date.now();
         this.transcript = new TranscriptBuffer(sessionStartedAtMs, (chunk) => {
-          if (this.disposed) return;
+          if (!this.transcriptOpen) return;
           try {
             args.sendTranscript(chunk);
           } catch (err: any) {
@@ -252,14 +263,22 @@ export class PeerSession {
             sessionId,
             ctx,
             send: (text) => {
-              if (this.disposed) return;
-              try {
-                dc.sendMessage(text);
-              } catch (err: any) {
-                ctx.logger?.warn?.("[rcp] data channel send failed", {
-                  sessionId,
-                  err: err?.message
-                });
+              // ⚠️ The live send is gated on `disposed`; the TEE is not.
+              //
+              // Both used to sit behind one `if (this.disposed) return` at
+              // the top, so during teardown the shell's last output reached
+              // neither the operator's screen (fair — nobody is watching)
+              // nor the transcript (not fair — that is the evidence). The
+              // viewer being gone is not a reason to stop recording.
+              if (!this.disposed) {
+                try {
+                  dc.sendMessage(text);
+                } catch (err: any) {
+                  ctx.logger?.warn?.("[rcp] data channel send failed", {
+                    sessionId,
+                    err: err?.message
+                  });
+                }
               }
               // Tee PTY output into transcript buffer.
               try {
@@ -431,7 +450,12 @@ export class PeerSession {
       clearTimeout(this.hardTimer);
       this.hardTimer = null;
     }
-    // rcp.shell — kill the PTY first, then flush transcript.
+    // ── rcp.shell — the ORDER here is the audit trail ───────────────
+    //
+    // Kill the PTY first so whatever the shell emits on its way out still
+    // runs through `send` and gets teed; THEN flush the transcript; and only
+    // then close it to further sends. Closing it any earlier — which is what
+    // gating on `disposed` did — threw away the tail of every session.
     try {
       this.pty?.dispose(reason);
     } catch {
@@ -439,10 +463,13 @@ export class PeerSession {
     }
     this.pty = null;
     try {
+      // dispose() flushes. `transcriptOpen` is still true, so this last
+      // chunk actually reaches the control stream.
       this.transcript?.dispose();
     } catch {
       /* ignore */
     }
+    this.transcriptOpen = false;
     this.transcript = null;
     // rcp.file — clean up uploads / temp files.
     try {

@@ -122,10 +122,25 @@ export class TranscriptBuffer {
     this.clearTimer();
   }
 
+  /**
+   * End of session: emit whatever is still buffered, then refuse further
+   * output.
+   *
+   * ⚠️ The flush happens BEFORE `disposed` goes true, and the order is the
+   * entire point. flush() bails on `disposed`, so setting the flag first —
+   * which is what this method used to do — made the final flush a no-op and
+   * silently threw away everything since the last 5-second/8 KB trigger.
+   * That is the tail of every shell session: the last commands, which is the
+   * part an auditor opens the replay to see.
+   *
+   * The same mistake existed one layer up, in PeerSession.dispose(): both
+   * had to be fixed for a single byte of the tail to survive.
+   */
   dispose(): void {
     if (this.disposed) return;
-    this.disposed = true;
     this.flush();
+    this.disposed = true;
+    this.clearTimer();
   }
 
   // ── Internals ─────────────────────────────────────────────────
