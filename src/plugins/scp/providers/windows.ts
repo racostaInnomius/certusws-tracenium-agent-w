@@ -49,7 +49,12 @@ async function readSecurityCompliance(ctx: AgentContext): Promise<any> {
       includeGpo: true,
       includeCiphers: true,
       includeProtocols: true,
-      includePatches: true
+      includePatches: true,
+      // Claves de registro que el control plane quiere leídas. Salen de
+      // la policy (compliance.registryProbes), no del agente: así una
+      // versión nueva de un benchmark CIS es un cambio de backend y no
+      // una release. Lista vacía = el PrivSvc no emite el bloque.
+      registryProbes: ctx.policyRuntime.getRegistryProbes()
     },
     meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
   });
@@ -170,6 +175,10 @@ export async function collectWindowsScp(ctx: AgentContext): Promise<ScpNamespace
     // Platform parity — secedit-derived local password policy
     // (windows.password_policy.* catalog checks, gated 1.1.46).
     passwordPolicy: posture?.passwordPolicy,
+    // Valores de registro leídos por el PrivSvc a petición del control
+    // plane (compliance.registryProbes). Se reenvían tal cual: el
+    // veredicto es del catálogo. Allowlist — si no se nombra, no viaja.
+    registry: posture?.registry,
 
     // Derived crypto + patches blocks (see helpers above).
     crypto: buildCryptoEvidence(posture),
