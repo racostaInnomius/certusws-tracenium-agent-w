@@ -22,7 +22,14 @@
 //     { op: "listing",  path, entries: [{name, isDir, size, modifiedAt}] }
 //     { op: "chunk",    transferId, seq, data, done? }  // base64
 //     { op: "ready",    transferId }   // agent is ready to receive upload
+//     { op: "uploadComplete", transferId, bytes, sha256 }  // it is on disk
 //     { op: "error",    code, message, transferId? }
+//
+// ⚠️ `uploadComplete` is what makes an upload finished. Before it existed the
+// browser marked the transfer done the moment it had sent its last chunk —
+// which says only that the bytes left the browser, and the browser was
+// dropping them silently whenever the channel was not open. A file could be
+// shown as "Completed" having never fully arrived.
 //
 // The agent also fires RemoteFileTransferAudit gRPC events at transfer
 // start and completion via the sendFileTransferAudit callback; the
@@ -45,6 +52,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import * as crypto from "crypto";
 import type { AgentContext } from "../../core/agent-context";
 import { PathJail, type JailDecision } from "./path-jail";
 
@@ -83,6 +91,17 @@ const UPLOAD_OPEN_FLAGS =
   fs.constants.O_EXCL |
   ((fs.constants as any).O_NOFOLLOW || 0);
 
+// Ceiling on a single upload. The endpoint's temp space is the thing being
+// protected: an upload lands in the staging directory before it is renamed
+// into place, so an unbounded one fills the disk of the machine we are meant
+// to be helping. 2 GiB is far above any support-session file and far below
+// "the operator can fill /var".
+//
+// A tenant can lower it via policy (`remoteFile.maxUploadBytes`); raising it
+// past the default is deliberately not possible — the number exists to bound
+// damage, and a bound a caller can lift is not one.
+const DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
+
 type UploadState = {
   path: string;
   tmpPath: string;
@@ -90,6 +109,15 @@ type UploadState = {
   size: number;
   received: number;
   cancelled: boolean;
+  // Set when the transfer died on its own rather than being cancelled by the
+  // operator. Kept apart because the audit row means different things: one
+  // says somebody changed their mind, the other says we lost the file.
+  failure: string | null;
+  // Running SHA-256 of what actually hit the disk. Computed while writing
+  // rather than by re-reading the file afterwards: the point is to hash the
+  // bytes we received, and a second read would hash whatever is on disk by
+  // then — which is the same thing only if nothing else touched it.
+  hash: crypto.Hash;
 };
 
 export class FileSession {
@@ -485,6 +513,31 @@ export class FileSession {
   ): void {
     if (!transferId) return;
 
+    // Refuse an oversize upload BEFORE opening a staging file. The declared
+    // size is the browser's word and is checked again per chunk below — a
+    // client that lies here simply gets stopped later, having written no more
+    // than the ceiling.
+    const maxBytes = this.maxUploadBytes();
+    if (Number.isFinite(size) && size > maxBytes) {
+      this.send({
+        op: "error",
+        code: "UPLOAD_TOO_LARGE",
+        message: `This file is ${Math.round(size / 1048576)} MB; the limit for this device is ${Math.round(maxBytes / 1048576)} MB.`,
+        transferId
+      });
+      this.args.sendFileTransferAudit({
+        transferId,
+        direction: "upload",
+        remotePath: typeof destPath === "string" ? destPath.slice(0, 512) : "",
+        filename: typeof destPath === "string" && destPath ? path.basename(destPath) : "",
+        sizeBytes: Number(size) || 0,
+        transferredBytes: 0,
+        status: "failed",
+        errorMessage: "exceeds the upload size limit"
+      });
+      return;
+    }
+
     // Gate the DESTINATION before opening anything. The old order created
     // the temp file first and only then resolved the destination, so a
     // refused upload still left a file on disk.
@@ -531,7 +584,9 @@ export class FileSession {
       fd,
       size,
       received: 0,
-      cancelled: false
+      cancelled: false,
+      failure: null,
+      hash: crypto.createHash("sha256")
     });
 
     this.args.sendFileTransferAudit({
@@ -557,9 +612,53 @@ export class FileSession {
     if (!upload || upload.cancelled) return;
     try {
       const buf = Buffer.from(data, "base64");
+
+      // The ceiling again, this time against what has actually arrived. The
+      // check at `upload` trusted a number the browser sent; this one does
+      // not. Anything past the limit is refused mid-flight and the staging
+      // file is dropped, so a client that under-declares its size cannot
+      // fill the disk one chunk at a time.
+      const maxBytes = this.maxUploadBytes();
+      if (upload.received + buf.length > maxBytes) {
+        upload.cancelled = true;
+        try { fs.closeSync(upload.fd); } catch { /* ignore */ }
+        this.cleanupTmp(upload.tmpPath);
+        this.uploads.delete(transferId);
+        this.args.ctx.logger?.warn?.("[rcp.file] upload exceeded the size limit mid-flight", {
+          sessionId: this.args.sessionId,
+          transferId,
+          declared: upload.size,
+          received: upload.received + buf.length,
+          maxBytes
+        });
+        this.send({
+          op: "error",
+          code: "UPLOAD_TOO_LARGE",
+          message: "The upload exceeded this device's size limit and was stopped.",
+          transferId
+        });
+        this.args.sendFileTransferAudit({
+          transferId,
+          direction: "upload",
+          remotePath: upload.path,
+          filename: path.basename(upload.path),
+          sizeBytes: upload.size,
+          transferredBytes: upload.received,
+          status: "failed",
+          errorMessage: "exceeded the upload size limit mid-transfer"
+        });
+        return;
+      }
+
       fs.writeSync(upload.fd, buf);
+      upload.hash.update(buf);
       upload.received += buf.length;
     } catch (err: any) {
+      // ⚠️ A write that fails must not leave the transfer looking healthy.
+      // It used to log and carry on, so the missing bytes were discovered by
+      // nobody: the browser said "Completed" and the file on disk was short.
+      // Cancelling here makes uploadDone take the failure path.
+      upload.failure = err?.message ?? "write error";
       this.args.ctx.logger?.warn?.("[rcp.file] chunk write error", {
         sessionId: this.args.sessionId,
         transferId,
@@ -568,11 +667,72 @@ export class FileSession {
     }
   }
 
+  /**
+   * The per-upload byte ceiling in force for this session.
+   *
+   * Policy may LOWER it; nothing may raise it. A limit that exists to bound
+   * damage stops being one the moment the thing being bounded can widen it.
+   */
+  private maxUploadBytes(): number {
+    const raw = (this.args.ctx as any)?.policyRuntime?.getFeatureValue?.(
+      "remoteFileMaxUploadBytes"
+    );
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return DEFAULT_MAX_UPLOAD_BYTES;
+    return Math.min(n, DEFAULT_MAX_UPLOAD_BYTES);
+  }
+
   private async handleUploadDone(transferId: string): Promise<void> {
     const upload = this.uploads.get(transferId);
     if (!upload) return;
 
     try { fs.closeSync(upload.fd); } catch { /* ignore */ }
+
+    const digest = upload.hash.digest("hex");
+
+    // ── The file must be whole ────────────────────────────────────────
+    //
+    // The browser declares a size up front and then streams chunks. Nothing
+    // ever compared the two, and the browser dropped chunks silently whenever
+    // the DataChannel was not open — so a short file was renamed into place
+    // and audited as `completed`. An operator restoring a config from that
+    // audit trail would have been restoring a truncated one.
+    //
+    // A byte count is what catches the real failure here: the transport is
+    // DTLS, so bits do not flip in flight — chunks go MISSING. The digest is
+    // computed anyway and reported, because "which file exactly" is the
+    // question an audit gets asked a year later.
+    if (!upload.cancelled && !upload.failure && upload.size > 0 && upload.received !== upload.size) {
+      upload.failure =
+        `incomplete: received ${upload.received} of ${upload.size} bytes`;
+    }
+
+    if (upload.failure) {
+      this.cleanupTmp(upload.tmpPath);
+      this.uploads.delete(transferId);
+      this.args.ctx.logger?.warn?.("[rcp.file] upload failed; staging file discarded", {
+        sessionId: this.args.sessionId,
+        transferId,
+        reason: upload.failure
+      });
+      this.send({
+        op: "error",
+        code: "UPLOAD_INCOMPLETE",
+        message: upload.failure,
+        transferId
+      });
+      this.args.sendFileTransferAudit({
+        transferId,
+        direction: "upload",
+        remotePath: upload.path,
+        filename: path.basename(upload.path),
+        sizeBytes: upload.size,
+        transferredBytes: upload.received,
+        status: "failed",
+        errorMessage: upload.failure
+      });
+      return;
+    }
 
     if (upload.cancelled) {
       this.cleanupTmp(upload.tmpPath);
@@ -627,6 +787,16 @@ export class FileSession {
       await fs.promises.mkdir(path.dirname(finalPath.realPath), { recursive: true });
       await fs.promises.rename(upload.tmpPath, finalPath.realPath);
       this.uploads.delete(transferId);
+      // Only NOW is the upload finished, and only now is the browser told.
+      // It used to decide that for itself the moment it had sent its last
+      // chunk — which proved the bytes left the browser, not that they
+      // arrived, and certainly not that the rename succeeded.
+      this.send({
+        op: "uploadComplete",
+        transferId,
+        bytes: upload.received,
+        sha256: digest
+      });
       this.args.sendFileTransferAudit({
         transferId,
         direction: "upload",
