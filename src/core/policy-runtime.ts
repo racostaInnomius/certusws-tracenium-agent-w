@@ -1,4 +1,5 @@
 // src/core/policy-runtime.ts
+import { parseProbeTarget, probeTargetKey, type ProbeTarget } from "../domain/probe-target";
 import { EventEmitter } from "events";
 import { PolicyStore } from "./policy-store";
 import {
@@ -78,6 +79,14 @@ export type RuntimePolicy = {
      *  (still intersected with what is actually listening). */
     tlsListenerPorts?: number[];
     certFilePaths?: string[];
+    /**
+     * Rol Probe (fase 2, analisis de madurez 2026-09): objetivos TLS
+     * remotos `host:port` que este equipo sondea para inventariar lo que
+     * sirven y lo que negocian — balanceadores, appliances, bases de
+     * datos, hipervisores sin agente. Solo lo que escriba el operador:
+     * el agente no descubre. Saneado y acotado al recibir la policy.
+     */
+    probeTargets?: string[];
   };
   /** Remote Control tuning that isn't a simple on/off capability gate.
    *  The `features.remote*` flags decide WHETHER a capability runs; this
@@ -562,6 +571,34 @@ function sanitizeTlsListenerPorts(input: unknown, logger: any): number[] {
   return out;
 }
 
+// Objetivos de sonda remota: operator-authored pero acaban en un socket
+// hacia fuera del equipo, asi que forma estricta, sin loopback, acotados
+// y deduplicados. La forma la decide UN parser compartido con el
+// colector (domain/probe-target.ts).
+const CDP_PROBE_TARGETS_MAX = 200;
+
+export function sanitizeProbeTargets(input: unknown, logger?: any): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of input) {
+    if (out.length >= CDP_PROBE_TARGETS_MAX) {
+      logger?.warn?.("cdp.probeTargets: cap reached, dropping remainder", { cap: CDP_PROBE_TARGETS_MAX });
+      break;
+    }
+    const t = parseProbeTarget(raw);
+    if (!t) {
+      logger?.debug?.("cdp.probeTargets: dropping invalid target", { raw: String(raw).slice(0, 80) });
+      continue;
+    }
+    const key = probeTargetKey(t);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
 const DEFAULT_POLICY: RuntimePolicy = {
   inventory: {
     intervalSeconds: 21600 // 6h
@@ -724,6 +761,13 @@ export class PolicyRuntime extends EventEmitter {
    * seria inutil (demasiado estrecho) o un escaneo recursivo de algo
    * grande en cada endpoint de la flota.
    */
+  /** Objetivos remotos ya saneados, como pares host/port. */
+  getCdpProbeTargets(): ProbeTarget[] {
+    return (this.policy.cdp?.probeTargets ?? [])
+      .map((s) => parseProbeTarget(s))
+      .filter((t): t is ProbeTarget => t !== null);
+  }
+
   getCdpCertFilePaths(): string[] {
     return this.policy.cdp?.certFilePaths ?? [];
   }
@@ -894,7 +938,8 @@ export class PolicyRuntime extends EventEmitter {
       ),
       scanTlsListeners: policy.cdp?.scanTlsListeners === true,
       tlsListenerPorts: sanitizeTlsListenerPorts(policy.cdp?.tlsListenerPorts, this.logger),
-      certFilePaths: sanitizeJavaKeystorePaths(policy.cdp?.certFilePaths, this.logger)
+      certFilePaths: sanitizeJavaKeystorePaths(policy.cdp?.certFilePaths, this.logger),
+      probeTargets: sanitizeProbeTargets(policy.cdp?.probeTargets, this.logger)
     };
     // rcp.file confinement. Path lists get the same hard sanitation as
     // cdp.javaKeystorePaths — absolute only, bounded length, bounded count,

@@ -387,7 +387,12 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
           const normalized = normalizeApp({
             name: formula,
             version,
-            publisher: "homebrew",
+            // ⚠️ homebrew NO tiene concepto de fabricante, y "homebrew" es el
+            // gestor. Es el mismo error que ya se corrigió unas líneas más
+            // abajo para pkgutil y que quedó vivo aquí: en el tenant 1 estas
+            // 298 filas iban al ranking de publishers como si Homebrew
+            // publicara el software que instala.
+            publisher: undefined,
             installLocation: `${cellar}/${formula}/${version}`,
             packageFamilyName: formula,
             source: "homebrew"

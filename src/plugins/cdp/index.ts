@@ -257,6 +257,27 @@ async function collectOnce(
     }
   }
 
+  // Rol Probe (fase 2): objetivos TLS remotos que el operador escribio
+  // en la policy. Sin objetivos no abre un solo socket. Fallo blando como
+  // todo lo anterior: una sonda que cuelga no puede costar el inventario
+  // del propio equipo.
+  // Llamada opcional a proposito: un runtime que no conozca el metodo —una
+  // policy vieja, o un doble de test— equivale a «sin objetivos», y eso no
+  // puede tumbar el escaneo del propio equipo, que ya termino bien.
+  if ((ctx.policyRuntime.getCdpProbeTargets?.() ?? []).length > 0) {
+    try {
+      const { collectTlsProbes } = await import("./providers/tls-probes");
+      const probes = await collectTlsProbes(ctx);
+      result.items.push(...probes.items);
+      result.stores.push(...probes.stores);
+      result.parseFailures += probes.parseFailures;
+    } catch (err: any) {
+      ctx.logger?.warn?.("CDP: sondas TLS remotas fallaron (no fatal)", {
+        error: err?.message || String(err)
+      });
+    }
+  }
+
   const { items, truncated } = applyCap(result.items);
 
   if (result.parseFailures > 0) {

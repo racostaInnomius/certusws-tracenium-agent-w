@@ -40,6 +40,10 @@
          RegistryProbeShape.cs precisamente para poder compilarse aqui;
          RegistryProbes.cs (Microsoft.Win32.Registry) se queda fuera. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\RegistryProbeShape.cs" />
+    <!-- Parseo de la salida de `gpresult`. Solo System y
+         System.Collections.Generic: texto puro, sin nada de Windows
+         dentro pese al namespace, asi que cumple la regla de arriba. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\GpResultParsing.cs" />
   </ItemGroup>
 
   <ItemGroup>

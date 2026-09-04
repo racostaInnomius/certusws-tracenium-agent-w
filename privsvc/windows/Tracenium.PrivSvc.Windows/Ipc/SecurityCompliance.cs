@@ -1111,21 +1111,11 @@ $items | ConvertTo-Json -Depth 4
         if (!obj.TryGetValue(key, out var value) || value is not JsonElement je || je.ValueKind != JsonValueKind.Array)
             return new List<string>();
 
+        // El algoritmo vive en GpResultParsing para poder probarlo: es logica
+        // de texto pura y aqui dentro, junto a PowerShell y WMI, ninguna suite
+        // podia ejercitarlo. El bug que tenia vivio ahi sin que nadie lo viera.
         var lines = je.EnumerateArray().Select(x => x.ToString()).ToList();
-        var start = lines.FindIndex(line => line.Contains("Applied Group Policy Objects", StringComparison.OrdinalIgnoreCase));
-        if (start < 0) return new List<string>();
-
-        var result = new List<string>();
-        for (var i = start + 1; i < lines.Count; i++)
-        {
-            var line = lines[i].Trim();
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            if (line.Contains("The following GPOs", StringComparison.OrdinalIgnoreCase)) break;
-            if (line.StartsWith("---")) continue;
-            if (line.Contains("N/A", StringComparison.OrdinalIgnoreCase)) continue;
-            result.Add(line);
-        }
-
-        return result.Distinct().ToList();
+        return GpResultParsing.ExtractAppliedGpoNames(lines);
     }
+
 }
