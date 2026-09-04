@@ -813,6 +813,13 @@ export class ScreenSession {
       this.inputSeen = true;
       this.publishIndicator();
     }
+
+    // Junto al vídeo, y ANTES de inyectar. Si el IPC falla, lo que queda
+    // registrado es que el operador lo intentó — que es lo que hay que poder
+    // auditar; "lo intentó y no salió" no es lo mismo que "no lo hizo".
+    // Las teclas que escriben van redactadas: ver recording-store.
+    this.recorder?.offerInput(op, msg);
+
     const params: Record<string, any> = { op };
     // Mouse fields (coordinates + button)
     if ("x" in msg)      params.x      = Number(msg.x);
