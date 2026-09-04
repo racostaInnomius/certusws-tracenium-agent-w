@@ -58,6 +58,9 @@ export type RuntimePolicy = {
      * SYSTEM, cuyo HKCU no es el del usuario.
      */
     registryProbes?: string[];
+    /** Sondas de registro DE USUARIO (CIS 19.x), relativas a cada
+     *  HKEY_USERS\<SID>: `Software\...\Clave:Valor`. Sin hive. */
+    registryUserProbes?: string[];
   };
   patch?: {
     intervalSeconds?: number;
@@ -670,6 +673,29 @@ const DEFAULT_POLICY: RuntimePolicy = {
  *     impide que una policy corrupta convierta cada ciclo en un barrido
  *     del registro entero.
  */
+/**
+ * Sondas de registro de usuario: como las de HKLM pero SIN hive — el
+ * PrivSvc las resuelve bajo cada HKEY_USERS\<SID> cargado. Se rechaza
+ * cualquier cosa que empiece por HK, por barra, o lleve comodines.
+ */
+export function sanitizeRegistryUserProbes(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const probe = item.trim();
+    if (probe.length === 0 || probe.length > 400) continue;
+    if (/^HK/i.test(probe)) continue;
+    if (!/^[^\\:*?"<>|\r\n][^:*?"<>|\r\n]*:[^\\:*?"<>|\r\n]+$/.test(probe)) continue;
+    if (seen.has(probe)) continue;
+    seen.add(probe);
+    out.push(probe);
+    if (out.length >= 500) break;
+  }
+  return out;
+}
+
 export function sanitizeRegistryProbes(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   const out: string[] = [];
@@ -738,6 +764,10 @@ export class PolicyRuntime extends EventEmitter {
    */
   getRegistryProbes(): string[] {
     return this.policy.compliance?.registryProbes ?? [];
+  }
+
+  getRegistryUserProbes(): string[] {
+    return this.policy.compliance?.registryUserProbes ?? [];
   }
 
   getPatchInterval(): number {
@@ -926,7 +956,8 @@ export class PolicyRuntime extends EventEmitter {
       // lo que no se nombre aquí desaparece de la policy validada. La
       // lista de sondas de registro tiene que pasar explícitamente, o el
       // backend la inyecta y el agente la tira sin dejar rastro.
-      registryProbes: sanitizeRegistryProbes(policy.compliance?.registryProbes)
+      registryProbes: sanitizeRegistryProbes(policy.compliance?.registryProbes),
+      registryUserProbes: sanitizeRegistryUserProbes(policy.compliance?.registryUserProbes)
     };
     const mergedPatch = {
       intervalSeconds:

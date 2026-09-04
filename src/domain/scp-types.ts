@@ -142,6 +142,16 @@ export type ScpNamespace = {
   //                   la trata como `onMissing`. Un solo colector abre
   //                   ~350 controles CIS sin tocar el agente por versión.
   registry?: unknown;
+  //   registryUser    Windows. Sondas de registro de usuario (HKEY_USERS de
+  //                   cada perfil cargado, agregadas) — CIS 19.x. Policy
+  //                   `compliance.registryUserProbes`.
+  registryUser?: unknown;
+  //   secedit         Windows. `secedit /export` completo: systemAccess y
+  //                   privilegeRights (con SIDs resueltos) — CIS 1.x/2.2.x.
+  secedit?: unknown;
+  //   auditpol        Windows. Política de auditoría avanzada por GUID de
+  //                   subcategoría — CIS 17.x.
+  auditpol?: unknown;
   //   mounts          filesystem hardening for tmp-style mounts
   //                   (tmp / var_tmp / dev_shm): separate + nodev /
   //                   nosuid / noexec. Non-separate targets omit their

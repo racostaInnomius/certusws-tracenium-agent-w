@@ -7,7 +7,7 @@
 // como SYSTEM.
 
 import { describe, expect, it } from "vitest";
-import { PolicyRuntime, sanitizeRegistryProbes } from "../../src/core/policy-runtime";
+import { PolicyRuntime, sanitizeRegistryProbes, sanitizeRegistryUserProbes } from "../../src/core/policy-runtime";
 
 const OK = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\mrxsmb10:Start";
 
@@ -74,5 +74,38 @@ describe("policyRuntime.getRegistryProbes", () => {
   it("is empty when the control plane sent none — the PrivSvc then emits no block", () => {
     expect(runtimeWith({}).getRegistryProbes()).toEqual([]);
     expect(runtimeWith({ compliance: {} }).getRegistryProbes()).toEqual([]);
+  });
+});
+
+// Fase 1 del cierre de brecha CIS: sondas de registro DE USUARIO. Sin hive
+// (el PrivSvc las resuelve bajo cada HKEY_USERS\<SID> cargado).
+describe("sanitizeRegistryUserProbes", () => {
+  const U = "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Attachments:SaveZoneInformation";
+
+  it("keeps relative probes verbatim", () => {
+    expect(sanitizeRegistryUserProbes([U, ` ${U} `, U])).toEqual([U]);
+  });
+
+  it("rejects anything with a hive, a leading backslash or wildcards", () => {
+    expect(
+      sanitizeRegistryUserProbes([
+        "HKCU\\Software\\Foo:Bar",
+        "HKU\\S-1-5-21-1\\Software\\Foo:Bar",
+        "\\Software\\Foo:Bar",
+        "Software\\Fo*o:Bar",
+        "Software\\Foo",
+        "Software\\Foo:",
+        42,
+        null
+      ])
+    ).toEqual([]);
+  });
+
+  it("is read from the policy and empty by default", () => {
+    const rt: any = Object.create(PolicyRuntime.prototype);
+    rt.policy = { compliance: { registryUserProbes: [U] } };
+    expect(rt.getRegistryUserProbes()).toEqual([U]);
+    rt.policy = {};
+    expect(rt.getRegistryUserProbes()).toEqual([]);
   });
 });

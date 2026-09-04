@@ -41,6 +41,12 @@
          RegistryProbeShape.cs precisamente para poder compilarse aqui;
          RegistryProbes.cs (Microsoft.Win32.Registry) se queda fuera. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\RegistryProbeShape.cs" />
+    <!-- Fase 1 del cierre de brecha CIS: secedit completo, auditpol y
+         sondas de registro de usuario. Las tres partes puras (parseo y
+         agregación) se compilan aquí; los lectores que tocan Win32 no. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\SeceditShape.cs" />
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\AuditpolShape.cs" />
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UserRegistryProbeShape.cs" />
   </ItemGroup>
 
   <ItemGroup>

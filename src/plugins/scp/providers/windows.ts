@@ -54,7 +54,9 @@ async function readSecurityCompliance(ctx: AgentContext): Promise<any> {
       // la policy (compliance.registryProbes), no del agente: así una
       // versión nueva de un benchmark CIS es un cambio de backend y no
       // una release. Lista vacía = el PrivSvc no emite el bloque.
-      registryProbes: ctx.policyRuntime.getRegistryProbes()
+      registryProbes: ctx.policyRuntime.getRegistryProbes(),
+      // Sondas de registro de usuario (CIS 19.x), relativas a HKEY_USERS.
+      registryUserProbes: ctx.policyRuntime.getRegistryUserProbes()
     },
     meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
   });
@@ -178,7 +180,17 @@ export async function collectWindowsScp(ctx: AgentContext): Promise<ScpNamespace
     // Valores de registro leídos por el PrivSvc a petición del control
     // plane (compliance.registryProbes). Se reenvían tal cual: el
     // veredicto es del catálogo. Allowlist — si no se nombra, no viaja.
-    registry: posture?.registry,
+    // ⚠️ Sólo si el PrivSvc lo emitió. Un `null` aquí viajaría como
+    // `"registry": null`, y el evaluador vería el bloque PRESENTE (la guarda
+    // `onMissingRequires` mira si la clave existe): todo check "ausente =
+    // fail" fallaría en un equipo al que no se le pidió nada.
+    ...(posture?.registry ? { registry: posture.registry } : {}),
+    // Fase 1 del cierre de brecha CIS: secedit completo (1.x, 2.2.x),
+    // auditpol (17.x) y registro de usuario (19.x). Misma regla: si no
+    // viene, no viaja.
+    ...(posture?.registryUser ? { registryUser: posture.registryUser } : {}),
+    ...(posture?.secedit ? { secedit: posture.secedit } : {}),
+    ...(posture?.auditpol ? { auditpol: posture.auditpol } : {}),
 
     // Derived crypto + patches blocks (see helpers above).
     crypto: buildCryptoEvidence(posture),
