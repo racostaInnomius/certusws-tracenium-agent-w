@@ -11,7 +11,7 @@ import { runRemediation } from "../plugins/pmp/remediation";
 // SDP no longer imported here — `software_install` is dispatched via
 // ctx.plugins.run("sdp.install", ...) so it goes through the
 // PluginManager policy gate uniformly with the other plugins.
-import { runUpdateTask } from "../update/update-task";
+import { runUpdateTask, ackForUpdateOutcome } from "../update/update-task";
 // Imports nothing itself, so it cannot join the cycle that forces the lazy
 // `require("../update/update-task")` further down.
 import { describeError } from "../update/describe-error";
@@ -858,6 +858,17 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
         };
       }
 
+      // The other direction of the update guard in runUpdateTask: an
+      // update that is already downloading will restart the privsvc in a
+      // minute or two, which would kill the Windows Update install we are
+      // about to start. Let the backend re-send this after the update.
+      if ((ctx as any)._agentUpdateInProgress) {
+        return {
+          status: 1,
+          message: "patch_install retry: agent_update in progress"
+        };
+      }
+
       const mode = String(payload?.mode || "install").trim().toLowerCase();
       const kbArticleIds = Array.isArray(payload?.kbArticleIds)
         ? payload.kbArticleIds.map((item: unknown) => String(item || "").trim()).filter(Boolean)
@@ -1293,21 +1304,11 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
 
         // Report what actually happened. This used to return
         // `update_completed` unconditionally, so an update that never
-        // installed still closed the job as successful.
-        if (outcome.status === "failed") {
-          return { status: 2, message: `update_failed: ${outcome.error}` };
-        }
-        if (outcome.status === "skipped") {
-          return { status: 0, message: `update_skipped: ${outcome.reason}` };
-        }
-        // `src=` names the tier that served the installer, mirroring what an
-        // SDP install already reports. Without it the control plane cannot tell
-        // a LAN download from a WAN one, which is the whole KPI of putting
-        // distribution points on the update path.
-        return {
-          status: 0,
-          message: `update_started;src=${outcome.servedBy || "origin"}`,
-        };
+        // installed still closed the job as successful. The mapping lives
+        // next to the outcome so the push path below cannot drift from it
+        // — in particular a deferred update (privileged operation in
+        // flight) is ACK_RETRY, not a closed job.
+        return ackForUpdateOutcome(outcome);
       } finally {
         (ctx as any)._agentUpdateInProgress = false;
       }
@@ -2140,20 +2141,8 @@ stream = client.Connect();
             // the outcome, not from the promise settling. Previously every
             // outcome ACK'd `update_completed`, which is why a host stuck on
             // the old version still showed the job as completed.
-            if (outcome?.status === "failed") {
-              await sendControlAck(ctx, eventId, 2, `update_failed: ${outcome.error}`);
-              return;
-            }
-            if (outcome?.status === "skipped") {
-              await sendControlAck(ctx, eventId, 0, `update_skipped: ${outcome.reason}`);
-              return;
-            }
-            await sendControlAck(
-              ctx,
-              eventId,
-              0,
-              `update_started;src=${outcome?.servedBy || "origin"}`
-            );
+            const ack = ackForUpdateOutcome(outcome);
+            await sendControlAck(ctx, eventId, ack.status, ack.message);
           })
           .catch((err: any) => {
             ctx.logger?.error?.("agentUpdate execution failed", {
