@@ -19,6 +19,7 @@ import { PeerSession } from "./peer-session";
 import {
   failClosedConsentPrompter,
   consentCloseReason,
+  SESSION_CONSENT_TIMEOUT_S,
   type ConsentDecision,
 } from "./consent-prompt";
 
@@ -267,7 +268,12 @@ export class SessionManager {
           sessionId,
           capability,
           operator: params?.operatorUserId ? String(params.operatorUserId) : null,
-          timeoutSeconds,
+          // ⚠️ NOT `timeoutSeconds`. That is the session's 4-hour hard cap,
+          // and passing it here told the dialog to wait four hours for a
+          // person to answer "may this stranger see your screen?". Two
+          // different questions had been given the same number because both
+          // read as "a timeout on this session".
+          timeoutSeconds: SESSION_CONSENT_TIMEOUT_S,
         });
       } catch (err: any) {
         // A prompter that throws must not fail OPEN — treat as denied.

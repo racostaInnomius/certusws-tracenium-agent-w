@@ -53,6 +53,22 @@ export function getTimeoutForMethod(method: string): number {
     case "grpc.send.remoteFileTransferAudit":
     case "grpc.send.remoteScreenAudit":
       return 30000;
+    // ── RCP consent (ADR-0012) ───────────────────────────────────────
+    //
+    // ⚠️ THE INVARIANT, eighth occurrence. `rcp.consent.request` had no
+    // budget here at all, so it fell to the 8s default — while the handler
+    // on the other side BLOCKS showing a dialog to a human. The client gave
+    // up after eight seconds and the catch turned that into "denied": on
+    // Linux, a person had eight seconds to answer a question about their own
+    // screen, and the dialog they were still reading was already orphaned.
+    //
+    // 150s = the longest prompt (MAX_CONSENT_TIMEOUT_S, 90s) + the helper's
+    // 10s kill grace, plus room for the serial lane. The prompts are pinned
+    // in src/plugins/rcp/consent-prompt.ts precisely so this number can be
+    // derived from them instead of guessed; test/priv/ipc-timeout-ordering
+    // fails if either side moves without the other.
+    case "rcp.consent.request":
+      return 150000;
     case "software.inventory":
       return 60000;
     case "security.compliance":
