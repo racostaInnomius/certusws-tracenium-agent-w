@@ -140,6 +140,31 @@ export type CdpCertItem = {
   source: "store" | "java-store" | "listener" | "file" | "nss" | "probe" | "adcs";
 };
 
+/**
+ * Un almacen que EXISTIA y no se pudo leer en este escaneo (keystore
+ * bloqueado, keychain de otro usuario, base NSS abierta, PrivSvc sin el
+ * metodo de usuario...). Sus certificados faltan de `items` sin haber
+ * desaparecido: ni el agente ni el control plane pueden afirmar su baja.
+ * `prefix: true` = el id nombra una familia de almacenes (`user/`).
+ */
+export type CdpUnreadableStore = {
+  id: string;
+  name: string;
+  reason: string;
+  prefix?: boolean;
+};
+
+/**
+ * Escaneo parcial: lo que se vio es cierto; lo que NO se vio no se
+ * puede dar por retirado. `unreadableStores` acota la duda a almacenes
+ * concretos; `unscoped` son fallos de un colector entero cuyos almacenes
+ * no se pueden nombrar (entonces no se afirma NINGUNA baja).
+ */
+export type CdpPartialScan = {
+  unreadableStores: CdpUnreadableStore[];
+  unscoped: string[];
+};
+
 export type CdpDelta = {
   added: CdpCertItem[];
   removed: Array<{ id: string }>;
@@ -173,6 +198,11 @@ export type CdpNamespace = {
   };
 
   collectorError?: CdpCollectorError;
+
+  /** Presente cuando algun almacen existia y no se pudo leer. Ver
+   *  CdpPartialScan: sin esto, una base NSS bloqueada un dia se leia
+   *  como «todos sus certificados fueron retirados». */
+  partial?: CdpPartialScan;
 
   /**
    * Conector AD CS (fase 4). Solo lo manda una Certification Authority

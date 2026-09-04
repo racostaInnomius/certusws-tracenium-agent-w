@@ -13,8 +13,8 @@
 
 import os from "os";
 import type { AgentContext } from "../../core/agent-context";
-import type { CdpAdcsReport, CdpCertItem, CdpNamespace, CdpStoreInfo } from "../../domain/cdp-types";
-import { commitCdpBaseline, computeCdpDelta } from "../../domain/cdp-baseline-repo";
+import type { CdpAdcsReport, CdpCertItem, CdpNamespace, CdpStoreInfo, CdpUnreadableStore } from "../../domain/cdp-types";
+import { commitCdpBaseline, computeCdpDelta, loadCdpBaselineItemsByStore } from "../../domain/cdp-baseline-repo";
 import { collectWindowsCdp } from "./providers/windows";
 import { collectMacosCdp } from "./providers/macos";
 import { collectLinuxCdp } from "./providers/linux";
@@ -112,11 +112,37 @@ async function collectOnce(
 
   let result: ProviderResult;
 
+  // ── Escaneo parcial ───────────────────────────────────────────────
+  //
+  // Cada colector es fail-soft: un keystore Java bloqueado, una base NSS
+  // abierta por Firefox o un login keychain de otro usuario no pueden
+  // costar el escaneo del sistema operativo que acaba de funcionar. Pero
+  // «no lo pude leer» y «ya no esta» son cosas distintas, y hasta ahora
+  // llegaban iguales al diff: los certificados del almacen ilegible
+  // faltaban de `items` y salian como BAJAS — el control plane los
+  // marcaba retirados y las alertas de desaparicion se disparaban por
+  // certificados que seguian en disco. Se llamo «baja fantasma».
+  //
+  // Ahora cada colector nombra los almacenes que existen y no leyo
+  // (`unreadable`), y un colector que falla entero sin poder nombrar los
+  // suyos deja una razon en `unscoped`. Con eso: las bajas de esos
+  // almacenes no viajan y su baseline se arrastra; con `unscoped` no
+  // viaja NINGUNA baja (misma regla que el recorte). Y el bloque
+  // `partial` va al cable para que el baseline completo tampoco las
+  // afirme en el control plane.
+  const unreadable: CdpUnreadableStore[] = [];
+  const unscoped: string[] = [];
+
   try {
     if (platform === "win32") {
       result = await collectWindowsCdp(ctx);
+      const win = result as any;
+      if (win.userStoresUnavailable) {
+        unreadable.push({ id: "user/", name: "CurrentUser\\", reason: String(win.userStoresUnavailable), prefix: true });
+      }
     } else if (platform === "darwin") {
       result = await collectMacosCdp();
+      unreadable.push(...(((result as any).unreadable ?? []) as CdpUnreadableStore[]));
       // Que el sintoma llegue al log y no se quede en el tipo. Si root
       // no pudiera leer los login keychains de otros usuarios —el caso
       // de produccion, que no se ha podido verificar en un Mac de un
@@ -132,6 +158,7 @@ async function collectOnce(
       }
     } else if (platform === "linux") {
       result = await collectLinuxCdp();
+      unreadable.push(...(((result as any).unreadable ?? []) as CdpUnreadableStore[]));
     } else {
       return {
         ...base,
@@ -173,10 +200,12 @@ async function collectOnce(
     result.items.push(...java.items);
     result.stores.push(...java.stores);
     result.parseFailures += java.parseFailures;
+    unreadable.push(...(java.unreadable ?? []));
   } catch (err: any) {
     ctx.logger?.warn?.("CDP: java store collection failed (non-fatal)", {
       error: err?.message || String(err)
     });
+    unscoped.push(`java-store: ${err?.message || String(err)}`);
   }
 
   // Almacenes NSS (Firefox, Thunderbird). Fallo blando como los
@@ -190,6 +219,7 @@ async function collectOnce(
     result.items.push(...nss.items);
     result.stores.push(...nss.stores);
     result.parseFailures += nss.parseFailures;
+    unreadable.push(...(nss.unreadableStores ?? []));
     if (nss.unreadable.length > 0) {
       // Se DICE. Un cert8.db heredado o una base bloqueada significan un
       // almacen de confianza que no estamos mirando, y el silencio ahi
@@ -200,6 +230,7 @@ async function collectOnce(
     ctx.logger?.warn?.("CDP: coleccion NSS fallo (no fatal)", {
       error: err?.message || String(err)
     });
+    unscoped.push(`nss: ${err?.message || String(err)}`);
   }
 
   // Certificates that live as files on disk. Opt-in via policy: an empty
@@ -214,6 +245,15 @@ async function collectOnce(
       result.items.push(...files.items);
       result.stores.push(...files.stores);
       result.parseFailures += files.parseFailures;
+      for (const f of files.unreadableFiles ?? []) {
+        unreadable.push({ id: `file:${f}`, name: f, reason: "unreadable" });
+      }
+      // Un directorio que existe y no se lista, o el tope de ficheros,
+      // esconden almacenes que no se pueden nombrar.
+      if ((files.unreadableDirs ?? []).length > 0) {
+        unscoped.push(`file: unreadable directories: ${files.unreadableDirs.slice(0, 5).join(", ")}`);
+      }
+      if (files.capped) unscoped.push("file: scan capped at MAX_FILES");
       if (files.capped || files.unreadable > 0) {
         ctx.logger?.warn?.("CDP: cert file scan incomplete", {
           filesScanned: files.filesScanned,
@@ -225,6 +265,7 @@ async function collectOnce(
       ctx.logger?.warn?.("CDP: cert file scan failed (non-fatal)", {
         error: err?.message || String(err)
       });
+      unscoped.push(`file: ${err?.message || String(err)}`);
     }
   }
 
@@ -243,6 +284,7 @@ async function collectOnce(
       ctx.logger?.warn?.("CDP: TLS listener scan failed (non-fatal)", {
         error: err?.message || String(err)
       });
+      unscoped.push(`listener: ${err?.message || String(err)}`);
     }
   }
 
@@ -264,6 +306,7 @@ async function collectOnce(
       ctx.logger?.warn?.("CDP: sondas TLS remotas fallaron (no fatal)", {
         error: err?.message || String(err)
       });
+      unscoped.push(`probe: ${err?.message || String(err)}`);
     }
   }
 
@@ -312,6 +355,29 @@ async function collectOnce(
   if (truncated && delta) {
     delta.removed = [];
   }
+
+  // Escaneo parcial (ver arriba). Con almacenes nombrados, solo SUS bajas
+  // se retiran del delta y su ultimo contenido conocido se arrastra en
+  // la baseline; sin poder nombrarlos, ninguna baja viaja.
+  const partial = unreadable.length > 0 || unscoped.length > 0 ? { unreadableStores: unreadable, unscoped } : undefined;
+  let carried: CdpCertItem[] = [];
+  if (partial) {
+    if (unscoped.length > 0 && delta) {
+      delta.removed = [];
+    } else if (unreadable.length > 0) {
+      const match = (storeId: string) => unreadable.some((u) => (u.prefix ? storeId.startsWith(u.id) : storeId === u.id));
+      carried = loadCdpBaselineItemsByStore(match, new Set(items.map((i) => i.id)));
+      if (delta && carried.length > 0) {
+        const keep = new Set(carried.map((i) => i.id));
+        delta.removed = delta.removed.filter((r) => !keep.has(r.id));
+      }
+    }
+    ctx.logger?.warn?.("CDP: escaneo parcial — no se afirman bajas de los almacenes no leidos", {
+      unreadable: unreadable.map((u) => `${u.id}${u.prefix ? "*" : ""}: ${u.reason}`),
+      unscoped,
+      carried: carried.length
+    });
+  }
   const isBaselineSend = delta === null;
   // Emisiones nuevas de la CA cuentan como cambio: si no, el planificador
   // descartaria el namespace entero y el bloque `adcs` no viajaria nunca
@@ -325,7 +391,9 @@ async function collectOnce(
   // scan. Committing here (vs after enqueue) mirrors AMP: the outbox is
   // local SQLite and its enqueue effectively cannot fail.
   if (hasChanges) {
-    commitCdpBaseline(items);
+    // Los arrastrados siguen en la baseline: cuando el almacen vuelva a
+    // leerse, lo que siga igual no sera alta y lo que falte si sera baja.
+    commitCdpBaseline(carried.length > 0 ? [...items, ...carried] : items);
   }
 
   return {
@@ -338,6 +406,7 @@ async function collectOnce(
       ...(isBaselineSend ? { items } : {}),
       ...(!isBaselineSend && hasChanges ? { delta } : {})
     },
+    ...(partial ? { partial } : {}),
     ...(adcs ? { adcs } : {})
   };
 }

@@ -141,6 +141,36 @@ export function commitCdpBaseline(items: CdpCertItem[]) {
   tx(items);
 }
 
+/**
+ * Certificados de la baseline cuyo almacen cumple `match` y que NO estan
+ * en el escaneo actual (`presentIds`). Es lo que un escaneo parcial
+ * ARRASTRA: el almacen no se pudo leer, asi que su ultimo contenido
+ * conocido sigue siendo la mejor verdad. Se recomite con los items
+ * nuevos para que (a) no se reporten como bajas y (b) cuando el almacen
+ * vuelva a leerse, lo que siga igual no aparezca como alta y lo que de
+ * verdad falte si aparezca como baja.
+ */
+export function loadCdpBaselineItemsByStore(
+  match: (storeId: string) => boolean,
+  presentIds: Set<string>
+): CdpCertItem[] {
+  const db = getDb();
+  const rows = db
+    .prepare(`SELECT cert_id as certId, item_json as itemJson FROM cdp_certificate_baseline`)
+    .all() as Array<{ certId: string; itemJson: string }>;
+  const out: CdpCertItem[] = [];
+  for (const row of rows) {
+    if (presentIds.has(row.certId)) continue;
+    try {
+      const item = JSON.parse(row.itemJson) as CdpCertItem;
+      if (item?.store?.id && match(String(item.store.id))) out.push(item);
+    } catch {
+      /* una fila corrupta no arrastra nada */
+    }
+  }
+  return out;
+}
+
 export function clearCdpBaseline() {
   const db = getDb();
   db.exec(`DELETE FROM cdp_certificate_baseline`);

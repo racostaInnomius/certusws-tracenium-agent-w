@@ -32,7 +32,7 @@ import crypto from "crypto";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import type { AgentContext } from "../../../core/agent-context";
-import type { CdpCertItem, CdpStoreInfo } from "../../../domain/cdp-types";
+import type { CdpCertItem, CdpStoreInfo, CdpUnreadableStore } from "../../../domain/cdp-types";
 import { parseCertToItem, splitPemBundle } from "../parse-cert";
 import { looksLikeJks, parseJks } from "../jks";
 
@@ -162,6 +162,10 @@ export type JavaStoresResult = {
   stores: CdpStoreInfo[];
   parseFailures: number;
   storeErrors: JavaStoreError[];
+  /** Subconjunto de storeErrors: almacenes que EXISTEN y no se leyeron.
+   *  «path not found» no esta aqui: un keystore que ya no existe se ha
+   *  ido de verdad, y sus certificados son bajas legitimas. */
+  unreadable: CdpUnreadableStore[];
 };
 
 type CollectOptions = {
@@ -212,7 +216,11 @@ export async function collectJavaStores(
   ctx: AgentContext,
   options: CollectOptions = {}
 ): Promise<JavaStoresResult> {
-  const result: JavaStoresResult = { items: [], stores: [], parseFailures: 0, storeErrors: [] };
+  const result: JavaStoresResult = { items: [], stores: [], parseFailures: 0, storeErrors: [], unreadable: [] };
+  const unreadable = (store: CdpStoreInfo, reason: string) => {
+    result.storeErrors.push({ store: store.name.replace(/^Java cacerts - /, ""), message: reason });
+    result.unreadable.push({ id: store.id, name: store.name, reason });
+  };
 
   const roots = options.roots ?? defaultRootsFor(os.platform());
   const cacertsList = discoverJavaCacerts(roots);
@@ -241,7 +249,7 @@ export async function collectJavaStores(
 
     const buf = readStoreFileSafe(cacertsPath);
     if (buf === null) {
-      result.storeErrors.push({ store: cacertsPath, message: "unreadable or oversized" });
+      unreadable(store, "unreadable or oversized");
       continue;
     }
 
@@ -256,10 +264,7 @@ export async function collectJavaStores(
         parsePemList(pems, store, result);
       }
     } catch (err: any) {
-      result.storeErrors.push({
-        store: cacertsPath,
-        message: err?.message || String(err)
-      });
+      unreadable(store, err?.message || String(err));
     }
   }
 
@@ -283,7 +288,7 @@ export async function collectJavaStores(
 
     const buf = readStoreFileSafe(real);
     if (buf === null) {
-      result.storeErrors.push({ store: real, message: "unreadable or oversized" });
+      unreadable(store, "unreadable or oversized");
       continue;
     }
 
@@ -300,13 +305,10 @@ export async function collectJavaStores(
         result.stores.push(store);
         parsePemList(pems, store, result);
       } else {
-        result.storeErrors.push({
-          store: real,
-          message: "PKCS12 keystore but no JVM found for keytool fallback"
-        });
+        unreadable(store, "PKCS12 keystore but no JVM found for keytool fallback");
       }
     } catch (err: any) {
-      result.storeErrors.push({ store: real, message: err?.message || String(err) });
+      unreadable(store, err?.message || String(err));
     }
   }
 
