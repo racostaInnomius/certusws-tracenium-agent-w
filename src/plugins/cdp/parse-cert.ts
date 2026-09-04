@@ -15,6 +15,7 @@ import crypto from "crypto";
 import {
   extractAlgorithmOids,
   extractHybridOids,
+  extractExtendedKeyUsage,
   extractSpkiDer,
   extractCrlUrls,
   extractOcspUrls
@@ -136,6 +137,38 @@ export type ParseCertOptions = {
  * wire item. Returns null on parse failure — providers count failures
  * but never abort the whole scan for one corrupt blob.
  */
+/**
+ * Propósitos con nombre. Se manda el NOMBRE cuando se conoce y el OID
+ * cuando no (`oid:1.2.3`), igual que los algoritmos: el control plane
+ * puede catalogar uno nuevo sin esperar a la flota.
+ */
+const EKU_NAMES: Record<string, string> = {
+  "1.3.6.1.5.5.7.3.1": "serverAuth",
+  "1.3.6.1.5.5.7.3.2": "clientAuth",
+  "1.3.6.1.5.5.7.3.3": "codeSigning",
+  "1.3.6.1.5.5.7.3.4": "emailProtection",
+  "1.3.6.1.5.5.7.3.8": "timeStamping",
+  "1.3.6.1.5.5.7.3.9": "OCSPSigning",
+  "2.5.29.37.0": "anyExtendedKeyUsage",
+  // Microsoft — frecuentes en flotas Windows y con significado propio.
+  "1.3.6.1.4.1.311.10.3.4": "efsCrypto",
+  "1.3.6.1.4.1.311.20.2.2": "smartCardLogon",
+  "1.3.6.1.4.1.311.54.1.2": "remoteDesktopAuth",
+  "1.3.6.1.4.1.311.10.3.12": "documentSigning",
+  "1.3.6.1.4.1.311.80.1": "documentEncryption",
+  // Apple / Kerberos / IPsec.
+  "1.3.6.1.5.2.3.4": "kerberosClient",
+  "1.3.6.1.5.2.3.5": "kerberosKdc",
+  "1.3.6.1.5.5.7.3.17": "ipsecIKE",
+  "1.3.6.1.5.5.8.2.2": "ipsecIKEIntermediate"
+};
+
+function extendedKeyUsageOf(der: Buffer): string[] | undefined {
+  const oids = extractExtendedKeyUsage(der);
+  if (oids.length === 0) return undefined;
+  return oids.map((oid) => EKU_NAMES[oid] ?? `oid:${oid}`);
+}
+
 export function parseCertToItem(
   input: string | Buffer,
   opts: ParseCertOptions
@@ -219,6 +252,9 @@ export function parseCertToItem(
     hasPrivateKey: opts.hasPrivateKey ?? false,
 
     keyUsage,
+    // Ausente (undefined) cuando el certificado no la declara: un `[]`
+    // por cada uno de los 10.000 certificados de la flota solo engorda.
+    extendedKeyUsage: extendedKeyUsageOf(cert.raw),
     san: parseSan(cert.subjectAltName),
 
     store: opts.store,

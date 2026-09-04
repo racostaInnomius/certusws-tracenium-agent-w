@@ -433,3 +433,44 @@ export function extractOcspUrls(der: Buffer): string[] {
   }
   return urls;
 }
+
+// ── Extended Key Usage (RFC 5280 §4.2.1.12) ──────────────────────────
+//
+// ⚠️ Medido 2026-09-04: `extendedKeyUsage` llevaba en `CdpCertItem` desde
+// la fase A y NADIE lo asignaba — 0 de 6.735 certificados con EKU en la
+// tenant más grande. Sin EKU no se distingue un certificado de servidor
+// TLS de uno de cliente, de firma de código o de S/MIME, y esa es la
+// dimensión que ordena cualquier plan de migración: a un servidor
+// expuesto se le exige antes que a un cliente interno.
+//
+// Node no expone la extensión (`X509Certificate` trae keyUsage, no
+// extendedKeyUsage), así que se lee del DER con el mismo lector que ya
+// sirve a catalyst y a los punteros de revocación.
+
+export const EXT_EXTENDED_KEY_USAGE = "2.5.29.37";
+const MAX_EKU = 16;
+
+/**
+ * Los OIDs de propósito del certificado, en el orden en que los declara.
+ *
+ *   ExtKeyUsageSyntax ::= SEQUENCE SIZE (1..MAX) OF KeyPurposeId
+ *
+ * Vacío = sin extensión. Con `anyExtendedKeyUsage` (2.5.29.37.0) se
+ * devuelve ese OID tal cual: vale para todo, y decidirlo es cosa del que
+ * clasifica, no del que lee.
+ */
+export function extractExtendedKeyUsage(der: Buffer): string[] {
+  const ext = extractExtension(der, EXT_EXTENDED_KEY_USAGE);
+  if (!ext) return [];
+  const seq = children(der, ext)[0];
+  if (!seq || seq.tag !== TAG_SEQUENCE) return [];
+
+  const out: string[] = [];
+  for (const child of children(der, seq)) {
+    if (child.tag !== TAG_OID) continue;
+    const oid = decodeOid(der, child);
+    if (oid && !out.includes(oid)) out.push(oid);
+    if (out.length >= MAX_EKU) break;
+  }
+  return out;
+}
