@@ -29,6 +29,12 @@
   <ItemGroup>
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\CryptoKeyNames.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\GpResultParsing.cs" />
+    <!-- Los structs de P/Invoke de la inyeccion de entrada. Compila fuera de
+         Windows porque un [DllImport] solo falla al LLAMARLO, y estas pruebas
+         no llaman a user32: miden la disposicion en memoria, que es lo que se
+         rompio tres veces en este modulo. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\Protocol.cs" />
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\InputInjection.cs" />
   </ItemGroup>
 
   <ItemGroup>

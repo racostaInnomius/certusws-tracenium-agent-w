@@ -785,6 +785,52 @@ if ! "$BUILD_DIR/Runtime/node" -e "require('$BUILD_DIR/Agent/node_modules/better
   rebuild_better_sqlite3
 fi
 
+# ── Prueba de humo de los nativos de Remote Control ──────────────────
+#
+# Hasta aquí el build solo comprobaba better-sqlite3. node-pty y
+# node-datachannel —la shell remota y TODO el transporte WebRTC— se
+# empaquetaban a ciegas: si el binding no cargaba, el fallo aparecía en un
+# endpoint, a mitad de una sesión de soporte, como un `ice_failed` o un
+# `pty_spawn_failed` que nadie sabía atribuir al paquete.
+#
+# "Los ficheros están" no es "esto funciona": lo que distingue una cosa de
+# otra es cargarlos con el node que se va a empaquetar y usarlos.
+#
+# ⚠️ En una compilación cruzada esto NO puede correr —el binding es del arco
+# destino y el node también—, así que se salta con un aviso explícito en vez
+# de pasar en silencio. Una comprobación que no se ejecutó no es una que
+# aprobó, y el build tiene que decir cuál de las dos cosas fue.
+HOST_ARCH="$(uname -m)"
+if [ "$(lipo_arch_for "$ARCH")" != "$HOST_ARCH" ]; then
+  echo "→ ⚠️  prueba de humo RCP OMITIDA: compilación cruzada ($ARCH sobre $HOST_ARCH)"
+else
+  if ! "$BUILD_DIR/Runtime/node" -e "
+    const pty = require('$BUILD_DIR/Agent/node_modules/node-pty');
+    const p = pty.spawn('/bin/sh', ['-c', 'exit 0'], { cols: 80, rows: 24 });
+    if (!p.pid) process.exit(1);
+  " >/dev/null 2>&1; then
+    echo "ERROR: node-pty no abre un pty con el node empaquetado." >&2
+    echo "       Sin esto la shell remota no funciona en ningún endpoint." >&2
+    echo "       Reproduce con:" >&2
+    echo "         $BUILD_DIR/Runtime/node -e \"require('$BUILD_DIR/Agent/node_modules/node-pty').spawn('/bin/sh',[],{})\"" >&2
+    exit 1
+  fi
+  echo "→ node-pty OK (carga + apertura de pty)"
+
+  # node-datachannel: crear un PeerConnection es lo que de verdad ejercita
+  # libdatachannel. Cargar el módulo solo prueba que el .node abre.
+  if ! "$BUILD_DIR/Runtime/node" -e "
+    const ndc = require('$BUILD_DIR/Agent/node_modules/node-datachannel');
+    const pc = new ndc.PeerConnection('smoke', { iceServers: [] });
+    pc.close();
+  " >/dev/null 2>&1; then
+    echo "ERROR: node-datachannel no crea un PeerConnection con el node empaquetado." >&2
+    echo "       Sin esto NINGUNA sesión remota conecta: shell, ficheros ni pantalla." >&2
+    exit 1
+  fi
+  echo "→ node-datachannel OK (carga + PeerConnection)"
+fi
+
 if [ ! -f "$RESOURCES_DIR/tracenium_pgk.png" ]; then
   echo "Missing installer background: $RESOURCES_DIR/tracenium_pgk.png" >&2
   exit 1
