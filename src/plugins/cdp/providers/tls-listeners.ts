@@ -89,7 +89,180 @@ export type TlsProbeResult = {
   chainError?: string;
   /** Raw subjectAltName, used to check coverage of the device's name. */
   san?: string;
+  /** Fase 2 — lo negociado. Ver CdpCertItem.tls. */
+  protocol?: string;
+  cipher?: string;
+  kexGroup?: string;
+  kemHybrid?: boolean | null;
+  kemProbeError?: string;
 };
+
+/** El grupo hibrido que se ofrece como sonda de capacidad. */
+export const HYBRID_KEM_GROUP = "X25519MLKEM768";
+
+/**
+ * ¿Puede ESTE agente sondear el KEM hibrido? Depende del OpenSSL que
+ * empaqueta Node (3.5+). Si no puede, el veredicto es null en toda la
+ * flota y se dice — nunca false, que seria acusar al servidor de lo que
+ * no sabe hacer el cliente.
+ */
+export function kemProbeSupported(): boolean {
+  try {
+    tls.createSecureContext({ ecdhCurve: HYBRID_KEM_GROUP });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type EndpointProbe = {
+  der: Buffer;
+  chainDepth: number;
+  chainAuthorized: boolean;
+  chainError?: string;
+  san?: string;
+  protocol?: string;
+  cipher?: string;
+  kexGroup?: string;
+};
+
+/**
+ * Un handshake contra host:port. Es la primitiva que comparten el
+ * sondeo de loopback y el rol Probe: lo unico que cambia es a quien se
+ * conecta y que SNI se manda. Nunca rechaza.
+ */
+type ProbeOutcome = { ok: true; probe: EndpointProbe } | { ok: false; code: string };
+
+export function probeTlsEndpoint(
+  host: string,
+  port: number,
+  servername: string,
+  extra: { ecdhCurve?: string } = {}
+): Promise<EndpointProbe | null> {
+  return probeTlsEndpointDetailed(host, port, servername, extra).then((o) => (o.ok ? o.probe : null));
+}
+
+/**
+ * Igual que probeTlsEndpoint pero dice POR QUE fallo. La diferencia
+ * importa para el veredicto de KEM: un servidor que responde con un
+ * alert de handshake al grupo hibrido NO lo soporta; uno que no contesta
+ * a tiempo no ha dicho nada, y decir «no» por el seria inventar el dato.
+ */
+export function probeTlsEndpointDetailed(
+  host: string,
+  port: number,
+  servername: string,
+  extra: { ecdhCurve?: string } = {}
+): Promise<ProbeOutcome> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let socket: tls.TLSSocket | null = null;
+    const finish = (value: ProbeOutcome) => {
+      if (settled) return;
+      settled = true;
+      try {
+        socket?.destroy();
+      } catch {
+        /* already gone */
+      }
+      resolve(value);
+    };
+
+    try {
+      socket = tls.connect(
+        {
+          host,
+          port,
+          rejectUnauthorized: false,
+          servername,
+          checkServerIdentity: () => undefined,
+          timeout: PROBE_TIMEOUT_MS,
+          ...extra
+        },
+        () => {
+          const s = socket!;
+          const peer = s.getPeerCertificate(true) as any;
+          if (!peer || !peer.raw || peer.raw.length === 0) return finish({ ok: false, code: "no_certificate" });
+
+          let depth = 0;
+          let node: any = peer;
+          const seen = new Set<string>();
+          while (node?.fingerprint256 && !seen.has(node.fingerprint256) && depth < MAX_CHAIN_DEPTH) {
+            seen.add(node.fingerprint256);
+            depth += 1;
+            node = node.issuerCertificate;
+          }
+
+          const cipher = s.getCipher();
+          const eph = (s.getEphemeralKeyInfo() || {}) as { name?: string };
+          finish({ ok: true, probe: {
+            der: peer.raw,
+            chainDepth: depth,
+            chainAuthorized: s.authorized === true,
+            chainError: s.authorized ? undefined : String(s.authorizationError ?? "UNKNOWN"),
+            san: typeof peer.subjectaltname === "string" ? peer.subjectaltname : undefined,
+            protocol: s.getProtocol() ?? undefined,
+            cipher: cipher?.standardName || cipher?.name || undefined,
+            kexGroup: eph?.name || undefined
+          } });
+        }
+      );
+      socket.setTimeout(PROBE_TIMEOUT_MS, () => finish({ ok: false, code: "timeout" }));
+      socket.on("error", (err: any) => finish({ ok: false, code: String(err?.code || err?.message || "error") }));
+      socket.on("close", () => finish({ ok: false, code: "closed" }));
+    } catch (err: any) {
+      // `ecdhCurve` desconocido para este OpenSSL lanza SINCRONO
+      // (ERR_CRYPTO_OPERATION_FAILED). Es un fallo del cliente, no del
+      // servidor.
+      finish({ ok: false, code: `client:${String(err?.code || err?.message || "error")}` });
+    }
+  });
+}
+
+/** Un alert de handshake es el servidor diciendo «no»; lo demas es silencio. */
+const HANDSHAKE_REJECTED = /HANDSHAKE_FAILURE|NO_SHARED_GROUP|NO_SHARED_CIPHER|ILLEGAL_PARAMETER|PROTOCOL_VERSION|SSL_ALERT|TLSV1_ALERT|ECONNRESET/i;
+
+/**
+ * Handshake + veredicto de KEM hibrido, en una o dos conexiones.
+ *
+ * 1. Por defecto. Si ya negocio el grupo hibrido, no hace falta mas.
+ * 2. Si no, se repite con el cliente RESTRINGIDO al grupo hibrido: si
+ *    completa, el servidor lo soporta pero prefiere clasico; si falla,
+ *    no lo soporta. Es una sonda de CAPACIDAD, que para la metrica de
+ *    preparacion es lo que se quiere (ADR-0004 e-F2).
+ *
+ * Con un OpenSSL sin el grupo, el veredicto es null y se explica.
+ */
+export async function probeTlsWithKem(
+  host: string,
+  port: number,
+  servername: string
+): Promise<TlsProbeResult | null> {
+  const first = await probeTlsEndpoint(host, port, servername);
+  if (!first) return null;
+
+  const out: TlsProbeResult = { ...first };
+  if (first.kexGroup && /MLKEM/i.test(first.kexGroup)) {
+    out.kemHybrid = true;
+    return out;
+  }
+  if (!kemProbeSupported()) {
+    out.kemHybrid = null;
+    out.kemProbeError = "client_openssl_lacks_group";
+    return out;
+  }
+  const forced = await probeTlsEndpointDetailed(host, port, servername, { ecdhCurve: HYBRID_KEM_GROUP });
+  if (forced.ok) {
+    out.kemHybrid = true;
+  } else if (HANDSHAKE_REJECTED.test(forced.code)) {
+    out.kemHybrid = false;
+  } else {
+    // Timeout, cierre sin alert, o fallo del propio cliente: no se sabe.
+    out.kemHybrid = null;
+    out.kemProbeError = forced.code;
+  }
+  return out;
+}
 
 /**
  * One handshake. Resolves with the served certificate and the verdict on
@@ -106,60 +279,7 @@ export type TlsProbeResult = {
  * coverage is evaluated separately, against the device's real name.
  */
 export function probeTlsPort(port: number): Promise<TlsProbeResult | null> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (value: TlsProbeResult | null) => {
-      if (settled) return;
-      settled = true;
-      try {
-        socket.destroy();
-      } catch {
-        /* already gone */
-      }
-      resolve(value);
-    };
-
-    const socket = tls.connect(
-      {
-        host: "127.0.0.1",
-        port,
-        // Inventory, not trust — see header.
-        rejectUnauthorized: false,
-        // Some servers require SNI to present a certificate at all.
-        servername: "localhost",
-        // See the doc comment: measures the CHAIN, not the name.
-        checkServerIdentity: () => undefined,
-        timeout: PROBE_TIMEOUT_MS
-      },
-      () => {
-        const peer = socket.getPeerCertificate(true) as any;
-        if (!peer || !peer.raw || peer.raw.length === 0) return finish(null);
-
-        // Walk the chain the server sent. The last certificate points at
-        // itself when self-signed, so `seen` is what terminates the walk.
-        let depth = 0;
-        let node: any = peer;
-        const seen = new Set<string>();
-        while (node?.fingerprint256 && !seen.has(node.fingerprint256) && depth < MAX_CHAIN_DEPTH) {
-          seen.add(node.fingerprint256);
-          depth += 1;
-          node = node.issuerCertificate;
-        }
-
-        finish({
-          der: peer.raw,
-          chainDepth: depth,
-          chainAuthorized: socket.authorized === true,
-          chainError: socket.authorized ? undefined : String(socket.authorizationError ?? "UNKNOWN"),
-          san: typeof peer.subjectaltname === "string" ? peer.subjectaltname : undefined
-        });
-      }
-    );
-
-    socket.setTimeout(PROBE_TIMEOUT_MS, () => finish(null));
-    socket.on("error", () => finish(null));
-    socket.on("close", () => finish(null));
-  });
+  return probeTlsWithKem("127.0.0.1", port, "localhost");
 }
 
 /**
@@ -283,6 +403,13 @@ export async function collectTlsListeners(
         chainDepth: hit.chainDepth,
         chainAuthorized: hit.chainAuthorized,
         ...(hit.chainError ? { chainError: hit.chainError } : {}),
+        // Fase 2: lo negociado viaja junto al certificado. `kemHybrid`
+        // puede ser null y ese null se manda: es «no se pudo saber».
+        ...(hit.protocol ? { protocol: hit.protocol } : {}),
+        ...(hit.cipher ? { cipher: hit.cipher } : {}),
+        ...(hit.kexGroup ? { kexGroup: hit.kexGroup } : {}),
+        ...(hit.kemHybrid !== undefined ? { kemHybrid: hit.kemHybrid } : {}),
+        ...(hit.kemProbeError ? { kemProbeError: hit.kemProbeError } : {}),
         ...(() => {
           const covers = sanCoversHost(hit.san, hostname);
           return covers === undefined ? {} : { coversDeviceHostname: covers };

@@ -13,7 +13,9 @@ export type CdpCollector = {
   version: string;
 };
 
-export type CdpStoreScope = "machine" | "user" | "system-roots";
+/** `network` (fase 2): un objetivo remoto sondeado por el rol Probe. No
+ *  esta EN el equipo; el equipo solo es quien lo miro. */
+export type CdpStoreScope = "machine" | "user" | "system-roots" | "network";
 
 export type CdpStoreInfo = {
   /** Stable store identifier, e.g. "lm/my", "keychain/system", "fs/etc-ssl-certs". */
@@ -86,6 +88,37 @@ export type CdpCertItem = {
      *  the control plane uses to attribute a certificate to an owning
      *  application in the software inventory. */
     process?: { pid: number; name?: string; path?: string };
+    /**
+     * Fase 2 (analisis de madurez 2026-09) — lo que el handshake NEGOCIO,
+     * no solo lo que el servidor presento. Es la mitad KEM de PQC, la
+     * urgente: el trafico grabado hoy se descifra manana si el
+     * intercambio de claves es clasico, y eso vive AQUI, no en el
+     * certificado.
+     */
+    /** TLSv1.2 / TLSv1.3. */
+    protocol?: string;
+    /** Suite negociada, nombre IANA cuando Node lo da. */
+    cipher?: string;
+    /** Grupo de intercambio de claves negociado por defecto, cuando Node
+     *  lo nombra: X25519, prime256v1… Medido en Node 22.21: SI se expone
+     *  en TLS 1.3 para ECDH clasico, pero para el grupo hibrido
+     *  X25519MLKEM768 getEphemeralKeyInfo() devuelve `{}`. Ausente + TLS
+     *  1.3 no significa nada por si solo; `kemHybrid` es el veredicto. */
+    kexGroup?: string;
+    /**
+     * ¿Acepta el servidor un intercambio hibrido post-cuantico?
+     *   true  — negocio X25519MLKEM768 (por defecto o forzado).
+     *   false — con el cliente restringido al grupo hibrido el handshake
+     *           fallo: el servidor no lo soporta.
+     *   null  — no se pudo determinar (el OpenSSL de este agente no
+     *           conoce el grupo, o el servidor no volvio a contestar).
+     * Nunca se infiere: ausencia de dato ≠ «no».
+     */
+    kemHybrid?: boolean | null;
+    kemProbeError?: string;
+    /** Solo para `source: "probe"`: el host tal como lo escribio el
+     *  operador en la policy. */
+    target?: string;
   };
 
   isCA?: boolean;
@@ -104,7 +137,7 @@ export type CdpCertItem = {
    *   "listener"   — captured from a live local TLS handshake, i.e. what
    *                  the service actually serves (may differ from any
    *                  store). */
-  source: "store" | "java-store" | "listener" | "file" | "nss";
+  source: "store" | "java-store" | "listener" | "file" | "nss" | "probe";
 };
 
 export type CdpDelta = {
