@@ -287,6 +287,37 @@ $installedCount = 0
 $failedCount = 0
 $downloadedCount = 0
 
+function Format-HResult($value) {{
+  try {{ '0x' + [Convert]::ToString([int]$value, 16) }} catch {{ $null }}
+}}
+
+# OperationResultCode, by name. The bare number ('4') was all the operator
+# used to get for a failed install.
+function Get-ResultCodeName($code) {{
+  switch ([int]$code) {{
+    0 {{ 'not_started' }}
+    1 {{ 'in_progress' }}
+    2 {{ 'succeeded' }}
+    3 {{ 'succeeded_with_errors' }}
+    4 {{ 'failed' }}
+    5 {{ 'aborted' }}
+    default {{ 'unknown_' + [string]$code }}
+  }}
+}}
+
+function Get-KbList($update) {{
+  $kbs = @()
+  foreach ($kb in $update.KBArticleIDs) {{
+    if ($kb) {{ $kbs += ('KB' + [string]$kb) }}
+  }}
+  return ,$kbs
+}}
+
+# Per-update verdicts of the DOWNLOAD phase, indexed like $updates. In
+# install mode these are the final verdict for anything that did not come
+# down, and the install phase only runs on what did.
+$downloadVerdicts = @()
+
 if ($mode -eq 'download' -or $mode -eq 'install') {{
   $downloader = $session.CreateUpdateDownloader()
   $downloader.Updates = $updates
@@ -294,58 +325,111 @@ if ($mode -eq 'download' -or $mode -eq 'install') {{
 
   for ($i = 0; $i -lt $updates.Count; $i++) {{
     $update = $updates.Item($i)
-    $kbs = @()
-    foreach ($kb in $update.KBArticleIDs) {{
-      if ($kb) {{ $kbs += ('KB' + [string]$kb) }}
-    }}
+    $kbs = Get-KbList $update
 
     $downloaded = [bool]$update.IsDownloaded
     if ($downloaded) {{ $downloadedCount++ }}
 
-    $results += [pscustomobject]@{{
+    # IDownloadResult.GetUpdateResult(i) carries the per-update HResult
+    # and ResultCode; the aggregate HResult is the fallback.
+    $perUpdate = $(try {{ $downloadResult.GetUpdateResult($i) }} catch {{ $null }})
+    $dlHresult = $(try {{ if ($perUpdate) {{ [int]$perUpdate.HResult }} else {{ [int]$downloadResult.HResult }} }} catch {{ 0 }})
+    $dlCode = $(try {{ if ($perUpdate) {{ [int]$perUpdate.ResultCode }} else {{ [int]$downloadResult.ResultCode }} }} catch {{ 0 }})
+
+    $downloadVerdicts += [pscustomobject]@{{
       updateId = $(try {{ [string]$update.Identity.UpdateID }} catch {{ $null }})
       kb = if ($kbs.Count -gt 0) {{ $kbs[0] }} else {{ $null }}
       title = [string]$update.Title
       result = if ($downloaded) {{ 'downloaded' }} else {{ 'failed' }}
-      hresult = $(try {{ ('0x' + [Convert]::ToString([int]$downloadResult.HResult, 16)) }} catch {{ $null }})
-      message = if ($downloaded) {{ 'downloaded' }} else {{ 'download_failed' }}
+      hresult = Format-HResult $dlHresult
+      message = if ($downloaded) {{ 'downloaded' }} else {{ 'download_failed:' + (Get-ResultCodeName $dlCode) }}
     }}
   }}
+
+  $results = $downloadVerdicts
 }}
 
 if ($mode -eq 'install') {{
-  $installer = $session.CreateUpdateInstaller()
-  $installer.Updates = $updates
-  $installResult = $installer.Install()
-
+  # Until 2026-09-04 this phase threw the download verdicts away and
+  # handed EVERY selected update to the installer, downloaded or not. WUA
+  # refuses the ones that never came down with 0x80246007
+  # (WU_E_DM_NOTDOWNLOADED), which is what the operator saw for KB5066747
+  # on DESKTOP-M8GJ0V5 — a true statement that hid the actual failure,
+  # whose HRESULT had just been overwritten.
   $results = @()
+  $toInstall = New-Object -ComObject Microsoft.Update.UpdateColl
+  $toInstallIndex = @()
+
   for ($i = 0; $i -lt $updates.Count; $i++) {{
-    $update = $updates.Item($i)
-    $updateResult = $installResult.GetUpdateResult($i)
-    $kbs = @()
-    foreach ($kb in $update.KBArticleIDs) {{
-      if ($kb) {{ $kbs += ('KB' + [string]$kb) }}
+    if ([bool]$updates.Item($i).IsDownloaded) {{
+      [void]$toInstall.Add($updates.Item($i))
+      $toInstallIndex += $i
+    }} else {{
+      $results += $downloadVerdicts[$i]
+      $failedCount++
     }}
+  }}
 
-    $code = [int]$updateResult.ResultCode
-    $mappedResult = switch ($code) {{
-      2 {{ 'installed' }}
-      3 {{ 'installed' }}
-      4 {{ 'failed' }}
-      5 {{ 'failed' }}
-      default {{ 'skipped' }}
-    }}
+  if ($toInstall.Count -gt 0) {{
+    $installer = $session.CreateUpdateInstaller()
+    $installer.Updates = $toInstall
 
-    if ($mappedResult -eq 'installed') {{ $installedCount++ }} else {{ $failedCount++ }}
-    if ([bool]$updateResult.RebootRequired -or [bool]$installResult.RebootRequired) {{ $rebootRequired = $true }}
+    # WUA refuses everything while a reboot is pending. Say so per update
+    # instead of letting each one fail with a generic HRESULT.
+    $rebootPending = $(try {{ [bool]$installer.RebootRequiredBeforeInstallation }} catch {{ $false }})
 
-    $results += [pscustomobject]@{{
-      updateId = $(try {{ [string]$update.Identity.UpdateID }} catch {{ $null }})
-      kb = if ($kbs.Count -gt 0) {{ $kbs[0] }} else {{ $null }}
-      title = [string]$update.Title
-      result = $mappedResult
-      hresult = $(try {{ ('0x' + [Convert]::ToString([int]$updateResult.HResult, 16)) }} catch {{ $null }})
-      message = $(try {{ [string]$updateResult.ResultCode }} catch {{ $null }})
+    if ($rebootPending) {{
+      $rebootRequired = $true
+      for ($j = 0; $j -lt $toInstall.Count; $j++) {{
+        $update = $toInstall.Item($j)
+        $kbs = Get-KbList $update
+        $failedCount++
+        $results += [pscustomobject]@{{
+          updateId = $(try {{ [string]$update.Identity.UpdateID }} catch {{ $null }})
+          kb = if ($kbs.Count -gt 0) {{ $kbs[0] }} else {{ $null }}
+          title = [string]$update.Title
+          result = 'skipped'
+          hresult = $null
+          message = 'reboot_pending_before_install'
+        }}
+      }}
+    }} else {{
+      $installResult = $installer.Install()
+
+      for ($j = 0; $j -lt $toInstall.Count; $j++) {{
+        $update = $toInstall.Item($j)
+        $updateResult = $installResult.GetUpdateResult($j)
+        $kbs = Get-KbList $update
+
+        $code = [int]$updateResult.ResultCode
+        $mappedResult = switch ($code) {{
+          2 {{ 'installed' }}
+          3 {{ 'installed' }}
+          4 {{ 'failed' }}
+          5 {{ 'failed' }}
+          default {{ 'skipped' }}
+        }}
+
+        # 'skipped' (not started / still in progress) is not installed, so
+        # it counts against the job; what changes is that it now carries
+        # the installer's overall HResult instead of a bare number.
+        if ($mappedResult -eq 'installed') {{ $installedCount++ }} else {{ $failedCount++ }}
+        if ([bool]$updateResult.RebootRequired -or [bool]$installResult.RebootRequired) {{ $rebootRequired = $true }}
+
+        $perHresult = $(try {{ [int]$updateResult.HResult }} catch {{ 0 }})
+        if ($mappedResult -eq 'skipped' -and $perHresult -eq 0) {{
+          $perHresult = $(try {{ [int]$installResult.HResult }} catch {{ 0 }})
+        }}
+
+        $results += [pscustomobject]@{{
+          updateId = $(try {{ [string]$update.Identity.UpdateID }} catch {{ $null }})
+          kb = if ($kbs.Count -gt 0) {{ $kbs[0] }} else {{ $null }}
+          title = [string]$update.Title
+          result = $mappedResult
+          hresult = Format-HResult $perHresult
+          message = Get-ResultCodeName $code
+        }}
+      }}
     }}
   }}
 }}
