@@ -41,6 +41,7 @@ function fakeClient(over: Partial<Record<string, any>> = {}) {
     countVms: vi.fn(async () => 19),
     findVmByUuid: vi.fn(async (uuid: string) => (uuid === VCENTER_UUID ? "vm-9637" : null)),
     createSnapshot: vi.fn(async () => "task-1"),
+    listSnapshots: vi.fn(async () => []),
     removeSnapshot: vi.fn(async () => "task-r"),
     revertToSnapshot: vi.fn(async () => "task-v"),
     waitForTask: vi.fn(async () => {}),
@@ -564,5 +565,52 @@ describe("runVcenterSnapshotRevert — operator-initiated only", () => {
     const client = fakeClient({ revertToSnapshot: vi.fn(async () => { throw new VimFault("busy"); }) });
     await runVcenterSnapshotRevert(deps({}, client), { snapshotMoref: "snapshot-1" });
     expect(client.logout).toHaveBeenCalled();
+  });
+});
+
+describe("runVcenterSnapshot — idempotent on redelivery", () => {
+  const EXISTING = {
+    moref: "snapshot-777",
+    name: "tracenium-prepatch-42",
+    description: "Tracenium pre-patch snapshot (deployment 42)",
+    createTime: "2026-09-04T18:30:00Z",
+    state: "poweredOn",
+    quiesced: true,
+  };
+
+  it("⭐ a snapshot already named for this deployment is returned, not taken again", async () => {
+    // The orchestrator re-sends a job whose ACK never arrived. A second
+    // CreateSnapshot_Task would leave two snapshots on the VM for one
+    // deployment; the name is the deployment's, so the existing one IS the
+    // result of this job.
+    const client = fakeClient({ listSnapshots: vi.fn(async () => [EXISTING]) });
+    const r = await runVcenterSnapshot(deps({}, client), { deploymentId: 42, target: TARGET });
+
+    expect(client.listSnapshots).toHaveBeenCalledWith("vm-9637");
+    expect(client.createSnapshot).not.toHaveBeenCalled();
+    expect(r.status).toBe(ACK_OK);
+    expect(r.message).toMatch(/^vcenter_snapshot:created;/);
+    expect(r.message).toContain("snapshotId=snapshot-777");
+    expect(r.message).toContain("reused=true");
+    expect(r.message).toContain("deploymentId=42");
+  });
+
+  it("a snapshot for ANOTHER deployment on the same VM does not count", async () => {
+    const client = fakeClient({
+      listSnapshots: vi.fn(async () => [{ ...EXISTING, name: "tracenium-prepatch-41" }]),
+    });
+    const r = await runVcenterSnapshot(deps({}, client), { deploymentId: 42, target: TARGET });
+
+    expect(client.createSnapshot).toHaveBeenCalledWith("vm-9637", "tracenium-prepatch-42", expect.any(String), false, true);
+    expect(r.message).not.toContain("reused=");
+  });
+
+  it("the reuse check runs before the capacity gate — nothing new is written", async () => {
+    const client = fakeClient({
+      listSnapshots: vi.fn(async () => [EXISTING]),
+      datastoresForVm: vi.fn(async () => []),
+    });
+    await runVcenterSnapshot(deps({}, client), { deploymentId: 42, target: TARGET });
+    expect(client.datastoresForVm).not.toHaveBeenCalled();
   });
 });

@@ -572,6 +572,33 @@ export async function runVcenterSnapshot(
       });
     }
 
+    const name = payload?.name || `tracenium-prepatch-${payload?.deploymentId ?? 0}`;
+
+    // Idempotent on redelivery. The orchestrator re-sends a job whose ACK
+    // never arrived (a 100-minute timeout, a gateway restart mid-task, the
+    // agent process recycled) and a second CreateSnapshot_Task would leave
+    // two snapshots on the VM for one deployment: twice the delta growth, and
+    // a revert that could pick the wrong one. The name is the deployment's,
+    // so an existing snapshot under it IS this job's result — report it.
+    // Before the capacity gate on purpose: nothing new gets written.
+    const existing = (await client.listSnapshots(vmMoref)).find((s) => s.name === name);
+    if (existing) {
+      deps.logger?.info?.("vcenter_snapshot already exists for this deployment; reusing", {
+        snapshotId: existing.moref,
+        createTime: existing.createTime,
+      });
+      return buildSnapshotAck({
+        outcome: "created",
+        deploymentId: payload?.deploymentId,
+        vmUuid: matchedUuid,
+        vmMoref,
+        snapshotId: existing.moref,
+        matchedBy,
+        durationMs: Date.now() - started,
+        reused: true,
+      });
+    }
+
     // Capacity gate. Taking a snapshot on a nearly-full datastore can wedge the
     // VM itself — strictly worse than not patching it. Fail-OPEN when nothing
     // can be measured (see datastore-check), fail-CLOSED on a measurement that
@@ -600,7 +627,6 @@ export async function runVcenterSnapshot(
       });
     }
 
-    const name = payload?.name || `tracenium-prepatch-${payload?.deploymentId ?? 0}`;
     const description =
       payload?.description || `Tracenium pre-patch snapshot (deployment ${payload?.deploymentId ?? 0})`;
 

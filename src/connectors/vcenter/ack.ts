@@ -90,6 +90,12 @@ export interface SnapshotAckFields {
   durationMs?: number;
   reason?: string;
   retryable?: boolean;
+  /**
+   * The snapshot already existed under this deployment's name and was
+   * returned instead of taken again (a redelivered job). Forensics only;
+   * the reducer treats it as `created`.
+   */
+  reused?: boolean;
 }
 
 /** ACK for `vcenter_snapshot`. */
@@ -104,6 +110,7 @@ export function buildSnapshotAck(f: SnapshotAckFields): { status: number; messag
     matchedBy: f.matchedBy,
     duration: f.durationMs,
     reason: f.reason,
+    reused: f.reused ? "true" : undefined,
   });
   return {
     status,
