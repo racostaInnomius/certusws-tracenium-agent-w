@@ -21,9 +21,9 @@ export function getTimeoutForMethod(method: string): number {
     // ── RCP signaling + audit (agent → backend) ──────────────────────
     // The handler on the PrivSvc side is a single write to the gRPC
     // stream — microseconds of work. This budget is NOT about the
-    // handler being slow; it exists because the IPC pipe is a SERIAL
-    // lane: one request is served at a time, and the client's clock
-    // starts at the write, not when PrivSvc picks the request up.
+    // handler being slow; it exists because each IPC connection is a
+    // SERIAL lane: one request is served at a time, and the budget
+    // starts when the request is dispatched into the lane.
     //
     // ICE candidates are the pathological case. libdatachannel emits
     // them in a BURST (4-5 at once as gathering completes), so the
@@ -34,10 +34,10 @@ export function getTimeoutForMethod(method: string): number {
     //   "PrivSvc timeout: grpc.send.remoteSessionIce did not answer
     //    within 8000ms"
     //
-    // ⚠️ This is MITIGATION, not a cure. If the lane is occupied by a
-    // long privileged operation (sdp.install budgets 1800s) no signaling
-    // budget saves us. The real fix is a separate lane / priority for
-    // latency-critical signaling — see the IPC serialization ADR.
+    // Since the slow lane exists (see `laneForMethod`) the long
+    // privileged operations no longer sit in front of signaling; what
+    // remains ahead of an ICE burst is other control traffic, which is
+    // short by construction.
     //
     // 30s: comfortably longer than any realistic queue behind a normal
     // request, and past the point where a late ICE candidate is still
@@ -152,8 +152,72 @@ export function getTimeoutForMethod(method: string): number {
       return DEFAULT_TIMEOUT_MS;
   }
 }
+
+// ── Two lanes ────────────────────────────────────────────────────────
+//
+// WHY A SECOND CONNECTION — the serial lane killed the process.
+//
+// `NamedPipeServer.HandleClientAsync` is strictly serial PER CONNECTION:
+// it awaits the handler before it even READS the next line. With a single
+// connection every privileged call shared one lane, and the queue below
+// made that honest (a budget starts at dispatch, not at write). What the
+// queue could not fix is that the CONTROL traffic shared the lane too.
+//
+// Observed on Msig13 (tenant 111) on 2026-09-04, twice, on the first real
+// Windows patch_install:
+//   15:49:31  patch.install enters the lane (Windows Update, 22 min)
+//   ~15:55    grpc.heartbeat is queued behind it and never dispatched;
+//             after SILENCE_THRESHOLD_MS (270s) grpc-stream declares the
+//             stream stale and forces a reconnect
+//   ~15:55    the reconnect's grpc.connect is queued behind it too, so
+//             reconnectCount never advances
+//   16:06:19  the connectivity supervisor exits the process: "reconnect
+//             loop stalled for 600s — exiting so WinSW can recycle"
+//   16:12:06  privsvc finishes the install and writes the result to a
+//             pipe nobody is reading. The job stays `sent` on the backend
+//             until its 100-minute timeout, then RUNS AGAIN.
+//
+// So on Windows no privileged call longer than ~15 minutes could ever
+// report back — patch.install, sdp.install, agent.install alike. The
+// "heartbeat arrives late instead of being rejected" trade recorded when
+// the queue landed was in fact "the process dies".
+//
+// The privsvc side already interleaves ACROSS connections (the max server
+// instance count is unbounded, and the fresh AgentCore that WinSW started
+// at 16:06 got tray.ensure + grpc.connect served in under 400ms while the
+// dead process's patch.install was still in flight on its own pipe). The
+// push sink is registered by `grpc.connect` for THAT connection only
+// (IpcGrpcHandlers.HandleConnect), so a second connection that never
+// calls grpc.connect receives no pushes and cannot duplicate a runJob.
+//
+// Hence two lanes over two connections to the same pipe:
+//   control — grpc.*, tray.*, short reads: everything the liveness
+//             machinery and the stream depend on. Budgets ≤ 60s.
+//   slow    — the long privileged operations. Opened lazily, on the
+//             first slow call, so an agent that never installs anything
+//             never holds a second pipe.
+//
+// The split is DERIVED from the budget rather than listed by hand, so a
+// new long method cannot land on the control lane by omission. The
+// threshold is 60s because that is the longest a control-lane request
+// may hold the lane (grpc.connect), and comfortably under the 270s after
+// which the stream gives up on a silent pipe. test/priv/ipc-slow-lane
+// pins the resulting membership so a budget change that moves a method
+// between lanes is a visible diff, not a surprise.
+//
+// Slow-lane calls still serialise among themselves — a security.compliance
+// scan issued mid-install waits for the install, exactly as before. That
+// is a scheduling delay; the control lane starving was a process death.
+export const SLOW_LANE_THRESHOLD_MS = 60_000;
+
+export type IpcLane = "control" | "slow";
+
+export function laneForMethod(method: string): IpcLane {
+  return getTimeoutForMethod(method) > SLOW_LANE_THRESHOLD_MS ? "slow" : "control";
+}
+
 const CONNECT_TIMEOUT_MS = 8000;
-const MAX_PENDING = 500; // hard cap to prevent unbounded growth
+const MAX_PENDING = 500; // hard cap per lane to prevent unbounded growth
 
 type Pending = {
   resolve: (r: PrivSvcResponse) => void;
@@ -168,12 +232,11 @@ type Pending = {
  * WHY A QUEUE AT ALL — the invariant had a hole.
  *
  * `NamedPipeServer.HandleClientAsync` is strictly serial per connection:
- * it awaits the handler before it even READS the next line. We keep one
- * connection, so every privileged call in the agent shares one lane.
- * Until this change the client ignored that: `call()` wrote immediately
- * and started the method's timer at WRITE time, so a request could burn
- * its whole budget queued behind somebody else's handler and be rejected
- * having never been dispatched.
+ * it awaits the handler before it even READS the next line. Until this
+ * change the client ignored that: `call()` wrote immediately and started
+ * the method's timer at WRITE time, so a request could burn its whole
+ * budget queued behind somebody else's handler and be rejected having
+ * never been dispatched.
  *
  * That is what "PrivSvc timeout: cdp.certs.read did not answer within
  * 8000ms" actually was in production (2026-08-13, 4 of 16 CDP scans on
@@ -190,15 +253,14 @@ type Pending = {
  * So the documented invariant — job > client > handler — was necessary
  * but not sufficient. It assumed a budget only has to cover its OWN
  * handler. With one serial lane it must cover the queue ahead of it too.
- * Rather than inflate every constant to hide that, the client now models
+ * Rather than inflate every constant to hide that, the client models
  * the lane: one request in flight, and the method budget starts at
  * DISPATCH. Each number then means what it says.
  *
  * Windows only, deliberately. The macOS/Linux privsvc handles each
  * `data` event in its own async callback, so those servers really do
  * interleave requests; serialising their clients would remove
- * concurrency that exists, and would park a 5s heartbeat behind a 60s
- * compliance run that today overtakes it.
+ * concurrency that exists.
  *
  * THE WAIT IS SELF-BOUNDING, so there is no separate queue deadline.
  * Whatever is in the lane leaves it when its own budget expires — the
@@ -208,12 +270,6 @@ type Pending = {
  * fire after the thing it was guarding had already fired, which is a
  * safety net that cannot catch anything. The outer bound stays the
  * scheduler's 30-minute stuck-worker guard.
- *
- * The cost of this is a real behaviour change: a request that used to
- * fail fast behind a long handler now waits for it instead. That is the
- * intended trade — failing fast on a lane you were never going to get is
- * how CDP lost 25% of its scans — but it means a heartbeat issued during
- * a 29-minute `sdp.install` is now late rather than rejected.
  */
 type Queued = {
   req: PrivSvcRequest;
@@ -226,7 +282,21 @@ type Queued = {
   queuedBehind: string[];
 };
 
-export class PrivSvcClient extends EventEmitter {
+/** What a lane reports upward; the client owns the EventEmitter surface. */
+type LaneEvents = {
+  debug: (ev: Record<string, unknown>) => void;
+  push: (msg: PrivSvcPush) => void;
+  /** The lane's socket went away (after its queue and pending were failed). */
+  closed: (wasManual: boolean) => void;
+  error: (err: unknown) => void;
+};
+
+/**
+ * One connection to the pipe and the serial lane it carries: its own
+ * socket, framing buffer, queue and in-flight slot. `PrivSvcClient` owns
+ * two of these and routes by method.
+ */
+class PipeLane {
   private socket: net.Socket | null = null;
   private buffer = "";
   private connecting: Promise<void> | null = null;
@@ -235,49 +305,22 @@ export class PrivSvcClient extends EventEmitter {
 
   /** Requests accepted but not yet written. See `Queued`. */
   private queue: Queued[] = [];
-  /** The single request currently occupying the pipe's serial lane. */
+  /** The single request currently occupying this connection's serial lane. */
   private inFlight: { id: string; method: string; budgetMs: number; startedAt: number } | null =
     null;
 
-  private earlyPushQueue: PrivSvcPush[] = [];
-  private pushListenerAttached = false;
+  constructor(readonly name: IpcLane, private readonly events: LaneEvents) {}
 
-  private hasPushListeners(): boolean {
-    return this.listenerCount("push") > 0 || this.pushListenerAttached;
+  /** Whether this lane has ever been (or is being) connected. */
+  get opened(): boolean {
+    return this.socket !== null || this.connecting !== null;
   }
 
-  onPush(cb: (msg: PrivSvcPush) => void) {
-    this.on("push", cb);
-    this.pushListenerAttached = true;
-
-    this.emit("debug", {
-      stage: "push_listener_attached",
-      listenerCount: this.listenerCount("push"),
-      earlyQueue: this.earlyPushQueue.length
-    });
-
-    // Flush any early buffered pushes through the same EventEmitter path
-    if (this.earlyPushQueue.length > 0) {
-      for (const msg of this.earlyPushQueue) {
-        try {
-          this.emit("debug", {
-            stage: "push_flush",
-            method: (msg as any)?.method,
-            msg
-          });
-          this.emit("push", msg);
-        } catch (e) {
-          // Guarded: a bare emit("error") with no listener re-throws as an
-          // uncaughtException (see onSocketError for the full rationale).
-          if (this.listenerCount("error") > 0) this.emit("error", e);
-          else this.emit("debug", { stage: "push_flush_error", err: String((e as any)?.message || e) });
-        }
-      }
-      this.earlyPushQueue = [];
-    }
+  private debug(ev: Record<string, unknown>) {
+    this.events.debug({ lane: this.name, ...ev });
   }
 
-  private async ensureConnected(): Promise<void> {
+  async ensureConnected(): Promise<void> {
     if (this.socket?.destroyed) this.socket = null;
     if (this.socket && !this.socket.destroyed) return;
     if (this.connecting) return this.connecting; // prevent parallel connect attempts
@@ -342,7 +385,7 @@ export class PrivSvcClient extends EventEmitter {
     const chunk = typeof data === "string" ? data : data.toString("utf8");
     this.buffer += chunk;
 
-    this.emit("debug", {
+    this.debug({
       stage: "raw_chunk_full",
       chunk,
       bufferLength: this.buffer.length
@@ -359,18 +402,16 @@ export class PrivSvcClient extends EventEmitter {
       let msg: any;
       try {
         msg = JSON.parse(txt);
-        this.emit("debug", {
+        this.debug({
           stage: "ipc_raw_message",
           method: msg?.method,
           id: msg?.id,
           hasOk: Object.prototype.hasOwnProperty.call(msg ?? {}, "ok"),
           hasError: Object.prototype.hasOwnProperty.call(msg ?? {}, "error"),
-          listenerCount: this.listenerCount("push"),
-          pushListenerAttached: this.pushListenerAttached,
           raw: msg
         });
       } catch {
-        this.emit("debug", { stage: "parse_error", raw: txt });
+        this.debug({ stage: "parse_error", raw: txt });
         continue;
       }
 
@@ -382,13 +423,7 @@ export class PrivSvcClient extends EventEmitter {
 
       if (isResponse) {
         if (!id) {
-          // Guarded: see onSocketError. A malformed response must not be
-          // able to crash the process via an unlistened "error" emit.
-          if (this.listenerCount("error") > 0) {
-            this.emit("error", new Error("PrivSvc response without id"));
-          } else {
-            this.emit("debug", { stage: "response_without_id", msg });
-          }
+          this.events.error(new Error("PrivSvc response without id"));
           continue;
         }
 
@@ -396,10 +431,10 @@ export class PrivSvcClient extends EventEmitter {
           const p = this.pending.get(id)!;
           this.pending.delete(id);
           clearTimeout(p.timer);
-          this.emit("debug", { stage: "response_match", id });
+          this.debug({ stage: "response_match", id });
           p.resolve(msg as PrivSvcResponse);
         } else {
-          this.emit("debug", {
+          this.debug({
             stage: "orphan_response",
             id,
             pendingSize: this.pending.size,
@@ -411,35 +446,14 @@ export class PrivSvcClient extends EventEmitter {
       const isPush = typeof msg?.method === "string";
 
       if (isPush) {
-        if (this.hasPushListeners()) {
-          this.emit("debug", {
-            stage: "push_emit",
-            method: msg?.method,
-            listenerCount: this.listenerCount("push"),
-            msg
-          });
-          this.emit("push", msg as PrivSvcPush);
-        } else {
-          this.emit("debug", {
-            stage: "push_buffered",
-            method: msg?.method,
-            listenerCount: this.listenerCount("push"),
-            msg
-          });
-          if (this.earlyPushQueue.length < 1000) {
-            this.earlyPushQueue.push(msg as PrivSvcPush);
-          } else {
-            this.emit("debug", {
-              stage: "push_buffer_overflow_drop",
-              method: msg?.method,
-              queued: this.earlyPushQueue.length
-            });
-          }
-        }
+        // Pushes are only ever registered for the control connection
+        // (grpc.connect binds the sink), but the framing does not care
+        // which socket a push arrived on: deliver it either way.
+        this.events.push(msg as PrivSvcPush);
         continue;
       }
 
-      this.emit("debug", { stage: "unknown_message", msg });
+      this.debug({ stage: "unknown_message", msg });
     }
   }
 
@@ -458,6 +472,7 @@ export class PrivSvcClient extends EventEmitter {
     // pending map is cleared below.
     const inFlight = Array.from(this.pending.entries()).map(([id, p]) => `${p.method}#${id}`);
     console.error("[PrivSvc IPC] socket error", {
+      lane: this.name,
       errCode,
       errMessage,
       pendingCount: this.pending.size,
@@ -465,7 +480,7 @@ export class PrivSvcClient extends EventEmitter {
     });
 
     if (errCode === "EPIPE" || /EPIPE/i.test(errMessage)) {
-      this.emit("debug", { stage: "epipe_detected", errCode, errMessage });
+      this.debug({ stage: "epipe_detected", errCode, errMessage });
     }
 
     const sock = this.socket;
@@ -486,21 +501,10 @@ export class PrivSvcClient extends EventEmitter {
 
     try { sock?.destroy(); } catch {}
 
-    // Only emit if someone is listening. On an EventEmitter, emitting
-    // "error" with NO registered listener makes Node RE-THROW the error,
-    // which surfaces as an uncaughtException. Nothing in the agent
-    // subscribes to `priv.on("error")` (only "push" and "debug"), so an
-    // unguarded emit here turned every transient named-pipe EPIPE /
-    // ECONNRESET into `[FATAL] uncaughtException: read EPIPE` — the exact
-    // W11 crash that outlived the idle-churn fix (logs 2026-07-01, event
-    // 266 chunked send at the 1h mark). Recovery does NOT depend on this
-    // emit: `sock.destroy()` above triggers the socket "close" event →
-    // `onSocketClose()` → `grpc.disconnected` push → reconnect. This
-    // guard matches privsvc-client-macos.ts / -linux.ts, which already
-    // had it — Windows was simply missed when that fix landed.
-    if (this.listenerCount("error") > 0) {
-      this.emit("error", err);
-    }
+    // Recovery does NOT depend on this: `sock.destroy()` above triggers
+    // the socket "close" event → onSocketClose(). The client decides
+    // whether anyone is listening for "error" (see there).
+    this.events.error(err);
   }
 
   /**
@@ -529,39 +533,13 @@ export class PrivSvcClient extends EventEmitter {
       clearTimeout(p.timer);
       p.reject(new Error(`PrivSvc connection closed (${id})`));
     }
-    // Notify higher layers (bridge) that the stream is gone
-    const disconnectMsg: PrivSvcPush = {
-      v: 1,
-      method: "grpc.disconnected",
-      params: { manual: wasManual }
-    };
-
-    if (this.hasPushListeners()) {
-      this.emit("debug", {
-        stage: "push_emit",
-        method: disconnectMsg.method,
-        listenerCount: this.listenerCount("push"),
-        msg: disconnectMsg
-      });
-      this.emit("push", disconnectMsg);
-    } else {
-      this.emit("debug", {
-        stage: "push_buffered",
-        method: disconnectMsg.method,
-        listenerCount: this.listenerCount("push"),
-        msg: disconnectMsg
-      });
-      if (this.earlyPushQueue.length < 1000) {
-        this.earlyPushQueue.push(disconnectMsg);
-      }
-    }
-    this.emit("close");
     this.buffer = "";
     this.socket = null;
+    this.events.closed(wasManual);
   }
 
   /** Methods occupying the lane ahead of a queued request, for diagnostics. */
-  private laneAhead(): string[] {
+  laneAhead(): string[] {
     const ahead = this.inFlight ? [this.inFlight.method] : [];
     return ahead.concat(this.queue.map((q) => q.req.method));
   }
@@ -602,13 +580,13 @@ export class PrivSvcClient extends EventEmitter {
 
     const timer = setTimeout(() => {
       this.pending.delete(id);
-      this.emit("debug", { stage: "timeout", id, method, waitedMs, waitedBehind });
+      this.debug({ stage: "timeout", id, method, waitedMs, waitedBehind });
       // Name the method and the budget: a bare "PrivSvc timeout" told an
       // operator nothing about WHICH privileged call hung, which is what
       // made a stalled self-update take a code read to diagnose.
       //
-      // The budget now covers only this handler, so this sentence is true
-      // as written. The queue context is appended rather than folded in,
+      // The budget covers only this handler, so this sentence is true as
+      // written. The queue context is appended rather than folded in,
       // because "waited 61s for the lane behind security.compliance, then
       // got 60s of its own" is the difference between a slow certificate
       // scan and a busy pipe — and the old message could not tell them
@@ -616,7 +594,7 @@ export class PrivSvcClient extends EventEmitter {
       entry.settled = true;
       const lane =
         waitedBehind.length > 0
-          ? ` (waited ${waitedMs}ms for the IPC lane behind ${waitedBehind.join(", ")})`
+          ? ` (waited ${waitedMs}ms for the IPC ${this.name} lane behind ${waitedBehind.join(", ")})`
           : "";
       entry.reject(
         new Error(`PrivSvc timeout: ${method} did not answer within ${timeoutMs}ms${lane}`)
@@ -642,7 +620,7 @@ export class PrivSvcClient extends EventEmitter {
 
     try {
       const payload = JSON.stringify(entry.req) + "\n";
-      this.emit("debug", { stage: "call_write", id, method });
+      this.debug({ stage: "call_write", id, method });
       const wrote = sock.write(payload);
       if (!wrote) sock.once("drain", () => {});
     } catch (e: any) {
@@ -658,7 +636,7 @@ export class PrivSvcClient extends EventEmitter {
     await this.ensureConnected();
 
     if (this.pending.size + this.queue.length >= MAX_PENDING) {
-      throw new Error(`PrivSvc pending requests overflow (${MAX_PENDING})`);
+      throw new Error(`PrivSvc pending requests overflow (${MAX_PENDING}, ${this.name} lane)`);
     }
 
     if (!req.id) req.id = randomUUID();
@@ -679,11 +657,11 @@ export class PrivSvcClient extends EventEmitter {
     });
   }
 
-  public getPendingCount(): number {
+  pendingCount(): number {
     return this.pending.size;
   }
 
-  public getPendingMethods(): string[] {
+  pendingMethods(): string[] {
     const out: string[] = [];
     for (const entry of this.pending.values()) {
       out.push(entry.method);
@@ -704,5 +682,152 @@ export class PrivSvcClient extends EventEmitter {
     this.socket = null;
     this.buffer = "";
     this.connecting = null;
+  }
+}
+
+export class PrivSvcClient extends EventEmitter {
+  private readonly control: PipeLane;
+  private readonly slow: PipeLane;
+
+  private earlyPushQueue: PrivSvcPush[] = [];
+  private pushListenerAttached = false;
+
+  constructor() {
+    super();
+    const shared = {
+      debug: (ev: Record<string, unknown>) => this.emit("debug", ev),
+      push: (msg: PrivSvcPush) => this.deliverPush(msg),
+      error: (err: unknown) => this.onLaneError(err)
+    };
+    this.control = new PipeLane("control", {
+      ...shared,
+      closed: (wasManual) => this.onControlClosed(wasManual)
+    });
+    this.slow = new PipeLane("slow", {
+      ...shared,
+      // The gRPC bridge lives on the control connection. Losing the slow
+      // connection fails the long call that was on it (already done by the
+      // lane) and nothing else: no `grpc.disconnected`, no reconnect.
+      closed: (wasManual) => this.emit("debug", { stage: "slow_lane_closed", manual: wasManual })
+    });
+  }
+
+  private lane(method: string): PipeLane {
+    return laneForMethod(method) === "slow" ? this.slow : this.control;
+  }
+
+  private hasPushListeners(): boolean {
+    return this.listenerCount("push") > 0 || this.pushListenerAttached;
+  }
+
+  onPush(cb: (msg: PrivSvcPush) => void) {
+    this.on("push", cb);
+    this.pushListenerAttached = true;
+
+    this.emit("debug", {
+      stage: "push_listener_attached",
+      listenerCount: this.listenerCount("push"),
+      earlyQueue: this.earlyPushQueue.length
+    });
+
+    // Flush any early buffered pushes through the same EventEmitter path
+    if (this.earlyPushQueue.length > 0) {
+      for (const msg of this.earlyPushQueue) {
+        try {
+          this.emit("debug", {
+            stage: "push_flush",
+            method: (msg as any)?.method,
+            msg
+          });
+          this.emit("push", msg);
+        } catch (e) {
+          // Guarded: a bare emit("error") with no listener re-throws as an
+          // uncaughtException (see onLaneError for the full rationale).
+          if (this.listenerCount("error") > 0) this.emit("error", e);
+          else this.emit("debug", { stage: "push_flush_error", err: String((e as any)?.message || e) });
+        }
+      }
+      this.earlyPushQueue = [];
+    }
+  }
+
+  private deliverPush(msg: PrivSvcPush) {
+    if (this.hasPushListeners()) {
+      this.emit("debug", {
+        stage: "push_emit",
+        method: msg?.method,
+        listenerCount: this.listenerCount("push"),
+        msg
+      });
+      this.emit("push", msg);
+      return;
+    }
+
+    this.emit("debug", {
+      stage: "push_buffered",
+      method: msg?.method,
+      listenerCount: this.listenerCount("push"),
+      msg
+    });
+    if (this.earlyPushQueue.length < 1000) {
+      this.earlyPushQueue.push(msg);
+    } else {
+      this.emit("debug", {
+        stage: "push_buffer_overflow_drop",
+        method: msg?.method,
+        queued: this.earlyPushQueue.length
+      });
+    }
+  }
+
+  private onLaneError(err: unknown) {
+    // Only emit if someone is listening. On an EventEmitter, emitting
+    // "error" with NO registered listener makes Node RE-THROW the error,
+    // which surfaces as an uncaughtException. Nothing in the agent
+    // subscribes to `priv.on("error")` (only "push" and "debug"), so an
+    // unguarded emit here turned every transient named-pipe EPIPE /
+    // ECONNRESET into `[FATAL] uncaughtException: read EPIPE` — the exact
+    // W11 crash that outlived the idle-churn fix (logs 2026-07-01, event
+    // 266 chunked send at the 1h mark). This guard matches
+    // privsvc-client-macos.ts / -linux.ts, which already had it — Windows
+    // was simply missed when that fix landed.
+    if (this.listenerCount("error") > 0) {
+      this.emit("error", err);
+    } else {
+      this.emit("debug", { stage: "lane_error_unlistened", err: String((err as any)?.message || err) });
+    }
+  }
+
+  private onControlClosed(wasManual: boolean) {
+    // Notify higher layers (bridge) that the stream is gone
+    const disconnectMsg: PrivSvcPush = {
+      v: 1,
+      method: "grpc.disconnected",
+      params: { manual: wasManual }
+    };
+    this.deliverPush(disconnectMsg);
+    this.emit("close");
+  }
+
+  async call(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+    return this.lane(req.method).call(req);
+  }
+
+  /** Whether the slow lane has opened its connection (diagnostics / tests). */
+  public isSlowLaneOpen(): boolean {
+    return this.slow.opened;
+  }
+
+  public getPendingCount(): number {
+    return this.control.pendingCount() + this.slow.pendingCount();
+  }
+
+  public getPendingMethods(): string[] {
+    return this.control.pendingMethods().concat(this.slow.pendingMethods());
+  }
+
+  close() {
+    this.control.close();
+    this.slow.close();
   }
 }

@@ -25,87 +25,25 @@
 // cannot wait for the lane forever either.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { EventEmitter } from "events";
+import { SerialPipe } from "./serial-pipe";
 
-/**
- * A stand-in for the Windows named pipe that reproduces the property that
- * matters: strictly serial service. One request is handled at a time and
- * the next is not even looked at until the previous answer is written.
- */
-class SerialPipe extends EventEmitter {
-  destroyed = false;
-  writable = true;
-  /** method -> how long its "handler" takes. */
-  handlerMs: Record<string, number> = {};
-  /**
-   * Optional: privsvc abandons a wedged handler and starts serving again
-   * after this long, without ever answering the request it dropped.
-   */
-  freeLaneAfterMs: number | null = null;
-  /** Methods in arrival order — what the server actually got to execute. */
-  dispatched: string[] = [];
-
-  private inbox: any[] = [];
-  private busy = false;
-
-  connect(_path: string) {
-    queueMicrotask(() => this.emit("connect"));
-    return this;
-  }
-
-  write(payload: string) {
-    for (const line of payload.split("\n")) {
-      if (line.trim()) this.inbox.push(JSON.parse(line));
-    }
-    this.serve();
-    return true;
-  }
-
-  private serve() {
-    if (this.busy) return;
-    const req = this.inbox.shift();
-    if (!req) return;
-
-    this.busy = true;
-    this.dispatched.push(req.method);
-
-    const handlerMs = this.handlerMs[req.method] ?? 10;
-
-    if (this.freeLaneAfterMs !== null && this.freeLaneAfterMs < handlerMs) {
-      setTimeout(() => {
-        this.busy = false;
-        this.serve(); // lane freed, answer never sent
-      }, this.freeLaneAfterMs);
-      return;
-    }
-
-    setTimeout(() => {
-      this.busy = false;
-      if (!this.destroyed) {
-        this.emit("data", JSON.stringify({ v: 1, id: req.id, ok: true, result: {} }) + "\n");
-      }
-      this.serve();
-    }, handlerMs);
-  }
-
-  destroy() {
-    this.destroyed = true;
-    this.writable = false;
-    this.emit("close");
-  }
-
-  once(event: string, cb: any) {
-    return super.once(event, cb);
-  }
-}
-
-let pipe: SerialPipe;
+let pipes: SerialPipe[];
+let handlerMs: Record<string, number>;
+let freeLaneAfterMs: number | null;
+const pipe = () => {
+  expect(pipes).toHaveLength(1);
+  return pipes[0];
+};
 
 vi.mock("net", () => ({
   default: {
     Socket: class {
       constructor() {
-        return pipe as any;
+        const p = new SerialPipe();
+        p.handlerMs = { ...handlerMs };
+        p.freeLaneAfterMs = freeLaneAfterMs;
+        pipes.push(p);
+        return p as any;
       }
     }
   }
@@ -120,7 +58,9 @@ const call = (client: any, method: string) =>
 describe("PrivSvc IPC lane (Windows)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    pipe = new SerialPipe();
+    pipes = [];
+    handlerMs = {};
+    freeLaneAfterMs = null;
   });
 
   afterEach(() => {
@@ -129,24 +69,26 @@ describe("PrivSvc IPC lane (Windows)", () => {
 
   it("does not spend a request's budget on the handler ahead of it", async () => {
     // The production shape, scaled down: compliance occupies the lane for
-    // longer than CDP's entire budget. Before the queue, CDP's timer was
-    // already running and it was rejected without ever being executed.
-    pipe.handlerMs["security.compliance"] = 30_000;
-    pipe.handlerMs["cdp.certs.read"] = 100;
+    // longer than the next request's entire budget. Before the queue, that
+    // request's timer was already running and it was rejected without ever
+    // being executed. (Both ride the slow lane; CDP, the original victim,
+    // now rides the control lane and never meets compliance at all.)
+    handlerMs["security.compliance"] = 30_000;
+    handlerMs["patch.scan"] = 100;
 
     const client = new PrivSvcClient();
     const compliance = call(client, "security.compliance");
-    const cdp = call(client, "cdp.certs.read");
+    const scan = call(client, "patch.scan");
 
     await vi.advanceTimersByTimeAsync(60_000);
 
     await expect(compliance).resolves.toMatchObject({ ok: true });
-    await expect(cdp).resolves.toMatchObject({ ok: true });
-    expect(pipe.dispatched).toEqual(["security.compliance", "cdp.certs.read"]);
+    await expect(scan).resolves.toMatchObject({ ok: true });
+    expect(pipe().dispatched).toEqual(["security.compliance", "patch.scan"]);
   });
 
   it("serves one request at a time, in order", async () => {
-    pipe.handlerMs = { "software.inventory": 5_000, "cdp.certs.read": 5_000, ping: 5_000 };
+    handlerMs = { "software.inventory": 5_000, "cdp.certs.read": 5_000, ping: 5_000 };
 
     const client = new PrivSvcClient();
     const all = Promise.all([
@@ -157,17 +99,17 @@ describe("PrivSvc IPC lane (Windows)", () => {
 
     // Only the head can be in the lane while the first handler runs.
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(pipe.dispatched).toEqual(["software.inventory"]);
+    expect(pipe().dispatched).toEqual(["software.inventory"]);
 
     await vi.advanceTimersByTimeAsync(30_000);
     await expect(all).resolves.toHaveLength(3);
-    expect(pipe.dispatched).toEqual(["software.inventory", "cdp.certs.read", "ping"]);
+    expect(pipe().dispatched).toEqual(["software.inventory", "cdp.certs.read", "ping"]);
   });
 
   it("still times out on its own slow handler, naming the method and budget", async () => {
     // The queue must not turn a genuinely wedged handler into an
     // indefinite wait — that was the whole value of the old timeout.
-    pipe.handlerMs["cdp.certs.read"] = 10 * 60_000;
+    handlerMs["cdp.certs.read"] = 10 * 60_000;
 
     const client = new PrivSvcClient();
     const cdp = call(client, "cdp.certs.read");
@@ -185,55 +127,57 @@ describe("PrivSvc IPC lane (Windows)", () => {
     // request's wait is bounded by construction. A queue deadline derived
     // from that same 270s could only ever fire after this — it would be a
     // safety net that cannot catch anything.
-    pipe.handlerMs["security.compliance"] = 60 * 60_000; // wedged
-    pipe.handlerMs.ping = 10;
-    pipe.freeLaneAfterMs = 270_000; // privsvc gives up around when we do
+    handlerMs["security.compliance"] = 60 * 60_000; // wedged
+    handlerMs["patch.scan"] = 10;
+    freeLaneAfterMs = 270_000; // privsvc gives up around when we do
 
     const client = new PrivSvcClient();
     const compliance = call(client, "security.compliance");
     compliance.catch(() => {}); // asserted below
-    const ping = call(client, "ping");
+    const scan = call(client, "patch.scan");
 
     await vi.advanceTimersByTimeAsync(200_000);
-    expect(pipe.dispatched).toEqual(["security.compliance"]); // still waiting
+    expect(pipe().dispatched).toEqual(["security.compliance"]); // still waiting
 
     await vi.advanceTimersByTimeAsync(120_000);
     await expect(compliance).rejects.toThrow(/security\.compliance did not answer/);
-    await expect(ping).resolves.toMatchObject({ ok: true });
+    await expect(scan).resolves.toMatchObject({ ok: true });
   });
 
   it("reports the lane it waited on, so a busy pipe is not misread as a slow handler", async () => {
     // The diagnostic that was missing. "cdp.certs.read did not answer
     // within 8000ms" was true and useless: it pointed the investigation at
     // the certificate scan, which was never the problem.
-    pipe.handlerMs["security.compliance"] = 60 * 60_000; // never answers
-    pipe.handlerMs["cdp.certs.read"] = 60 * 60_000; // nor does the pipe after it
+    handlerMs["security.compliance"] = 60 * 60_000; // never answers
+    handlerMs["patch.scan"] = 60 * 60_000; // nor does the pipe after it
 
     const client = new PrivSvcClient();
     const compliance = call(client, "security.compliance");
     compliance.catch(() => {}); // asserted below; silence the unhandled warning
-    const cdp = call(client, "cdp.certs.read");
-    cdp.catch(() => {}); // asserted below
+    const scan = call(client, "patch.scan");
+    scan.catch(() => {}); // asserted below
 
-    await vi.advanceTimersByTimeAsync(400_000);
+    // compliance holds the lane for its 270s budget, then patch.scan gets
+    // its own 240s: both must have expired for the message to exist.
+    await vi.advanceTimersByTimeAsync(600_000);
 
-    await expect(cdp).rejects.toThrow(/cdp\.certs\.read did not answer within 60000ms/);
-    await expect(cdp).rejects.toThrow(/waited \d+ms for the IPC lane behind security\.compliance/);
+    await expect(scan).rejects.toThrow(/patch\.scan did not answer within 240000ms/);
+    await expect(scan).rejects.toThrow(/waited \d+ms for the IPC slow lane behind security\.compliance/);
   });
 
   it("rejects queued callers when the pipe drops instead of leaving them hanging", async () => {
-    pipe.handlerMs["security.compliance"] = 60_000;
+    handlerMs["security.compliance"] = 60_000;
 
     const client = new PrivSvcClient();
     const compliance = call(client, "security.compliance");
-    compliance.catch(() => {}); // the drop rejects it too; only cdp is asserted
-    const cdp = call(client, "cdp.certs.read");
-    cdp.catch(() => {}); // asserted below
+    compliance.catch(() => {}); // the drop rejects it too; only scan is asserted
+    const scan = call(client, "patch.scan");
+    scan.catch(() => {}); // asserted below
 
     await vi.advanceTimersByTimeAsync(100);
-    pipe.destroy();
+    pipe().destroy();
     await vi.advanceTimersByTimeAsync(100);
 
-    await expect(cdp).rejects.toThrow(/closed/i);
+    await expect(scan).rejects.toThrow(/closed/i);
   });
 });
