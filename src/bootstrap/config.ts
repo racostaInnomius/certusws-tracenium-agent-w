@@ -1,4 +1,5 @@
 // src/bootstrap/config.ts
+import { readRegistryValue } from "./registry";
 import dotenv from "dotenv";
 import pkg from "../../package.json";
 dotenv.config();
@@ -27,6 +28,8 @@ function required(name: string, value?: string): string {
  *
  * IPv6 soportado vía bracket syntax estándar: "[::1]:443".
  */
+const REGISTRY_KEY = "HKLM\\Software\\CertusWS\\Tracenium";
+
 function resolveGrpcEndpoint(raw: string): string {
   const value = (raw || "").trim();
   if (!value) {
@@ -55,26 +58,34 @@ export const config = {
     return url;
   }
 
-  // Try reading from Windows registry
-  try {
-    if (process.platform === "win32") {
-      const { execSync } = require("child_process");
-      const output = execSync(
-        'reg query "HKLM\\Software\\CertusWS\\Tracenium" /v ServerBaseUrl',
-        { encoding: "utf8" }
-      );
+  const read = readRegistryValue(REGISTRY_KEY, "ServerBaseUrl");
+  if (read.value) {
+    console.log(`[Config] SERVER_BASE_URL=${read.value} (registry)`);
+    return read.value;
+  }
 
-      const match = output.match(/ServerBaseUrl\s+REG_\w+\s+(.+)/i);
-      if (match && match[1]) {
-        const url = match[1].trim();
-        if (url.length > 0) {
-          console.log(`[Config] SERVER_BASE_URL=${url} (registry)`);
-          return url;
-        }
-      }
-    }
-  } catch {
-    // ignore registry errors
+  // ⚠️ EL FALLO SE REGISTRA. La versión anterior tenía un `catch {}` mudo, y
+  // eso convirtió "no pude leer el registro" en "hablo con localhost para
+  // siempre" sin dejar una sola línea que lo explicara.
+  console.warn(`[Config] no se pudo leer ServerBaseUrl del registro: ${read.detail}`);
+
+  // ⚠️ EN WINDOWS NO HAY FALLBACK A localhost, Y ESO ES DELIBERADO.
+  //
+  // El MSI SIEMPRE escribe esta llave, así que en un Windows instalado la
+  // única forma de llegar aquí es que la LECTURA fallara — un equipo roto, no
+  // el portátil de un desarrollador. Devolver `http://localhost:3000` ahí
+  // convierte un problema de arranque en un agente que se pasa semanas
+  // conectándose a sí mismo: los updates fallan con ECONNREFUSED a ::1:3000 y
+  // la renovación del certificado apunta al mismo sitio, todo en silencio.
+  //
+  // Dejándolo sin resolver, `getApiBaseUrl` lanza `update_api_base_url_missing`
+  // — un error con nombre que viaja en el ACK y dice qué pasa.
+  //
+  // Fuera de Windows no hay registro que leer, así que el fallback sigue
+  // siendo lo correcto: es el caso del desarrollador con nada configurado.
+  if (process.platform === "win32") {
+    console.error("[Config] SERVER_BASE_URL sin resolver en Windows — revisar la llave del registro");
+    return undefined as unknown as string;
   }
 
   const fallback = "http://localhost:3000";
@@ -89,27 +100,16 @@ export const config = {
       return url;
     }
 
-    try {
-      if (process.platform === "win32") {
-        const { execSync } = require("child_process");
-        const output = execSync(
-          'reg query "HKLM\\Software\\CertusWS\\Tracenium" /v CertRenewalBaseUrl',
-          { encoding: "utf8" }
-        );
-
-        const match = output.match(/CertRenewalBaseUrl\s+REG_\w+\s+(.+)/i);
-        if (match && match[1]) {
-          const url = match[1].trim();
-          if (url.length > 0) {
-            console.log(`[Config] CERT_RENEWAL_BASE_URL=${url} (registry)`);
-            return url;
-          }
-        }
-      }
-    } catch {
-      // ignore registry errors
+    const read = readRegistryValue(REGISTRY_KEY, "CertRenewalBaseUrl");
+    if (read.value) {
+      console.log(`[Config] CERT_RENEWAL_BASE_URL=${read.value} (registry)`);
+      return read.value;
     }
 
+    // Opcional por diseño: cert-renewal.ts cae a serverBaseUrl. Pero el motivo
+    // se registra igual, porque cuando serverBaseUrl tampoco resuelve, la
+    // renovación del certificado se queda sin destino y eso caduca el equipo.
+    console.warn(`[Config] CERT_RENEWAL_BASE_URL sin resolver: ${read.detail}`);
     return undefined;
   })(),
   agentId: process.env.AGENT_ID || "auto",
