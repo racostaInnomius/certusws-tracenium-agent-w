@@ -205,6 +205,9 @@ public sealed class Router
             // enrolamiento.
             "cdp.cert.install" => CdpCertInstall.Handle(req),
 
+            // Fase 4 — conector AD CS: la base de emisiones de una CA, cruda.
+            "cdp.adcs.read" => CdpAdcs.Handle(req),
+
             "crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),
             "crypto.cert.install" => CryptoCertInstall.HandleInstallCert(req),
             "crypto.cert.renew" => CryptoCertRenew.HandleRenewCert(req),

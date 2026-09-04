@@ -71,6 +71,13 @@ export type RuntimePolicy = {
      * el agente no descubre. Saneado y acotado al recibir la policy.
      */
     probeTargets?: string[];
+    /**
+     * Conector AD CS (fase 4): en un equipo con el rol Certification
+     * Authority, leer la base de emisiones por RequestID (incremental) y
+     * reportarla. Opt-in: es una lectura grande y solo tiene sentido en
+     * un CA server.
+     */
+    adcs?: { enabled?: boolean; maxPerScan?: number };
   };
   /** Remote Control tuning that isn't a simple on/off capability gate.
    *  The `features.remote*` flags decide WHETHER a capability runs; this
@@ -703,6 +710,12 @@ export class PolicyRuntime extends EventEmitter {
    * seria inutil (demasiado estrecho) o un escaneo recursivo de algo
    * grande en cada endpoint de la flota.
    */
+  /** Conector AD CS: si leer la base de la CA, y cuantas filas por escaneo. */
+  getCdpAdcs(): { enabled: boolean; maxPerScan: number } {
+    const a = this.policy.cdp?.adcs;
+    return { enabled: a?.enabled === true, maxPerScan: Number(a?.maxPerScan) || 2000 };
+  }
+
   /** Objetivos remotos ya saneados, como pares host/port. */
   getCdpProbeTargets(): ProbeTarget[] {
     return (this.policy.cdp?.probeTargets ?? [])
@@ -876,7 +889,11 @@ export class PolicyRuntime extends EventEmitter {
       scanTlsListeners: policy.cdp?.scanTlsListeners === true,
       tlsListenerPorts: sanitizeTlsListenerPorts(policy.cdp?.tlsListenerPorts, this.logger),
       certFilePaths: sanitizeJavaKeystorePaths(policy.cdp?.certFilePaths, this.logger),
-      probeTargets: sanitizeProbeTargets(policy.cdp?.probeTargets, this.logger)
+      probeTargets: sanitizeProbeTargets(policy.cdp?.probeTargets, this.logger),
+      adcs: {
+        enabled: policy.cdp?.adcs?.enabled === true,
+        maxPerScan: Math.min(Math.max(Number(policy.cdp?.adcs?.maxPerScan) || 2000, 50), 5000)
+      }
     };
     // rcp.file confinement. Path lists get the same hard sanitation as
     // cdp.javaKeystorePaths — absolute only, bounded length, bounded count,

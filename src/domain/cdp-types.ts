@@ -137,7 +137,7 @@ export type CdpCertItem = {
    *   "listener"   — captured from a live local TLS handshake, i.e. what
    *                  the service actually serves (may differ from any
    *                  store). */
-  source: "store" | "java-store" | "listener" | "file" | "nss" | "probe";
+  source: "store" | "java-store" | "listener" | "file" | "nss" | "probe" | "adcs";
 };
 
 export type CdpDelta = {
@@ -173,4 +173,25 @@ export type CdpNamespace = {
   };
 
   collectorError?: CdpCollectorError;
+
+  /**
+   * Conector AD CS (fase 4). Solo lo manda una Certification Authority
+   * con `cdp.adcs.enabled`. Lo emitido NO esta en este equipo: el control
+   * plane lo proyecta a activos con origen `adcs`, no a la lista de
+   * certificados del equipo.
+   */
+  adcs?: CdpAdcsReport;
+};
+
+export type CdpAdcsReport = {
+  isCa: boolean;
+  caName: string | null;
+  sinceRequestId: number;
+  lastRequestId: number;
+  /** Emisiones nuevas desde el cursor, con su plantilla y solicitante. */
+  issued: Array<CdpCertItem & { requestId: number; disposition: number | null; requester?: string; template?: string }>;
+  truncated: boolean;
+  parseFailures: number;
+  /** Que columnas reconocio el parser: si falta una, se ve aqui. */
+  columnsFound: { requestId: boolean; disposition: boolean; requester: boolean; template: boolean; rawCertificate: boolean } | null;
 };

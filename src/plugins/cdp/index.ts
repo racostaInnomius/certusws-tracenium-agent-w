@@ -13,7 +13,7 @@
 
 import os from "os";
 import type { AgentContext } from "../../core/agent-context";
-import type { CdpCertItem, CdpNamespace, CdpStoreInfo } from "../../domain/cdp-types";
+import type { CdpAdcsReport, CdpCertItem, CdpNamespace, CdpStoreInfo } from "../../domain/cdp-types";
 import { commitCdpBaseline, computeCdpDelta } from "../../domain/cdp-baseline-repo";
 import { collectWindowsCdp } from "./providers/windows";
 import { collectMacosCdp } from "./providers/macos";
@@ -267,6 +267,19 @@ async function collectOnce(
     }
   }
 
+  // Conector AD CS (fase 4): solo en Windows, solo si la policy lo pide,
+  // y en un bloque propio del namespace — lo emitido por una CA no esta
+  // EN este equipo. Fallo blando.
+  let adcs: CdpAdcsReport | undefined;
+  if (platform === "win32" && ctx.policyRuntime.getCdpAdcs?.()?.enabled) {
+    try {
+      const { collectAdcs } = await import("./providers/adcs");
+      adcs = await collectAdcs(ctx);
+    } catch (err: any) {
+      ctx.logger?.warn?.("CDP/ADCS: conector fallo (no fatal)", { error: err?.message || String(err) });
+    }
+  }
+
   const { items, truncated } = applyCap(result.items);
 
   if (result.parseFailures > 0) {
@@ -300,9 +313,13 @@ async function collectOnce(
     delta.removed = [];
   }
   const isBaselineSend = delta === null;
+  // Emisiones nuevas de la CA cuentan como cambio: si no, el planificador
+  // descartaria el namespace entero y el bloque `adcs` no viajaria nunca
+  // en una CA cuyo propio almacen no cambia (la trampa de `hasChanges`).
+  const adcsChanged = (adcs?.issued.length ?? 0) > 0;
   const hasChanges = isBaselineSend
     ? true
-    : delta.added.length > 0 || delta.removed.length > 0 || delta.updated.length > 0;
+    : adcsChanged || delta.added.length > 0 || delta.removed.length > 0 || delta.updated.length > 0;
 
   // Commit AFTER diffing so `removed` is computed against the previous
   // scan. Committing here (vs after enqueue) mirrors AMP: the outbox is
@@ -320,6 +337,7 @@ async function collectOnce(
       count: items.length,
       ...(isBaselineSend ? { items } : {}),
       ...(!isBaselineSend && hasChanges ? { delta } : {})
-    }
+    },
+    ...(adcs ? { adcs } : {})
   };
 }
