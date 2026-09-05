@@ -81,10 +81,36 @@ export type TrayConsentResponseFile = {
   respondedBy?: string;
 };
 
-/** Lo que se supo de quién respondió, para el registro. */
+/**
+ * Lo que se supo de quién respondió, para el registro.
+ *
+ * ⚠️ Los tres motivos NO son el mismo hecho, y confundirlos vacía la
+ * ventana de observación de sentido:
+ *
+ * `tray_sin_identidad` — la bandeja es anterior al campo. Es una cuestión
+ * de despliegue: se arregla actualizando la flota, y su cuenta dice cuánto
+ * falta para poder EXIGIR la verificación.
+ *
+ * `consola_desconocida` — no se pudo resolver quién está delante. Es una
+ * avería de lectura (en Linux, todo lo que sale por `exec` puede volver
+ * vacío). No dice nada sobre quién respondió.
+ *
+ * `otro_usuario` — se supo quién está en consola, se supo quién respondió,
+ * y NO son la misma persona. Esto es el caso que motivó todo el mecanismo:
+ * alguien por RDP aprobando la pantalla de quien está sentado delante. Es
+ * la única señal de abuso de las tres, y mientras se contara como
+ * "consola_desconocida" quedaba enterrada bajo el ruido de las otras dos —
+ * o sea, la observación no medía lo que dice medir.
+ */
 export type ConsentResponder =
   | { verified: true; user: string }
-  | { verified: false; why: "tray_sin_identidad" | "consola_desconocida" };
+  | {
+      verified: false;
+      why: "tray_sin_identidad" | "consola_desconocida" | "otro_usuario";
+      /** Solo en `otro_usuario`: los dos nombres, ya normalizados. */
+      respondio?: string;
+      consola?: string;
+    };
 
 /** Directorio de estado compartido: donde vive tray-status.json. */
 export function consentRequestPath(): string {
@@ -172,7 +198,15 @@ export function matchesConsoleUser(
     return afterDomain.split("@")[0].trim().toLowerCase();
   };
   if (bare(said) !== bare(console_)) {
-    return { verified: false, why: "consola_desconocida" };
+    // ⚠️ NO es "consola_desconocida". Aquí se sabe todo: quién está delante
+    // y quién respondió, y no coinciden. Es el único de los tres motivos
+    // que señala a alguien.
+    return {
+      verified: false,
+      why: "otro_usuario",
+      respondio: bare(said),
+      consola: bare(console_)
+    };
   }
   return { verified: true, user: said };
 }
@@ -286,7 +320,20 @@ export function createTrayConsentPrompter(ctx: AgentContext): ConsentPrompter {
               .catch(() => null);
             const who = matchesConsoleUser(answer.respondedBy, consoleUser);
 
-            if (!who.verified) {
+            if (!who.verified && who.why === "otro_usuario") {
+              // ⚠️ Esto no es un dato que falte: es una respuesta dada por
+              // alguien que NO está delante del equipo. Sigue sin
+              // rechazarse mientras dure la ventana de observación —esa
+              // decisión es del producto, no del log—, pero se registra
+              // como lo que es, y aparte, para que contarlo sea contar
+              // esto y no el ruido de las bandejas viejas.
+              ctx.logger?.warn?.("[rcp] consentimiento respondido por OTRO usuario", {
+                sessionId: req.sessionId,
+                motivo: who.why,
+                respondio: who.respondio ?? null,
+                consola: who.consola ?? null
+              });
+            } else if (!who.verified) {
               // No se rechaza: ver matchesConsoleUser. Se ANOTA, para que el
               // día que la flota tenga la bandeja nueva se pueda exigir sin
               // descubrir entonces a quién se estaba dejando fuera.

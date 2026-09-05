@@ -77,6 +77,23 @@ export class SessionManager {
    * Se limpia con la sesión: nunca sobrevive a un cierre.
    */
   private readonly consentGranted = new Set<string>();
+
+  /**
+   * Cuándo empezó CADA sesión, para que el tope duro no se reinicie.
+   *
+   * ⚠️ El tope de 4 h vive en un `setTimeout` del `PeerSession`, y un
+   * reinicio de ICE construye un `PeerSession` NUEVO. Con el temporizador
+   * naciendo con él, cada reconstrucción regalaba otras cuatro horas: una
+   * sesión de pantalla en un portátil que cambia de wifi cada rato podía no
+   * alcanzar el tope nunca. Un límite que se puede renovar sin decidirlo
+   * no es un límite.
+   *
+   * Aquí se guarda el instante de la PRIMERA oferta y el peer nuevo recibe
+   * lo que queda, no el plazo entero. Misma idea que `consentGranted`: lo
+   * que pertenece a la sesión no puede vivir en el peer, porque el peer se
+   * reconstruye y la sesión no.
+   */
+  private readonly sessionStartedAt = new Map<string, number>();
   private readonly pendingIce = new Map<
     string,
     { at: number; items: PendingIce[] }
@@ -328,6 +345,32 @@ export class SessionManager {
     // RtcPeerConnection, which has historically been the silent-crash hotspot
     // (missing prebuild for the host arch, deadlock during ICE init, etc.).
     // Bracketing logs let us locate the exact step the next time it fails.
+    // Lo que queda del tope duro, no el tope entero. Ver `sessionStartedAt`.
+    const startedAt = this.sessionStartedAt.get(sessionId) ?? Date.now();
+    this.sessionStartedAt.set(sessionId, startedAt);
+    const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+    const remainingSeconds = timeoutSeconds - elapsedSeconds;
+    if (remainingSeconds <= 0) {
+      // El tope venció mientras la red se recomponía. Reconstruir aquí sería
+      // devolver una sesión que ya debería haber terminado.
+      this.ctx.logger?.warn?.("[rcp] el tope duro venció durante el reinicio de ICE", {
+        sid: sessionId.slice(-8),
+        elapsedSeconds,
+        timeoutSeconds
+      });
+      this.consentGranted.delete(sessionId);
+      this.sessionStartedAt.delete(sessionId);
+      this.sendClose(sessionId, "hard_cap_timeout");
+      return;
+    }
+    if (elapsedSeconds > 0) {
+      this.ctx.logger?.info?.("[rcp] el tope duro NO se reinicia con ICE", {
+        sid: sessionId.slice(-8),
+        elapsedSeconds,
+        remainingSeconds
+      });
+    }
+
     this.ctx.logger?.info?.("[rcp] constructing PeerSession", {
       sid: sessionId.slice(-8)
     });
@@ -349,9 +392,10 @@ export class SessionManager {
       onTeardown: (reason) => {
         this.sessions.delete(sessionId);
         this.consentGranted.delete(sessionId);
+        this.sessionStartedAt.delete(sessionId);
         this.sendClose(sessionId, reason);
       },
-      sessionTimeoutSeconds: timeoutSeconds
+      sessionTimeoutSeconds: remainingSeconds
     });
     this.ctx.logger?.info?.("[rcp] PeerSession constructed", {
       sid: sessionId.slice(-8)
@@ -476,6 +520,7 @@ export class SessionManager {
     if (!peer) return;
     this.sessions.delete(sessionId);
     this.consentGranted.delete(sessionId);
+    this.sessionStartedAt.delete(sessionId);
     await peer.dispose(reason);
   }
 
@@ -492,6 +537,7 @@ export class SessionManager {
     if (peer) {
       this.sessions.delete(sessionId);
       this.consentGranted.delete(sessionId);
+      this.sessionStartedAt.delete(sessionId);
       await peer.dispose(`remote_error:${code}`);
     }
   }

@@ -122,12 +122,49 @@ enum ConsentPrompt {
         Logger.shared.info("Consent \(approved ? "approved" : "denied") for \(request.kind) session")
     }
 
-    private static func write(requestId: String, approved: Bool) {
-        let payload: [String: Any] = [
+    /// El contenido del fichero de respuesta, aparte de escribirlo.
+    ///
+    /// Separado para poder comprobarlo: `write` toca el disco y el usuario
+    /// real de la sesión, y un test que dependa de los dos no comprueba la
+    /// forma del mensaje, que es lo único que el agente lee.
+    static func responsePayload(requestId: String,
+                                approved: Bool,
+                                respondedBy: String) -> [String: Any] {
+        var payload: [String: Any] = [
             "requestId": requestId,
             "decision": approved ? "approved" : "denied",
             "atUtc": ISO8601DateFormatter().string(from: Date()),
         ]
+        // Vacío NO se manda: el agente distingue "la bandeja no lo dice"
+        // (bandeja vieja, se acepta y se anota) de "lo dice y no coincide"
+        // (otro usuario). Una cadena vacía se leería como lo segundo.
+        let who = respondedBy.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !who.isEmpty {
+            payload["respondedBy"] = who
+        }
+        return payload
+    }
+
+    private static func write(requestId: String, approved: Bool) {
+        // ⚠️ QUIÉN respondió, y no solo qué respondió.
+        //
+        // AgentCore corre como root y busca la respuesta en TODOS los
+        // perfiles del equipo, porque no sabe de antemano quién está en
+        // consola. Sin este campo, una respuesta escrita desde otra sesión
+        // —una pantalla compartida, un segundo usuario en cambio rápido—
+        // valía igual que la de quien está sentado delante, y el
+        // consentimiento de ADR-0012 es el de esa persona: es SU pantalla.
+        //
+        // La bandeja de Windows ya lo mandaba; esta no, así que en macOS la
+        // comprobación se saldaba siempre con "no se sabe" y la ventana de
+        // observación no observaba nada.
+        //
+        // `NSUserName()` es el nombre CORTO, que es exactamente lo que el
+        // agente lee con `stat -f %Su /dev/console`. Mandar el nombre
+        // completo (`NSFullUserName()`) no cotejaría con nada.
+        let payload = responsePayload(requestId: requestId,
+                                      approved: approved,
+                                      respondedBy: NSUserName())
         do {
             let dir = responseURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

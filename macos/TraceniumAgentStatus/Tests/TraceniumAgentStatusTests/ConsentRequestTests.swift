@@ -82,3 +82,67 @@ final class ConsentRequestTests: XCTestCase {
         XCTAssertTrue(r.isShowable)
     }
 }
+
+/// ⚠️ Quién respondió, no solo qué respondió.
+///
+/// AgentCore corre como root y busca la respuesta en TODOS los perfiles del
+/// equipo, porque no sabe de antemano quién está en consola. Sin
+/// `respondedBy`, una respuesta escrita desde otra sesión valía igual que la
+/// de quien está sentado delante — y el consentimiento de ADR-0012 es el de
+/// esa persona: es SU pantalla.
+///
+/// La bandeja de Windows ya mandaba el campo; esta no, así que en macOS la
+/// comprobación del agente se saldaba SIEMPRE con "no se sabe" y la ventana
+/// de observación no observaba nada.
+final class ConsentResponsePayloadTests: XCTestCase {
+    func testCarriesWhoAnswered() {
+        let p = ConsentPrompt.responsePayload(requestId: "sess-1.view.9",
+                                              approved: true,
+                                              respondedBy: "javier")
+        XCTAssertEqual(p["requestId"] as? String, "sess-1.view.9")
+        XCTAssertEqual(p["decision"] as? String, "approved")
+        XCTAssertEqual(p["respondedBy"] as? String, "javier")
+    }
+
+    func testDenialAlsoCarriesIt() {
+        // Un "no" también hay que poder atribuirlo: si no, una negativa
+        // ajena es indistinguible de la de la persona del equipo.
+        let p = ConsentPrompt.responsePayload(requestId: "x",
+                                              approved: false,
+                                              respondedBy: "javier")
+        XCTAssertEqual(p["decision"] as? String, "denied")
+        XCTAssertEqual(p["respondedBy"] as? String, "javier")
+    }
+
+    func testAnEmptyNameIsOmittedRatherThanSentBlank() {
+        // El agente distingue tres cosas: la bandeja no lo dice (bandeja
+        // vieja: se acepta y se anota), no se pudo resolver quién está en
+        // consola (avería de lectura), y no coincide (otro usuario). Una
+        // cadena vacía se leería como la tercera, que es la única que señala
+        // a alguien.
+        let p = ConsentPrompt.responsePayload(requestId: "x",
+                                              approved: true,
+                                              respondedBy: "   ")
+        XCTAssertNil(p["respondedBy"])
+    }
+
+    func testTheNameIsTrimmed() {
+        let p = ConsentPrompt.responsePayload(requestId: "x",
+                                              approved: true,
+                                              respondedBy: " javier\n")
+        XCTAssertEqual(p["respondedBy"] as? String, "javier")
+    }
+
+    func testItSerializesAsTheAgentReadsIt() throws {
+        // El agente hace `JSON.parse` y lee `respondedBy` como string. Si el
+        // diccionario llevara algo no serializable, `write` fallaría en
+        // silencio y el consentimiento venceria por plazo.
+        let p = ConsentPrompt.responsePayload(requestId: "x",
+                                              approved: true,
+                                              respondedBy: "javier")
+        let data = try JSONSerialization.data(withJSONObject: p)
+        let back = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(back["respondedBy"] as? String, "javier")
+    }
+}

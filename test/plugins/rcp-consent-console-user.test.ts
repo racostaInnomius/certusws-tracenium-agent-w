@@ -39,6 +39,31 @@ describe("quién respondió", () => {
     expect(r.verified).toBe(false);
   });
 
+  it("⚠️ y lo dice con su propio motivo, no con el de 'no se pudo saber'", () => {
+    // Los tres motivos se contaban como uno solo (`consola_desconocida`),
+    // así que la ÚNICA señal de abuso de las tres quedaba enterrada bajo el
+    // ruido de las bandejas viejas y de las lecturas fallidas: la ventana de
+    // observación no medía lo que dice medir, y con ella se iba a decidir
+    // cuándo pasar a rechazar.
+    const r = matchesConsoleUser("intruso", "javier");
+    expect(r.verified).toBe(false);
+    if (!r.verified) {
+      expect(r.why).toBe("otro_usuario");
+      // Los dos nombres, normalizados: sin ellos el registro dice que hubo
+      // un desajuste pero no entre quiénes.
+      expect(r.respondio).toBe("intruso");
+      expect(r.consola).toBe("javier");
+    }
+  });
+
+  it("el desajuste se detecta con dominio y con UPN por medio", () => {
+    // `CONTOSO\\intruso` contra `javier` sigue siendo otra persona: la
+    // normalización que hace pasar a los legítimos no puede colar a nadie.
+    const r = matchesConsoleUser("CONTOSO\\intruso", "javier@contoso.com");
+    expect(r.verified).toBe(false);
+    if (!r.verified) expect(r.why).toBe("otro_usuario");
+  });
+
   it("el dominio no cuenta: es la misma persona", () => {
     // `CONTOSO\\javier` en consola y `javier` en la bandeja son el mismo
     // usuario. Comparar la cadena entera rechazaría a todo un dominio.
@@ -68,6 +93,20 @@ describe("cuando no se puede saber", () => {
     const r = matchesConsoleUser("javier", null);
     expect(r.verified).toBe(false);
     if (!r.verified) expect(r.why).toBe("consola_desconocida");
+  });
+
+  it("⚠️ los dos motivos de 'no se sabe' no se confunden con el desajuste", () => {
+    // Cada uno se arregla de una forma distinta: uno actualizando la flota,
+    // otro arreglando la resolución del usuario, y el tercero hablando con
+    // alguien. Un solo motivo para los tres no permite ninguna de las tres.
+    const vieja = matchesConsoleUser(undefined, "javier");
+    const irresoluble = matchesConsoleUser("javier", null);
+    const otro = matchesConsoleUser("intruso", "javier");
+
+    const motivos = [vieja, irresoluble, otro].map((r) =>
+      r.verified ? "verificado" : r.why
+    );
+    expect(new Set(motivos).size).toBe(3);
   });
 
   it("una cadena vacía cuenta como no saber, no como coincidir", () => {
