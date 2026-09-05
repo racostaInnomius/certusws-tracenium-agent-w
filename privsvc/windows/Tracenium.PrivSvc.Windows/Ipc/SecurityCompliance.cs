@@ -656,36 +656,39 @@ try {
         }
     }
 
-    private static object GetDomainAndGpoStatus()
+    /// <summary>
+    /// Identidad de dominio del equipo. WMI y nada mas.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Esta lectura vale mucho mas que el bloque en el que vive: `role`
+    /// decide la APLICABILIDAD de 55 controles CIS —los "(DC only)" y
+    /// "(MS only)"— medidos en el catalogo de produccion. Si no llega, esos
+    /// controles no fallan: pasan a `not_applicable` y se salen del pool de
+    /// evaluados sin un solo error en el log.
+    ///
+    /// ⚠️ Por eso esta SEPARADA de gpresult, que es lo que hay debajo. Hasta
+    /// hoy compartian un unico script de PowerShell con un presupuesto de 15 s
+    /// y un unico `catch`; y como ParseJsonObject devuelve un diccionario
+    /// vacio en vez de lanzar, un gpresult lento —un DC ocupado, un enlace
+    /// lento— dejaba `role` en null y apagaba en silencio los 55 controles.
+    /// Un dato barato no debe depender de la latencia de uno caro.
+    /// </remarks>
+    private static DomainIdentity GetDomainIdentity()
     {
         try
         {
-            var output = RunPs(@"
-$cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain, DomainRole
-function Get-GpResultLines($scope) {
-  try {
-    $raw = gpresult /Scope $scope /R 2>$null
-    if ($LASTEXITCODE -ne 0 -or $raw -eq $null) { return @() }
-    return @($raw | ForEach-Object { [string]$_ })
-  } catch { return @() }
-}
+            var output = RunPsWithTimeout(@"
+$cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain, DomainRole, UserName
 [pscustomobject]@{
   partOfDomain = [bool]$cs.PartOfDomain
   domain = [string]$cs.Domain
   domainRole = [int]$cs.DomainRole
-  computer = Get-GpResultLines 'Computer'
-  user = Get-GpResultLines 'User'
-} | ConvertTo-Json -Depth 8
-");
+  userName = [string]$cs.UserName
+} | ConvertTo-Json -Depth 4
+", DOMAIN_IDENTITY_TIMEOUT_MS).Stdout;
 
             var obj = ParseJsonObject(output);
-            // Sprint 4 hardening: NO `raw` here. It used to ship the entire
-            // gpresult /R output for BOTH scopes — the User scope carries
-            // the logged-on user's name, every group they belong to and
-            // the site/OU path. The catalog reads only the extracted GPO
-            // lists; shipping the transcript was PII in the evidence
-            // blob for no rule's benefit. (Linux has capped raw at 4 KB
-            // since day one; macOS got the cap the same day as this.)
+
             // Win32_ComputerSystem.DomainRole: 0/1 estación (autónoma/miembro),
             // 2/3 servidor (autónomo/miembro), 4/5 controlador de dominio
             // (backup/primario). Es lo que separa los controles "(DC only)" /
@@ -693,26 +696,190 @@ function Get-GpResultLines($scope) {
             // controles de DC por una razón falsa. `role` es la forma que
             // compara el catálogo; `domainRole` el número crudo.
             var domainRole = GetInt(obj, "domainRole");
-            var role = domainRole switch
+
+            return new DomainIdentity
             {
-                0 or 1 => "workstation",
-                2 or 3 => "member_server",
-                4 or 5 => "domain_controller",
-                _ => (string?)null
-            };
-            return new
-            {
-                partOfDomain = GetBool(obj, "partOfDomain") ?? false,
-                domain = GetString(obj, "domain"),
-                domainRole,
-                role,
-                appliedComputerGpos = ExtractAppliedGpos(obj, "computer"),
-                appliedUserGpos = ExtractAppliedGpos(obj, "user")
+                // ⚠️ null, no false. Antes un fallo de lectura se enviaba como
+                // "no está en dominio", que es una AFIRMACIÓN sobre el equipo y
+                // no lo que se sabe. La pantalla de inventario de GPO distingue
+                // los tres estados desde el lado del backend; mandar false
+                // desde aquí le quitaba el tercero.
+                PartOfDomain = GetBool(obj, "partOfDomain"),
+                Domain = GetString(obj, "domain"),
+                DomainRole = domainRole,
+                Role = domainRole switch
+                {
+                    0 or 1 => "workstation",
+                    2 or 3 => "member_server",
+                    4 or 5 => "domain_controller",
+                    _ => (string?)null
+                },
+                // ⚠️ NO viaja en el payload. Se usa solo aquí dentro, para
+                // preguntarle a gpresult por las directivas de ESE usuario.
+                // Quién inició sesión es justo lo que la limpieza del Sprint 4
+                // sacó de la evidencia.
+                ConsoleUser = GetString(obj, "userName")
             };
         }
         catch
         {
-            return new { partOfDomain = false, domain = (string?)null, domainRole = (int?)null, role = (string?)null, appliedComputerGpos = Array.Empty<string>(), appliedUserGpos = Array.Empty<string>() };
+            return new DomainIdentity();
+        }
+    }
+
+    private sealed class DomainIdentity
+    {
+        public bool? PartOfDomain { get; init; }
+        public string? Domain { get; init; }
+        public int? DomainRole { get; init; }
+        public string? Role { get; init; }
+        public string? ConsoleUser { get; init; }
+    }
+
+    private static object GetDomainAndGpoStatus()
+    {
+        var identity = GetDomainIdentity();
+        var gpos = GetAppliedGpos(identity.ConsoleUser);
+
+        return new
+        {
+            partOfDomain = identity.PartOfDomain,
+            domain = identity.Domain,
+            domainRole = identity.DomainRole,
+            role = identity.Role,
+            appliedComputerGpos = gpos.Computer,
+            appliedUserGpos = gpos.User
+        };
+    }
+
+    private sealed class AppliedGpos
+    {
+        // ⚠️ Nullable, y no por comodidad de tipos: `null` es "no se pudo
+        // leer" y la lista vacía es "este equipo no tiene ninguna". Mandar lo
+        // primero como lo segundo es el defecto que trajo hasta aquí — un
+        // equipo con tres directivas aplicadas se mostró durante meses en el
+        // portal como equipo sin ninguna, porque el lector de texto no
+        // encontraba un encabezado en inglés y devolvía la lista vacía.
+        public List<string>? Computer { get; init; }
+        public List<string>? User { get; init; }
+    }
+
+    /// <summary>
+    /// Las GPO aplicadas, por gpresult. Su fallo no puede tocar la identidad.
+    /// </summary>
+    /// <remarks>
+    /// Primero el XML de RSOP (`/X`), que no está localizado; si no se pudo
+    /// leer, la prosa de `/R`, que sí. Ver la cabecera de GpResultParsing.
+    /// </remarks>
+    private static AppliedGpos GetAppliedGpos(string? consoleUser)
+    {
+        var computer = ReadAppliedGposFromRsopXml(GpResultParsing.RsopScope.Computer, null, GPRESULT_TIMEOUT_MS);
+
+        // ⚠️ El ámbito de USUARIO necesita a quién preguntar. El servicio corre
+        // como LocalSystem, que no tiene perfil interactivo: un `gpresult
+        // /Scope User` a secas no devuelve nada, y por eso la lista de
+        // directivas de usuario llevaba vacía desde el primer día. Con
+        // `/USER <cuenta>` se lee el RSOP cacheado de quien SÍ inició sesión.
+        //
+        // Sin nadie con sesión —un servidor, un equipo recién arrancado— no se
+        // gasta la llamada y la respuesta es `null`: no se sabe. Cero sería
+        // una afirmación sobre ese usuario que nadie ha comprobado.
+        var user = string.IsNullOrWhiteSpace(consoleUser)
+            ? null
+            : ReadAppliedGposFromRsopXml(GpResultParsing.RsopScope.User, consoleUser, GPRESULT_USER_TIMEOUT_MS);
+
+        if (computer is null)
+        {
+            // Respaldo: la prosa de `/R`, con el parser de siempre. Se conserva
+            // porque la invocación del XML no se puede probar fuera de Windows
+            // y un fallo mío ahí no debe quitar el dato que hoy sí llega.
+            var texto = ReadAppliedGposFromText();
+            // Si el respaldo tampoco encuentra nada, la respuesta honrada es
+            // "no se sabe": los DOS lectores se quedaron callados, y uno de
+            // ellos es justo el que falla por idioma. Afirmar "ninguna" ahí es
+            // repetir el error, esta vez con dos fuentes en lugar de una.
+            computer = texto is { Count: > 0 } ? texto : null;
+        }
+
+        return new AppliedGpos { Computer = computer, User = user };
+    }
+
+    /// <summary>
+    /// Corre `gpresult /X` y devuelve las GPO aplicadas de un ámbito.
+    /// </summary>
+    private static List<string>? ReadAppliedGposFromRsopXml(
+        GpResultParsing.RsopScope scope,
+        string? targetUser,
+        int timeoutMs)
+    {
+        // ⚠️ El fichero lleva PII mientras existe: el informe de RSOP trae el
+        // usuario, sus SIDs, sus grupos y la ruta de la OU. Se escribe, se
+        // extraen los NOMBRES de las directivas y se borra en el `finally`. No
+        // se sube, no se registra en el log y no sobrevive a esta función —
+        // que es la misma línea que trazó la limpieza del Sprint 4 al sacar la
+        // transcripción de gpresult de la evidencia.
+        var path = Path.Combine(Path.GetTempPath(), $"tracenium-rsop-{Guid.NewGuid():N}.xml");
+
+        try
+        {
+            var args = scope == GpResultParsing.RsopScope.Computer
+                ? $"/X \"{path}\" /F /Scope Computer"
+                : $"/X \"{path}\" /F /Scope User /USER \"{targetUser}\"";
+
+            RunProcessWithTimeout(new ProcessStartInfo("gpresult", args)
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            }, timeoutMs);
+
+            // No se mira el código de salida: gpresult devuelve distinto de
+            // cero por cosas que no impiden que el informe se escriba. Lo que
+            // decide es si hay fichero legible.
+            if (!File.Exists(path)) return null;
+
+            // ReadAllText detecta el BOM. gpresult escribe UTF-16, y leerlo
+            // como UTF-8 devuelve un documento que no parsea.
+            var xml = File.ReadAllText(path);
+            return GpResultParsing.ExtractAppliedGposFromRsopXml(xml, scope);
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
+    }
+
+    /// <summary>Respaldo: las GPO de equipo desde la prosa de `gpresult /R`.</summary>
+    private static List<string>? ReadAppliedGposFromText()
+    {
+        try
+        {
+            var output = RunPsWithTimeout(@"
+try {
+  $raw = gpresult /Scope Computer /R 2>$null
+  if ($LASTEXITCODE -ne 0 -or $raw -eq $null) { $lines = @() }
+  else { $lines = @($raw | ForEach-Object { [string]$_ }) }
+} catch { $lines = @() }
+[pscustomobject]@{ computer = $lines } | ConvertTo-Json -Depth 8
+", GPRESULT_TIMEOUT_MS).Stdout;
+
+            // Sprint 4 hardening: NO `raw` here. It used to ship the entire
+            // gpresult /R output for BOTH scopes — the User scope carries
+            // the logged-on user's name, every group they belong to and
+            // the site/OU path. The catalog reads only the extracted GPO
+            // lists; shipping the transcript was PII in the evidence
+            // blob for no rule's benefit. (Linux has capped raw at 4 KB
+            // since day one; macOS got the cap the same day as this.)
+            return ExtractAppliedGpos(ParseJsonObject(output), "computer");
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -1011,6 +1178,25 @@ $items | ConvertTo-Json -Depth 4
     // overrides this — see `RunPsWithTimeout` callers below.
     private const int DEFAULT_PS_TIMEOUT_MS = 15_000;
 
+    // ⚠️ Presupuestos separados, y ese es el punto. La identidad de dominio es
+    // una consulta WMI local que responde en milisegundos y de la que dependen
+    // 55 controles CIS; gpresult habla con el controlador de dominio y puede
+    // tardar segundos. Compartir presupuesto significaba que lo lento decidiera
+    // si lo barato llegaba.
+    //
+    // ⚠️ La SUMA está acotada a propósito. THE INVARIANT del carril IPC dice
+    // que el llamador tiene que sobrevivir al handler, y el cliente de Windows
+    // da 270 s a `security.compliance` sobre un techo calculado de ~240 s
+    // (privsvc-client-windows.ts). Esta sección aportaba 15 s a ese techo;
+    // ahora aporta 8 + 15 + 12 = 35 s en el peor caso, y los 12 s del ámbito de
+    // usuario sólo se gastan si hay alguien con sesión iniciada. Techo nuevo
+    // ≈ 260 s, por debajo del presupuesto. Subir el presupuesto NO era la
+    // salida: el latido viaja por el mismo carril serie y se pone rancio a los
+    // 270 s — es la cadena que ya tumbó procesos enteros con patch_install.
+    private const int DOMAIN_IDENTITY_TIMEOUT_MS = 8_000;
+    private const int GPRESULT_TIMEOUT_MS = 15_000;
+    private const int GPRESULT_USER_TIMEOUT_MS = 12_000;
+
     // ── PowerShell launcher with a hard timeout ────────────────────
     //
     // The legacy `RunPs(cmd)` API returned `stdout` and silently
@@ -1048,15 +1234,28 @@ $items | ConvertTo-Json -Depth 4
     private static PsResult RunPsWithTimeout(string command, int timeoutMs)
     {
         var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
-        var psi = new ProcessStartInfo("powershell",
+        return RunProcessWithTimeout(new ProcessStartInfo("powershell",
             $"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}")
         {
             CreateNoWindow = true,
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true
-        };
+        }, timeoutMs);
+    }
 
+    /// <summary>
+    /// Lanza un proceso con tope de tiempo, drenaje de salida y muerte dura.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ Es el cuerpo que tenía RunPsWithTimeout, extraído tal cual para que
+    /// gpresult.exe pase por el MISMO camino. Un segundo lanzador copiado
+    /// habría sido un segundo sitio donde olvidarse de matar el árbol de
+    /// procesos o de drenar stdout antes del kill — y eso ya costó un proceso
+    /// colgado sin log en este módulo.
+    /// </remarks>
+    private static PsResult RunProcessWithTimeout(ProcessStartInfo psi, int timeoutMs)
+    {
         using var proc = Process.Start(psi);
         if (proc == null)
         {

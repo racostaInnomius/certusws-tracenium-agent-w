@@ -80,6 +80,20 @@ export function getTimeoutForMethod(method: string): number {
       // diagnostic matters most were the ones whose response the
       // client dropped. 240s ceiling + margin = 270s; the scheduler's
       // 30-min stuck-worker guard stays the outer bound.
+      //
+      // ⚠️ Techo recalculado (05-sep): la sección de dominio dejó de ser un
+      // solo RunPs de 15s. Ahora son tres topes —identidad WMI 8s, gpresult
+      // /X de equipo 15s, gpresult /X de usuario 12s, y este último sólo si
+      // hay sesión iniciada— porque un gpresult lento apagaba en silencio la
+      // aplicabilidad de 55 controles CIS al dejar `domain.role` en null.
+      // Aporta 35s donde antes aportaba 15s: techo ≈ 260s, todavía por
+      // debajo del presupuesto.
+      //
+      // ⚠️ Y por eso el presupuesto NO se subió para acompañarlo. El latido
+      // comparte este carril serie y se pone rancio a los 270s; alargar el
+      // handler es exactamente la cadena que mató procesos enteros con
+      // patch_install. Si esta sección vuelve a crecer, lo que hay que
+      // recortar son sus topes, no ampliar este número.
       return 270000;
     // ── Patch Management ─────────────────────────────────────────────
     //
