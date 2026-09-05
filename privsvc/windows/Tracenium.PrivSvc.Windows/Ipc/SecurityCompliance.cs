@@ -338,6 +338,10 @@ public static class SecurityCompliance
                 "if (Test-Path $f) { Get-Content $f -Raw; Remove-Item $f -Force -ErrorAction SilentlyContinue }"
             );
             if (string.IsNullOrWhiteSpace(text)) return null;
+            // Un NUL en cualquier cadena tumba el jsonb del backend (ver
+            // RegistryProbeShape.StripNul); y si el fichero llegara como
+            // UTF-16 mal decodificado, quitar los NUL recupera el ASCII.
+            text = text.Replace("\0", "");
             var ini = SeceditShape.ParseIni(text);
             if (!ini.ContainsKey("System Access") && !ini.ContainsKey("Privilege Rights")) return null;
             return SeceditShape.Build(ini, ResolveSidToName);
@@ -371,7 +375,7 @@ public static class SecurityCompliance
                 "auditpol /backup /file:$f | Out-Null; " +
                 "if (Test-Path $f) { Get-Content $f -Raw; Remove-Item $f -Force -ErrorAction SilentlyContinue }"
             );
-            return AuditpolShape.ParseBackupCsv(text);
+            return AuditpolShape.ParseBackupCsv(text?.Replace("\0", ""));
         }
         catch (Exception ex)
         {

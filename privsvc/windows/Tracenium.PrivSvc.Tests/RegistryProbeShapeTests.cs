@@ -125,4 +125,15 @@ public class RegistryProbeShapeTests
         // Un escalar donde se esperaba una lista: no se adivina.
         Assert.Empty(RegistryProbeShape.FromParams(new Dictionary<string, object> { ["registryProbes"] = "HKLM\\A:B" }));
     }
+
+    [Fact]
+    public void NormalizeStripsEmbeddedNul()
+    {
+        // jsonb de PostgreSQL rechaza \u0000; un REG_SZ con NUL tumbaba el
+        // snapshot entero (prod 2026-09-05).
+        Assert.Equal("abc", RegistryProbeShape.Normalize("abc\0"));
+        Assert.Equal("a", RegistryProbeShape.Normalize("a\0b\0"));
+        Assert.Equal(new[] { "a", "b" }, RegistryProbeShape.Normalize(new[] { "a\0", "b" }));
+        Assert.Equal("plain", RegistryProbeShape.Normalize("plain"));
+    }
 }

@@ -15,6 +15,7 @@
 //   · Los valores se normalizan a lo que JSON y el evaluador del backend
 //     comparan sin conversiones: número, cadena o array de cadenas.
 
+using System.Linq;
 using System.Text.Json;
 
 namespace Tracenium.PrivSvc.Windows.Ipc;
@@ -61,11 +62,25 @@ public static class RegistryProbeShape
             long l => l,
             uint ui => (long)ui,
             ulong ul => (long)ul,
-            string s => s,
-            string[] arr => arr,
+            string s => StripNul(s),
+            string[] arr => arr.Any(x => x.IndexOf('\0') >= 0) ? arr.Select(StripNul).ToArray() : arr,
             byte[] bytes => Convert.ToHexString(bytes).ToLowerInvariant(),
-            _ => raw.ToString()
+            _ => StripNul(raw.ToString() ?? "")
         };
+    }
+
+    /// <summary>
+    /// Un REG_SZ puede llevar NUL incrustados (datos MULTI_SZ guardados con
+    /// tipo SZ, o valores sin terminador limpio). JSON los serializa como
+    /// \u0000 y el jsonb de PostgreSQL los rechaza ("unsupported Unicode
+    /// escape sequence"): entre el 04 y el 05-sep-2026 ningún equipo Windows
+    /// persistió un snapshot por eso. Se corta en el primer NUL, que es lo
+    /// que hace cualquier consumidor Win32 de la cadena.
+    /// </summary>
+    public static string StripNul(string s)
+    {
+        var nul = s.IndexOf('\0');
+        return nul < 0 ? s : s[..nul];
     }
 
     /// <summary>
