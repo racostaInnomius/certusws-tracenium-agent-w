@@ -16,7 +16,9 @@ async function readSecurityCompliance(ctx: AgentContext): Promise<any> {
     v: 1,
     id: `scp_${Date.now()}`,
     method: "security.compliance",
-    params: {},
+    // Sondas genéricas que pide el control plane (policy
+    // compliance.macosProbes). Lista vacía = el PrivSvc no emite el bloque.
+    params: { macosProbes: ctx.policyRuntime.getMacosProbes() },
     meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
   });
 
@@ -84,6 +86,9 @@ export async function collectMacosScp(ctx: AgentContext): Promise<ScpNamespace> 
     // SSH crypto/hardening posture — same shape as Linux, so the shared SSH
     // crypto catalog rules evaluate on macOS (replaces the former crypto stub).
     ssh: posture?.ssh,
+    // Fase 3 CIS — sondas genéricas. Sólo si el PrivSvc lo emitió (un null
+    // viajaría como bloque presente y la guarda onMissingRequires fallaría).
+    ...(posture?.probes ? { probes: posture.probes } : {}),
 
     patches: buildPatchesEvidence(posture),
 

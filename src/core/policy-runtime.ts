@@ -66,6 +66,10 @@ export type RuntimePolicy = {
      *  conf, lines, sysctl). Nunca un comando: el PrivSvc sólo ejecuta lo
      *  que el kind implica. */
     linuxProbes?: string[];
+    /** Sondas genéricas de macOS (fase 3 CIS): `<kind>.<key>` con kind en la
+     *  lista cerrada del PrivSvc de macOS (pref, pmset, launchctl,
+     *  systemsetup, mac, authdb, file, files, lines). */
+    macosProbes?: string[];
   };
   patch?: {
     intervalSeconds?: number;
@@ -731,6 +735,32 @@ export function sanitizeLinuxProbes(raw: unknown): string[] {
   return out;
 }
 
+export const MACOS_PROBE_KINDS = ["pref", "pmset", "launchctl", "systemsetup", "mac", "authdb", "file", "files", "lines"] as const;
+
+/** Sondas de macOS: como las de Linux, pero la clave admite espacios
+ *  (nombres de preferencia como "Siri Data Sharing Opt-In Status"). */
+export function sanitizeMacosProbes(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const probe = item.trim();
+    if (probe.length === 0 || probe.length > 300) continue;
+    const dot = probe.indexOf(".");
+    if (dot <= 0) continue;
+    const kind = probe.slice(0, dot);
+    const key = probe.slice(dot + 1);
+    if (!(MACOS_PROBE_KINDS as readonly string[]).includes(kind)) continue;
+    if (key.length === 0 || /[;|&`$<>"'\r\n\x00-\x1f]/.test(key)) continue;
+    if (seen.has(probe)) continue;
+    seen.add(probe);
+    out.push(probe);
+    if (out.length >= 1000) break;
+  }
+  return out;
+}
+
 export function sanitizeRegistryProbes(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   const out: string[] = [];
@@ -807,6 +837,10 @@ export class PolicyRuntime extends EventEmitter {
 
   getLinuxProbes(): string[] {
     return this.policy.compliance?.linuxProbes ?? [];
+  }
+
+  getMacosProbes(): string[] {
+    return this.policy.compliance?.macosProbes ?? [];
   }
 
   getPatchInterval(): number {
@@ -997,7 +1031,8 @@ export class PolicyRuntime extends EventEmitter {
       // backend la inyecta y el agente la tira sin dejar rastro.
       registryProbes: sanitizeRegistryProbes(policy.compliance?.registryProbes),
       registryUserProbes: sanitizeRegistryUserProbes(policy.compliance?.registryUserProbes),
-      linuxProbes: sanitizeLinuxProbes(policy.compliance?.linuxProbes)
+      linuxProbes: sanitizeLinuxProbes(policy.compliance?.linuxProbes),
+      macosProbes: sanitizeMacosProbes(policy.compliance?.macosProbes)
     };
     const mergedPatch = {
       intervalSeconds:
