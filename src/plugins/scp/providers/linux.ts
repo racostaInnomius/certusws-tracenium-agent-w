@@ -23,7 +23,9 @@ async function readSecurityCompliance(ctx: AgentContext): Promise<any> {
     v: 1,
     id: `scp_${Date.now()}`,
     method: "security.compliance",
-    params: {},
+    // Sondas genéricas que pide el control plane (policy
+    // compliance.linuxProbes). Lista vacía = el PrivSvc no emite el bloque.
+    params: { linuxProbes: ctx.policyRuntime.getLinuxProbes() },
     meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId },
   });
 
@@ -86,6 +88,11 @@ export async function collectLinuxScp(ctx: AgentContext): Promise<ScpNamespace> 
     // cost). If you add a block in security-posture.ts, add it here.
     diskEncryption: posture?.diskEncryption,
     screenLock: posture?.screenLock,
+    // Fase 2 CIS — sondas genéricas. Sólo si el PrivSvc lo emitió: un
+    // `null` viajaría como bloque presente y la guarda onMissingRequires
+    // del catálogo fallaría controles en un equipo al que no se le pidió
+    // nada.
+    ...(posture?.probes ? { probes: posture.probes } : {}),
 
     ...(collectorError ? { collectorError } : {}),
   };

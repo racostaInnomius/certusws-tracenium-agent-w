@@ -194,6 +194,16 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   # controles no fallaban: se evaluaban sobre nada.
   /proc/sys/net/**                                  r,
   /proc/sys/kernel/**                               r,
+  # linux-probes.ts: sysctl bajo fs/vm/etc, módulos cargados y el árbol de
+  # módulos del kernel que modprobe -n necesita para resolver un nombre.
+  /proc/sys/**                                      r,
+  /proc/modules                                     r,
+  /usr/lib/modules/                                 r,
+  /usr/lib/modules/**                               r,
+  /lib/modules/                                     r,
+  /lib/modules/**                                   r,
+  /var/log/                                         r,
+  /var/log/audit/                                   r,
 
   # Base de datos de dpkg: es lo que lee dpkg-query para el inventario de
   # software en Debian/Ubuntu.
@@ -373,6 +383,9 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   # `panic: permission denied`, que no menciona AppArmor por ningun lado.
   /snap/snapd/*/usr/bin/snap                        ix,
   /usr/bin/systemctl                                ix,
+  # Fase 2 del cierre de brecha CIS (linux-probes.ts): `modprobe -n -v` sólo
+  # simula (-n) — no carga nada — para saber si un módulo está neutralizado.
+  /usr/sbin/modprobe                                ix,
   # systemd-run: lanza el dpkg del auto-update en un scope propio, para que
   # sobreviva al reinicio del servicio que provoca su propia instalacion.
   # Sin esta regla el spawn daba EACCES y el update NUNCA se ejecutaba.

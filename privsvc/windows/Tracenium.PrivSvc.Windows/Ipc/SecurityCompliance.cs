@@ -680,7 +680,7 @@ try {
         try
         {
             var output = RunPs(@"
-$cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain
+$cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain, DomainRole
 function Get-GpResultLines($scope) {
   try {
     $raw = gpresult /Scope $scope /R 2>$null
@@ -691,6 +691,7 @@ function Get-GpResultLines($scope) {
 [pscustomobject]@{
   partOfDomain = [bool]$cs.PartOfDomain
   domain = [string]$cs.Domain
+  domainRole = [int]$cs.DomainRole
   computer = Get-GpResultLines 'Computer'
   user = Get-GpResultLines 'User'
 } | ConvertTo-Json -Depth 8
@@ -704,17 +705,33 @@ function Get-GpResultLines($scope) {
             // lists; shipping the transcript was PII in the evidence
             // blob for no rule's benefit. (Linux has capped raw at 4 KB
             // since day one; macOS got the cap the same day as this.)
+            // Win32_ComputerSystem.DomainRole: 0/1 estación (autónoma/miembro),
+            // 2/3 servidor (autónomo/miembro), 4/5 controlador de dominio
+            // (backup/primario). Es lo que separa los controles "(DC only)" /
+            // "(MS only)" de CIS Server 2022: sin esto un miembro fallaba
+            // controles de DC por una razón falsa. `role` es la forma que
+            // compara el catálogo; `domainRole` el número crudo.
+            var domainRole = GetInt(obj, "domainRole");
+            var role = domainRole switch
+            {
+                0 or 1 => "workstation",
+                2 or 3 => "member_server",
+                4 or 5 => "domain_controller",
+                _ => (string?)null
+            };
             return new
             {
                 partOfDomain = GetBool(obj, "partOfDomain") ?? false,
                 domain = GetString(obj, "domain"),
+                domainRole,
+                role,
                 appliedComputerGpos = ExtractAppliedGpos(obj, "computer"),
                 appliedUserGpos = ExtractAppliedGpos(obj, "user")
             };
         }
         catch
         {
-            return new { partOfDomain = false, domain = (string?)null, appliedComputerGpos = Array.Empty<string>(), appliedUserGpos = Array.Empty<string>() };
+            return new { partOfDomain = false, domain = (string?)null, domainRole = (int?)null, role = (string?)null, appliedComputerGpos = Array.Empty<string>(), appliedUserGpos = Array.Empty<string>() };
         }
     }
 

@@ -61,6 +61,11 @@ export type RuntimePolicy = {
     /** Sondas de registro DE USUARIO (CIS 19.x), relativas a cada
      *  HKEY_USERS\<SID>: `Software\...\Clave:Valor`. Sin hive. */
     registryUserProbes?: string[];
+    /** Sondas genéricas de Linux (fase 2 CIS): `<kind>.<key>` con kind en
+     *  la lista cerrada del PrivSvc (kmod, mount, unit, pkg, file, files,
+     *  conf, lines, sysctl). Nunca un comando: el PrivSvc sólo ejecuta lo
+     *  que el kind implica. */
+    linuxProbes?: string[];
   };
   patch?: {
     intervalSeconds?: number;
@@ -696,6 +701,36 @@ export function sanitizeRegistryUserProbes(raw: unknown): string[] {
   return out;
 }
 
+/** Kinds de sonda que el PrivSvc de Linux implementa. Cerrada a propósito. */
+export const LINUX_PROBE_KINDS = ["kmod", "mount", "unit", "pkg", "file", "files", "conf", "lines", "sysctl", "sshd"] as const;
+
+/**
+ * Sondas de Linux: `kind.key`. Se rechaza un kind fuera de la lista, un key
+ * vacío o con caracteres de control, y cualquier cosa que parezca un
+ * comando (`;`, `|`, `$(`, backticks, saltos de línea).
+ */
+export function sanitizeLinuxProbes(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const probe = item.trim();
+    if (probe.length === 0 || probe.length > 300) continue;
+    const dot = probe.indexOf(".");
+    if (dot <= 0) continue;
+    const kind = probe.slice(0, dot);
+    const key = probe.slice(dot + 1);
+    if (!(LINUX_PROBE_KINDS as readonly string[]).includes(kind)) continue;
+    if (key.length === 0 || /[\s;|&`$<>"'\x00-\x1f]/.test(key)) continue;
+    if (seen.has(probe)) continue;
+    seen.add(probe);
+    out.push(probe);
+    if (out.length >= 1500) break;
+  }
+  return out;
+}
+
 export function sanitizeRegistryProbes(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   const out: string[] = [];
@@ -768,6 +803,10 @@ export class PolicyRuntime extends EventEmitter {
 
   getRegistryUserProbes(): string[] {
     return this.policy.compliance?.registryUserProbes ?? [];
+  }
+
+  getLinuxProbes(): string[] {
+    return this.policy.compliance?.linuxProbes ?? [];
   }
 
   getPatchInterval(): number {
@@ -957,7 +996,8 @@ export class PolicyRuntime extends EventEmitter {
       // lista de sondas de registro tiene que pasar explícitamente, o el
       // backend la inyecta y el agente la tira sin dejar rastro.
       registryProbes: sanitizeRegistryProbes(policy.compliance?.registryProbes),
-      registryUserProbes: sanitizeRegistryUserProbes(policy.compliance?.registryUserProbes)
+      registryUserProbes: sanitizeRegistryUserProbes(policy.compliance?.registryUserProbes),
+      linuxProbes: sanitizeLinuxProbes(policy.compliance?.linuxProbes)
     };
     const mergedPatch = {
       intervalSeconds:

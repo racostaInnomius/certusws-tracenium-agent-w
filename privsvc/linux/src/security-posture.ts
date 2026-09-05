@@ -26,6 +26,7 @@
 // Output cap on `raw` fields: 4KB each, so a misbehaving sshd that
 // prints 100MB of debug to stdout can't blow up the IPC pipe.
 import { execFile } from "child_process";
+import { collectLinuxProbes, probesFromParams, realProbeDeps } from "./linux-probes";
 import fs from "fs";
 import { promisify } from "util";
 import { detectFamily, type LinuxFamily } from "./distro";
@@ -769,6 +770,13 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
       collectDiskEncryption(),
     ]);
     const sysctl = collectSysctl();
+    // Fase 2 del cierre de brecha CIS: sondas genéricas pedidas por el
+    // control plane (params.linuxProbes). Lista vacía = no se emite el
+    // bloque, y el catálogo resuelve not_applicable. Ver linux-probes.ts.
+    const requestedProbes = probesFromParams((req as any).params);
+    const probed = requestedProbes.length > 0
+      ? await collectLinuxProbes(requestedProbes, realProbeDeps((bin, args) => runCheck(bin, args), distro.family as any))
+      : null;
     const shares = collectShares();
     const mounts = collectMounts();
     const pwquality = collectPwquality();
@@ -798,6 +806,7 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
       // linux.disk_encryption.*). Block name matches the Windows /
       // macOS convention the summary_payload projection already knows.
       diskEncryption,
+      ...(probed ? { probes: probed.probes, probeErrors: Object.keys(probed.errors).length ? probed.errors : undefined } : {}),
       // Sprint 4 — GNOME/dconf system screen-lock policy (catalog:
       // linux.screen_lock.*). Same key as the macOS/Windows blocks.
       screenLock,

@@ -7,7 +7,7 @@
 // como SYSTEM.
 
 import { describe, expect, it } from "vitest";
-import { PolicyRuntime, sanitizeRegistryProbes, sanitizeRegistryUserProbes } from "../../src/core/policy-runtime";
+import { PolicyRuntime, sanitizeRegistryProbes, sanitizeRegistryUserProbes, sanitizeLinuxProbes } from "../../src/core/policy-runtime";
 
 const OK = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\mrxsmb10:Start";
 
@@ -107,5 +107,24 @@ describe("sanitizeRegistryUserProbes", () => {
     expect(rt.getRegistryUserProbes()).toEqual([U]);
     rt.policy = {};
     expect(rt.getRegistryUserProbes()).toEqual([]);
+  });
+});
+
+// Fase 2 del cierre de brecha CIS: sondas genéricas de Linux. Kind cerrado,
+// key sin nada que parezca un comando.
+describe("sanitizeLinuxProbes", () => {
+  it("keeps kind.key probes of known kinds", () => {
+    const ok = ["kmod.cramfs", "mount./tmp", "unit.autofs~service", "pkg.apparmor-utils", "file./etc/passwd", "conf./etc/login~defs:PASS_MAX_DAYS", "lines./etc/pam~d/common-password", "sysctl.net.ipv4.ip_forward", "files./etc/ssh/sshd_config~d"];
+    expect(sanitizeLinuxProbes(ok)).toEqual(ok);
+  });
+  it("rejects unknown kinds, empty keys and anything shell-like", () => {
+    expect(sanitizeLinuxProbes(["cmd.ls", "kmod.", "kmod", "file./etc/passwd; rm -rf /", "unit.$(id)", "pkg.a|b", "lines./etc/x`y`", 3, null])).toEqual([]);
+  });
+  it("is read from the policy and empty by default", () => {
+    const rt: any = Object.create(PolicyRuntime.prototype);
+    rt.policy = { compliance: { linuxProbes: ["kmod.cramfs"] } };
+    expect(rt.getLinuxProbes()).toEqual(["kmod.cramfs"]);
+    rt.policy = {};
+    expect(rt.getLinuxProbes()).toEqual([]);
   });
 });

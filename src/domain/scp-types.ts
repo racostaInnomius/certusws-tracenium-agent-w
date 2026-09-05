@@ -152,6 +152,12 @@ export type ScpNamespace = {
   //   auditpol        Windows. Política de auditoría avanzada por GUID de
   //                   subcategoría — CIS 17.x.
   auditpol?: unknown;
+  //   probes          Linux (fase 2 CIS). Sondas genéricas pedidas por el
+  //                   control plane (policy `compliance.linuxProbes`):
+  //                   probes.kmod.<mod>, probes.mount.<path>, probes.unit.*,
+  //                   probes.pkg.*, probes.file.*, probes.files.*,
+  //                   probes.conf.*, probes.lines.*, probes.sysctl.*.
+  probes?: unknown;
   //   mounts          filesystem hardening for tmp-style mounts
   //                   (tmp / var_tmp / dev_shm): separate + nodev /
   //                   nosuid / noexec. Non-separate targets omit their
