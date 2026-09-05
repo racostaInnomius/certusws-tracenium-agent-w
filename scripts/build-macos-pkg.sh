@@ -829,6 +829,27 @@ else
   # solo, así que aquí no arregla nada — se pone por simetría con el de abajo,
   # que es el que de verdad colgaba. Las comprobaciones ocurren antes, así que
   # salir explícitamente no enmascara ningún fallo.
+  # ⚠️ El bit de ejecución del spawn-helper, ANTES de intentar abrir el pty.
+  #
+  # Es la causa que tumbó el Release del 2026-09-05 en arm64, y node-pty la
+  # reporta como `posix_spawnp failed` — un mensaje que no menciona permisos
+  # por ningún lado. El chmod de más arriba debería haberlo puesto; esta
+  # comprobación existe para que, si alguna vez vuelve a faltar, el log diga
+  # QUÉ pasa en lugar de obligar a deducirlo desde un errno.
+  #
+  # No lo arregla aquí a propósito: si el chmod de arriba dejó de funcionar,
+  # eso es lo que hay que reparar. Un gate que corrige en silencio lo que
+  # debería fallar es un gate que deja pasar el problema al siguiente build.
+  pty_helper="$BUILD_DIR/Agent/node_modules/node-pty/prebuilds/darwin-$(lipo_arch_for "$ARCH")/spawn-helper"
+  if [ -f "$pty_helper" ] && [ ! -x "$pty_helper" ]; then
+    echo "ERROR: el spawn-helper de node-pty no es ejecutable." >&2
+    echo "       $(ls -l "$pty_helper")" >&2
+    echo "       node-pty fallaría con 'posix_spawnp failed', que no menciona" >&2
+    echo "       los permisos. El chmod de Mach-O del staging no hizo su" >&2
+    echo "       trabajo: arréglalo ahí, no aquí." >&2
+    exit 1
+  fi
+
   if ! pty_err="$("$BUILD_DIR/Runtime/node" -e "
     const pty = require('$BUILD_DIR/Agent/node_modules/node-pty');
     const p = pty.spawn('/bin/sh', ['-c', 'exit 0'], { cols: 80, rows: 24 });
