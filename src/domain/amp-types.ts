@@ -89,6 +89,18 @@ export type HardwareRuntime = {
   }>;
 
   isVirtualMachine?: boolean;
+
+  /**
+   * Cuándo arrancó el sistema operativo (ISO 8601 UTC, redondeado al minuto),
+   * y el contador crudo de segundos encendido.
+   *
+   * ⚠️ Son DOS campos porque responden dos preguntas distintas y en Windows no
+   * coinciden: el contador no cuenta el tiempo suspendido, y el instante que
+   * declara el sistema choca con el Inicio rápido. Ver domain/boot-time.ts.
+   * `null` significa que no se pudo determinar, nunca "acaba de arrancar".
+   */
+  bootTimeUtc?: string | null;
+  uptimeSeconds?: number | null;
 };
 
 /**

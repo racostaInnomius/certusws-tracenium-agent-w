@@ -14,6 +14,7 @@
 //   collection here because it's cheap and matches the macOS/windows
 //   provider shape, in case the builder is ever refactored to defer
 //   to providers for OS-specific details.
+import fs from "fs";
 import os from "os";
 import si from "systeminformation";
 import { execFile } from "child_process";
@@ -21,6 +22,7 @@ import { promisify } from "util";
 
 import type { AgentContext } from "../../../core/agent-context";
 import type { AmpNamespace } from "../../../domain/amp-types";
+import { readBootTime } from "../../../domain/boot-time";
 import type { SoftwareApplication } from "../../../domain/normalize-app";
 
 import { normalizeApp } from "../../../domain/normalize-app";
@@ -171,7 +173,21 @@ async function collectLinuxHardware(): Promise<AmpNamespace["hardware"]> {
     } as any,
     runtime: {
       mem: mem ? { total: mem.total } : undefined,
-      fsSize: fsSize || undefined
+      fsSize: fsSize || undefined,
+      // Cuando arrancó el sistema. En Linux manda `/proc/stat`, que da el
+      // epoch exacto del arranque y —a diferencia del contador— no se ve
+      // afectado por la suspensión. Ver boot-time.ts.
+      ...readBootTime({
+        nowMs: Date.now(),
+        uptimeSeconds: os.uptime(),
+        readProcStat: () => {
+          try {
+            return fs.readFileSync("/proc/stat", "utf8");
+          } catch {
+            return null;
+          }
+        }
+      })
     } as any
   };
 }

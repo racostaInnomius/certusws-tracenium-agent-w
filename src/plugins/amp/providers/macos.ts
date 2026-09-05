@@ -7,6 +7,7 @@ import fs from "fs";
 
 import type { AgentContext } from "../../../core/agent-context";
 import type { AmpNamespace } from "../../../domain/amp-types";
+import { readBootTime } from "../../../domain/boot-time";
 import type { SoftwareApplication } from "../../../domain/normalize-app";
 import type { MacBundleInfo } from "../../../domain/macos-bundle-info";
 
@@ -635,7 +636,10 @@ async function collectMacHardware(): Promise<AmpNamespace["hardware"]> {
     } as any,
     runtime: {
       mem: mem ? { total: mem.total } : undefined,
-      fsSize: fsSize || undefined
+      fsSize: fsSize || undefined,
+      // Cuando arrancó el sistema. `os.uptime()` no abre ningún proceso; ver
+      // boot-time.ts para por qué viajan las DOS cifras y no una sola.
+      ...readBootTime({ nowMs: Date.now(), uptimeSeconds: os.uptime() })
     } as any
   };
 }
