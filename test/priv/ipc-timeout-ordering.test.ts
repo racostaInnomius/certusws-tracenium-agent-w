@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { getTimeoutForMethod as winTimeout } from "../../src/priv/privsvc-client-windows";
 import { getTimeoutForMethod as macTimeout } from "../../src/priv/privsvc-client-macos";
 import { getTimeoutForMethod as linuxTimeout } from "../../src/priv/privsvc-client-linux";
+import { MAX_CONSENT_TIMEOUT_S } from "../../src/plugins/rcp/consent-prompt";
 
 /**
  * THE INVARIANT: the CALLER must outwait the HANDLER.
@@ -69,6 +70,17 @@ const PRIVSVC_CEILING_MS: Record<string, { windows?: number; macos?: number; lin
   // edit, sshd -t, reload; ufw allow ×N + enable).
   "pmp.read_check_state": { windows: 30_000, macos: 10_000, linux: 10_000 },
   "pmp.remediate": { windows: 120_000, macos: 40_000, linux: 40_000 },
+  // ⚠️ 8th occurrence (2026-09-04), and the first where the handler is slow
+  // ON PURPOSE: it blocks showing a dialog to a human. `rcp.consent.request`
+  // had no entry in getTimeoutForMethod at all, so it fell to the 8s default
+  // and the catch turned the timeout into "denied" — on Linux a person had
+  // eight seconds to decide whether a stranger could see their screen, and
+  // the dialog they were still reading had already been abandoned.
+  //
+  // The ceiling is the longest prompt (MAX_CONSENT_TIMEOUT_S = 90s) plus the
+  // helper's 10s kill grace. If either moves, this number has to move with
+  // it, which is the whole point of asserting it here.
+  "rcp.consent.request": { windows: 100_000, macos: 100_000, linux: 100_000 },
 };
 
 const CLIENTS = {
@@ -86,6 +98,18 @@ describe("IPC client budgets outwait the privsvc handler", () => {
       });
     }
   }
+
+  it("the consent budget is derived from the prompts, not guessed", () => {
+    // The failure this guards against is quiet: somebody lengthens the
+    // "take control" prompt to two minutes because a customer asked, and
+    // Linux silently goes back to auto-denying — the prompt outlives the
+    // caller again, exactly as it did before this was fixed.
+    const HELPER_KILL_GRACE_MS = 10_000;
+    const needed = MAX_CONSENT_TIMEOUT_S * 1000 + HELPER_KILL_GRACE_MS;
+    for (const t of Object.values(CLIENTS)) {
+      expect(t("rcp.consent.request")).toBeGreaterThan(needed);
+    }
+  });
 
   it("patch.install leaves real margin over the slowest handler (Windows 90min)", () => {
     // A tie is as broken as being under: both sides expire together and the

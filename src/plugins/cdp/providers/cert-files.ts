@@ -61,6 +61,12 @@ export type CertFileResult = {
   filesScanned: number;
   /** Files that looked like certificates and could not be read. */
   unreadable: number;
+  /** The same, by path: each file is its own store (`file:<path>`). */
+  unreadableFiles: string[];
+  /** Directories under a root that exist and could not be listed. Their
+   *  stores cannot be named, so a scan with any of these cannot claim a
+   *  single removal for the `file` source. */
+  unreadableDirs: string[];
   /** Truncated because the file cap was reached. */
   capped: boolean;
 };
@@ -104,15 +110,19 @@ export function certificatesInBuffer(buf: Buffer, filePath: string): Buffer[] {
 async function* walk(
   root: string,
   depth: number,
-  budget: { left: number }
+  budget: { left: number },
+  unreadableDirs: string[]
 ): AsyncGenerator<string> {
   if (depth > MAX_DEPTH || budget.left <= 0) return;
 
   let entries: fs.Dirent[];
   try {
     entries = await fs.promises.readdir(root, { withFileTypes: true });
-  } catch {
-    return; // unreadable directory is not an error worth failing the scan for
+  } catch (err: any) {
+    // Not worth failing the scan for — but worth SAYING: a directory that
+    // exists and cannot be listed hides stores we inventoried yesterday.
+    if (err?.code !== "ENOENT") unreadableDirs.push(root);
+    return;
   }
 
   for (const entry of entries) {
@@ -125,7 +135,7 @@ async function* walk(
       // bounded walk into an unbounded one, and a link into someone's
       // home directory turns an inventory into a privacy incident.
       if (entry.isSymbolicLink()) continue;
-      yield* walk(full, depth + 1, budget);
+      yield* walk(full, depth + 1, budget, unreadableDirs);
       continue;
     }
 
@@ -150,6 +160,8 @@ export async function collectCertFiles(roots: string[]): Promise<CertFileResult>
     parseFailures: 0,
     filesScanned: 0,
     unreadable: 0,
+    unreadableFiles: [],
+    unreadableDirs: [],
     capped: false
   };
   if (!Array.isArray(roots) || roots.length === 0) return result;
@@ -158,7 +170,7 @@ export async function collectCertFiles(roots: string[]): Promise<CertFileResult>
   const seenStores = new Map<string, CdpStoreInfo>();
 
   for (const root of roots) {
-    for await (const filePath of walk(root, 0, budget)) {
+    for await (const filePath of walk(root, 0, budget, result.unreadableDirs)) {
       result.filesScanned += 1;
 
       let buf: Buffer;
@@ -168,6 +180,7 @@ export async function collectCertFiles(roots: string[]): Promise<CertFileResult>
         buf = await fs.promises.readFile(filePath);
       } catch {
         result.unreadable += 1;
+        result.unreadableFiles.push(filePath);
         continue;
       }
 

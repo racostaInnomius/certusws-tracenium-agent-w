@@ -150,11 +150,24 @@ internal static class ConsentPrompt
             var dir = Path.GetDirectoryName(ResponsePath);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
+            // ⚠️ Quién responde, no solo qué responde.
+            //
+            // La bandeja corre COMO el usuario, así que es el único punto del
+            // sistema que sabe con certeza quién pulsó el botón. AgentCore
+            // corre como SYSTEM y busca la respuesta en TODOS los perfiles,
+            // porque no sabe de antemano quién está en consola — y eso
+            // significaba que una respuesta escrita desde una sesión de RDP
+            // valía como si la hubiera dado la persona sentada delante.
+            //
+            // El nombre del directorio de perfil no sirve para deducirlo: en
+            // Windows no tiene por qué coincidir con el del usuario. Por eso
+            // se dice explícitamente aquí.
             var payload = new
             {
                 requestId,
                 decision = approved ? "approved" : "denied",
-                atUtc = DateTime.UtcNow.ToString("O")
+                atUtc = DateTime.UtcNow.ToString("O"),
+                respondedBy = Environment.UserName
             };
 
             // Temp + move: AgentCore sondea tres veces por segundo y no puede

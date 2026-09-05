@@ -16,6 +16,51 @@ import {
 } from "./update-service";
 import { compareSemver, looksLikeSemver } from "./semver";
 import { describeError } from "./describe-error";
+import { isRemediateInFlight } from "../plugins/pmp/state";
+import { isInstallInProgress as isSoftwareInstallInProgress } from "../plugins/sdp/state";
+
+/** Prefix of the `skipped` reason when the update yielded to a privileged operation. */
+export const UPDATE_DEFERRED_PREFIX = "privileged_operation_in_progress:";
+
+/**
+ * Which privileged operation, if any, the privsvc is running for this
+ * process right now. Each is a long call whose result would be lost if the
+ * installer restarted the privsvc underneath it.
+ */
+export function privilegedOperationInFlight(
+  ctx: Pick<AgentContext, never> & { _patchInstallInProgress?: boolean }
+): "patch_install" | "patch_remediate" | "software_install" | null {
+  if ((ctx as any)?._patchInstallInProgress === true) return "patch_install";
+  if (isRemediateInFlight()) return "patch_remediate";
+  if (isSoftwareInstallInProgress()) return "software_install";
+  return null;
+}
+
+/**
+ * The control ACK for an update outcome, shared by the runJob and the push
+ * paths so they cannot drift. `status` follows the ack contract: 0 done,
+ * 1 retry later (the backend re-dispatches with backoff), 2 failed.
+ *
+ * A deferred update is the one `skipped` that must NOT close the job: the
+ * version was never installed, and acking 0 would have the backend record
+ * the update as done on a host still running the old build.
+ */
+export function ackForUpdateOutcome(outcome: UpdateOutcome): { status: 0 | 1 | 2; message: string } {
+  if (outcome.status === "failed") {
+    return { status: 2, message: `update_failed: ${outcome.error}` };
+  }
+  if (outcome.status === "skipped") {
+    if (outcome.reason.startsWith(UPDATE_DEFERRED_PREFIX)) {
+      return { status: 1, message: `agent_update retry: ${outcome.reason}` };
+    }
+    return { status: 0, message: `update_skipped: ${outcome.reason}` };
+  }
+  // `src=` names the tier that served the installer, mirroring what an
+  // SDP install already reports. Without it the control plane cannot tell
+  // a LAN download from a WAN one, which is the whole KPI of putting
+  // distribution points on the update path.
+  return { status: 0, message: `update_started;src=${outcome.servedBy || "origin"}` };
+}
 
 /**
  * Which tier served the installer for the attempt that just ran.
@@ -186,6 +231,25 @@ export async function runUpdateTask(
     logger?.warn?.("[update] stale updateInProgress detected, marking failed");
     markUpdateFailed("stale_update_in_progress");
     freshState = loadUpdateState();
+  }
+
+  // ── Never restart the privsvc under a privileged operation ───────
+  //
+  // Installing the new agent (MSI / pkg / deb) restarts BOTH services.
+  // Whatever the privsvc was doing for us at that moment dies with it: a
+  // Windows Update install, an SDP package install, a registry
+  // remediation. Msig13 (tenant 111) on 2026-09-04 received the runJob
+  // patch_install and the agentUpdate to 1.1.59 in the same reconnect
+  // burst; the MSI restarted the privsvc 22 minutes into the WUA install
+  // and the job was lost. Nothing here looked before pulling the trigger.
+  //
+  // Skip with a reason the job handlers map to ACK_RETRY, so the backend
+  // re-dispatches the update with backoff once the operation is over. The
+  // periodic check simply tries again on its next tick.
+  const busy = privilegedOperationInFlight(ctx);
+  if (busy) {
+    logger?.warn?.("[update] deferring: a privileged operation is in flight", { operation: busy });
+    return { status: "skipped", reason: `${UPDATE_DEFERRED_PREFIX}${busy}` };
   }
 
   if (!force && !shouldCheckNow(intervalMs)) {

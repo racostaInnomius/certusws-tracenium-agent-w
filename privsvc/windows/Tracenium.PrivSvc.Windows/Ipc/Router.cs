@@ -151,7 +151,7 @@ public sealed class Router
             "ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 service = "TraceniumPrivSvc",
-                version = "1.1.59",
+                version = "1.1.60",
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
@@ -210,6 +210,8 @@ public sealed class Router
             // plane. Es la excepcion consciente al censo de
             // `cdp-job-routing.test.ts`.
             "cdp.anchor.state" => CdpAnchorState.Handle(req),
+            // Fase 4 — conector AD CS: la base de emisiones de una CA, cruda.
+            "cdp.adcs.read" => CdpAdcs.Handle(req),
 
             "crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),
             "crypto.cert.install" => CryptoCertInstall.HandleInstallCert(req),

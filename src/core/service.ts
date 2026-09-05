@@ -8,6 +8,7 @@ import type { AgentContext } from "./agent-context";
 import { maybeRenewClientCertificate } from "../bootstrap/cert-renewal";
 import { dumpWedgeState } from "../diag/wedge-dump";
 import { reconcileGatewayKey, formatFingerprint } from "../connectors/vcenter/gateway-key-sync";
+import { reconcileStalePmpState } from "../plugins/pmp/state";
 
 let shuttingDown = false;
 let currentCtx: AgentContext | null = null;
@@ -102,6 +103,18 @@ export async function startService() {
       log.info("Outbox recovery completed");
     } catch (e: any) {
       log.warn("Outbox recovery failed", e?.message || e);
+    }
+
+    // A patch install the previous process was awaiting cannot survive
+    // into this one. Clear it BEFORE the first PMP collect, or the portal
+    // keeps showing "installing" for a process that is gone.
+    try {
+      const stale = reconcileStalePmpState();
+      if (stale) {
+        log.warn("[pmp] install state was in_progress at boot — marked failed (agent_restarted)", stale);
+      }
+    } catch (e: any) {
+      log.warn("[pmp] stale install state reconcile failed", e?.message || e);
     }
 
     // Eager probe of the RCP native runtime. If `node-datachannel` is broken

@@ -63,6 +63,7 @@ import type { AgentContext } from "../../core/agent-context";
 import { consumeRevokeRequest } from "../../status/remote-session-revoke";
 import {
   failClosedConsentPrompter,
+  CONTROL_CONSENT_TIMEOUT_S,
   type ConsentDecision
 } from "./consent-prompt";
 import {
@@ -143,11 +144,10 @@ const REVOKE_POLL_MS = 500;
 
 // Cuánto se espera a que la persona conteste al aviso de CONTROL.
 //
-// Más largo que el de abrir sesión: allí la persona acaba de pedir soporte y
-// está mirando la pantalla. Aquí puede llevar diez minutos explicando el
-// problema por teléfono cuando aparece el segundo aviso, y un tiempo corto
-// convertiría una duda normal en una negativa.
-const CONTROL_CONSENT_TIMEOUT_S = 90;
+// El plazo de esta segunda puerta vive con el de la primera en
+// consent-prompt.ts: el presupuesto IPC de `rcp.consent.request` se calcula
+// sobre el mayor de los dos, y separados era cuestión de tiempo que subir uno
+// rompiera esa cuenta en silencio.
 
 // Codes meaning "this endpoint will not produce a frame until something
 // changes on it" (someone logs in, an MDM profile lands, the session moves
@@ -813,6 +813,13 @@ export class ScreenSession {
       this.inputSeen = true;
       this.publishIndicator();
     }
+
+    // Junto al vídeo, y ANTES de inyectar. Si el IPC falla, lo que queda
+    // registrado es que el operador lo intentó — que es lo que hay que poder
+    // auditar; "lo intentó y no salió" no es lo mismo que "no lo hizo".
+    // Las teclas que escriben van redactadas: ver recording-store.
+    this.recorder?.offerInput(op, msg);
+
     const params: Record<string, any> = { op };
     // Mouse fields (coordinates + button)
     if ("x" in msg)      params.x      = Number(msg.x);

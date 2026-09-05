@@ -22,6 +22,10 @@ export type WindowsCdpResult = {
   items: CdpCertItem[];
   stores: CdpStoreInfo[];
   parseFailures: number;
+  /** Los almacenes de usuario (`user/<sid>/<store>`) no se pudieron leer
+   *  en este escaneo: PrivSvc antiguo, presupuesto agotado o fallo IPC.
+   *  Sus certificados no son bajas. */
+  userStoresUnavailable?: string;
 };
 
 export async function collectWindowsCdp(ctx: AgentContext): Promise<WindowsCdpResult> {
@@ -103,6 +107,7 @@ export async function collectWindowsCdp(ctx: AgentContext): Promise<WindowsCdpRe
   // NO puede costar el escaneo de maquina que acaba de funcionar. Lo
   // mismo vale para cualquier otro fallo — los certificados de usuario
   // son un anadido, no un requisito.
+  let userStoresUnavailable: string | undefined;
   try {
     const userResp = await ctx.priv.call({
       v: 1,
@@ -111,6 +116,12 @@ export async function collectWindowsCdp(ctx: AgentContext): Promise<WindowsCdpRe
       params: {},
       meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
     });
+
+    if (!userResp?.ok) {
+      userStoresUnavailable = String(userResp?.error?.code || userResp?.error?.message || "cdp.certs.readUser failed");
+    } else if (userResp.result?.budgetExceeded === true) {
+      userStoresUnavailable = "cdp.certs.readUser exceeded its handler budget";
+    }
 
     if (userResp?.ok && userResp.result?.budgetExceeded !== true) {
       const userCerts: Array<{ store?: string; userSid?: string; rawDerBase64?: string }> =
@@ -141,10 +152,17 @@ export async function collectWindowsCdp(ctx: AgentContext): Promise<WindowsCdpRe
         else parseFailures += 1;
       }
     }
-  } catch {
+  } catch (err: any) {
     // PrivSvc antiguo, o cualquier otro fallo. El escaneo de maquina ya
-    // esta hecho y se entrega igual.
+    // esta hecho y se entrega igual — pero se DICE que lo de usuario no
+    // se vio, para que no cuente como retirado.
+    userStoresUnavailable = String(err?.message || err);
   }
 
-  return { items, stores: [...storesSeen.values()], parseFailures };
+  return {
+    items,
+    stores: [...storesSeen.values()],
+    parseFailures,
+    ...(userStoresUnavailable ? { userStoresUnavailable } : {})
+  };
 }

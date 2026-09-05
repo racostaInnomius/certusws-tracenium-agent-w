@@ -25,7 +25,15 @@
 //      vía de remediación que no exige reinstalar: alguien deja el token en un
 //      archivo y el agente lo toma.
 
-import { execFileSync } from "child_process";
+import {
+  describeRegFailure,
+  parseRegQueryValue,
+  readRegistryValueInView,
+  REG_TIMEOUT_MS,
+} from "./registry";
+
+// Re-exportados: eran públicos aquí antes de extraerlos a registry.ts.
+export { parseRegQueryValue, describeRegFailure };
 import crypto from "crypto";
 import fs from "fs";
 import os from "os";
@@ -42,7 +50,6 @@ const REGISTRY_VALUE = "ENROLLMENT_TOKEN";
  * hive corrupto— deja el arranque del agente detenido para siempre, sin log y
  * sin que el gestor de servicios lo note: el proceso sigue vivo.
  */
-const REG_TIMEOUT_MS = 10_000;
 
 export type TokenSourceName =
   | "env"
@@ -87,82 +94,12 @@ function enrollmentTokenFilePath(): string | null {
   return null;
 }
 
-/**
- * Saca el dato de una salida de `reg query … /v NOMBRE`.
- *
- * ⚠️ La versión anterior hacía `out.split("REG_SZ")[1].trim()`. Eso devuelve
- * basura en silencio en cuanto la salida cambia de forma —otra vista, otro
- * tipo de valor, un idioma distinto— en vez de devolver null, que es la
- * respuesta correcta cuando no se pudo leer.
- */
-export function parseRegQueryValue(name: string, stdout: unknown): string | null {
-  if (typeof stdout !== "string" || !stdout.trim()) return null;
 
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // El dato es el resto del renglón: un REG_SZ puede contener espacios.
-  const re = new RegExp(`^\\s*${escaped}\\s+REG_(?:SZ|EXPAND_SZ)\\s+(.+)$`, "im");
-  const m = re.exec(stdout);
-  if (!m) return null;
-
-  const value = m[1].trim();
-  return value.length > 0 ? value : null;
-}
-
-/**
- * Traduce el fallo de reg.exe a algo que oriente a quien lo lee.
- *
- * ⚠️ Deliberadamente NO se clasifica por el texto de stderr. reg.exe escribe
- * sus errores en el idioma del sistema ("El sistema no puede encontrar la
- * clave…"), así que emparejar contra cadenas en inglés funciona en el
- * laboratorio y falla justo en el equipo del cliente. Se clasifica por lo que
- * es estable —hubo proceso o no, terminó o lo matamos, con qué código— y el
- * texto crudo se adjunta para que un humano lo lea.
- */
-export function describeRegFailure(err: any): string {
-  if (!err) return "unknown failure";
-
-  if (err.code === "ETIMEDOUT" || err.killed === true) {
-    return `reg.exe did not answer in ${REG_TIMEOUT_MS / 1000}s and was killed`;
-  }
-
-  // Sin `status` no llegó a correr: reg.exe ausente del PATH, o el spawn
-  // bloqueado (un EDR con reglas sobre procesos hijos de un servicio hace
-  // exactamente esto).
-  if (err.status === undefined || err.status === null) {
-    return `could not run reg.exe (${err.code || err.message || "spawn failed"})`;
-  }
-
-  const stderr = String(err.stderr || "").trim().split(/\r?\n/)[0] || "";
-  return stderr
-    ? `reg.exe exited ${err.status}: ${stderr}`
-    : `reg.exe exited ${err.status}`;
-}
 
 function queryRegistry(view: "64" | "32"): { value: string | null; detail?: string } {
-  try {
-    // execFileSync y no execSync: la versión anterior pasaba por cmd.exe, que
-    // agrega un proceso intermedio y un nivel de comillas para nada. Aquí se
-    // invoca reg.exe directo.
-    const out = execFileSync(
-      "reg.exe",
-      ["query", REGISTRY_KEY, "/v", REGISTRY_VALUE, `/reg:${view}`],
-      {
-        encoding: "utf8",
-        timeout: REG_TIMEOUT_MS,
-        windowsHide: true,
-        // stderr capturado, NO descartado: era el renglón que explicaba el
-        // fallo y se estaba tirando a la basura.
-        stdio: ["ignore", "pipe", "pipe"],
-      }
-    );
-
-    const value = parseRegQueryValue(REGISTRY_VALUE, out);
-    return value
-      ? { value }
-      : { value: null, detail: "value present in output but empty or unparseable" };
-  } catch (err: any) {
-    return { value: null, detail: describeRegFailure(err) };
-  }
+  // Implementación compartida en registry.ts — misma lectura endurecida que
+  // usa config.ts. Ver la cabecera de ese módulo.
+  return readRegistryValueInView(REGISTRY_KEY, REGISTRY_VALUE, view);
 }
 
 /**

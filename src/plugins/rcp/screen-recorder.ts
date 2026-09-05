@@ -43,6 +43,7 @@ import {
   bufferBytes,
   freeDiskBytes,
   type FrameMeta,
+  redactInputEvent,
   type RecordingResult,
   type StopReason
 } from "./recording-store";
@@ -206,6 +207,69 @@ export class ScreenRecorder {
       if (frame.full) this.lastKeyframeAt = now;
     } catch (err: any) {
       this.logger?.warn?.("[rcp.rec] fallo escribiendo la grabación", {
+        sessionId: this.sessionId,
+        err: err?.message
+      });
+      this.finishWith("write_error");
+    }
+  }
+
+  /**
+   * Anota un evento de entrada del operador junto al vídeo.
+   *
+   * La grabación decía qué se VIO y no qué se HIZO. Con esto, quien reproduce
+   * una sesión puede distinguir al operador que solo miraba del que estaba
+   * conduciendo — y ver en qué momento exacto hizo cada cosa.
+   *
+   * ⚠️ Lo que se escribe pasa por `redactInputEvent`: las teclas que producen
+   * texto se sustituyen por un marcador. Grabar la pulsación literal
+   * convertiría esto en un registrador de pulsaciones y, con el acceso
+   * desatendido, en un fichero que guarda la contraseña de administrador del
+   * cliente durante lo que dure la retención. Ver la nota en recording-store.
+   *
+   * No cuenta como fotograma ni pisa el límite de un keyframe por segundo:
+   * son unas decenas de bytes y su valor está justamente en no perderse
+   * ninguno — un clic que falta es una acción que nadie hizo.
+   */
+  offerInput(op: string, msg: any): void {
+    if (!this.active || !this.key || this.fd === null) return;
+
+    const payload = Buffer.from(
+      JSON.stringify(redactInputEvent(op, msg)),
+      "utf8"
+    );
+
+    const gate = canWriteMore({
+      sessionBytes: this.bytes,
+      incomingBytes: payload.length,
+      freeBytes: this.lastFreeBytes
+    });
+    if (!gate.ok) {
+      this.finishWith(gate.reason);
+      return;
+    }
+
+    const meta: FrameMeta = {
+      kind: "input",
+      t: Date.now() - this.startedAt,
+      // El resto de campos no significan nada aquí, pero el formato es fijo
+      // y un lector viejo los espera. Ceros, no ausencias.
+      full: false,
+      x: 0,
+      y: 0,
+      rw: 0,
+      rh: 0,
+      w: 0,
+      h: 0
+    };
+
+    try {
+      const rec = encodeRecord(meta, payload, this.key);
+      fs.writeSync(this.fd, rec);
+      this.bytes += rec.length;
+      this.wroteAnything = true;
+    } catch (err: any) {
+      this.logger?.warn?.("[rcp.rec] fallo escribiendo un evento de entrada", {
         sessionId: this.sessionId,
         err: err?.message
       });

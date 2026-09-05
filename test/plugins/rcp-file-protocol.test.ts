@@ -22,6 +22,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
 
 import { FileSession } from "../../src/plugins/rcp/file-session";
 import type { FileTransferAuditPayload } from "../../src/plugins/rcp/file-session";
@@ -74,6 +75,26 @@ function makeSession() {
     onTeardown: (r) => teardowns.push(r)
   });
   return { dc, audits, teardowns, session };
+}
+
+/** A session whose tenant policy lowers the upload ceiling. */
+function makeSessionWithLimit(maxBytes: number) {
+  const dc = new FakeDataChannel();
+  const audits: FileTransferAuditPayload[] = [];
+  const ctx: any = {
+    logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+    policyRuntime: {
+      getFeatureValue: (k: string) =>
+        k === "remoteFileMaxUploadBytes" ? maxBytes : undefined
+    }
+  };
+  const session = new FileSession(dc as any, {
+    sessionId: "sess-file-limit",
+    ctx,
+    sendFileTransferAudit: (a) => audits.push(a),
+    onTeardown: () => {}
+  });
+  return { dc, audits, session };
 }
 
 let tmpDir: string;
@@ -242,6 +263,86 @@ describe("RCP file protocol — upload", () => {
     );
     expect(completed).toBeDefined();
     expect(completed!.transferredBytes).toBe(payload.length);
+  });
+
+  it("⚠️ confirma el final al navegador, con bytes y digest", async () => {
+    // Antes NADIE decía que el fichero estuviera en su sitio: el navegador
+    // se marcaba "Completado" al mandar su último trozo, que solo prueba que
+    // los bytes salieron del navegador. Con el canal cerrado los descartaba
+    // en silencio, así que un fichero truncado se auditaba como completado.
+    const dest = path.join(tmpDir, "confirmed.txt");
+    const payload = Buffer.from("hola mundo");
+    const sha = crypto.createHash("sha256").update(payload).digest("hex");
+
+    const { dc } = makeSession();
+    dc.emit({ op: "upload", transferId: "ok1", path: dest, name: "confirmed.txt", size: payload.length });
+    await waitFor(() => dc.sentOfOp("ready").length > 0);
+    dc.emit({ op: "chunk", transferId: "ok1", seq: 0, data: payload.toString("base64") });
+    dc.emit({ op: "uploadDone", transferId: "ok1" });
+    await waitFor(() => dc.sentOfOp("uploadComplete").length > 0);
+
+    const done = dc.sentOfOp("uploadComplete")[0];
+    expect(done.bytes).toBe(payload.length);
+    // El digest es de lo que se ESCRIBIÓ, no de lo que hay en disco después:
+    // releer el fichero mediría lo que otro haya podido dejar ahí.
+    expect(done.sha256).toBe(sha);
+  });
+
+  it("⚠️ un upload corto se rechaza en vez de auditarse como completado", async () => {
+    // El fallo real que esto cierra: al navegador se le caían trozos y el
+    // fichero se renombraba a su destino igualmente. Quien restaurase una
+    // configuración desde ese expediente restauraría una versión truncada.
+    const dest = path.join(tmpDir, "short.txt");
+    const { dc, audits } = makeSession();
+    dc.emit({ op: "upload", transferId: "s1", path: dest, name: "short.txt", size: 100 });
+    await waitFor(() => dc.sentOfOp("ready").length > 0);
+    dc.emit({ op: "chunk", transferId: "s1", seq: 0, data: Buffer.from("solo 6").toString("base64") });
+    dc.emit({ op: "uploadDone", transferId: "s1" });
+    await waitFor(() => audits.some((a) => a.status === "failed"));
+
+    expect(fs.existsSync(dest)).toBe(false);
+    const failed = audits.find((a) => a.direction === "upload" && a.status === "failed");
+    expect(failed!.errorMessage).toMatch(/incomplete/i);
+    expect(dc.sentOfOp("uploadComplete")).toHaveLength(0);
+    expect(dc.sentOfOp("error").some((e) => e.code === "UPLOAD_INCOMPLETE")).toBe(true);
+  });
+
+  it("⚠️ rechaza un fichero mayor que el tope antes de abrir nada en disco", async () => {
+    const dest = path.join(tmpDir, "huge.bin");
+    const { dc, audits } = makeSession();
+    dc.emit({
+      op: "upload",
+      transferId: "big1",
+      path: dest,
+      name: "huge.bin",
+      size: 4 * 1024 * 1024 * 1024
+    });
+    await waitFor(() => dc.sentOfOp("error").length > 0);
+
+    expect(dc.sentOfOp("error")[0].code).toBe("UPLOAD_TOO_LARGE");
+    expect(dc.sentOfOp("ready")).toHaveLength(0);
+    expect(audits.some((a) => a.status === "failed")).toBe(true);
+  });
+
+  it("⚠️ un tamaño declarado en falso no sirve para llenar el disco", async () => {
+    // El tope del arranque confía en un número del navegador. Este NO: se
+    // vuelve a comprobar contra lo que de verdad va llegando.
+    const dest = path.join(tmpDir, "liar.bin");
+    // Tope bajado por política a 1 KB; el navegador declara 10 bytes y manda 2 KB.
+    const { dc, audits } = makeSessionWithLimit(1024);
+    dc.emit({ op: "upload", transferId: "l1", path: dest, name: "liar.bin", size: 10 });
+    await waitFor(() => dc.sentOfOp("ready").length > 0);
+    dc.emit({
+      op: "chunk",
+      transferId: "l1",
+      seq: 0,
+      data: Buffer.alloc(2048, 0x41).toString("base64")
+    });
+    await waitFor(() => dc.sentOfOp("error").length > 0);
+
+    expect(dc.sentOfOp("error")[0].code).toBe("UPLOAD_TOO_LARGE");
+    expect(fs.existsSync(dest)).toBe(false);
+    expect(audits.some((a) => a.status === "failed")).toBe(true);
   });
 
   it("chunk de un transferId de upload desconocido es ignorado (no revienta)", async () => {

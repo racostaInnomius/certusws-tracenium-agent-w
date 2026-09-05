@@ -88,3 +88,18 @@ describe("cdp-baseline-repo delta contract", () => {
     expect(next.removed).toEqual([]);
   });
 });
+
+describe("loadCdpBaselineItemsByStore — arrastre de almacenes no leidos", () => {
+  it("devuelve los de la baseline cuyo almacen casa y que no estan en el escaneo actual", async () => {
+    const { loadCdpBaselineItemsByStore } = await import("../../src/domain/cdp-baseline-repo");
+    clearCdpBaseline();
+    const jks = { id: "java:keystore:x", name: "/opt/app.jks", scope: "machine" as const };
+    commitCdpBaseline([item("a"), item("j1", { store: jks }), item("j2", { store: jks })]);
+    const carried = loadCdpBaselineItemsByStore((s) => s === jks.id, new Set(["j1"]));
+    expect(carried.map((i) => i.id)).toEqual(["j2"]);
+    // Y viene con el item completo, no solo el id: se recomite tal cual.
+    expect(carried[0].store).toEqual(jks);
+    expect(loadCdpBaselineItemsByStore((s) => s.startsWith("java:"), new Set())).toHaveLength(2);
+    expect(loadCdpBaselineItemsByStore(() => false, new Set())).toEqual([]);
+  });
+});

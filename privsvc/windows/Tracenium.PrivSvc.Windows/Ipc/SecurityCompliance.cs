@@ -1,6 +1,7 @@
 // privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/SecurityCompliance.cs
 using System.Diagnostics;
 using System.Text.Json;
+using System.Security.Principal;
 using System.Linq;
 using System.Text;
 
@@ -57,6 +58,16 @@ public static class SecurityCompliance
             var registry = probed is { Values.Count: > 0 } ? probed.Values : null;
             var registryErrors = probed is { Errors.Count: > 0 } ? probed.Errors : null;
 
+            // Sondas de registro DE USUARIO (CIS 19.x): HKEY_USERS\<SID> de
+            // cada perfil cargado, agregadas. Sin perfiles cargados no se
+            // emite el bloque. Ver UserRegistryProbeShape.cs.
+            var userProbes = UserRegistryProbeShape.FromParams(req.Params);
+            var userProbed = userProbes.Count > 0 ? UserRegistryProbes.Read(userProbes) : null;
+            var registryUser = userProbed is { Hives: > 0 }
+                ? UserRegistryProbeShape.Aggregate(userProbed.PerHive, userProbes)
+                : null;
+            var registryUserErrors = userProbed is { Errors.Count: > 0 } ? userProbed.Errors : null;
+
             var result = new
             {
                 bitlocker = GetBitlockerStatus(),
@@ -87,6 +98,17 @@ public static class SecurityCompliance
                 // SYSTEM lee cualquier clave de directiva bajo HKLM, esto
                 // debería ir siempre vacío; si no, es un hallazgo.
                 registryErrors,
+                registryUser,
+                registryUserErrors,
+                // Directiva local completa (secedit /export): [System Access]
+                // y [Privilege Rights] — CIS 1.x, 2.2.x y parte de 2.3.x.
+                // null si no se pudo exportar: el bloque no viaja y el
+                // catálogo resuelve not_applicable. Ver SeceditShape.cs.
+                secedit = GetSeceditPolicy(),
+                // Política de auditoría avanzada (CIS 17.x), por GUID de
+                // subcategoría y con el ajuste numérico estable entre
+                // idiomas. Ver AuditpolShape.cs.
+                auditpol = GetAuditPolicy(),
                 ciphers = GetEnabledCiphers(),
                 protocols = GetTlsProtocols(),
                 patches = GetInstalledSecurityPatches(),
@@ -296,6 +318,65 @@ public static class SecurityCompliance
         {
             RecordSectionError("passwordPolicy", "read_failed", ex.Message);
             return new { available = false };
+        }
+    }
+
+    // ── secedit completo: [System Access] + [Privilege Rights] ──────────
+    //
+    // passwordPolicy (arriba) extrae cinco claves con regex; esto exporta la
+    // directiva entera para los controles de CIS que no caben ahí: derechos
+    // de usuario (2.2.x), cuentas (2.3.1.x) y el resto de [System Access].
+    // Los SIDs de los derechos se resuelven a nombre AQUÍ, que es el único
+    // sitio donde un SID local o de dominio resuelve. Null = no se emite.
+    private static object? GetSeceditPolicy()
+    {
+        try
+        {
+            var text = RunPs(
+                "$f = Join-Path $env:TEMP ('trc-secedit-' + [guid]::NewGuid().ToString('N') + '.cfg'); " +
+                "secedit /export /cfg $f /quiet | Out-Null; " +
+                "if (Test-Path $f) { Get-Content $f -Raw; Remove-Item $f -Force -ErrorAction SilentlyContinue }"
+            );
+            if (string.IsNullOrWhiteSpace(text)) return null;
+            var ini = SeceditShape.ParseIni(text);
+            if (!ini.ContainsKey("System Access") && !ini.ContainsKey("Privilege Rights")) return null;
+            return SeceditShape.Build(ini, ResolveSidToName);
+        }
+        catch (Exception ex)
+        {
+            RecordSectionError("secedit", "read_failed", ex.Message);
+            return null;
+        }
+    }
+
+    private static string? ResolveSidToName(string sid)
+    {
+        try
+        {
+            return new SecurityIdentifier(sid).Translate(typeof(NTAccount)).Value;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // ── auditpol /backup: el ajuste numérico, no el texto localizado ──────
+    private static object? GetAuditPolicy()
+    {
+        try
+        {
+            var text = RunPs(
+                "$f = Join-Path $env:TEMP ('trc-auditpol-' + [guid]::NewGuid().ToString('N') + '.csv'); " +
+                "auditpol /backup /file:$f | Out-Null; " +
+                "if (Test-Path $f) { Get-Content $f -Raw; Remove-Item $f -Force -ErrorAction SilentlyContinue }"
+            );
+            return AuditpolShape.ParseBackupCsv(text);
+        }
+        catch (Exception ex)
+        {
+            RecordSectionError("auditpol", "read_failed", ex.Message);
+            return null;
         }
     }
 
@@ -580,7 +661,7 @@ try {
         try
         {
             var output = RunPs(@"
-$cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain
+$cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain, DomainRole
 function Get-GpResultLines($scope) {
   try {
     $raw = gpresult /Scope $scope /R 2>$null
@@ -591,6 +672,7 @@ function Get-GpResultLines($scope) {
 [pscustomobject]@{
   partOfDomain = [bool]$cs.PartOfDomain
   domain = [string]$cs.Domain
+  domainRole = [int]$cs.DomainRole
   computer = Get-GpResultLines 'Computer'
   user = Get-GpResultLines 'User'
 } | ConvertTo-Json -Depth 8
@@ -604,17 +686,33 @@ function Get-GpResultLines($scope) {
             // lists; shipping the transcript was PII in the evidence
             // blob for no rule's benefit. (Linux has capped raw at 4 KB
             // since day one; macOS got the cap the same day as this.)
+            // Win32_ComputerSystem.DomainRole: 0/1 estación (autónoma/miembro),
+            // 2/3 servidor (autónomo/miembro), 4/5 controlador de dominio
+            // (backup/primario). Es lo que separa los controles "(DC only)" /
+            // "(MS only)" de CIS Server 2022: sin esto un miembro fallaba
+            // controles de DC por una razón falsa. `role` es la forma que
+            // compara el catálogo; `domainRole` el número crudo.
+            var domainRole = GetInt(obj, "domainRole");
+            var role = domainRole switch
+            {
+                0 or 1 => "workstation",
+                2 or 3 => "member_server",
+                4 or 5 => "domain_controller",
+                _ => (string?)null
+            };
             return new
             {
                 partOfDomain = GetBool(obj, "partOfDomain") ?? false,
                 domain = GetString(obj, "domain"),
+                domainRole,
+                role,
                 appliedComputerGpos = ExtractAppliedGpos(obj, "computer"),
                 appliedUserGpos = ExtractAppliedGpos(obj, "user")
             };
         }
         catch
         {
-            return new { partOfDomain = false, domain = (string?)null, appliedComputerGpos = Array.Empty<string>(), appliedUserGpos = Array.Empty<string>() };
+            return new { partOfDomain = false, domain = (string?)null, domainRole = (int?)null, role = (string?)null, appliedComputerGpos = Array.Empty<string>(), appliedUserGpos = Array.Empty<string>() };
         }
     }
 

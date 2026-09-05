@@ -21,6 +21,33 @@
 // native dialog isn't implemented yet; wiring a real prompter (registered on
 // ctx.consentPrompter) is what turns the feature on.
 
+// ── How long a person gets to answer ─────────────────────────────────
+//
+// ⚠️ These are NOT the session timeout, and the difference mattered: the
+// session-open gate used to be handed `sessionTimeoutSeconds`, the agent's
+// 4-hour hard cap on the session itself. A dialog asking somebody whether a
+// stranger may see their screen was therefore told to wait four hours for an
+// answer. Two different questions had been given the same number because both
+// happened to be "a timeout on this session".
+//
+// They live together here because the IPC budget for `rcp.consent.request`
+// has to outlast the LONGER of the two (see getTimeoutForMethod in
+// src/priv/privsvc-client-*.ts, and the invariant test that pins it). Split
+// across two modules, raising one of them would silently break that.
+export const SESSION_CONSENT_TIMEOUT_S = 60;
+
+// Longer than opening the session: there the person has just asked for help
+// and is looking at the screen. This second prompt can arrive ten minutes
+// into explaining the problem on the phone, and a short window would turn a
+// normal hesitation into a refusal.
+export const CONTROL_CONSENT_TIMEOUT_S = 90;
+
+/** The longest any consent prompt may block for. What the IPC budget is built on. */
+export const MAX_CONSENT_TIMEOUT_S = Math.max(
+  SESSION_CONSENT_TIMEOUT_S,
+  CONTROL_CONSENT_TIMEOUT_S
+);
+
 export type ConsentDecision = "approved" | "denied" | "timeout";
 
 export interface ConsentRequest {

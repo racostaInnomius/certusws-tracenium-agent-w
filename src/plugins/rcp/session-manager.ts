@@ -19,6 +19,7 @@ import { PeerSession } from "./peer-session";
 import {
   failClosedConsentPrompter,
   consentCloseReason,
+  SESSION_CONSENT_TIMEOUT_S,
   type ConsentDecision,
 } from "./consent-prompt";
 
@@ -57,6 +58,25 @@ function extractIceUfrag(sdp: string): string | null {
 
 export class SessionManager {
   private readonly sessions = new Map<string, PeerSession>();
+
+  /**
+   * Sesiones cuya persona YA dio su consentimiento.
+   *
+   * ⚠️ Existe por el reinicio de ICE. Cuando el Wi-Fi de un portátil salta de
+   * punto de acceso, el navegador manda una oferta nueva; para `rcp.screen`
+   * el peer se reconstruye desde cero y el resto de `onOffer` se ejecuta otra
+   * vez — incluida la puerta del consentimiento. Es decir: a la persona le
+   * volvía a saltar el diálogo a mitad de sesión, sin que nada hubiera
+   * cambiado salvo su router.
+   *
+   * Volver a preguntar ahí no es "más seguro", es peor: enseña que el
+   * diálogo aparece solo y se acepta sin leer, que es exactamente cómo se
+   * anula un consentimiento. La sesión es LA MISMA —mismo id, mismo
+   * operador, el indicador nunca se apagó—, así que la decisión sigue valiendo.
+   *
+   * Se limpia con la sesión: nunca sobrevive a un cierre.
+   */
+  private readonly consentGranted = new Set<string>();
   private readonly pendingIce = new Map<
     string,
     { at: number; items: PendingIce[] }
@@ -259,7 +279,13 @@ export class SessionManager {
     const requireConsent = Boolean(
       this.ctx.policyRuntime?.isFeatureEnabled?.("remoteRequireConsent")
     );
-    if (requireConsent) {
+    // Una reconstrucción por reinicio de ICE NO vuelve a preguntar: es la
+    // misma sesión y la persona ya decidió. Ver `consentGranted`.
+    if (requireConsent && this.consentGranted.has(sessionId)) {
+      this.ctx.logger?.info?.("[rcp] consentimiento ya concedido en esta sesión; no se repregunta", {
+        sid: sessionId.slice(-8)
+      });
+    } else if (requireConsent) {
       const prompter = this.ctx.consentPrompter ?? failClosedConsentPrompter;
       let decision: ConsentDecision;
       try {
@@ -267,7 +293,12 @@ export class SessionManager {
           sessionId,
           capability,
           operator: params?.operatorUserId ? String(params.operatorUserId) : null,
-          timeoutSeconds,
+          // ⚠️ NOT `timeoutSeconds`. That is the session's 4-hour hard cap,
+          // and passing it here told the dialog to wait four hours for a
+          // person to answer "may this stranger see your screen?". Two
+          // different questions had been given the same number because both
+          // read as "a timeout on this session".
+          timeoutSeconds: SESSION_CONSENT_TIMEOUT_S,
         });
       } catch (err: any) {
         // A prompter that throws must not fail OPEN — treat as denied.
@@ -286,6 +317,7 @@ export class SessionManager {
         this.sendClose(sessionId, consentCloseReason(decision) ?? "consent_denied");
         return;
       }
+      this.consentGranted.add(sessionId);
       this.ctx.logger?.info?.("[rcp] consent granted", {
         sid: sessionId.slice(-8),
         capability,
@@ -316,6 +348,7 @@ export class SessionManager {
       sendRecordingReady: (r) => this.sendRecordingReady(r),
       onTeardown: (reason) => {
         this.sessions.delete(sessionId);
+        this.consentGranted.delete(sessionId);
         this.sendClose(sessionId, reason);
       },
       sessionTimeoutSeconds: timeoutSeconds
@@ -442,6 +475,7 @@ export class SessionManager {
     const peer = this.sessions.get(sessionId);
     if (!peer) return;
     this.sessions.delete(sessionId);
+    this.consentGranted.delete(sessionId);
     await peer.dispose(reason);
   }
 
@@ -457,6 +491,7 @@ export class SessionManager {
     const peer = this.sessions.get(sessionId);
     if (peer) {
       this.sessions.delete(sessionId);
+      this.consentGranted.delete(sessionId);
       await peer.dispose(`remote_error:${code}`);
     }
   }

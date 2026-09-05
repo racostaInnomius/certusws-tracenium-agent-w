@@ -333,6 +333,47 @@ if (-not (Test-Path $cachedNode)) {
 
 Copy-Item $cachedNode (Join-Path $OutNode "node.exe") -Force
 
+# ── 3b. Smoke-test the Remote Control native modules ─────────────────
+#
+# Until now this build only checked that better-sqlite3 produced a .node
+# file. node-pty and node-datachannel — the remote shell and the ENTIRE
+# WebRTC transport — were packaged blind. A binding that does not load
+# surfaced on an endpoint, mid support session, as an `ice_failed` or a
+# `pty_spawn_failed` nobody attributed to the package.
+#
+# "The files are there" is not "this works". What separates them is loading
+# them with the node.exe about to be shipped, and using them.
+#
+# ⚠️ A cross-compiled build CANNOT run this — the bindings and the node are
+# for the target arch — so it is SKIPPED with an explicit warning rather
+# than passing quietly. A check that did not run is not a check that passed,
+# and the build log has to say which of the two happened.
+$stagedNode = Join-Path $OutNode "node.exe"
+$hostArch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
+if ($Arch -ne $hostArch) {
+  Write-Host "  ⚠️  RCP native smoke SKIPPED: cross-compiling $Arch on $hostArch" -ForegroundColor Yellow
+} else {
+  $ptyDir = (Join-Path $OutNm "node-pty") -replace '\\', '/'
+  $ndcDir = (Join-Path $OutNm "node-datachannel") -replace '\\', '/'
+
+  # node-pty: opening a real pty is the only thing that tells an ABI
+  # mismatch apart from a module that merely loads.
+  & $stagedNode -e "const pty=require('$ptyDir');const p=pty.spawn('cmd.exe',['/c','exit 0'],{cols:80,rows:24});if(!p.pid)process.exit(1);" 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    throw "node-pty cannot open a pty with the bundled node.exe. The remote shell would be dead on every endpoint this package reaches. Reproduce: $stagedNode -e ""require('$ptyDir').spawn('cmd.exe',[],{})"""
+  }
+  Write-Host "  ✓ node-pty loads and opens a pty"
+
+  # node-datachannel: constructing a PeerConnection is what actually
+  # exercises libdatachannel; requiring the module only proves the .node
+  # file opens.
+  & $stagedNode -e "const ndc=require('$ndcDir');const pc=new ndc.PeerConnection('smoke',{iceServers:[]});pc.close();" 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    throw "node-datachannel cannot create a PeerConnection with the bundled node.exe. NO remote session would connect: shell, files or screen."
+  }
+  Write-Host "  ✓ node-datachannel loads and creates a PeerConnection"
+}
+
 # ── 4. Copy WinSW wrapper for target arch from the repo ─────────────
 # WinSW is the service wrapper that launches `node app\dist\index.js`
 # as a Windows service. We ship per-arch binaries committed at

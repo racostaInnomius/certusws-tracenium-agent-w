@@ -137,7 +137,32 @@ export type CdpCertItem = {
    *   "listener"   — captured from a live local TLS handshake, i.e. what
    *                  the service actually serves (may differ from any
    *                  store). */
-  source: "store" | "java-store" | "listener" | "file" | "nss" | "probe";
+  source: "store" | "java-store" | "listener" | "file" | "nss" | "probe" | "adcs";
+};
+
+/**
+ * Un almacen que EXISTIA y no se pudo leer en este escaneo (keystore
+ * bloqueado, keychain de otro usuario, base NSS abierta, PrivSvc sin el
+ * metodo de usuario...). Sus certificados faltan de `items` sin haber
+ * desaparecido: ni el agente ni el control plane pueden afirmar su baja.
+ * `prefix: true` = el id nombra una familia de almacenes (`user/`).
+ */
+export type CdpUnreadableStore = {
+  id: string;
+  name: string;
+  reason: string;
+  prefix?: boolean;
+};
+
+/**
+ * Escaneo parcial: lo que se vio es cierto; lo que NO se vio no se
+ * puede dar por retirado. `unreadableStores` acota la duda a almacenes
+ * concretos; `unscoped` son fallos de un colector entero cuyos almacenes
+ * no se pueden nombrar (entonces no se afirma NINGUNA baja).
+ */
+export type CdpPartialScan = {
+  unreadableStores: CdpUnreadableStore[];
+  unscoped: string[];
 };
 
 export type CdpDelta = {
@@ -183,7 +208,20 @@ export type CdpNamespace = {
    * plataforma donde no hay anclas que fijar (Linux, gate 1).
    */
   anchorPin?: CdpAnchorPinReport;
+  /** Presente cuando algun almacen existia y no se pudo leer. Ver
+   *  CdpPartialScan: sin esto, una base NSS bloqueada un dia se leia
+   *  como «todos sus certificados fueron retirados». */
+  partial?: CdpPartialScan;
+
+  /**
+   * Conector AD CS (fase 4). Solo lo manda una Certification Authority
+   * con `cdp.adcs.enabled`. Lo emitido NO esta en este equipo: el control
+   * plane lo proyecta a activos con origen `adcs`, no a la lista de
+   * certificados del equipo.
+   */
+  adcs?: CdpAdcsReport;
 };
+
 
 export type CdpAnchorPinReport = {
   applicable: boolean;
@@ -209,4 +247,18 @@ export type CdpAnchorPinReport = {
     firstRun: boolean;
     unpinnedSeenTotal: number;
   } | null;
+};
+
+
+export type CdpAdcsReport = {
+  isCa: boolean;
+  caName: string | null;
+  sinceRequestId: number;
+  lastRequestId: number;
+  /** Emisiones nuevas desde el cursor, con su plantilla y solicitante. */
+  issued: Array<CdpCertItem & { requestId: number; disposition: number | null; requester?: string; template?: string }>;
+  truncated: boolean;
+  parseFailures: number;
+  /** Que columnas reconocio el parser: si falta una, se ve aqui. */
+  columnsFound: { requestId: boolean; disposition: boolean; requester: boolean; template: boolean; rawCertificate: boolean } | null;
 };

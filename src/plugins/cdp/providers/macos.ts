@@ -17,7 +17,7 @@ import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import type { CdpCertItem, CdpStoreInfo } from "../../../domain/cdp-types";
+import type { CdpCertItem, CdpStoreInfo, CdpUnreadableStore } from "../../../domain/cdp-types";
 import { parseCertToItem, splitPemBundle } from "../parse-cert";
 
 const execFileAsync = promisify(execFile);
@@ -110,6 +110,9 @@ export type MacosCdpResult = {
    * visible en el log y en el propio inventario, no un silencio.
    */
   loginKeychains: { discovered: number; read: number };
+  /** Keychains que existen y no se pudieron leer: sus certificados no
+   *  son bajas. */
+  unreadable: CdpUnreadableStore[];
 };
 
 async function readKeychainPems(keychainPath: string): Promise<string[]> {
@@ -145,6 +148,7 @@ async function readIdentityHashes(): Promise<Set<string>> {
 export async function collectMacosCdp(): Promise<MacosCdpResult> {
   const items: CdpCertItem[] = [];
   const stores: CdpStoreInfo[] = [];
+  const unreadable: CdpUnreadableStore[] = [];
   let parseFailures = 0;
   let loginDiscovered = 0;
   let loginRead = 0;
@@ -200,8 +204,13 @@ export async function collectMacosCdp(): Promise<MacosCdpResult> {
       pems = await readKeychainPems(target.keychainPath);
     } catch (err: any) {
       // One unreadable keychain (SIP changes, missing file on future
-      // macOS) must not kill the scan of the other.
+      // macOS) must not kill the scan of the other. Y tampoco puede
+      // convertir sus certificados en bajas: se DICE que no se leyo.
+      // (Un keychain que ya no existe si es una baja real.)
       parseFailures += 1;
+      if (err?.code !== "ENOENT" && fs.existsSync(target.keychainPath)) {
+        unreadable.push({ id: target.store.id, name: target.store.name, reason: String(err?.message || err) });
+      }
       continue;
     }
 
@@ -225,6 +234,7 @@ export async function collectMacosCdp(): Promise<MacosCdpResult> {
     items,
     stores,
     parseFailures,
-    loginKeychains: { discovered: loginDiscovered, read: loginRead }
+    loginKeychains: { discovered: loginDiscovered, read: loginRead },
+    unreadable
   };
 }

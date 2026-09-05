@@ -32,7 +32,9 @@ function resolveBaseDir() {
 }
 
 function getStatePath() {
-  const dir = path.join(resolveBaseDir(), "state");
+  // Override for tests and ad-hoc runs; production always uses the
+  // platform data dir above.
+  const dir = process.env.TRACENIUM_STATE_DIR || path.join(resolveBaseDir(), "state");
   ensureDir(dir);
   return path.join(dir, "pmp-state.json");
 }
@@ -78,6 +80,39 @@ export function updatePmpState(patch: Partial<PmpRemediationState>) {
 
   savePmpState(next);
   return next;
+}
+
+/** Marker in `lastError` for an install the agent could not see finish. */
+export const AGENT_RESTARTED_ERROR = "agent_restarted";
+
+/**
+ * Called once at boot, before any collector reads the state and before a
+ * job can start. An `in_progress` install found here cannot be in
+ * progress in THIS process: the promise that was awaiting `patch.install`
+ * died with the previous one. Whatever the privsvc did with it is unknown
+ * to us — it may still be running, it may have finished into a pipe nobody
+ * read — and the next patch scan will report the real on-disk state.
+ *
+ * Until 2026-09-04 nothing cleared this. Msig13 (tenant 111) lost its
+ * AgentCore mid-install three times that day and every FACTS snapshot in
+ * between (14:29, 14:36, 16:09) still said `installing`: the portal showed
+ * a spinner for a process that had been dead for hours. Same shape as
+ * `stale_update_in_progress` in update-task.ts.
+ *
+ * Returns what was found so the caller can log it, or null when there was
+ * nothing to do.
+ */
+export function reconcileStalePmpState(): Pick<PmpRemediationState, "mode" | "startedAtUtc"> | null {
+  const current = loadPmpState();
+  if (current.status !== "in_progress") return null;
+
+  updatePmpState({
+    status: "failed",
+    finishedAtUtc: new Date().toISOString(),
+    lastError: AGENT_RESTARTED_ERROR
+  });
+
+  return { mode: current.mode, startedAtUtc: current.startedAtUtc };
 }
 
 // ── PMv2 — security-config remediation lock (in-memory) ──────────

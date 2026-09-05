@@ -15,7 +15,7 @@
 
 import fs from "fs";
 import path from "path";
-import type { CdpCertItem, CdpStoreInfo } from "../../../domain/cdp-types";
+import type { CdpCertItem, CdpStoreInfo, CdpUnreadableStore } from "../../../domain/cdp-types";
 import { parseCertToItem, splitPemBundle } from "../parse-cert";
 
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
@@ -52,6 +52,9 @@ export type LinuxCdpResult = {
   items: CdpCertItem[];
   stores: CdpStoreInfo[];
   parseFailures: number;
+  /** Directorios/bundles que EXISTEN y no se pudieron leer (EACCES…).
+   *  Ausente en esta distro no esta aqui: eso no es un fallo. */
+  unreadable: CdpUnreadableStore[];
 };
 
 function readCertFileSafe(filePath: string): string | null {
@@ -68,6 +71,7 @@ function readCertFileSafe(filePath: string): string | null {
 
 export async function collectLinuxCdp(): Promise<LinuxCdpResult> {
   const stores: CdpStoreInfo[] = [];
+  const unreadable: CdpUnreadableStore[] = [];
   let parseFailures = 0;
 
   // Dedupe within each store: the Debian symlink farm exposes every
@@ -80,7 +84,12 @@ export async function collectLinuxCdp(): Promise<LinuxCdpResult> {
 
     if (target.bundle) {
       const content = readCertFileSafe(target.bundle);
-      if (content === null) continue;
+      if (content === null) {
+        if (fs.existsSync(target.bundle)) {
+          unreadable.push({ id: target.store.id, name: target.store.name, reason: `bundle unreadable: ${target.bundle}` });
+        }
+        continue;
+      }
       pems.push(...splitPemBundle(content));
     }
 
@@ -88,8 +97,13 @@ export async function collectLinuxCdp(): Promise<LinuxCdpResult> {
       let entries: fs.Dirent[];
       try {
         entries = fs.readdirSync(target.dir, { withFileTypes: true });
-      } catch {
-        continue; // directory absent on this distro — not an error
+      } catch (err: any) {
+        // Absent on this distro is not an error. Present and unreadable
+        // IS: its certificates must not read as removed.
+        if (err?.code !== "ENOENT") {
+          unreadable.push({ id: target.store.id, name: target.store.name, reason: String(err?.message || err) });
+        }
+        continue;
       }
 
       for (const entry of entries) {
@@ -120,5 +134,5 @@ export async function collectLinuxCdp(): Promise<LinuxCdpResult> {
     }
   }
 
-  return { items: [...byId.values()], stores, parseFailures };
+  return { items: [...byId.values()], stores, parseFailures, unreadable };
 }

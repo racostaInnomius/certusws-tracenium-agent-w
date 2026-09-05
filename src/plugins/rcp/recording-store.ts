@@ -211,6 +211,15 @@ export function canWriteMore(args: {
 }
 
 export type FrameMeta = {
+  /**
+   * Qué es este registro.
+   *
+   * Ausente = fotograma, por compatibilidad con las grabaciones escritas
+   * antes de que existieran los eventos de entrada: un lector viejo no
+   * conoce el campo y un fichero viejo no lo trae, y las dos cosas tienen
+   * que seguir significando lo mismo.
+   */
+  kind?: "frame" | "input";
   /** Milisegundos desde el inicio de la grabación. */
   t: number;
   /** true = fotograma completo; false = solo la región (x,y,rw,rh). */
@@ -223,6 +232,65 @@ export type FrameMeta = {
   w: number;
   h: number;
 };
+
+// ── Qué se guarda de lo que el operador TECLEA, y qué no ─────────────
+//
+// ⚠️ Esta es la decisión delicada de todo el fichero.
+//
+// La grabación decía qué se VIO y no qué se HIZO, y arreglarlo tiene una
+// forma obvia y equivocada: registrar cada tecla. Eso convierte la grabación
+// de una sesión de soporte en un registrador de pulsaciones — y, con el
+// acceso desatendido de la fase 4, en un fichero cifrado que contiene la
+// contraseña de administrador de dominio del cliente, guardada durante 90
+// días porque la política de retención dice eso.
+//
+// Un expediente que no se puede enseñar sin filtrar un secreto no es un
+// expediente: es un pasivo.
+//
+// La regla: se guarda lo que responde "qué hizo esta persona" y no lo que
+// responde "qué escribió".
+//
+//   · Las teclas de MANDO —Enter, Tab, Escape, flechas, funciones,
+//     modificadores— van tal cual. Son acciones, no contenido: pulsar
+//     Ctrl+Alt+Supr o Enter es exactamente lo que hay que poder auditar.
+//   · Las teclas IMPRIMIBLES se sustituyen por un marcador. Se conserva que
+//     hubo escritura y cuándo; se pierde qué se escribió.
+//   · El ratón va entero. Sus coordenadas ya están en el vídeo.
+//
+// Queda expuesta la LONGITUD de lo tecleado, y se acepta a conciencia: es
+// una fuga mucho menor que el contenido, y la alternativa —no registrar
+// nada— pierde la capacidad de enseñar que alguien estuvo escribiendo, que
+// es justo lo que este cambio existe para dar.
+const PRINTABLE_KEY = /^(Key[A-Z]|Digit\d|Numpad(\d|Decimal|Add|Subtract|Multiply|Divide)|Space|Comma|Period|Slash|Semicolon|Quote|Backquote|Minus|Equal|Bracket(Left|Right)|Backslash|Intl.*)$/;
+
+/** El marcador que sustituye a una tecla imprimible. */
+export const REDACTED_KEY = "·";
+
+/** True si esta tecla produce texto y por tanto NO se guarda literal. */
+export function isPrintableKey(code: unknown): boolean {
+  return PRINTABLE_KEY.test(String(code ?? ""));
+}
+
+/**
+ * Deja un evento de entrada listo para grabar: entero si es de ratón o de
+ * mando, redactado si es una tecla que escribe.
+ */
+export function redactInputEvent(op: string, msg: any): Record<string, unknown> {
+  const base: Record<string, unknown> = { op };
+  if (op === "keyDown" || op === "keyUp") {
+    const code = String(msg?.code ?? "");
+    base.code = isPrintableKey(code) ? REDACTED_KEY : code;
+    return base;
+  }
+  if (op === "releaseAll") return base;
+  // Ratón y rueda: coordenadas y botón, que es lo que el vídeo ya enseña.
+  if (msg?.x !== undefined) base.x = Number(msg.x) || 0;
+  if (msg?.y !== undefined) base.y = Number(msg.y) || 0;
+  if (msg?.button !== undefined) base.button = Number(msg.button) || 0;
+  if (msg?.deltaX !== undefined) base.deltaX = Number(msg.deltaX) || 0;
+  if (msg?.deltaY !== undefined) base.deltaY = Number(msg.deltaY) || 0;
+  return base;
+}
 
 /**
  * Serializa un registro cifrado.

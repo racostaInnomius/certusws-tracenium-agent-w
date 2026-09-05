@@ -33,6 +33,7 @@
 //   existe, y aprendería que estos avisos no significan nada.
 
 import fs from "fs";
+import { getInteractiveUserFromOs } from "../../domain/device-facts-builder";
 import path from "path";
 import os from "os";
 import type { AgentContext } from "../../core/agent-context";
@@ -67,7 +68,23 @@ export type TrayConsentResponseFile = {
   requestId: string;
   decision: "approved" | "denied";
   atUtc: string;
+  /**
+   * Quién pulsó el botón, según la propia bandeja — que corre COMO el
+   * usuario y es el único punto del sistema que lo sabe con certeza.
+   *
+   * Opcional porque una bandeja anterior a este campo no lo escribe. Ver
+   * `consumeConsentResponse` para qué se hace en ese caso, que NO es
+   * rechazarla: eso dejaría a media flota sin poder consentir hasta que se
+   * actualice la bandeja, y una puerta que deja fuera a quien tiene derecho
+   * a pasar se acaba desactivando.
+   */
+  respondedBy?: string;
 };
+
+/** Lo que se supo de quién respondió, para el registro. */
+export type ConsentResponder =
+  | { verified: true; user: string }
+  | { verified: false; why: "tray_sin_identidad" | "consola_desconocida" };
 
 /** Directorio de estado compartido: donde vive tray-status.json. */
 export function consentRequestPath(): string {
@@ -112,13 +129,67 @@ export function consentResponseCandidates(): string[] {
 }
 
 /**
+ * ¿La respondió quien está delante del equipo?
+ *
+ * ── El agujero ──────────────────────────────────────────────────────
+ *
+ * AgentCore corre como SYSTEM y busca la respuesta en TODOS los perfiles,
+ * porque no sabe de antemano quién está en consola. Eso significaba que una
+ * respuesta escrita desde una sesión de RDP —u otro usuario en cambio rápido—
+ * valía exactamente igual que la de la persona sentada delante. El
+ * consentimiento de ADR-0012 es la de delante: es SU pantalla.
+ *
+ * ── Por qué compara nombres y no rutas ──────────────────────────────
+ *
+ * El nombre del directorio de perfil NO es el del usuario en Windows: se
+ * queda con el que tuviera la cuenta al crearse, y con dominios cambia. Una
+ * comparación por ruta rechazaría a gente legítima, que es peor que no
+ * comparar. Por eso la bandeja escribe su `Environment.UserName` y aquí se
+ * contrasta contra el usuario de consola.
+ *
+ * ── Por qué "no se sabe" NO es "se rechaza" ─────────────────────────
+ *
+ * Una bandeja anterior a este campo no lo manda, y el usuario de consola no
+ * siempre se puede resolver. Rechazar ahí dejaría sin poder consentir a toda
+ * la flota que aún no se ha actualizado — y una puerta que deja fuera a quien
+ * tiene derecho a pasar se acaba desactivando por directiva, con lo que no
+ * protege de nada. Se acepta y se ANOTA como no verificada: primero se
+ * observa, y se exige cuando la flota lo permita.
+ */
+export function matchesConsoleUser(
+  respondedBy: string | undefined,
+  consoleUser: string | null | undefined
+): ConsentResponder {
+  const said = String(respondedBy || "").trim();
+  if (!said) return { verified: false, why: "tray_sin_identidad" };
+  const console_ = String(consoleUser || "").trim();
+  if (!console_) return { verified: false, why: "consola_desconocida" };
+
+  // `DOMINIO\usuario` y `usuario` son la misma persona a estos efectos: lo
+  // que se compara es quién, no de dónde viene su cuenta.
+  const bare = (v: string) => {
+    const afterDomain = v.includes("\\") ? v.split("\\").pop()! : v;
+    return afterDomain.split("@")[0].trim().toLowerCase();
+  };
+  if (bare(said) !== bare(console_)) {
+    return { verified: false, why: "consola_desconocida" };
+  }
+  return { verified: true, user: said };
+}
+
+/**
  * Busca y CONSUME una respuesta para `requestId`.
  *
  * Consume siempre que encuentra el fichero, aunque sea de otra petición:
  * dejarlo ahí lo convertiría en una mina para la siguiente, que se resolvería
  * sola con una decisión que nadie tomó para ella.
+ *
+ * Devuelve también QUIÉN respondió, para que el llamador pueda contrastarlo
+ * con el usuario de consola.
  */
-export function consumeConsentResponse(requestId: string): ConsentDecision | null {
+export function consumeConsentResponseDetailed(
+  requestId: string
+): { decision: ConsentDecision; respondedBy?: string } | null {
   for (const file of consentResponseCandidates()) {
     let raw: string;
     try {
@@ -139,9 +210,17 @@ export function consumeConsentResponse(requestId: string): ConsentDecision | nul
       continue;
     }
     if (!parsed || parsed.requestId !== requestId) continue;
-    return parsed.decision === "approved" ? "approved" : "denied";
+    return {
+      decision: parsed.decision === "approved" ? "approved" : "denied",
+      respondedBy: typeof parsed.respondedBy === "string" ? parsed.respondedBy : undefined
+    };
   }
   return null;
+}
+
+/** La forma de siempre, para quien solo necesita la decisión. */
+export function consumeConsentResponse(requestId: string): ConsentDecision | null {
+  return consumeConsentResponseDetailed(requestId)?.decision ?? null;
 }
 
 export function createTrayConsentPrompter(ctx: AgentContext): ConsentPrompter {
@@ -196,8 +275,35 @@ export function createTrayConsentPrompter(ctx: AgentContext): ConsentPrompter {
       try {
         const deadline = Date.now() + req.timeoutSeconds * 1000;
         while (Date.now() < deadline) {
-          const decision = consumeConsentResponse(requestId);
-          if (decision) return decision;
+          const answer = consumeConsentResponseDetailed(requestId);
+          if (answer) {
+            // ¿La dio quien está delante? La respuesta puede venir de
+            // cualquier perfil del equipo —el servicio las busca en todos
+            // porque no sabe quién está en consola— y eso incluye una sesión
+            // de RDP abierta en paralelo.
+            const consoleUser = await getInteractiveUserFromOs()
+              .then((u) => u?.user ?? null)
+              .catch(() => null);
+            const who = matchesConsoleUser(answer.respondedBy, consoleUser);
+
+            if (!who.verified) {
+              // No se rechaza: ver matchesConsoleUser. Se ANOTA, para que el
+              // día que la flota tenga la bandeja nueva se pueda exigir sin
+              // descubrir entonces a quién se estaba dejando fuera.
+              ctx.logger?.warn?.("[rcp] consentimiento SIN VERIFICAR quién respondió", {
+                sessionId: req.sessionId,
+                motivo: who.why,
+                respondio: answer.respondedBy ?? null,
+                consola: consoleUser
+              });
+            } else {
+              ctx.logger?.info?.("[rcp] consentimiento verificado contra el usuario de consola", {
+                sessionId: req.sessionId,
+                usuario: who.user
+              });
+            }
+            return answer.decision;
+          }
           await new Promise((r) => setTimeout(r, POLL_MS));
         }
         return "timeout";

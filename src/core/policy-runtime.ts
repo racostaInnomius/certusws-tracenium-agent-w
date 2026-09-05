@@ -58,6 +58,14 @@ export type RuntimePolicy = {
      * SYSTEM, cuyo HKCU no es el del usuario.
      */
     registryProbes?: string[];
+    /** Sondas de registro DE USUARIO (CIS 19.x), relativas a cada
+     *  HKEY_USERS\<SID>: `Software\...\Clave:Valor`. Sin hive. */
+    registryUserProbes?: string[];
+    /** Sondas genéricas de Linux (fase 2 CIS): `<kind>.<key>` con kind en
+     *  la lista cerrada del PrivSvc (kmod, mount, unit, pkg, file, files,
+     *  conf, lines, sysctl). Nunca un comando: el PrivSvc sólo ejecuta lo
+     *  que el kind implica. */
+    linuxProbes?: string[];
   };
   patch?: {
     intervalSeconds?: number;
@@ -87,6 +95,13 @@ export type RuntimePolicy = {
      * el agente no descubre. Saneado y acotado al recibir la policy.
      */
     probeTargets?: string[];
+    /**
+     * Conector AD CS (fase 4): en un equipo con el rol Certification
+     * Authority, leer la base de emisiones por RequestID (incremental) y
+     * reportarla. Opt-in: es una lectura grande y solo tiene sentido en
+     * un CA server.
+     */
+    adcs?: { enabled?: boolean; maxPerScan?: number };
   };
   /** Remote Control tuning that isn't a simple on/off capability gate.
    *  The `features.remote*` flags decide WHETHER a capability runs; this
@@ -663,6 +678,59 @@ const DEFAULT_POLICY: RuntimePolicy = {
  *     impide que una policy corrupta convierta cada ciclo en un barrido
  *     del registro entero.
  */
+/**
+ * Sondas de registro de usuario: como las de HKLM pero SIN hive — el
+ * PrivSvc las resuelve bajo cada HKEY_USERS\<SID> cargado. Se rechaza
+ * cualquier cosa que empiece por HK, por barra, o lleve comodines.
+ */
+export function sanitizeRegistryUserProbes(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const probe = item.trim();
+    if (probe.length === 0 || probe.length > 400) continue;
+    if (/^HK/i.test(probe)) continue;
+    if (!/^[^\\:*?"<>|\r\n][^:*?"<>|\r\n]*:[^\\:*?"<>|\r\n]+$/.test(probe)) continue;
+    if (seen.has(probe)) continue;
+    seen.add(probe);
+    out.push(probe);
+    if (out.length >= 500) break;
+  }
+  return out;
+}
+
+/** Kinds de sonda que el PrivSvc de Linux implementa. Cerrada a propósito. */
+export const LINUX_PROBE_KINDS = ["kmod", "mount", "unit", "pkg", "file", "files", "conf", "lines", "sysctl", "sshd"] as const;
+
+/**
+ * Sondas de Linux: `kind.key`. Se rechaza un kind fuera de la lista, un key
+ * vacío o con caracteres de control, y cualquier cosa que parezca un
+ * comando (`;`, `|`, `$(`, backticks, saltos de línea).
+ */
+export function sanitizeLinuxProbes(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const probe = item.trim();
+    if (probe.length === 0 || probe.length > 300) continue;
+    const dot = probe.indexOf(".");
+    if (dot <= 0) continue;
+    const kind = probe.slice(0, dot);
+    const key = probe.slice(dot + 1);
+    if (!(LINUX_PROBE_KINDS as readonly string[]).includes(kind)) continue;
+    if (key.length === 0 || /[\s;|&`$<>"'\x00-\x1f]/.test(key)) continue;
+    if (seen.has(probe)) continue;
+    seen.add(probe);
+    out.push(probe);
+    if (out.length >= 1500) break;
+  }
+  return out;
+}
+
 export function sanitizeRegistryProbes(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   const out: string[] = [];
@@ -733,6 +801,14 @@ export class PolicyRuntime extends EventEmitter {
     return this.policy.compliance?.registryProbes ?? [];
   }
 
+  getRegistryUserProbes(): string[] {
+    return this.policy.compliance?.registryUserProbes ?? [];
+  }
+
+  getLinuxProbes(): string[] {
+    return this.policy.compliance?.linuxProbes ?? [];
+  }
+
   getPatchInterval(): number {
     return this.policy.patch?.intervalSeconds || DEFAULT_POLICY.patch!.intervalSeconds!;
   }
@@ -761,6 +837,12 @@ export class PolicyRuntime extends EventEmitter {
    * seria inutil (demasiado estrecho) o un escaneo recursivo de algo
    * grande en cada endpoint de la flota.
    */
+  /** Conector AD CS: si leer la base de la CA, y cuantas filas por escaneo. */
+  getCdpAdcs(): { enabled: boolean; maxPerScan: number } {
+    const a = this.policy.cdp?.adcs;
+    return { enabled: a?.enabled === true, maxPerScan: Number(a?.maxPerScan) || 2000 };
+  }
+
   /** Objetivos remotos ya saneados, como pares host/port. */
   getCdpProbeTargets(): ProbeTarget[] {
     return (this.policy.cdp?.probeTargets ?? [])
@@ -913,7 +995,9 @@ export class PolicyRuntime extends EventEmitter {
       // lo que no se nombre aquí desaparece de la policy validada. La
       // lista de sondas de registro tiene que pasar explícitamente, o el
       // backend la inyecta y el agente la tira sin dejar rastro.
-      registryProbes: sanitizeRegistryProbes(policy.compliance?.registryProbes)
+      registryProbes: sanitizeRegistryProbes(policy.compliance?.registryProbes),
+      registryUserProbes: sanitizeRegistryUserProbes(policy.compliance?.registryUserProbes),
+      linuxProbes: sanitizeLinuxProbes(policy.compliance?.linuxProbes)
     };
     const mergedPatch = {
       intervalSeconds:
@@ -939,7 +1023,11 @@ export class PolicyRuntime extends EventEmitter {
       scanTlsListeners: policy.cdp?.scanTlsListeners === true,
       tlsListenerPorts: sanitizeTlsListenerPorts(policy.cdp?.tlsListenerPorts, this.logger),
       certFilePaths: sanitizeJavaKeystorePaths(policy.cdp?.certFilePaths, this.logger),
-      probeTargets: sanitizeProbeTargets(policy.cdp?.probeTargets, this.logger)
+      probeTargets: sanitizeProbeTargets(policy.cdp?.probeTargets, this.logger),
+      adcs: {
+        enabled: policy.cdp?.adcs?.enabled === true,
+        maxPerScan: Math.min(Math.max(Number(policy.cdp?.adcs?.maxPerScan) || 2000, 50), 5000)
+      }
     };
     // rcp.file confinement. Path lists get the same hard sanitation as
     // cdp.javaKeystorePaths — absolute only, bounded length, bounded count,

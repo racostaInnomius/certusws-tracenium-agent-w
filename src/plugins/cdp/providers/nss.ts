@@ -42,7 +42,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import type { CdpCertItem, CdpStoreInfo } from "../../../domain/cdp-types";
+import type { CdpCertItem, CdpStoreInfo, CdpUnreadableStore } from "../../../domain/cdp-types";
 import { parseCertToItem } from "../parse-cert";
 
 /** CKO_CERTIFICATE en el `a0` de 4 bytes, tal como lo guarda NSS. */
@@ -60,6 +60,9 @@ export type NssResult = {
   parseFailures: number;
   /** Bases encontradas que no se pudieron leer (incluye cert8.db). */
   unreadable: Array<{ path: string; reason: string }>;
+  /** Las que SI son un almacen que inventariamos y hoy no se leyo
+   *  (cert8.db no: nunca se lee, nunca estuvo en la baseline). */
+  unreadableStores: CdpUnreadableStore[];
 };
 
 /**
@@ -168,7 +171,7 @@ export function readNssCertificates(dbPath: string): Buffer[] {
 }
 
 export async function collectNssStores(): Promise<NssResult> {
-  const result: NssResult = { items: [], stores: [], parseFailures: 0, unreadable: [] };
+  const result: NssResult = { items: [], stores: [], parseFailures: 0, unreadable: [], unreadableStores: [] };
 
   const bases = discoverNssDatabases(mozillaProfileRoots(homeDirectories()));
 
@@ -181,17 +184,6 @@ export async function collectNssStores(): Promise<NssResult> {
       continue;
     }
 
-    try {
-      const stat = fs.statSync(dbPath);
-      if (stat.size > MAX_DB_BYTES) {
-        result.unreadable.push({ path: dbPath, reason: "demasiado grande" });
-        continue;
-      }
-    } catch (err: any) {
-      result.unreadable.push({ path: dbPath, reason: String(err?.message || err) });
-      continue;
-    }
-
     const store: CdpStoreInfo = {
       id: `nss/${profile}`,
       name: `NSS ${dbPath}`,
@@ -200,6 +192,23 @@ export async function collectNssStores(): Promise<NssResult> {
       // que aquí la presencia SÍ es una decisión de alguien.
       scope: "user"
     };
+    const unreadable = (reason: string) => {
+      result.unreadable.push({ path: dbPath, reason });
+      result.unreadableStores.push({ id: store.id, name: store.name, reason });
+    };
+
+    try {
+      const stat = fs.statSync(dbPath);
+      if (stat.size > MAX_DB_BYTES) {
+        unreadable("demasiado grande");
+        continue;
+      }
+    } catch (err: any) {
+      // ENOENT = el perfil se borro: sus certificados se fueron de verdad.
+      if (err?.code === "ENOENT") continue;
+      unreadable(String(err?.message || err));
+      continue;
+    }
 
     let ders: Buffer[];
     try {
@@ -207,7 +216,7 @@ export async function collectNssStores(): Promise<NssResult> {
     } catch (err: any) {
       // Fallo blando: una base bloqueada o corrupta no puede costar el
       // resto del escaneo.
-      result.unreadable.push({ path: dbPath, reason: String(err?.message || err) });
+      unreadable(String(err?.message || err));
       continue;
     }
 
