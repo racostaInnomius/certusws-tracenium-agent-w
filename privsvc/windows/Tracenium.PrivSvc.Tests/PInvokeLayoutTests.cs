@@ -97,4 +97,86 @@ public class PInvokeLayoutTests
         // miembro pequeno: eso truncaria cada evento de raton en silencio.
         Assert.True(union >= mouse);
     }
+
+    // ── DXGI: la captura de pantalla ────────────────────────────────────
+    //
+    // Estos NO son privados de una clase: viven en DxgiInteropTypes.cs, que
+    // existe para poder compilarse aqui. Un tamano equivocado en el primero
+    // es peor que un clic perdido — `AcquireNextFrame` lo rellena DXGI, y si
+    // el struct del lado gestionado es mas pequeno que el nativo, escribe en
+    // la pila del llamante mas alla del final. El proceso no se cae ahi: se
+    // cae despues, en otro sitio, sin relacion aparente.
+    [Theory]
+    // LastPresentTime(8) LastMouseUpdateTime(8) = 16, AccumulatedFrames(4)
+    // RectsCoalesced(4) ProtectedContentMaskedOut(4) = 28, PointerPosition(12)
+    // = 40, TotalMetadataBufferSize(4) PointerShapeBufferSize(4) = 48.
+    // Es el mismo 48 del blob opaco al que sustituyo.
+    [InlineData("DXGI_OUTDUPL_FRAME_INFO", 48)]
+    // POINT Position(8) + Visible(4) = 12. Sin relleno: el mayor campo es 4.
+    [InlineData("DXGI_OUTDUPL_POINTER_POSITION", 12)]
+    [InlineData("POINT", 8)]
+    [InlineData("RECT", 16)]
+    public void DxgiStructSizeMatchesWin32(string name, int expected)
+    {
+        Assert.Equal(expected, Marshal.SizeOf(TypeInNamespace(name)));
+    }
+
+    /// <summary>
+    /// ⚠️ El fallo que ya nos costo una tarde: `GetDesc` devolvia S_OK y el
+    /// escritorio medía 0x0.
+    ///
+    /// El campo nativo es `WCHAR DeviceName[32]`, o sea 64 bytes. Sin
+    /// `CharSet.Unicode` el defecto es Ansi, `ByValTStr` marshala 32, y todo
+    /// lo que va detras queda corrido 32 bytes: `DesktopCoordinates` cae
+    /// sobre la segunda mitad del nombre, que va rellena de ceros.
+    ///
+    /// Se comprueba el TAMANO —96 y no 64— porque es lo que distingue una
+    /// cosa de la otra, y ademas el CharSet declarado, que es la causa: si
+    /// alguien lo quita, el numero cambia y ademas se dice por que.
+    /// </summary>
+    [Fact]
+    public void OutputDescIsUnicodeAndFullSize()
+    {
+        var t = TypeInNamespace("DXGI_OUTPUT_DESC");
+
+        // DeviceName(64) DesktopCoordinates(16) AttachedToDesktop(4)
+        // Rotation(4) = 88, Monitor(8) alineado a 8 = 96.
+        Assert.Equal(96, Marshal.SizeOf(t));
+
+        var layout = t.StructLayoutAttribute;
+        Assert.NotNull(layout);
+        Assert.Equal(CharSet.Unicode, layout!.CharSet);
+    }
+
+    /// <summary>
+    /// El puntero del raton va DENTRO del info de fotograma, no al lado. Si
+    /// alguien lo sacara a un campo suelto el struct seguiria compilando y
+    /// mediria distinto; esto ata la relacion, no solo los tamanos.
+    /// </summary>
+    [Fact]
+    public void FrameInfoContainsPointerPosition()
+    {
+        var frame = TypeInNamespace("DXGI_OUTDUPL_FRAME_INFO");
+        var field = frame.GetField(
+            "PointerPosition",
+            BindingFlags.Public | BindingFlags.Instance);
+
+        Assert.True(field is not null, "DXGI_OUTDUPL_FRAME_INFO ya no lleva PointerPosition");
+        Assert.Equal(TypeInNamespace("DXGI_OUTDUPL_POINTER_POSITION"), field!.FieldType);
+        // Offset 28: los tres uint/BOOL que van delante de los dos long.
+        Assert.Equal(28, Marshal.OffsetOf(frame, "PointerPosition").ToInt32());
+    }
+
+    /// <summary>
+    /// Los structs de DXGI no estan anidados en ninguna clase: se sacaron a
+    /// `DxgiInteropTypes.cs` para que este proyecto —`net8.0` a secas— pueda
+    /// compilarlos, porque `ScreenCaptureDxgi.cs` usa System.Drawing.
+    /// </summary>
+    private static Type TypeInNamespace(string name)
+    {
+        var t = typeof(InputInjection).Assembly.GetType(
+            $"Tracenium.PrivSvc.Windows.Ipc.{name}");
+        Assert.True(t is not null, $"ya no existe el struct {name}");
+        return t!;
+    }
 }

@@ -53,6 +53,13 @@
     <!-- Fase 1 del cierre de brecha CIS: secedit completo, auditpol y
          sondas de registro de usuario. Las tres partes puras (parseo y
          agregación) se compilan aquí; los lectores que tocan Win32 no. -->
+    <!-- Los structs de DXGI de la captura de pantalla. Viven en su propio
+         fichero justamente para poder compilarse aqui: ScreenCaptureDxgi.cs
+         usa System.Drawing.Imaging y no entra en un TFM `net8.0`. Un tamano
+         equivocado no da error ni excepcion —DXGI escribe mas alla del
+         struct y el proceso se cae despues, en otro sitio—, asi que
+         medirlos es la unica forma de verlo antes. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\DxgiInteropTypes.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\SeceditShape.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\AuditpolShape.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UserRegistryProbeShape.cs" />
