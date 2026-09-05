@@ -156,6 +156,24 @@ export type RuntimePolicy = {
       perVmTimeoutSec?: number;
     };
   };
+  /**
+   * Ajustes numéricos de Remote Control.
+   *
+   * ⚠️ NO va en `features`. Ese bloque es de banderas: `isFeatureEnabled`
+   * devuelve `boolean` y el validador del backend rechaza una clave conocida
+   * que no lo sea. Un tope en bytes metido ahí habría sido rechazado por el
+   * propio validador o habría obligado a que `isFeatureEnabled` mintiera
+   * sobre su tipo. Los números con nombre viven en su bloque, como
+   * `gateway.snapshot.retentionHours`.
+   */
+  remoteControl?: {
+    /**
+     * Tope por subida, en bytes. Solo puede BAJAR el techo del agente
+     * (2 GiB): un límite que existe para acotar daño deja de serlo en cuanto
+     * lo puede ensanchar aquello que acota.
+     */
+    maxUploadBytes?: number;
+  };
   plugins?: {
     enabled?: string[];
   };
@@ -946,6 +964,29 @@ export class PolicyRuntime extends EventEmitter {
 
   isFeatureEnabled(feature: RuntimeFeatureName): boolean {
     return this.policy.features?.[feature] ?? false;
+  }
+
+  /**
+   * Tope por subida que fija la política, o `null` si el tenant no lo ha
+   * puesto.
+   *
+   * ⚠️ Existe porque `file-session.ts` llamaba a `policyRuntime.getFeatureValue`,
+   * un método que NUNCA ha existido en esta clase. La llamada estaba dentro de
+   * un `try` y devolvía `undefined`, así que el tope por política era código
+   * muerto: el agente aplicaba siempre su techo de 2 GiB y un tenant no podía
+   * bajarlo. El test no lo detectó porque su doble INVENTABA el método —el
+   * patrón "fixture con una forma que el llamador real no tiene".
+   *
+   * Devuelve `null` y no un número por defecto: "el tenant no ha decidido" y
+   * "el tenant eligió el mismo valor que el defecto" son cosas distintas, y
+   * quien llama necesita poder distinguirlas para explicar por qué rechazó
+   * una subida.
+   */
+  remoteFileMaxUploadBytes(): number | null {
+    const raw = this.policy.remoteControl?.maxUploadBytes;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.floor(n);
   }
 
   // ---------- update handling ----------

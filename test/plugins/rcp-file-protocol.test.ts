@@ -26,6 +26,7 @@ import crypto from "crypto";
 
 import { FileSession } from "../../src/plugins/rcp/file-session";
 import type { FileTransferAuditPayload } from "../../src/plugins/rcp/file-session";
+import type { PolicyRuntime } from "../../src/core/policy-runtime";
 
 // ── Fake DataChannel ───────────────────────────────────────────────────
 class FakeDataChannel {
@@ -77,16 +78,26 @@ function makeSession() {
   return { dc, audits, teardowns, session };
 }
 
-/** A session whose tenant policy lowers the upload ceiling. */
+/**
+ * Sesión cuyo tenant BAJA el tope de subida.
+ *
+ * ⚠️ El doble se tipa contra la clase REAL. La versión anterior inventaba un
+ * `getFeatureValue` que `PolicyRuntime` no ha tenido nunca: el test pasaba, el
+ * llamador recibía `undefined` dentro de un `try`, y el tope por política era
+ * código muerto en producción mientras aquí salía verde.
+ *
+ * Con este `Pick`, renombrar o borrar el método rompe la COMPILACIÓN del test
+ * en vez de dejarlo pasando contra un mundo que no existe.
+ */
 function makeSessionWithLimit(maxBytes: number) {
   const dc = new FakeDataChannel();
   const audits: FileTransferAuditPayload[] = [];
+  const policyRuntime: Pick<PolicyRuntime, "remoteFileMaxUploadBytes"> = {
+    remoteFileMaxUploadBytes: () => maxBytes
+  };
   const ctx: any = {
     logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
-    policyRuntime: {
-      getFeatureValue: (k: string) =>
-        k === "remoteFileMaxUploadBytes" ? maxBytes : undefined
-    }
+    policyRuntime
   };
   const session = new FileSession(dc as any, {
     sessionId: "sess-file-limit",
@@ -305,6 +316,25 @@ describe("RCP file protocol — upload", () => {
     expect(failed!.errorMessage).toMatch(/incomplete/i);
     expect(dc.sentOfOp("uploadComplete")).toHaveLength(0);
     expect(dc.sentOfOp("error").some((e) => e.code === "UPLOAD_INCOMPLETE")).toBe(true);
+  });
+
+  it("⚠️ el tope viaja con las raíces, para que el navegador pueda parar antes", async () => {
+    // Sin esto, la única forma de saber que un fichero es demasiado grande
+    // era mandarlo entero y que el agente lo rechazara: minutos de subida
+    // para un "no".
+    const { dc } = makeSessionWithLimit(1024);
+    dc.emit({ op: "roots" });
+    await waitFor(() => dc.sentOfOp("roots").length > 0);
+    expect(dc.sentOfOp("roots")[0].maxUploadBytes).toBe(1024);
+  });
+
+  it("⚠️ el tope de la política SOLO puede bajar el techo del agente", async () => {
+    // Un límite que existe para acotar daño deja de serlo en cuanto lo puede
+    // ensanchar aquello que acota.
+    const { dc } = makeSessionWithLimit(999 * 1024 * 1024 * 1024);
+    dc.emit({ op: "roots" });
+    await waitFor(() => dc.sentOfOp("roots").length > 0);
+    expect(dc.sentOfOp("roots")[0].maxUploadBytes).toBe(2 * 1024 * 1024 * 1024);
   });
 
   it("⚠️ rechaza un fichero mayor que el tope antes de abrir nada en disco", async () => {

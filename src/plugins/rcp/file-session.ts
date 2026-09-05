@@ -18,7 +18,7 @@
 //     { op: "cancel",     transferId }
 //
 //   Agent → Browser:
-//     { op: "roots",    roots: ["C:\\Users", ...] }
+//     { op: "roots",    roots: ["C:\\Users", ...], maxUploadBytes }
 //     { op: "listing",  path, entries: [{name, isDir, size, modifiedAt}] }
 //     { op: "chunk",    transferId, seq, data, done? }  // base64
 //     { op: "ready",    transferId }   // agent is ready to receive upload
@@ -97,7 +97,7 @@ const UPLOAD_OPEN_FLAGS =
 // to be helping. 2 GiB is far above any support-session file and far below
 // "the operator can fill /var".
 //
-// A tenant can lower it via policy (`remoteFile.maxUploadBytes`); raising it
+// A tenant can lower it via policy (`remoteControl.maxUploadBytes`); raising it
 // past the default is deliberately not possible — the number exists to bound
 // damage, and a bound a caller can lift is not one.
 const DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
@@ -236,7 +236,16 @@ export class FileSession {
         // Tells the browser where it is allowed to begin. Before the jail
         // existed the panel opened on "/" and walked anywhere; now "/" is
         // almost always outside the roots, so it has to ask.
-        this.send({ op: "roots", roots: this.jail.listRoots() });
+        // El tope viaja CON las raíces, no en un mensaje aparte: es la misma
+        // pregunta —"¿qué puedo hacer en este equipo?"— y el navegador lo
+        // necesita antes de dejar elegir un fichero. Sin él, la única forma de
+        // enterarse de que un fichero es demasiado grande era mandarlo entero
+        // y que el agente lo rechazara: minutos de subida para un "no".
+        this.send({
+          op: "roots",
+          roots: this.jail.listRoots(),
+          maxUploadBytes: this.maxUploadBytes()
+        });
         break;
 
       case "list": {
@@ -674,12 +683,18 @@ export class FileSession {
    * damage stops being one the moment the thing being bounded can widen it.
    */
   private maxUploadBytes(): number {
-    const raw = (this.args.ctx as any)?.policyRuntime?.getFeatureValue?.(
-      "remoteFileMaxUploadBytes"
-    );
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n <= 0) return DEFAULT_MAX_UPLOAD_BYTES;
-    return Math.min(n, DEFAULT_MAX_UPLOAD_BYTES);
+    // ⚠️ Antes llamaba a `policyRuntime.getFeatureValue`, un método que NUNCA
+    // ha existido. Dentro del `try` devolvía `undefined` y el tope por
+    // política era código muerto: el agente aplicaba siempre su techo y un
+    // tenant no podía bajarlo. El test no lo vio porque su doble inventaba el
+    // método — un fixture con una forma que el llamador real no tiene.
+    const fromPolicy = this.args.ctx?.policyRuntime?.remoteFileMaxUploadBytes?.();
+    if (typeof fromPolicy !== "number" || !Number.isFinite(fromPolicy) || fromPolicy <= 0) {
+      return DEFAULT_MAX_UPLOAD_BYTES;
+    }
+    // Solo BAJA. Un límite que existe para acotar daño deja de serlo en
+    // cuanto lo puede ensanchar aquello que acota.
+    return Math.min(fromPolicy, DEFAULT_MAX_UPLOAD_BYTES);
   }
 
   private async handleUploadDone(transferId: string): Promise<void> {
