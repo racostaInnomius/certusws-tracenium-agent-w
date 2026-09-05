@@ -7,7 +7,7 @@
 // como SYSTEM.
 
 import { describe, expect, it } from "vitest";
-import { PolicyRuntime, sanitizeRegistryProbes, sanitizeRegistryUserProbes, sanitizeLinuxProbes } from "../../src/core/policy-runtime";
+import { PolicyRuntime, sanitizeRegistryProbes, sanitizeRegistryUserProbes, sanitizeLinuxProbes, sanitizeMacosProbes } from "../../src/core/policy-runtime";
 
 const OK = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\mrxsmb10:Start";
 
@@ -126,5 +126,16 @@ describe("sanitizeLinuxProbes", () => {
     expect(rt.getLinuxProbes()).toEqual(["kmod.cramfs"]);
     rt.policy = {};
     expect(rt.getLinuxProbes()).toEqual([]);
+  });
+});
+
+describe("sanitizeMacosProbes", () => {
+  it("keeps known kinds, allows spaces in preference keys, rejects shell", () => {
+    const ok = ["pref.com~apple~screensaver:idleTime", "pref.com~apple~assistant~support:Siri Data Sharing Opt-In Status", "pmset.womp", "launchctl.com~apple~timed", "mac.csrutil", "authdb.system~preferences", "file./etc/security/audit_control"];
+    expect(sanitizeMacosProbes(ok)).toEqual(ok);
+    expect(sanitizeMacosProbes(["kmod.cramfs", "mac.csrutil; rm", "pref.$(x):y", 1])).toEqual([]);
+    const rt: any = Object.create(PolicyRuntime.prototype);
+    rt.policy = { compliance: { macosProbes: ["pmset.womp"] } };
+    expect(rt.getMacosProbes()).toEqual(["pmset.womp"]);
   });
 });

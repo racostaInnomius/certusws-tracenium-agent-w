@@ -6,6 +6,7 @@ import { parseSshdConfig } from "./ssh-parse";
 import { boolFromDefaultsRead, classifyDefaultsRead } from "./defaults-parse";
 import { parseSysadminctlScreenLock } from "./screenlock-parse";
 import { parsePwpolicyMinimumLength } from "./pwpolicy-parse";
+import { collectMacProbes, probesFromParams, realMacProbeDeps } from "./macos-probes";
 
 const execFileAsync = promisify(execFile);
 
@@ -727,6 +728,14 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
   const smb = await collectSmb(shares);
   const ssh = await collectSsh();
 
+  // Fase 3 del cierre de brecha CIS: sondas genéricas pedidas por el
+  // control plane (params.macosProbes). Sin lista, sin bloque. Ver
+  // macos-probes.ts.
+  const requestedProbes = probesFromParams((req as any).params);
+  const probed = requestedProbes.length > 0
+    ? await collectMacProbes(requestedProbes, realMacProbeDeps(async (bin, args) => { const r = await run(bin, args, 15000); return { stdout: r.output, stderr: "", code: r.ok ? 0 : 1 }; }))
+    : null;
+
   return success(req.id, {
     filevault,
     firewall,
@@ -753,6 +762,7 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
     // `crypto` stub. Same shape as the Linux ssh block, so the shared SSH
     // catalog rules (ssh.ciphers / ssh.macs / ssh.kexAlgorithms) evaluate here.
     ssh,
+    ...(probed ? { probes: probed.probes, probeErrors: Object.keys(probed.errors).length ? probed.errors : undefined } : {}),
     collectedAtUtc: new Date().toISOString()
   });
 }
