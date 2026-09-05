@@ -98,7 +98,8 @@ export async function collectTlsProbes(ctx: AgentContext, options: Options = {})
       ...(hit.cipher ? { cipher: hit.cipher } : {}),
       ...(hit.kexGroup ? { kexGroup: hit.kexGroup } : {}),
       ...(hit.kemHybrid !== undefined ? { kemHybrid: hit.kemHybrid } : {}),
-      ...(hit.kemProbeError ? { kemProbeError: hit.kemProbeError } : {})
+      ...(hit.kemProbeError ? { kemProbeError: hit.kemProbeError } : {}),
+      ...(hit.startTls ? { startTls: hit.startTls } : {})
     };
     result.items.push(item);
     result.stores.push(store);

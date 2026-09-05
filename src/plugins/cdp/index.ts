@@ -12,12 +12,15 @@
 // Design: certusws-tracenium/docs/adr/ADR-0004-crypto-inventory-to-pqc-migration.md
 
 import os from "os";
+import crypto from "crypto";
 import type { AgentContext } from "../../core/agent-context";
 import type {
   CdpAdcsReport,
   CdpAnchorPinReport,
   CdpCertItem,
   CdpNamespace,
+  CdpProbeCandidate,
+  CdpSshHostKeys,
   CdpStoreInfo,
   CdpUnreadableStore
 } from "../../domain/cdp-types";
@@ -337,6 +340,45 @@ async function collectOnce(
     }
   }
 
+  // ── §5.2: claves de host SSH y candidatos a objetivo de sonda ──────
+  //
+  // Los dos van fuera de `certificates`: no son X.509 y no deben entrar
+  // en el diff ni en el embudo de propiedad. Y los dos viajan solo cuando
+  // CAMBIAN (digest en cdp_meta) o en un baseline completo, para no
+  // engordar cada tick con lo mismo. Fallo blando, como todo lo demas.
+  // Las dos funciones de red son opt-in: van con la sonda de listeners.
+  let sshHostKeys: CdpSshHostKeys | undefined;
+  let probeCandidates: CdpProbeCandidate[] | undefined;
+  let sideChanged = false;
+  if (ctx.policyRuntime.getCdpScanTlsListeners()) {
+    try {
+      const { listListeningPorts } = await import("./listening-ports");
+      const listening = await listListeningPorts();
+      const { collectSshHostKeys } = await import("./providers/ssh-host-keys");
+      const { collectOutboundTlsCandidates } = await import("./providers/outbound-tls");
+      const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
+      const ssh = await collectSshHostKeys({ listeningPorts: listening });
+      const cands = await collectOutboundTlsCandidates({ localListening: listening });
+      const digest = (v: unknown) => crypto.createHash("sha256").update(JSON.stringify(v)).digest("hex");
+      const sshDigest = digest({ host: ssh.host, listening: ssh.listening, keys: ssh.keys });
+      const candDigest = digest(cands);
+      const full = options?.full === true;
+      if (full || readCdpMeta("ssh_hostkeys_digest") !== sshDigest) {
+        sshHostKeys = { host: ssh.host, listening: ssh.listening, keys: ssh.keys };
+        writeCdpMeta("ssh_hostkeys_digest", sshDigest);
+        if (!full) sideChanged = true;
+      }
+      if (full || readCdpMeta("probe_candidates_digest") !== candDigest) {
+        probeCandidates = cands;
+        writeCdpMeta("probe_candidates_digest", candDigest);
+        if (!full) sideChanged = true;
+      }
+      if (ssh.unreadable > 0) ctx.logger?.warn?.("CDP: claves de host SSH no leidas", { unreadable: ssh.unreadable });
+    } catch (err: any) {
+      ctx.logger?.warn?.("CDP: claves SSH / candidatos de sonda fallaron (no fatal)", { error: err?.message || String(err) });
+    }
+  }
+
   const { items, truncated } = applyCap(result.items);
 
   if (result.parseFailures > 0) {
@@ -416,6 +458,7 @@ async function collectOnce(
     ? true
     : anchorChanged ||
       adcsChanged ||
+      sideChanged ||
       delta.added.length > 0 ||
       delta.removed.length > 0 ||
       delta.updated.length > 0;
@@ -446,7 +489,9 @@ async function collectOnce(
     },
     ...(anchorPin ? { anchorPin } : {}),
     ...(partial ? { partial } : {}),
-    ...(adcs ? { adcs } : {})
+    ...(adcs ? { adcs } : {}),
+    ...(sshHostKeys ? { sshHostKeys } : {}),
+    ...(probeCandidates ? { probeCandidates } : {})
   };
 }
 

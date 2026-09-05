@@ -183,15 +183,16 @@ describe("collectTlsListeners scoping", () => {
     return null;
   };
 
-  it("never probes the skip list", async () => {
+  it("never probes the skip list — and since StartTLS (§5.2) MySQL/PostgreSQL are no longer on it", async () => {
     probeCalls.length = 0;
-    const risky = [22, 3306, 5432, 27017];
+    const risky = [22, 1433, 27017];
     const result = await collectTlsListeners(makeCtx(), {
-      ports: [...risky, 8443],
+      ports: [...risky, 3306, 5432, 8443],
       probe: trackingProbe
     });
-    expect(probeCalls).toEqual([8443]);
-    expect(result.portsScanned).toBe(1);
+    // 3306 y 5432 se sondean con su preambulo StartTLS; el resto sigue fuera.
+    expect(probeCalls).toEqual([3306, 5432, 8443]);
+    expect(result.portsScanned).toBe(3);
     for (const p of risky) expect(SKIPPED_PORTS.has(p)).toBe(true);
   });
 

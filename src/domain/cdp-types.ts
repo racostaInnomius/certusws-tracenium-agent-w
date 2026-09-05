@@ -119,6 +119,9 @@ export type CdpCertItem = {
     /** Solo para `source: "probe"`: el host tal como lo escribio el
      *  operador en la policy. */
     target?: string;
+    /** El puerto exigio un preambulo StartTLS (smtp, imap, pop3, ldap,
+     *  postgres, mysql) antes del handshake. Ausente = TLS implicito. */
+    startTls?: string;
   };
 
   isCA?: boolean;
@@ -220,6 +223,40 @@ export type CdpNamespace = {
    * certificados del equipo.
    */
   adcs?: CdpAdcsReport;
+
+  /**
+   * Claves de host SSH leidas de disco (§5.2). No son X.509: el control
+   * plane las proyecta a activos con origen `ssh`. Solo viaja cuando
+   * cambia (digest en cdp_meta) o en un baseline completo.
+   */
+  sshHostKeys?: CdpSshHostKeys;
+
+  /**
+   * Candidatos a objetivo de sonda: servicios TLS INTERNOS con los que
+   * este equipo tiene conexiones salientes establecidas. Nunca se sondean
+   * por si solos; el operador los promueve desde la policy.
+   */
+  probeCandidates?: CdpProbeCandidate[];
+};
+
+export type CdpSshHostKeys = {
+  host: string;
+  listening: boolean;
+  keys: Array<{
+    keyType: string;
+    algorithm: string;
+    bits: number | null;
+    curve: string | null;
+    fingerprintSha256: string;
+    path: string;
+  }>;
+};
+
+export type CdpProbeCandidate = {
+  host: string;
+  port: number;
+  connections: number;
+  process?: string;
 };
 
 

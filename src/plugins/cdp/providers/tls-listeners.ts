@@ -26,6 +26,7 @@
 
 import tls from "tls";
 import os from "os";
+import { STARTTLS_PORTS, StartTlsError, connectWithStartTls } from "../starttls";
 import type { AgentContext } from "../../../core/agent-context";
 import type { CdpCertItem, CdpStoreInfo } from "../../../domain/cdp-types";
 import { parseCertToItem } from "../parse-cert";
@@ -43,19 +44,18 @@ const MAX_CHAIN_DEPTH = 12;
  * the agent's own gRPC/IPC ports have nothing to inventory.
  */
 export const SKIPPED_PORTS = new Set([
-  22,    // SSH — plaintext banner protocol, and probes pollute auth logs
+  22,    // SSH — plaintext banner protocol, and probes pollute auth logs.
+         // Las claves de host se leen de disco: ver providers/ssh-host-keys.ts.
   23,    // telnet
-  25,    // SMTP (STARTTLS, not implicit TLS)
   53,    // DNS
-  110,   // POP3 (STARTTLS)
-  143,   // IMAP (STARTTLS)
-  1433,  // MSSQL
+  1433,  // MSSQL — TLS dentro de TDS (pre-login), no StartTLS estandar
   1521,  // Oracle
-  3306,  // MySQL — handshake is server-first, a ClientHello confuses it
-  5432,  // PostgreSQL — same
   6379,  // Redis
   11211, // memcached
   27017  // MongoDB
+  // 25/587 (SMTP), 110 (POP3), 143 (IMAP), 389 (LDAP), 5432 (PostgreSQL) y
+  // 3306 (MySQL) ya NO se saltan: se sondean con su preambulo StartTLS
+  // (starttls.ts), que es lo que el servidor espera oir.
 ]);
 
 export type TlsListenerResult = {
@@ -95,6 +95,9 @@ export type TlsProbeResult = {
   kexGroup?: string;
   kemHybrid?: boolean | null;
   kemProbeError?: string;
+  /** Protocolo del preambulo StartTLS cuando el puerto lo exige
+   *  (smtp, imap, pop3, ldap, postgres, mysql). Ausente = TLS implicito. */
+  startTls?: string;
 };
 
 /** El grupo hibrido que se ofrece como sonda de capacidad. */
@@ -168,18 +171,8 @@ export function probeTlsEndpointDetailed(
       resolve(value);
     };
 
-    try {
-      socket = tls.connect(
-        {
-          host,
-          port,
-          rejectUnauthorized: false,
-          servername,
-          checkServerIdentity: () => undefined,
-          timeout: PROBE_TIMEOUT_MS,
-          ...extra
-        },
-        () => {
+    const startTls = STARTTLS_PORTS[port];
+    const onSecure = () => {
           const s = socket!;
           const peer = s.getPeerCertificate(true) as any;
           if (!peer || !peer.raw || peer.raw.length === 0) return finish({ ok: false, code: "no_certificate" });
@@ -203,13 +196,41 @@ export function probeTlsEndpointDetailed(
             san: typeof peer.subjectaltname === "string" ? peer.subjectaltname : undefined,
             protocol: s.getProtocol() ?? undefined,
             cipher: cipher?.standardName || cipher?.name || undefined,
-            kexGroup: eph?.name || undefined
+            kexGroup: eph?.name || undefined,
+            ...(startTls ? { startTls } : {})
           } });
-        }
-      );
-      socket.setTimeout(PROBE_TIMEOUT_MS, () => finish({ ok: false, code: "timeout" }));
-      socket.on("error", (err: any) => finish({ ok: false, code: String(err?.code || err?.message || "error") }));
-      socket.on("close", () => finish({ ok: false, code: "closed" }));
+    };
+    const wire = (s: tls.TLSSocket) => {
+      socket = s;
+      s.setTimeout(PROBE_TIMEOUT_MS, () => finish({ ok: false, code: "timeout" }));
+      s.on("error", (err: any) => finish({ ok: false, code: String(err?.code || err?.message || "error") }));
+      s.on("close", () => finish({ ok: false, code: "closed" }));
+    };
+    const tlsOpts = {
+      rejectUnauthorized: false,
+      servername,
+      checkServerIdentity: () => undefined,
+      ...extra
+    };
+
+    try {
+      if (startTls) {
+        // Preambulo en claro y luego el mismo handshake sobre el socket ya
+        // abierto. Un fallo del preambulo dice su razon (`starttls:…`).
+        connectWithStartTls(host, port, startTls, PROBE_TIMEOUT_MS)
+          .then((plain) => {
+            if (settled) return plain.destroy();
+            try {
+              wire(tls.connect({ socket: plain, ...tlsOpts } as tls.ConnectionOptions, onSecure));
+            } catch (err: any) {
+              plain.destroy();
+              finish({ ok: false, code: `client:${String(err?.code || err?.message || "error")}` });
+            }
+          })
+          .catch((err: any) => finish({ ok: false, code: err instanceof StartTlsError ? err.message : `starttls:${String(err?.message || err)}` }));
+        return;
+      }
+      wire(tls.connect({ host, port, timeout: PROBE_TIMEOUT_MS, ...tlsOpts } as tls.ConnectionOptions, onSecure));
     } catch (err: any) {
       // `ecdhCurve` desconocido para este OpenSSL lanza SINCRONO
       // (ERR_CRYPTO_OPERATION_FAILED). Es un fallo del cliente, no del
@@ -410,6 +431,7 @@ export async function collectTlsListeners(
         ...(hit.kexGroup ? { kexGroup: hit.kexGroup } : {}),
         ...(hit.kemHybrid !== undefined ? { kemHybrid: hit.kemHybrid } : {}),
         ...(hit.kemProbeError ? { kemProbeError: hit.kemProbeError } : {}),
+        ...(hit.startTls ? { startTls: hit.startTls } : {}),
         ...(() => {
           const covers = sanCoversHost(hit.san, hostname);
           return covers === undefined ? {} : { coversDeviceHostname: covers };

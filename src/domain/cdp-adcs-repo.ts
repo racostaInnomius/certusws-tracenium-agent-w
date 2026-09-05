@@ -33,6 +33,19 @@ export function writeAdcsCursor(ca: string, requestId: number): void {
     .run(keyFor(ca), String(Math.floor(requestId)));
 }
 
+/** Clave/valor generico en cdp_meta (digests de bloques que solo viajan
+ *  cuando cambian: claves SSH, candidatos de sonda). */
+export function readCdpMeta(key: string): string | null {
+  const row = getDb().prepare(`SELECT value FROM cdp_meta WHERE key = ?`).get(key) as { value?: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function writeCdpMeta(key: string, value: string): void {
+  getDb()
+    .prepare(`INSERT INTO cdp_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+    .run(key, value);
+}
+
 /** Solo para tests. */
 export function resetAdcsCursors(): void {
   getDb().prepare(`DELETE FROM cdp_meta WHERE key LIKE 'adcs_last_request_id:%'`).run();
