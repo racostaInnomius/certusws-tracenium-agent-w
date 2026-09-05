@@ -808,10 +808,16 @@ else
   # nadie se puede conectar, así que un fallo mudo obliga a adivinar. La
   # primera vez que saltó (macOS arm64, 2026-09-05) el log decía sólo «no
   # abre un pty» y no si era el binding, el spawn-helper o la ABI.
+  # Cierre explícito por precaución. Medido en macOS: este snippet SÍ termina
+  # solo, así que aquí no arregla nada — se pone por simetría con el de abajo,
+  # que es el que de verdad colgaba. Las comprobaciones ocurren antes, así que
+  # salir explícitamente no enmascara ningún fallo.
   if ! pty_err="$("$BUILD_DIR/Runtime/node" -e "
     const pty = require('$BUILD_DIR/Agent/node_modules/node-pty');
     const p = pty.spawn('/bin/sh', ['-c', 'exit 0'], { cols: 80, rows: 24 });
     if (!p.pid) throw new Error('spawn devolvio un proceso sin pid');
+    try { p.kill(); } catch {}
+    process.exit(0);
   " 2>&1)"; then
     echo "ERROR: node-pty no abre un pty con el node empaquetado." >&2
     echo "       Sin esto la shell remota no funciona en ningún endpoint." >&2
@@ -829,10 +835,17 @@ else
 
   # node-datachannel: crear un PeerConnection es lo que de verdad ejercita
   # libdatachannel. Cargar el módulo solo prueba que el .node abre.
+  # ⚠️ ESTE es el que colgaba el build de Windows. `pc.close()` NO termina el
+  # proceso: libdatachannel deja hilos propios vivos y el bucle de eventos no
+  # se vacía nunca. Medido aquí: con sólo `pc.close()` el proceso seguía vivo
+  # a los 15s; con `cleanup()` + `exit` sale en el acto. En macOS no se había
+  # visto porque node-pty fallaba antes de llegar a esta sonda.
   if ! ndc_err="$("$BUILD_DIR/Runtime/node" -e "
     const ndc = require('$BUILD_DIR/Agent/node_modules/node-datachannel');
     const pc = new ndc.PeerConnection('smoke', { iceServers: [] });
     pc.close();
+    try { ndc.cleanup(); } catch {}
+    process.exit(0);
   " 2>&1)"; then
     echo "ERROR: node-datachannel no crea un PeerConnection con el node empaquetado." >&2
     echo "       Sin esto NINGUNA sesión remota conecta: shell, ficheros ni pantalla." >&2

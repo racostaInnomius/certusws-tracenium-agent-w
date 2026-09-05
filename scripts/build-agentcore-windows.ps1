@@ -358,7 +358,11 @@ if ($Arch -ne $hostArch) {
 
   # node-pty: opening a real pty is the only thing that tells an ABI
   # mismatch apart from a module that merely loads.
-  & $stagedNode -e "const pty=require('$ptyDir');const p=pty.spawn('cmd.exe',['/c','exit 0'],{cols:80,rows:24});if(!p.pid)process.exit(1);" 2>$null
+  # Cierre explicito por precaucion. Medido en macOS, este snippet SI termina
+  # solo; en Windows el pty va por conpty y no se ha comprobado, asi que no se
+  # deja al azar: el que cuelga de verdad es el de node-datachannel (abajo).
+  # Las comprobaciones ocurren antes, asi que salir aqui no enmascara nada.
+  & $stagedNode -e "const pty=require('$ptyDir');const p=pty.spawn('cmd.exe',['/c','exit 0'],{cols:80,rows:24});if(!p.pid)process.exit(1);try{p.kill();}catch{};process.exit(0);" 2>$null
   if ($LASTEXITCODE -ne 0) {
     throw "node-pty cannot open a pty with the bundled node.exe. The remote shell would be dead on every endpoint this package reaches. Reproduce: $stagedNode -e ""require('$ptyDir').spawn('cmd.exe',[],{})"""
   }
@@ -367,7 +371,13 @@ if ($Arch -ne $hostArch) {
   # node-datachannel: constructing a PeerConnection is what actually
   # exercises libdatachannel; requiring the module only proves the .node
   # file opens.
-  & $stagedNode -e "const ndc=require('$ndcDir');const pc=new ndc.PeerConnection('smoke',{iceServers:[]});pc.close();" 2>$null
+  # ⚠️ ESTE es el que colgaba el build. `pc.close()` NO termina el proceso:
+  # libdatachannel deja hilos propios vivos y el bucle de eventos no se
+  # vacia nunca, asi que node.exe se queda esperando hasta el timeout de 6h
+  # del job. El paso 9 paso de 5 segundos a atascado (run 33939613765,
+  # 2026-09-05). Medido: con solo `pc.close()` el proceso sigue vivo a los
+  # 15s; con `cleanup()` + `exit` sale en el acto.
+  & $stagedNode -e "const ndc=require('$ndcDir');const pc=new ndc.PeerConnection('smoke',{iceServers:[]});pc.close();try{ndc.cleanup();}catch{};process.exit(0);" 2>$null
   if ($LASTEXITCODE -ne 0) {
     throw "node-datachannel cannot create a PeerConnection with the bundled node.exe. NO remote session would connect: shell, files or screen."
   }
