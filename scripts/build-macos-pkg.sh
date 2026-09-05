@@ -753,6 +753,23 @@ done
 # and BEFORE the pkg is assembled.
 stage_node_datachannel
 
+# Bit de ejecución de los Mach-O del staging.
+#
+# ⚠️ Más abajo ya hay un chmod equivalente, pero actúa sobre $PKG_PREFIX
+# (la copia de pkg-root) y dentro del paso de firma — DESPUÉS de la prueba
+# de humo, que corre contra ESTA ruta. Resultado: el paquete final salía con
+# los permisos bien y aun así el build moría antes, en el gate.
+#
+# Y el supuesto de aquel comentario —«el darwin-arm64 sí trae +x»— es falso
+# en el runner: el 2026-09-05 llegó `-rw-r--r--` en arm64, y node-pty falló
+# con `posix_spawnp failed`, que no menciona permisos por ningún lado.
+# Venga el bit mal de npm, del tar de la caché o del `cp -R`: si es un
+# Mach-O ejecutable, tiene que poder ejecutarse antes de que nadie lo pruebe.
+find "$BUILD_DIR/Agent/node_modules" -type f 2>/dev/null | while IFS= read -r cand; do
+  kind="$(/usr/bin/file -b "$cand" 2>/dev/null)"
+  case "$kind" in *Mach-O*executable*) chmod 0755 "$cand" ;; esac
+done
+
 if [ ! -f "$BUILD_DIR/PrivSvc/macos/privsvc.js" ]; then
   echo "Missing PrivSvc bundle: $BUILD_DIR/PrivSvc/macos/privsvc.js" >&2
   exit 1
