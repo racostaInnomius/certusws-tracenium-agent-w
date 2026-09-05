@@ -804,13 +804,23 @@ HOST_ARCH="$(uname -m)"
 if [ "$(lipo_arch_for "$ARCH")" != "$HOST_ARCH" ]; then
   echo "→ ⚠️  prueba de humo RCP OMITIDA: compilación cruzada ($ARCH sobre $HOST_ARCH)"
 else
-  if ! "$BUILD_DIR/Runtime/node" -e "
+  # ⚠️ La salida NO se tira a /dev/null: este gate corre en un runner al que
+  # nadie se puede conectar, así que un fallo mudo obliga a adivinar. La
+  # primera vez que saltó (macOS arm64, 2026-09-05) el log decía sólo «no
+  # abre un pty» y no si era el binding, el spawn-helper o la ABI.
+  if ! pty_err="$("$BUILD_DIR/Runtime/node" -e "
     const pty = require('$BUILD_DIR/Agent/node_modules/node-pty');
     const p = pty.spawn('/bin/sh', ['-c', 'exit 0'], { cols: 80, rows: 24 });
-    if (!p.pid) process.exit(1);
-  " >/dev/null 2>&1; then
+    if (!p.pid) throw new Error('spawn devolvio un proceso sin pid');
+  " 2>&1)"; then
     echo "ERROR: node-pty no abre un pty con el node empaquetado." >&2
     echo "       Sin esto la shell remota no funciona en ningún endpoint." >&2
+    echo "       --- error real ---" >&2
+    echo "$pty_err" >&2
+    echo "       --- contexto ---" >&2
+    echo "       node empaquetado: $("$BUILD_DIR/Runtime/node" -v 2>&1) ($("$BUILD_DIR/Runtime/node" -p 'process.arch' 2>&1))" >&2
+    ls -l "$BUILD_DIR/Agent/node_modules/node-pty/prebuilds/darwin-$ARCH/" >&2 2>/dev/null ||
+      echo "       (no hay prebuilds/darwin-$ARCH — ese es el problema)" >&2
     echo "       Reproduce con:" >&2
     echo "         $BUILD_DIR/Runtime/node -e \"require('$BUILD_DIR/Agent/node_modules/node-pty').spawn('/bin/sh',[],{})\"" >&2
     exit 1
@@ -819,13 +829,15 @@ else
 
   # node-datachannel: crear un PeerConnection es lo que de verdad ejercita
   # libdatachannel. Cargar el módulo solo prueba que el .node abre.
-  if ! "$BUILD_DIR/Runtime/node" -e "
+  if ! ndc_err="$("$BUILD_DIR/Runtime/node" -e "
     const ndc = require('$BUILD_DIR/Agent/node_modules/node-datachannel');
     const pc = new ndc.PeerConnection('smoke', { iceServers: [] });
     pc.close();
-  " >/dev/null 2>&1; then
+  " 2>&1)"; then
     echo "ERROR: node-datachannel no crea un PeerConnection con el node empaquetado." >&2
     echo "       Sin esto NINGUNA sesión remota conecta: shell, ficheros ni pantalla." >&2
+    echo "       --- error real ---" >&2
+    echo "$ndc_err" >&2
     exit 1
   fi
   echo "→ node-datachannel OK (carga + PeerConnection)"
