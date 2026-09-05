@@ -147,6 +147,56 @@ describe("cert-renewal — umbral de renovación", () => {
     );
   });
 
+  // ── ADR-0015: el gatillo remoto se salta el umbral ────────────────
+  //
+  // Una rotación de CA o una migración a certificados híbridos tiene que
+  // reemitir certificados perfectamente vigentes — que es EXACTAMENTE el
+  // caso que el umbral existe para no tocar. Sin `force`, el mensaje
+  // `RotateCert` llegaba al agente y no producía nada: `shouldRenew`
+  // decía que no tocaba y la función salía por arriba. El síntoma sería
+  // «pedí rotar y no pasó nada», con el job en verde.
+
+  it("⚠️ force renueva un cert a 90 días, que sin él NO se tocaría", async () => {
+    const h = makeHarness(certFarPem);
+    h.priv.call.mockResolvedValue(okRenewResponse());
+
+    const result = await maybeRenewClientCertificate({ ...(h as any), force: true });
+
+    expect(h.priv.call).toHaveBeenCalledTimes(1);
+    expect(h.priv.call.mock.calls[0][0].method).toBe("crypto.cert.renew");
+    expect(result).not.toBe(h.enrollment);
+    // Y lo deja escrito en el log del equipo: sin esto, una rotación de
+    // flota y una renovación por calendario son indistinguibles al mirar
+    // un endpoint concreto.
+    expect(h.logger.info).toHaveBeenCalledWith(
+      "[cert-renewal] starting certificate renewal",
+      expect.objectContaining({ forced: true })
+    );
+  });
+
+  it("force NO salta las demás condiciones: sin huella no renueva", async () => {
+    // Salta el umbral, no la cordura. La petición al backend se hace
+    // CONTRA la huella actual, así que sin ella no hay nada que pedir.
+    const h = makeHarness(certFarPem);
+    h.enrollment.mtls.clientCertThumbprint = "";
+
+    const result = await maybeRenewClientCertificate({ ...(h as any), force: true });
+
+    expect(h.priv.call).not.toHaveBeenCalled();
+    expect(result).toBe(h.enrollment);
+  });
+
+  it("sin force el comportamiento de siempre no cambia", async () => {
+    // El riesgo del cambio es que `force` se quedara pegado. Este caso
+    // repite el de arriba pasando `force: false` explícito.
+    const h = makeHarness(certFarPem);
+
+    const result = await maybeRenewClientCertificate({ ...(h as any), force: false });
+
+    expect(result).toBe(h.enrollment);
+    expect(h.priv.call).not.toHaveBeenCalled();
+  });
+
   it("cert cerca de expirar (5d) → renueva: llama crypto.cert.renew, escribe el cert y persiste estado", async () => {
     const h = makeHarness(certNearPem);
     h.priv.call.mockResolvedValue(okRenewResponse());

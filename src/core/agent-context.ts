@@ -39,4 +39,21 @@ export type AgentContext = {
   // (see plugins/rcp/consent-prompt.ts), which denies until a platform-native
   // prompt is wired here.
   consentPrompter?: import("../plugins/rcp/consent-prompt").ConsentPrompter;
+  /**
+   * ADR-0015 — reemitir la identidad mTLS AHORA, sin mirar el umbral de
+   * 30 días. Lo invoca el manejador de `rotateCert` del stream gRPC.
+   *
+   * Es un callback y no una llamada directa a `maybeRenewClientCertificate`
+   * a propósito: la renovación de verdad no es sólo pedir el certificado,
+   * es además comprobar que nadie mutó el enrolamiento mientras se
+   * esperaba (TOCTOU) y **reiniciar el puente gRPC** cuando la huella
+   * cambia. Todo eso ya vive en el bucle de `service.ts`, y llamarlo
+   * desde dentro del propio manejador del stream significaría reiniciar
+   * el puente desde el mensaje que está atendiendo.
+   *
+   * Opcional: quien no levante el ciclo de vida completo —tests, o el
+   * arranque antes de que el servicio esté en pie— simplemente no lo
+   * tiene, y el manejador lo dice en el log en vez de fallar.
+   */
+  requestCertRotation?: (reason: string) => void;
 };

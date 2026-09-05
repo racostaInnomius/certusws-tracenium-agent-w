@@ -102,11 +102,25 @@ export async function maybeRenewClientCertificate(input: {
   store: EnrollmentStore;
   priv: IPrivSvcClient;
   logger: any;
+  /**
+   * ADR-0015 — saltarse el umbral de 30 días.
+   *
+   * Lo usa el gatillo remoto `RotateCert`: una rotación de CA o una
+   * migración a certificados híbridos tiene que reemitir certificados
+   * que están perfectamente vigentes, que es justo el caso que el
+   * umbral existe para NO hacer. Sin esto el gatillo llegaba al agente
+   * y no producía nada, porque `shouldRenew` decía que no tocaba.
+   *
+   * ⚠️ Salta el umbral, no las demás condiciones: sin huella del
+   * certificado actual sigue sin renovar, porque la petición al backend
+   * se hace contra esa huella.
+   */
+  force?: boolean;
 }): Promise<EnrollmentState> {
-  const { enrollment, store, priv, logger } = input;
+  const { enrollment, store, priv, logger, force } = input;
   const notAfter = readClientCertNotAfter(enrollment);
 
-  if (!shouldRenew(notAfter)) {
+  if (!force && !shouldRenew(notAfter)) {
     logger?.info?.("[cert-renewal] certificate renewal not needed", {
       notAfter: notAfter?.toISOString?.() ?? null,
       thresholdDays: getRenewalThresholdDays()
@@ -130,7 +144,12 @@ export async function maybeRenewClientCertificate(input: {
 
   logger?.info?.("[cert-renewal] starting certificate renewal", {
     deviceId: enrollment.deviceId,
-    notAfter: notAfter?.toISOString?.() ?? null
+    notAfter: notAfter?.toISOString?.() ?? null,
+    // Deja escrito en el log del equipo si la reemisión la pidió el
+    // control plane o si tocaba por calendario. Sin esto, una rotación
+    // de flota y una renovación rutinaria son indistinguibles al mirar
+    // un endpoint concreto.
+    forced: force === true
   });
 
   const response = await priv.call({

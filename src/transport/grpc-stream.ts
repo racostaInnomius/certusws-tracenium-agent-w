@@ -2059,11 +2059,39 @@ stream = client.Connect();
     }
 
     if (msg.rotateCert) {
-      ctx.logger?.warn?.("gRPC control message: rotateCert received, pausing sender loop");
+      // ⚠️ Hasta ADR-0015 esto SOLO ponía la bandera y escribía en el
+      // log, con un comentario diciendo que «PrivSvc should perform
+      // rotation». Ningún PrivSvc la hacía: el mensaje llegaba, el
+      // agente pausaba el envío de facts, y no se renovaba nada. La
+      // bandera se quedaba puesta hasta el siguiente stop() o
+      // reconexión, así que el único efecto observable de pedir una
+      // rotación era que el equipo dejaba de reportar un rato.
+      const reason = String(msg.rotateCert?.reason || "control plane requested rotation");
+      ctx.logger?.warn?.("gRPC control message: rotateCert received, pausing sender loop", { reason });
       rotationInProgress = true;
-      ctx.logger?.info?.("Rotate cert received:", msg.rotateCert || "");
-      // PrivSvc should perform rotation and keep the bridge alive.
-      // While rotation is in progress, we pause sending new facts to avoid churn.
+
+      if (typeof ctx.requestCertRotation === "function") {
+        // El bucle de service.ts es quien renueva: tiene el guard de
+        // TOCTOU y el reinicio del puente. Se le pide y se sigue; no se
+        // espera aquí, porque este manejador atiende el stream que la
+        // renovación va a reiniciar.
+        try {
+          ctx.requestCertRotation(reason);
+        } catch (err: any) {
+          rotationInProgress = false;
+          ctx.logger?.error?.("rotateCert: no se pudo encolar la reemisión", {
+            err: err?.message || String(err)
+          });
+        }
+      } else {
+        // Sin el callback la rotación no ocurriría y la bandera dejaría
+        // al equipo mudo. Se dice y se suelta la bandera: mejor mudo un
+        // instante y ruidoso en el log que mudo en silencio.
+        rotationInProgress = false;
+        ctx.logger?.error?.(
+          "rotateCert: recibido pero este contexto no sabe renovar (requestCertRotation ausente)"
+        );
+      }
     }
 
     if (msg.policyUpdate) {

@@ -464,3 +464,71 @@ describe("grpc-stream — sender loop (drain del outbox)", () => {
     expect(mocks.outbox.markFailed).toHaveBeenCalledWith(9, "Unsupported event type: LOG_BUNDLE");
   });
 });
+
+// ── ADR-0015: RotateCert deja de ser un mensaje decorativo ───────────
+//
+// ⚠️ Hasta este ADR, `if (msg.rotateCert)` sólo ponía `rotationInProgress
+// = true` y escribía en el log, con un comentario que decía que «PrivSvc
+// should perform rotation». Ningún PrivSvc la hacía. El mensaje llegaba,
+// el agente dejaba de mandar facts, y no se renovaba nada: el único
+// efecto observable de pedir una rotación era que el equipo se quedaba
+// mudo un rato.
+//
+// El fallo no lanzaba, no llenaba el log de errores y dejaba el job en
+// verde. Estos tests fijan que ahora ocurre algo, y que si no puede
+// ocurrir se dice en voz alta en vez de dejar al equipo callado.
+describe("rotateCert (ADR-0015)", () => {
+  it("⚠️ invoca la renovación, con el motivo que mandó el control plane", async () => {
+    const requestCertRotation = vi.fn();
+    (ctx as any).requestCertRotation = requestCertRotation;
+
+    await startFresh();
+    latestStream().emit("data", { connected: true });
+    latestStream().emit("data", { rotateCert: { reason: "rotacion CA filtrada" } });
+
+    expect(requestCertRotation).toHaveBeenCalledTimes(1);
+    expect(requestCertRotation).toHaveBeenCalledWith("rotacion CA filtrada");
+  });
+
+  it("un mensaje sin motivo no manda una cadena vacía", async () => {
+    const requestCertRotation = vi.fn();
+    (ctx as any).requestCertRotation = requestCertRotation;
+
+    await startFresh();
+    latestStream().emit("data", { connected: true });
+    latestStream().emit("data", { rotateCert: {} });
+
+    expect(requestCertRotation.mock.calls[0][0]).toBeTruthy();
+  });
+
+  it("⚠️ sin manejador de renovación NO deja al equipo mudo en silencio", async () => {
+    // La bandera `rotationInProgress` pausa el envío de facts. Si se
+    // pusiera sin que nadie vaya a renovar, el equipo dejaría de
+    // reportar hasta la siguiente reconexión y nada lo explicaría.
+    // Mejor mudo un instante y ruidoso en el log.
+    delete (ctx as any).requestCertRotation;
+
+    await startFresh();
+    latestStream().emit("data", { connected: true });
+    latestStream().emit("data", { rotateCert: { reason: "x" } });
+
+    expect(ctx.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("requestCertRotation ausente")
+    );
+  });
+
+  it("si la renovación lanza al encolarse, tampoco se queda mudo", async () => {
+    (ctx as any).requestCertRotation = vi.fn(() => {
+      throw new Error("boom");
+    });
+
+    await startFresh();
+    latestStream().emit("data", { connected: true });
+    latestStream().emit("data", { rotateCert: { reason: "x" } });
+
+    expect(ctx.logger.error).toHaveBeenCalledWith(
+      "rotateCert: no se pudo encolar la reemisión",
+      expect.objectContaining({ err: "boom" })
+    );
+  });
+});

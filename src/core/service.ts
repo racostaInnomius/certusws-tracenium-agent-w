@@ -14,6 +14,9 @@ let shuttingDown = false;
 let currentCtx: AgentContext | null = null;
 let cleanupTimer: NodeJS.Timeout | undefined;
 let certRenewalTimer: NodeJS.Timeout | undefined;
+// ADR-0015 — guard de exclusión entre la renovación periódica y el
+// gatillo remoto. Ver runCertRenewal.
+let certRenewalRunning = false;
 let livenessWatchdogTimer: NodeJS.Timeout | undefined;
 let stopGrpcStream: (() => void) | null = null;
 
@@ -395,8 +398,39 @@ export async function startService() {
 
       certRenewalTimer = setTimeout(async () => {
         certRenewalTimer = undefined;
-        if (!currentCtx || shuttingDown) return;
+        try {
+          await runCertRenewal(false);
+        } finally {
+          armCertRenewal();
+        }
+      }, delayMs);
+    };
 
+    /**
+     * Una sola renovación, venga del calendario o del gatillo remoto.
+     *
+     * ADR-0015 la extrajo del temporizador para que `RotateCert` pueda
+     * reutilizarla ENTERA. Lo que hay aquí y no en
+     * `maybeRenewClientCertificate` es lo que de verdad cuesta hacer
+     * bien: el snapshot contra la mutación concurrente y el reinicio del
+     * puente gRPC cuando la huella cambia. Duplicar eso en el manejador
+     * del stream habría sido copiar la parte delicada.
+     *
+     * `certRenewalRunning` no es cosmético: sin él, un `RotateCert` que
+     * llegue mientras corre la renovación periódica lanzaría una
+     * segunda, las dos pedirían un certificado contra la MISMA huella
+     * previa, y la segunda respuesta llegaría obsoleta — el caso que el
+     * guard de TOCTOU de abajo detecta y descarta. Mejor no provocarlo.
+     */
+    const runCertRenewal = async (force: boolean): Promise<void> => {
+      if (!currentCtx || shuttingDown) return;
+      if (certRenewalRunning) {
+        log.info("[cert-renewal] ya hay una renovación en curso, se ignora la petición", { force });
+        return;
+      }
+      certRenewalRunning = true;
+
+      try {
         // Snapshot the enrollment BEFORE the await. If a rotateCert
         // control message fires during our call, it'll mutate the
         // context; we want to detect that by comparing thumbprints
@@ -412,7 +446,8 @@ export async function startService() {
             enrollment: enrollmentSnapshot,
             store: currentCtx.store,
             priv: currentCtx.priv,
-            logger: currentCtx.logger
+            logger: currentCtx.logger,
+            force
           });
 
           // Re-check that nobody else mutated enrollment while we were
@@ -439,12 +474,26 @@ export async function startService() {
             }
           }
         } catch (e: any) {
-          log.warn("[cert-renewal] periodic renewal failed", e?.message || e);
-        } finally {
-          armCertRenewal();
+          log.warn("[cert-renewal] renewal failed", { forced: force, err: e?.message || e });
         }
-      }, delayMs);
+      } finally {
+        certRenewalRunning = false;
+      }
     };
+
+    // ADR-0015 — el gatillo remoto. `startGrpcStream` lo invoca al
+    // recibir `RotateCert`; se ata ANTES de arrancar el stream para que
+    // un mensaje que llegue en el primer segundo ya lo encuentre.
+    //
+    // No se espera al resultado a propósito: quien llama está dentro del
+    // manejador del stream que esta renovación puede reiniciar.
+    ctx.requestCertRotation = (reason: string) => {
+      log.warn("[cert-renewal] reemisión solicitada por el control plane", { reason });
+      runCertRenewal(true).catch((e: any) => {
+        log.error("[cert-renewal] la reemisión forzada falló", { err: e?.message || e });
+      });
+    };
+
     armCertRenewal();
 
     // Arm the process-level liveness watchdog. This is the last-resort
