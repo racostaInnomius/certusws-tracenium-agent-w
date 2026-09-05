@@ -8,6 +8,17 @@ duplication, `SendInput`, the PrivSvc IPC bridge).
 This runbook is ordered by risk: the checks most likely to fail, and most
 expensive to discover in production, come first.
 
+**Las tres plataformas, en una pasada** (actualizado 2026-09-04). Las fases
+1-4 se escribieron para Windows y ahí siguen; las 5-9 son nuevas y cubren lo
+que se ha construido desde entonces —consentimiento, cola de aprobación,
+propiedad de sesión, salud, auditoría, tope de subida— que en su mayoría es
+independiente del sistema operativo. La tabla del final dice qué hay que
+correr en cuál.
+
+⚠️ **Nada de esto se puede marcar hecho sin resultados.** Un runbook con
+casillas vacías es un runbook que nadie corrió, y hasta ahora la única
+evidencia de que RCP funciona en macOS y Linux son tests unitarios.
+
 ## What has never run on real hardware
 
 | Change | Why it can't be tested off-device |
@@ -21,12 +32,20 @@ expensive to discover in production, come first.
 
 ## Prerequisites
 
-- Windows 10/11 endpoint with the agent built from `Package-Prepare`, enrolled
-  and **online** in the dashboard.
+- **Tres equipos enrolados y online**, uno por sistema: Windows 10/11, macOS
+  (14+) y Linux (Ubuntu 22.04/24.04). El agente, en **1.1.60 o superior** —
+  la versión importa: `/health/rcp`, el tope de subida anunciado en `roots` y
+  el consentimiento con `respondedBy` no existen antes.
+- En macOS, el permiso de **Grabación de pantalla** concedido al agente en
+  Ajustes → Privacidad y seguridad. Sin él la captura falla con un código
+  propio (ver `MACOS_TCC_FLOW.md`) y no es un fallo de RCP.
 - A tenant policy with `features.remoteShell`, `remoteFile` and `remoteScreen`
-  enabled, and `remoteRequireConsent` **off** (it is not implementable yet —
-  turning it on refuses every session by design).
-- Two dashboard identities: one `admin_master`, one plain tenant `ADMIN`.
+  enabled. `remoteRequireConsent` se prueba en la fase 5, así que empieza
+  **apagado** y se enciende ahí.
+- **Tres identidades** en el portal: `admin_master`, un `ADMIN` del tenant y
+  un `USER` del mismo tenant. La fase 3 las usa; la 6 necesita además un
+  segundo `ADMIN` distinto del que pide, porque la autoaprobación está
+  prohibida a propósito.
 - Log tail on the endpoint, in an elevated PowerShell. WinSW's `%BASE%` is the
   `AgentCore` directory, not the install root:
 
@@ -225,6 +244,11 @@ the session closes. There must be **no** `rcp-upload-*` files loose in `%TEMP%`
 Regression check: it resolves to `OWNER` upstream, so nothing should have
 changed for Tracenium staff. Start a session of each type.
 
+⚠️ Desde M4 el gate NO es "solo admin_master": es el rol ADMIN u OWNER **en
+el tenant del equipo**. La copia del portal decía lo primero y se corrigió;
+si vuelve a aparecer "admin_master-only" en la UI, es una regresión de texto,
+no de permisos.
+
 ### 3.2 A tenant ADMIN can now operate
 
 Sign in as the plain tenant `ADMIN`.
@@ -264,8 +288,244 @@ SELECT
 
 ---
 
+## Phase 5 — Consentimiento del usuario (ADR-0012)
+
+La razón por la que el aviso existe es que la persona pueda decir que no. Lo
+que hay que comprobar es que ese "no" **llega, se distingue y se guarda**.
+
+Enciende `remoteRequireConsent` en la política del tenant y repite en cada
+sistema:
+
+### 5.1 Aceptar
+
+1. Pide una sesión de pantalla contra el equipo.
+2. En el equipo aparece el aviso. Acepta.
+
+**Expect:** la sesión abre. En la línea de tiempo del detalle de la sesión
+(portal → Remote Control → Sessions → la fila) hay `Session requested` y
+`Connected`.
+
+### 5.2 Rechazar
+
+Pide otra y **deniega** en el equipo.
+
+**Expect en el portal:** "The person at the device declined." — con esas
+palabras, no un código. **Regresión** si dice "Session ended." o
+`consent_denied` en crudo: significa que el visor volvió a tirar el motivo, y
+entonces alguien negándose y una red rota se ven igual.
+
+**Expect en la base del tenant:**
+
+```sql
+SELECT event, source, actor, detail
+  FROM remote_session_events
+ WHERE session_id = '<sess>'
+ ORDER BY occurred_at;
+```
+
+Tiene que haber una fila `consent_denied` **antes** de la `closed`, con
+`source = 'agent'` y `actor` a NULL. Si el `consent_denied` no está y solo
+aparece dentro del `detail` del `closed`, es la versión anterior del backend.
+
+### 5.3 No contestar
+
+Pide una tercera y deja el aviso sin tocar hasta que caduque.
+
+**Expect:** "Nobody answered on the device." y un evento `consent_timeout`.
+Que se distinga del rechazo es el punto: uno se reintenta llamando por
+teléfono y el otro no se reintenta.
+
+### 5.4 El agente que no sabe preguntar
+
+Contra un equipo **sin** `rcp.consent` anunciado (un agente viejo, o un
+servidor sin sesión de usuario) y con la política exigiendo consentimiento:
+
+**Expect:** la sesión **no abre**, y el mensaje explica que el equipo no puede
+preguntar. Falla cerrado a propósito: abrir sin preguntar sería justo lo que
+la política prohíbe.
+
+---
+
+## Phase 6 — Cola de aprobación (ADR-0009 fase 2)
+
+Con la matriz de política exigiendo vistobueno para la clase del equipo:
+
+### 6.1 Queda pendiente, no falla
+
+Pide una sesión como `ADMIN`.
+
+**Expect:** el portal dice "Access queued" con un identificador, **no** un
+error. Un rechazo aquí haría reintentar en bucle y cada intento dejaría una
+petición pendiente nueva.
+
+### 6.2 Nadie se aprueba a sí mismo
+
+Intenta aprobar tu propia petición con la misma identidad.
+
+**Expect:** 409 `SELF_APPROVAL_FORBIDDEN`.
+
+### 6.3 La decisión queda escrita
+
+Aprueba con el **segundo** ADMIN y abre la sesión. Luego:
+
+```sql
+SELECT event, actor, actor_ip, detail
+  FROM remote_session_events
+ WHERE session_id IN ('<requestId>', '<sessionId>')
+ ORDER BY occurred_at;
+```
+
+**Expect:** `gated` → `approved` (con `actor` = el aprobador y
+`detail->>'requestedBy'` = el solicitante) → `requested` → `connected`. Deniega
+otra petición y comprueba que deja un `denied`: una tabla donde solo constan
+las aprobaciones dice que aquí siempre se dice que sí.
+
+### 6.4 Break-glass (solo OWNER)
+
+Ábrelo y comprueba que la fila `break_glass` sale **en negrita y en rojo** en
+la línea de tiempo, y que llegó el correo. No es silenciable por diseño.
+
+---
+
+## Phase 7 — Propiedad de sesión y salud
+
+### 7.1 `/health/rcp` responde sin autenticar
+
+Desde fuera, contra el host REST:
+
+```bash
+curl -s https://api.tracenium.com/api/v1/health/rcp | jq
+```
+
+**Expect:** 200 con el detalle. **Regresión** si contesta 401: montado detrás
+del middleware OIDC, un 401 es indistinguible de un servicio caído, que es
+exactamente lo que un health check existe para distinguir.
+
+### 7.2 Un agente no puede tocar la sesión de otro
+
+No hace falta un agente comprometido: basta mirar que la tabla está vacía y
+sigue vacía en operación normal.
+
+```sql
+SELECT COUNT(*) FROM security_events
+ WHERE event_type = 'RCP_SESSION_OWNERSHIP_REJECTED';
+```
+
+**Expect:** 0 durante todo el smoke test. Cualquier fila aquí es un agente
+actuando sobre una sesión que no es suya — y el detalle dice cuál y de quién.
+
+### 7.3 Las credenciales TURN no están en claro
+
+```sql
+SELECT payload::text FROM rcp_signal_queue ORDER BY id DESC LIMIT 5;
+```
+
+**Expect:** ningún `turn:` ni credencial dentro del payload de las ofertas.
+Desde 2026-09-05 se leen del routing al entregar. Y con `RCP_SECRETS_KEY`
+definida **en los dos hosts** (REST y gRPC), `rcp_session_routing.ice_servers_json`
+tampoco es legible a simple vista.
+
+⚠️ Si la clave está en un solo lado, la sesión muere con `ice_failed` sin
+decir por qué: el agente recibe una configuración ICE ilegible. Esa es la
+comprobación real de esta casilla — que las sesiones **abren**.
+
+---
+
+## Phase 8 — Tope de subida y auditoría de ficheros
+
+### 8.1 El fichero grande se rechaza ANTES de subir
+
+Con `remoteControl.maxUploadBytes` puesto en la política (por ejemplo 1 MB),
+arrastra un fichero de 5 MB al panel de ficheros.
+
+**Expect:** un mensaje inmediato que dice cuánto acepta el equipo y cuánto
+ocupa el fichero, **sin** barra de progreso. La regresión es que la barra
+avance y falle al final: eso significa que el rechazo volvió a ocurrir en el
+agente, con la sesión de transferencia ya abierta.
+
+**Contra un agente anterior a 1.1.60** (que no anuncia el tope): la subida
+debe intentarse igual. No inventamos un límite que el equipo no ha dicho.
+
+### 8.2 El filtro de la auditoría es del servidor
+
+En la pestaña Transfers, con más de 25 transferencias en el histórico, filtra
+por `Failed`.
+
+**Expect:** el contador dice "N matching" sobre TODO el histórico y la
+paginación vuelve a la página 1. La regresión es una tabla vacía con el filtro
+puesto —el filtro aplicándose solo a la página cargada—, que se lee como "no
+ha fallado ninguna".
+
+### 8.3 Una transferencia deja rastro ligado a la sesión
+
+Sube y descarga un fichero pequeño.
+
+```sql
+SELECT event, detail->>'path', detail->>'bytes'
+  FROM remote_session_events
+ WHERE session_id = '<sess>' AND event LIKE 'file_%';
+```
+
+**Expect:** un `file_upload` y un `file_download`, solo en el estado terminal
+(el agente dispara dos eventos por transferencia y aquí solo cuenta el final).
+
+---
+
+## Phase 9 — Pantalla y cierre, por sistema
+
+Esto es lo que cambió en el backend y hay que ver en los tres:
+
+1. Abre una sesión de pantalla y ciérrala desde el portal.
+2. Consulta la sesión:
+
+```sql
+SELECT status, close_reason, ended_at FROM remote_sessions WHERE session_id = '<sess>';
+SELECT event, source FROM remote_session_events WHERE session_id = '<sess>' ORDER BY occurred_at;
+```
+
+**Expect:** `close_reason` **NO NULL** (`operator_closed` o
+`operator_disconnected`), un `screen_stopped` del agente y un `closed` del
+sistema. Hasta el 04-sep toda sesión de pantalla terminaba con `close_reason`
+NULL: el audit de pantalla cerraba la fila antes de que llegara el motivo.
+
+---
+
+## Qué correr en cada sistema
+
+| Fase | Windows | macOS | Linux | Nota |
+|---|---|---|---|---|
+| 1 — Pantalla (dirty rects, DXGI) | ✅ | ⚠️ solo 1.1, 1.5, 1.7 | ⚠️ solo 1.1, 1.5, 1.7 | Los rects sucios y las estadísticas son de DXGI: Windows. |
+| 2 — Confinamiento de ficheros | ✅ | ✅ | ✅ | 2.5 (`O_NOFOLLOW`) solo tiene sentido en POSIX. |
+| 3 — Autorización | ✅ | — | — | Es del control plane; una vez basta. |
+| 4 — Retención | ✅ | — | — | Idem. |
+| 5 — Consentimiento | ✅ | ✅ | ✅ | El aviso es nativo por sistema: hay que verlo en los tres. |
+| 6 — Aprobación | ✅ | — | — | Control plane. |
+| 7 — Propiedad y salud | ✅ | — | — | 7.3 se mira una vez, con sesiones de los tres. |
+| 8 — Subida y auditoría | ✅ | ✅ | ✅ | El tope lo anuncia el agente. |
+| 9 — Cierre de pantalla | ✅ | ✅ | ✅ | El camino que estaba roto. |
+
+---
+
 ## Recording the outcome
 
 Note per check: pass / fail / not run, and for 1.2 paste one `stream stats`
 line — it is the only quantitative evidence that dirty rects engaged, and it is
 worth keeping for comparison after future capture changes.
+
+Para las fases 5-9, apunta además la **versión del agente** de cada equipo y
+pega la salida de las consultas SQL. Una casilla marcada sin la fila que la
+respalda no es evidencia: es una intención.
+
+### Resultados
+
+| Fase | Windows | macOS | Linux | Fecha | Notas |
+|---|---|---|---|---|---|
+| 1 | | | | | |
+| 2 | | | | | |
+| 3 | | — | — | | |
+| 4 | | — | — | | |
+| 5 | | | | | |
+| 6 | | — | — | | |
+| 7 | | — | — | | |
+| 8 | | | | | |
+| 9 | | | | | |
