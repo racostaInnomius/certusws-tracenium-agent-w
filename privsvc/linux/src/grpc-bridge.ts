@@ -32,6 +32,7 @@ import type { PrivSvcRequest, PrivSvcResponse, PushSink } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
 import { makeCheckServerIdentity, readServerKeyPins } from "./server-pin";
+import { issuerAltSpkiFromBundle } from "../../shared/catalyst";
 
 // Resolve the controlplane.proto. Order of preference:
 //   1. TRACENIUM_PROTO_PATH env override — escape hatch for unusual
@@ -1092,14 +1093,31 @@ async function startConnection(params: Record<string, any>, pushSink: PushSink) 
       identity.clientKey,
       identity.clientCert,
       {
-        checkServerIdentity: makeCheckServerIdentity(pins, (pin, hostname) => {
-          if (pins.length === 0) {
-            logger.info?.("[grpc-bridge] pin de servidor observado (sin exigir)", {
-              hostname,
-              pin,
-            });
+        checkServerIdentity: makeCheckServerIdentity(
+          pins,
+          (pin, hostname) => {
+            if (pins.length === 0) {
+              logger.info?.("[grpc-bridge] pin de servidor observado (sin exigir)", {
+                hostname,
+                pin,
+              });
+            }
+          },
+          {
+            // ADR-0015 punto 9. La mitad alternativa de la CA se saca del
+            // BUNDLE que el equipo ya tiene instalado, no de una variable
+            // nueva: la clave alternativa de una CA vive en su
+            // certificado, y un valor aparte podría discrepar del
+            // certificado que el equipo usa de verdad.
+            issuerAltSpki: issuerAltSpkiFromBundle(identity.caBundle.toString("utf8")),
+            observe: (verdict, hostname) => {
+              logger.info?.("[grpc-bridge] mitad alternativa del servidor observada (sin exigir)", {
+                hostname,
+                verdict,
+              });
+            },
           }
-        }),
+        ),
       }
     );
 

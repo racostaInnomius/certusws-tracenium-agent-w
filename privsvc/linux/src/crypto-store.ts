@@ -280,20 +280,84 @@ export async function handleGenerateCsr(req: PrivSvcRequest): Promise<PrivSvcRes
   }
 }
 
+
+/**
+ * ADR-0015 punto 10 — el bundle de CA llega en su PROPIO mensaje.
+ *
+ * ⚠️ POR QUÉ SE PARTE EN DOS, y por qué también aquí donde no hace falta.
+ *
+ * El IPC es JSON delimitado por saltos de línea, o sea que un mensaje es
+ * UNA línea. En Windows el pipe tiene un tope de 64 KB por línea, y con
+ * certificados catalyst la cuenta deja de sobrar: la hoja pasa de ~0,6 KB
+ * a ~6 KB y una cadena híbrida de tres se acerca a los 24 KB. Sumar
+ * cadena y hoja en la misma línea es acercarse al tope por un ahorro de
+ * un viaje.
+ *
+ * En macOS y Linux el socket no tiene ese tope, así que aquí esto no
+ * arregla nada. Se hace igual: un contrato IPC que se comporta distinto
+ * según el sistema es un contrato que se prueba en uno y falla en otro,
+ * y este producto ya tiene la cicatriz — el enrolamiento de Windows se
+ * rompió justamente porque cada privsvc hacía lo suyo.
+ *
+ * El bundle se deja EN ESPERA, no instalado. Instalar la cadena sin la
+ * hoja dejaría al equipo confiando en una CA nueva sin certificado con
+ * que hablarle: un estado a medias que nadie observa. El punto de
+ * compromiso sigue siendo uno solo, `crypto.cert.install`.
+ */
+export async function handleStageBundle(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  try {
+    ensurePrivSvcDirs();
+    const paths = certPaths();
+    const caBundlePem = normalizePem((req.params || {}).caBundlePem);
+
+    if (!caBundlePem.includes("BEGIN CERTIFICATE")) {
+      return fail(req.id, "invalid_ca_bundle", "caBundlePem is required");
+    }
+
+    fs.writeFileSync(stagedBundlePath(paths.caBundle), caBundlePem, {
+      encoding: "utf8",
+      mode: 0o644
+    });
+
+    return success(req.id, { staged: true, bytes: caBundlePem.length });
+  } catch (err: any) {
+    return fail(req.id, "cert_stage_failed", err?.message || String(err));
+  }
+}
+
+/** El bundle en espera, junto al definitivo. */
+function stagedBundlePath(caBundlePath: string): string {
+  return `${caBundlePath}.staged`;
+}
+
 export async function handleInstallCert(req: PrivSvcRequest): Promise<PrivSvcResponse> {
   try {
     ensurePrivSvcDirs();
     const paths = certPaths();
     const params = req.params || {};
     const clientCertPem = normalizePem(params.clientCertPem);
-    const caBundlePem = normalizePem(params.caBundlePem);
+
+    // ⚠️ El bundle puede venir en ESTE mensaje o haber llegado antes por
+    // `crypto.cert.stage` (ADR-0015 punto 10). Se admiten las dos formas
+    // a propósito: agent-core y privsvc viajan en el mismo paquete, pero
+    // durante una actualización pueden no coincidir un rato, y un
+    // enrolamiento que fallara en esa ventana sería un equipo sin
+    // certificado esperando una visita.
+    const staged = stagedBundlePath(paths.caBundle);
+    const caBundlePem = params.caBundlePem
+      ? normalizePem(params.caBundlePem)
+      : (fs.existsSync(staged) ? normalizePem(fs.readFileSync(staged, "utf8")) : "");
 
     if (!clientCertPem.includes("BEGIN CERTIFICATE")) {
       return fail(req.id, "invalid_client_cert", "clientCertPem is required");
     }
 
     if (!caBundlePem.includes("BEGIN CERTIFICATE")) {
-      return fail(req.id, "invalid_ca_bundle", "caBundlePem is required");
+      return fail(
+        req.id,
+        "invalid_ca_bundle",
+        "caBundlePem is required (in this message or staged via crypto.cert.stage)"
+      );
     }
 
     if (!fs.existsSync(paths.clientKey)) {
@@ -310,6 +374,10 @@ export async function handleInstallCert(req: PrivSvcRequest): Promise<PrivSvcRes
     // macOS shape so cross-platform tooling (debugging scripts that
     // dump the bundle) doesn't need root on either host.
     fs.writeFileSync(paths.caBundle, fullBundlePem, { encoding: "utf8", mode: 0o644 });
+
+    // El bundle en espera ya se instaló: se borra para que un
+    // enrolamiento posterior no lo herede sin saberlo.
+    try { fs.rmSync(staged, { force: true }); } catch {}
 
     const clientCertThumbprint = certFingerprintPem(clientCertPem);
 

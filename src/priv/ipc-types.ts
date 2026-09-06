@@ -47,6 +47,7 @@ export type PrivSvcMethod =
   // setting de denegacion. Ver CdpAnchorDistrust.cs.
   | "cdp.anchor.distrust"
   | "crypto.csr.generate" // enrollment CSR generation
+  | "crypto.cert.stage" // ADR-0015 pto.10: deja el bundle de CA en espera, en su propio mensaje
   | "crypto.cert.install" // install client cert (bind to existing key)
   // ADR-0013 — la clave con la que se abre la credencial de vCenter.
   //

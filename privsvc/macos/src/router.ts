@@ -1,7 +1,9 @@
 import os from "os";
 import type { PrivSvcRequest, PrivSvcResponse, PushSink } from "./protocol";
 import { fail, success } from "./protocol";
-import { handleGenerateCsr, handleInstallCert, handleRenewCert } from "./crypto-store";
+import { handleGenerateCsr, handleInstallCert, handleRenewCert,
+  handleStageBundle,
+} from "./crypto-store";
 import { handleGatewayKeyEnsure, handleGatewayKeyDestroy } from "./gateway-key";
 import {
   handleCredentialProvision,
@@ -141,6 +143,10 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "crypto.gwkey.destroy":
       return handleGatewayKeyDestroy(req);
+
+    // ADR-0015 punto 10 — el bundle de CA, en su propio mensaje.
+    case "crypto.cert.stage":
+      return handleStageBundle(req);
 
     case "crypto.cert.install":
       return handleInstallCert(req);

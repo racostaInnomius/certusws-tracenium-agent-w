@@ -188,6 +188,53 @@ async function generateCsrViaPrivSvc(): Promise<{ csrPem: string; deviceId: stri
   });
 }
 
+/**
+ * Manda un mensaje al PrivSvc y espera su respuesta.
+ *
+ * Existe porque el punto 10 necesita DOS viajes y duplicar el bloque de
+ * socket entero para el segundo habría dejado dos temporizadores, dos
+ * parseos y dos formas de fallar donde antes había una.
+ */
+async function sendToPrivSvc(mensaje: unknown, que: string): Promise<any> {
+  const net = await import("net");
+  const linea = JSON.stringify(mensaje) + "\n";
+
+  return new Promise((resolve, reject) => {
+    const client = net.createConnection({ path: getPrivSvcPipePath() });
+    let acumulado = "";
+    const timeout = setTimeout(() => {
+      client.destroy();
+      reject(new Error(`${que} timeout`));
+    }, 30000);
+
+    client.on("connect", () => client.write(linea));
+
+    client.on("data", (data) => {
+      acumulado += data.toString();
+      const idx = acumulado.indexOf("\n");
+      if (idx === -1) return;
+      clearTimeout(timeout);
+      const line = acumulado.slice(0, idx).trim();
+      client.destroy();
+      try {
+        const parsed = JSON.parse(line);
+        if (!parsed.ok) {
+          reject(new Error(parsed.error?.message || `${que} failed`));
+          return;
+        }
+        resolve(parsed.result || {});
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    client.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
+}
+
 // Helper to install certificates via PrivSvc IPC
 async function installCertViaPrivSvc(clientCertPem: string, caBundlePem: string): Promise<{ clientCertThumbprint: string; issuingCaThumbprint?: string; issuingCaThumbprints?: string[] }> {
   const net = await import("net");
@@ -195,14 +242,39 @@ async function installCertViaPrivSvc(clientCertPem: string, caBundlePem: string)
   const deviceId = getDeviceId();
   const tenantId = "bootstrap";
 
+  // ADR-0015 punto 10 — la cadena de CA viaja en SU PROPIO mensaje.
+  //
+  // ⚠️ El IPC es JSON delimitado por saltos de línea: un mensaje es UNA
+  // línea, y en Windows el pipe tiene un tope de 64 KB por línea. Con
+  // certificados catalyst la cuenta deja de sobrar —la hoja pasa de ~0,6
+  // a ~6 KB, y una cadena híbrida de tres se acerca a 24 KB— así que
+  // mandar cadena y hoja juntas es acercarse al tope por ahorrarse un
+  // viaje. Aquí, en macOS y Linux, el socket no tiene ese tope: se hace
+  // igual porque un contrato IPC que se comporta distinto según el
+  // sistema se prueba en uno y falla en otro, y esa cicatriz ya la tiene
+  // este producto.
+  //
+  // El compromiso sigue siendo UNO: `stage` sólo deja el bundle en
+  // espera. Instalar la cadena sin la hoja dejaría al equipo confiando en
+  // una CA nueva sin certificado con que hablarle.
+  await sendToPrivSvc({
+    v: 1,
+    id: `cert_stage_${Date.now()}`,
+    method: "crypto.cert.stage",
+    params: { deviceId, caBundlePem },
+    meta: { tenantId, deviceId }
+  }, "PrivSvc CA bundle stage");
+
   const request = JSON.stringify({
     v: 1,
     id: `cert_install_${Date.now()}`,
     method: "crypto.cert.install",
     params: {
       deviceId: deviceId,
-      clientCertPem: clientCertPem,
-      caBundlePem: caBundlePem
+      clientCertPem: clientCertPem
+      // El bundle NO va aquí: lo dejó el `stage` de arriba. El privsvc
+      // sigue aceptándolo en este mensaje por si las dos mitades del
+      // paquete no coinciden durante una actualización.
     },
     meta: {
       tenantId,

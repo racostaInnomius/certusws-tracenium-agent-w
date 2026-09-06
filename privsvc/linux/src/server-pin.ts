@@ -26,6 +26,7 @@
 
 import { createHash, X509Certificate } from "crypto";
 import { checkServerIdentity as defaultCheckServerIdentity } from "tls";
+import { classifyCatalyst, CatalystVerdict } from "../../shared/catalyst";
 
 export interface PinnableCertificate {
   /** SPKI en DER, tal como la entrega Node en `getPeerCertificate()`. */
@@ -60,6 +61,20 @@ export function publicKeyPin(cert: PinnableCertificate | null | undefined): stri
 export type ObservePin = (pin: string | null, hostname: string) => void;
 
 /**
+ * ADR-0015 punto 9 — qué mitad alternativa traía el servidor.
+ *
+ * ⚠️ OBSERVAR, NUNCA CORTAR, y por la misma razón que el pin: hoy no
+ * existe una Issuing híbrida, así que NINGÚN servidor puede presentar una
+ * mitad alternativa válida todavía. Un modo que exigiera algo dejaría a
+ * la flota entera sin canal — y sin canal no hay forma de mandarle el
+ * arreglo, que es una visita presencial por equipo.
+ *
+ * Lo que sí se puede hacer desde ya es REGISTRAR lo que se ve, que es
+ * como se averigua cuándo se puede exigir sin apostar.
+ */
+export type ObserveCatalyst = (verdict: CatalystVerdict, hostname: string) => void;
+
+/**
  * Construye el `checkServerIdentity` para `grpc.credentials.createSsl`.
  *
  * ⚠️ Trampa que este código evita: pasar un `checkServerIdentity` propio
@@ -72,6 +87,7 @@ export type ObservePin = (pin: string | null, hostname: string) => void;
 export function makeCheckServerIdentity(
   pins: readonly string[] = [],
   observe?: ObservePin,
+  catalyst?: { issuerAltSpki: Buffer | null; observe?: ObserveCatalyst },
 ): (hostname: string, cert: PinnableCertificate) => Error | undefined {
   const allowed = new Set(pins.map((p) => String(p).trim()).filter(Boolean));
 
@@ -79,6 +95,19 @@ export function makeCheckServerIdentity(
     // 1. Lo que Node haría por su cuenta. No se salta nunca.
     const identityError = defaultCheckServerIdentity(hostname, cert as never);
     if (identityError) return identityError;
+
+    // 1.b La mitad alternativa (ADR-0015). Va DESPUÉS de la verificación
+    // de identidad y ANTES del pin, y su resultado no participa en el
+    // valor de retorno: se mira y se cuenta. Envuelto porque un fallo
+    // observando no puede tirar una conexión que por lo demás es válida.
+    if (catalyst && cert?.raw) {
+      try {
+        catalyst.observe?.(classifyCatalyst(cert.raw, catalyst.issuerAltSpki), hostname);
+      } catch {
+        // Ni siquiera se registra: no hay nada que decir y este camino
+        // corre en cada handshake.
+      }
+    }
 
     // 2. El pin.
     const pin = publicKeyPin(cert);
