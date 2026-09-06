@@ -26,6 +26,8 @@ import path from "path";
 
 import {
   classifyCatalyst,
+  classifyCatalystChain,
+  describeCatalystChain,
   subjectAltSpkiOf,
   altSignatureValueOf,
   tbsWithoutAltSignatureValue,
@@ -42,6 +44,11 @@ let caAlt: { spkiDer: Buffer; pkcs8Der: Buffer };
 beforeAll(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "srv-catalyst-"));
   caAlt = getMlDsaProvider().generateKeyPair();
+  // Un certificado catalyst cuya 74 firma su PROPIA clave alternativa:
+  // es la forma de una raíz autofirmada, y lo que hace que un recorrido
+  // sin `vistos` produzca tramos «válidos» que no existen.
+  const auto = getMlDsaProvider().generateKeyPair();
+  fs.writeFileSync(path.join(tmp, "auto.der"), certConAlt(auto.spkiDer, auto.pkcs8Der));
 });
 
 // ── Un certificado catalyst, emitido a mano ─────────────────────────
@@ -56,6 +63,38 @@ function ext(oidHex: string, critical: boolean, value: Buffer): Buffer {
     oidFromHex(oidHex),
     ...(critical ? [tlv(DER_BOOLEAN, Buffer.from([0xff]))] : []),
     octetString(value)
+  );
+}
+
+/** Un certificado catalyst cuyo sujeto declara `sujetoAlt` y cuya 74 firma `emisorAltPkcs8`. */
+function certConAlt(sujetoAltSpki: Buffer, emisorAltPkcs8: Buffer): Buffer {
+  const clasica = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const spki = clasica.publicKey.export({ format: "der", type: "spki" }) as Buffer;
+  const nombre = seq(tlv(0x31, seq(seq(oidFromHex("550403"), tlv(0x0c, Buffer.from("x"))))));
+  const validez = seq(
+    tlv(0x17, Buffer.from("260101000000Z", "ascii")),
+    tlv(0x17, Buffer.from("270101000000Z", "ascii"))
+  );
+  const armaTbs = (exts: Buffer[]) =>
+    seq(
+      tlv(0xa0, tlv(0x02, Buffer.from([0x02]))),
+      tlv(0x02, Buffer.from([0x01])),
+      seq(oidFromHex("2a8648ce3d040302")),
+      nombre, validez, nombre, spki,
+      tlv(0xa3, seq(...exts))
+    );
+  const base = [
+    ext("551d0f", true, tlv(0x03, Buffer.from([0x07, 0x80]))),
+    ext("551d48", false, sujetoAltSpki),
+    ext("551d49", false, mlDsaAlgorithmIdentifier())
+  ];
+  const sinAlt74 = armaTbs(base);
+  const firma = getMlDsaProvider().sign(sinAlt74, emisorAltPkcs8);
+  const tbs = armaTbs([...base, ext("551d4a", false, bitString(firma))]);
+  return seq(
+    tbs,
+    seq(oidFromHex("2a8648ce3d040302")),
+    bitString(crypto.sign("sha256", tbs, clasica.privateKey))
   );
 }
 
@@ -171,6 +210,55 @@ describe("issuerAltSpkiFromBundle", () => {
   });
 });
 
+// ── La CADENA, que es lo que hace que D4 sirva de algo ─────────────
+
+describe("classifyCatalystChain", () => {
+  /** Hoja ← Issuing ← Root, con las firmas alternativas encadenadas. */
+  function jerarquia() {
+    const rootAlt = getMlDsaProvider().generateKeyPair();
+    const issuingAlt = getMlDsaProvider().generateKeyPair();
+    const hojaAlt = getMlDsaProvider().generateKeyPair();
+    return {
+      rootAlt,
+      root: certConAlt(rootAlt.spkiDer, rootAlt.pkcs8Der),
+      issuing: certConAlt(issuingAlt.spkiDer, rootAlt.pkcs8Der),
+      hoja: certConAlt(hojaAlt.spkiDer, issuingAlt.pkcs8Der)
+    };
+  }
+
+  it("⚠️ los DOS tramos verifican: hoja←Issuing e Issuing←Root", () => {
+    const j = jerarquia();
+    const r = classifyCatalystChain([j.hoja, j.issuing, j.root]);
+    expect(r.verdicts).toEqual(["valid", "valid"]);
+    expect(r.depth).toBe(2);
+    expect(r.anyInvalid).toBe(false);
+  });
+
+  it("⚠️ con Root CLÁSICA el tramo de arriba es 'unverifiable', no 'invalid'", () => {
+    // El estado por el que se pasa mientras la Root híbrida no esté en
+    // campo. Declararlo inválido diría que la Issuing tiene la firma rota.
+    const j = jerarquia();
+    const r = classifyCatalystChain([j.hoja, j.issuing, certCatalyst({ conAlt: false })]);
+    expect(r.verdicts).toEqual(["valid", "unverifiable"]);
+    expect(r.depth).toBe(1);
+    expect(r.anyInvalid).toBe(false);
+  });
+
+  it("un tramo corrompido se ve aunque el otro esté bien", () => {
+    const j = jerarquia();
+    const rota = Buffer.from(j.issuing);
+    const i = rota.indexOf(Buffer.from("551d4a", "hex"));
+    rota[i + 40] ^= 0xff;
+    expect(classifyCatalystChain([j.hoja, rota, j.root]).anyInvalid).toBe(true);
+  });
+
+  it("una cadena de un solo certificado no tiene tramos", () => {
+    expect(classifyCatalystChain([certCatalyst()]).verdicts).toHaveLength(0);
+    expect(classifyCatalystChain([]).verdicts).toHaveLength(0);
+    expect(describeCatalystChain(classifyCatalystChain([]))).toMatch(/sin tramos/);
+  });
+});
+
 describe("checkServerIdentity — el cableado", () => {
   it("⚠️ observa la mitad alternativa Y NUNCA corta por ella", () => {
     // La garantía entera del modo observación, probada sobre el peor
@@ -178,7 +266,7 @@ describe("checkServerIdentity — el cableado", () => {
     const vistos: string[] = [];
     const check = makeCheckServerIdentity([], undefined, {
       issuerAltSpki: caAlt.spkiDer,
-      observe: (v) => vistos.push(v)
+      observe: (resumen) => vistos.push(resumen)
     });
 
     const cert = {
@@ -188,9 +276,39 @@ describe("checkServerIdentity — el cableado", () => {
     } as never;
 
     const err = check("localhost", cert);
-    expect(vistos).toEqual(["invalid"]);
+    // Sin `issuerCertificate` la cadena tiene un solo certificado: cero
+    // tramos. Lo que se comprueba aquí es que OBSERVA y no corta.
+    expect(vistos).toHaveLength(1);
+    expect(vistos[0]).toMatch(/tramos|profundidad/);
     // Sin error de identidad ni de pin: el veredicto no participa.
     expect(err).toBeUndefined();
+  });
+
+  it("⚠️ una raíz que se apunta a sí misma NO inventa tramos", () => {
+    // Node hace exactamente esto: en la raíz, `issuerCertificate` apunta
+    // al propio certificado.
+    //
+    // ⚠️ ESTE TEST NACIÓ MIDIENDO LA PROPIEDAD EQUIVOCADA. La primera
+    // versión comprobaba que no se colgara, y pasaba con el guard quitado
+    // — porque el tope de 10 ya garantiza la terminación. Lo que el guard
+    // evita es OTRA cosa: que el mismo certificado entre nueve veces y se
+    // informe de una profundidad post-cuántica de 9 sobre una cadena que
+    // tiene un eslabón. Un número inventado justo donde el número es lo
+    // único que sirve para decidir cuándo exigir.
+    const raw = fs.readFileSync(path.join(tmp, "auto.der"));
+    const raiz: any = { raw, subject: { CN: "localhost" }, subjectaltname: "DNS:localhost" };
+    raiz.issuerCertificate = raiz;
+
+    const vistos: string[] = [];
+    const check = makeCheckServerIdentity([], undefined, {
+      issuerAltSpki: caAlt.spkiDer,
+      observe: (resumen) => vistos.push(resumen)
+    });
+
+    check("localhost", raiz);
+    expect(vistos).toHaveLength(1);
+    // Un solo certificado ⇒ CERO tramos. Con el guard quitado saldrían 9.
+    expect(vistos[0]).toMatch(/sin tramos/);
   });
 
   it("sin la configuración de catalyst no observa nada y se comporta igual", () => {

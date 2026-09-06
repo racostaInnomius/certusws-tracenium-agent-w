@@ -135,6 +135,59 @@ export function classifyCatalyst(
   }
 }
 
+/** Qué pasó con la cadena alternativa entera. */
+export type AltChainResult = {
+  verdicts: CatalystVerdict[];
+  /** Tramos seguidos, desde la hoja, con veredicto `valid`. */
+  depth: number;
+  anyInvalid: boolean;
+};
+
+/**
+ * Recorre la mitad alternativa a lo largo de la CADENA, no de un eslabón.
+ *
+ * ⚠️ ES LO QUE HACE QUE LA ROOT HÍBRIDA (D4) SIRVA DE ALGO. Su clave
+ * alternativa sólo compra seguridad si alguien comprueba que la Issuing
+ * lleva una firma hecha con ella; su propia autofirma alternativa no la
+ * verifica nadie, porque un ancla se confía por estar en el almacén.
+ *
+ * `chain` va de la HOJA a la RAÍZ. La raíz entra porque de ella sale la
+ * clave del último tramo, aunque su autofirma no se comprueba.
+ *
+ * ⚠️ Devuelve PROFUNDIDAD, no un booleano. Durante la migración la cadena
+ * post-cuántica es más corta que la clásica —dos tramos, uno o ninguno
+ * según hasta dónde llegó el despliegue— y un verificador de «todo o
+ * nada» declararía rota una flota que funciona como se planeó.
+ */
+export function classifyCatalystChain(chain: readonly Buffer[]): AltChainResult {
+  const verdicts: CatalystVerdict[] = [];
+  let depth = 0;
+  let anyInvalid = false;
+  let seguida = true;
+
+  for (let i = 0; i < chain.length - 1; i++) {
+    let emisorAlt: Buffer | null = null;
+    try {
+      emisorAlt = subjectAltSpkiOf(chain[i + 1]);
+    } catch {
+      emisorAlt = null;
+    }
+    const v = classifyCatalyst(chain[i], emisorAlt);
+    if (v === "invalid") anyInvalid = true;
+    if (seguida && v === "valid") depth++;
+    else seguida = false;
+    verdicts.push(v);
+  }
+
+  return { verdicts, depth, anyInvalid };
+}
+
+/** Una línea legible para el log: la profundidad es el dato, no un ok/ko. */
+export function describeCatalystChain(r: AltChainResult): string {
+  if (r.verdicts.length === 0) return "cadena sin tramos que comprobar";
+  return `profundidad PQ ${r.depth}/${r.verdicts.length} · ${r.verdicts.join(" → ")}`;
+}
+
 /**
  * La SPKI alternativa de la CA, sacada del bundle que el agente ya tiene.
  *

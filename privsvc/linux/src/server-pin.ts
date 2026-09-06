@@ -26,13 +26,56 @@
 
 import { createHash, X509Certificate } from "crypto";
 import { checkServerIdentity as defaultCheckServerIdentity } from "tls";
-import { classifyCatalyst, CatalystVerdict } from "../../shared/catalyst";
+import { classifyCatalystChain, describeCatalystChain, CatalystVerdict } from "../../shared/catalyst";
 
 export interface PinnableCertificate {
   /** SPKI en DER, tal como la entrega Node en `getPeerCertificate()`. */
   pubkey?: Buffer;
   /** DER del certificado completo; respaldo si `pubkey` no viniera. */
   raw?: Buffer;
+  /**
+   * El emisor, que Node encadena aquí.
+   *
+   * ⚠️ En la RAÍZ este campo apunta a SÍ MISMO — Node no lo deja en
+   * `undefined`— así que recorrerlo sin cortar es un bucle infinito. Ver
+   * `cadenaDe`.
+   */
+  issuerCertificate?: PinnableCertificate;
+}
+
+/**
+ * La cadena en DER, de la hoja a la raíz, siguiendo `issuerCertificate`.
+ *
+ * ⚠️ DOS CORTES, Y HACEN COSAS DISTINTAS. Lo escribo separado porque mi
+ * primera versión los confundió en un solo comentario, y el test que
+ * escribí medía la propiedad equivocada:
+ *
+ *   · El conjunto `vistos` es el que MANDA. Node hace que la raíz se
+ *     apunte a sí misma como emisora, así que una parada por «llegué a
+ *     undefined» no llegaría nunca — y, más importante, sin él la raíz
+ *     entraría varias veces y `classifyCatalystChain` verificaría tramos
+ *     raíz←raíz, informando de una profundidad post-cuántica que no
+ *     existe. Un número inventado justo donde el número es lo único que
+ *     sirve para decidir cuándo exigir. Hay test que lo fija.
+ *
+ *   · El tope de 10 es cinturón sobre tirantes, y se queda dicho como
+ *     tal: con `vistos` cualquier ciclo termina, así que este tope sólo
+ *     acotaría una cadena de más de diez certificados DISTINTOS, que Node
+ *     no produce. Ningún test lo distingue y no pretendo que lo haga.
+ */
+function cadenaDe(cert: PinnableCertificate | undefined): Buffer[] {
+  const out: Buffer[] = [];
+  const vistos = new Set<string>();
+  let actual = cert;
+
+  while (actual && Buffer.isBuffer(actual.raw) && out.length < 10) {
+    const clave = actual.raw.toString("base64");
+    if (vistos.has(clave)) break;
+    vistos.add(clave);
+    out.push(actual.raw);
+    actual = actual.issuerCertificate;
+  }
+  return out;
 }
 
 /** SHA-256 de la SubjectPublicKeyInfo, en base64. `null` si no se puede leer. */
@@ -72,7 +115,7 @@ export type ObservePin = (pin: string | null, hostname: string) => void;
  * Lo que sí se puede hacer desde ya es REGISTRAR lo que se ve, que es
  * como se averigua cuándo se puede exigir sin apostar.
  */
-export type ObserveCatalyst = (verdict: CatalystVerdict, hostname: string) => void;
+export type ObserveCatalyst = (resumen: string, hostname: string) => void;
 
 /**
  * Construye el `checkServerIdentity` para `grpc.credentials.createSsl`.
@@ -102,7 +145,12 @@ export function makeCheckServerIdentity(
     // observando no puede tirar una conexión que por lo demás es válida.
     if (catalyst && cert?.raw) {
       try {
-        catalyst.observe?.(classifyCatalyst(cert.raw, catalyst.issuerAltSpki), hostname);
+        // La CADENA, no la hoja: el tramo Issuing←Root es la razón entera
+        // de que la Root sea híbrida (D4), y no se ve mirando un eslabón.
+        // Si Node no encadenó nada, queda un solo certificado y el
+        // resultado son cero tramos — que se dice, no se calla.
+        const cadena = cadenaDe(cert);
+        catalyst.observe?.(describeCatalystChain(classifyCatalystChain(cadena)), hostname);
       } catch {
         // Ni siquiera se registra: no hay nada que decir y este camino
         // corre en cada handshake.

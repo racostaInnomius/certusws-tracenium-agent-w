@@ -1066,10 +1066,10 @@ async function startConnection(params: Record<string, any>, pushSink: PushSink) 
             // certificado, y un valor aparte podría discrepar del
             // certificado que el equipo usa de verdad.
             issuerAltSpki: issuerAltSpkiFromBundle(identity.caBundle.toString("utf8")),
-            observe: (verdict, hostname) => {
-              logger.info?.("[grpc-bridge] mitad alternativa del servidor observada (sin exigir)", {
+            observe: (resumen, hostname) => {
+              logger.info?.("[grpc-bridge] cadena alternativa del servidor observada (sin exigir)", {
                 hostname,
-                verdict,
+                cadena: resumen,
               });
             },
           }

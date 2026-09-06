@@ -150,6 +150,63 @@ public static class CatalystReader
             : CatalystVerdict.Invalid;
     }
 
+    /// <summary>Qué pasó con UN tramo de la cadena.</summary>
+    public sealed record AltChainLink(string Subject, CatalystVerdict Verdict);
+
+    /// <summary>El resultado de recorrer la cadena alternativa.</summary>
+    public sealed record AltChainResult(
+        IReadOnlyList<AltChainLink> Links,
+        int Depth,
+        bool AnyInvalid)
+    {
+        public override string ToString() =>
+            Links.Count == 0
+                ? "cadena sin tramos que comprobar"
+                : $"profundidad PQ {Depth}/{Links.Count} · {string.Join(" → ", Links.Select(l => l.Verdict))}";
+    }
+
+    /// <summary>
+    /// Verifica la mitad alternativa a lo largo de la CADENA, no de un
+    /// eslabón.
+    ///
+    /// ⚠️ ES LO QUE HACE QUE LA ROOT HÍBRIDA (D4) SIRVA DE ALGO. Su clave
+    /// alternativa sólo compra seguridad si alguien comprueba que la
+    /// Issuing lleva una firma hecha con ella; su propia autofirma
+    /// alternativa no la verifica nadie, porque un ancla se confía por
+    /// estar en el almacén.
+    ///
+    /// `chain` va de la HOJA a la RAÍZ, como la entrega X509Chain. La raíz
+    /// entra porque de ella sale la clave del último tramo, aunque su
+    /// autofirma no se comprueba.
+    ///
+    /// ⚠️ Devuelve PROFUNDIDAD, no un booleano. Durante la migración la
+    /// cadena post-cuántica es más corta que la clásica —dos tramos, uno o
+    /// ninguno según hasta dónde llegó el despliegue— y un verificador de
+    /// «todo o nada» declararía rota una flota que funciona como se
+    /// planeó. El número es además lo único con lo que se puede decidir
+    /// cuándo exigir sin apostar.
+    /// </summary>
+    public static AltChainResult ClassifyChain(IReadOnlyList<byte[]> chain)
+    {
+        var links = new List<AltChainLink>();
+        var depth = 0;
+        var anyInvalid = false;
+        var seguida = true;
+
+        for (var i = 0; i < chain.Count - 1; i++)
+        {
+            var emisorAlt = SubjectAltSpki(chain[i + 1]);
+            var v = Classify(chain[i], emisorAlt);
+
+            if (v == CatalystVerdict.Invalid) anyInvalid = true;
+            if (seguida && v == CatalystVerdict.Valid) depth++; else seguida = false;
+
+            links.Add(new AltChainLink($"#{i}", v));
+        }
+
+        return new AltChainResult(links, depth, anyInvalid);
+    }
+
     /// <summary>
     /// La SPKI alternativa de la CA, sacada del bundle que el agente ya
     /// tiene instalado.

@@ -183,6 +183,106 @@ public class CatalystReaderTests
         Assert.Null(CatalystReader.IssuerAltSpkiFrom(new List<byte[]>()));
     }
 
+    // ── La CADENA, que es lo que hace que D4 sirva de algo ──────────
+
+    [Fact]
+    public void La_cadena_de_dos_tramos_verifica_entera()
+    {
+        // Hoja ← Issuing ← Root, las dos firmas alternativas buenas. El
+        // segundo tramo es el que la Root híbrida existe para permitir.
+        var (hoja, issuing, root) = Jerarquia();
+        var r = CatalystReader.ClassifyChain(new[] { hoja, issuing, root });
+        Assert.Equal(2, r.Depth);
+        Assert.False(r.AnyInvalid);
+        Assert.Equal(new[] { CatalystVerdict.Valid, CatalystVerdict.Valid },
+            r.Links.Select(l => l.Verdict).ToArray());
+    }
+
+    [Fact]
+    public void Con_Root_clasica_el_tramo_de_arriba_es_Unverifiable()
+    {
+        // ⚠️ El estado por el que se pasa mientras la Root híbrida no esté
+        // en campo. Declararlo inválido diría que la Issuing tiene la
+        // firma rota cuando lo que pasa es que no hay con qué comprobarla.
+        var (hoja, issuing, _) = Jerarquia();
+        var rootClasica = CertCatalyst(conAlt: false);
+        var r = CatalystReader.ClassifyChain(new[] { hoja, issuing, rootClasica });
+        Assert.Equal(1, r.Depth);
+        Assert.False(r.AnyInvalid);
+        Assert.Equal(CatalystVerdict.Unverifiable, r.Links[1].Verdict);
+    }
+
+    [Fact]
+    public void Un_tramo_corrompido_se_ve_aunque_el_otro_este_bien()
+    {
+        var (hoja, _, root) = Jerarquia();
+        var issuingRota = CertCatalyst(firmaRota: true);
+        var r = CatalystReader.ClassifyChain(new[] { hoja, issuingRota, root });
+        Assert.True(r.AnyInvalid);
+    }
+
+    [Fact]
+    public void Una_cadena_de_un_solo_certificado_no_tiene_tramos()
+    {
+        Assert.Empty(CatalystReader.ClassifyChain(new[] { CertCatalyst() }).Links);
+        Assert.Empty(CatalystReader.ClassifyChain(Array.Empty<byte[]>()).Links);
+    }
+
+    /// <summary>
+    /// Hoja ← Issuing ← Root, con las dos firmas alternativas encadenadas
+    /// de verdad: la Issuing la firma la clave alternativa de la Root, y
+    /// la hoja la de la Issuing.
+    /// </summary>
+    private static (byte[] hoja, byte[] issuing, byte[] root) Jerarquia()
+    {
+        var rootAlt = CaAlt;                      // la alternativa de la Root
+        var issuingAlt = MlDsaAlt.GenerateKeyPair();
+
+        // La Root publica su clave alternativa; su autofirma alternativa
+        // la firma ella misma, y no la verifica nadie.
+        var root = CertConAlt("Root", rootAlt.SpkiDer, rootAlt.Pkcs8Der);
+        // La Issuing publica la suya y la firma la Root.
+        var issuing = CertConAlt("Issuing", issuingAlt.SpkiDer, rootAlt.Pkcs8Der);
+        // La hoja publica la suya y la firma la Issuing.
+        var hojaAlt = MlDsaAlt.GenerateKeyPair();
+        var hoja = CertConAlt("hoja", hojaAlt.SpkiDer, issuingAlt.Pkcs8Der);
+
+        return (hoja, issuing, root);
+    }
+
+    /// <summary>Un certificado catalyst cuyo sujeto declara `sujetoAltSpki` y cuya 74 firma `emisorAltPkcs8`.</summary>
+    private static byte[] CertConAlt(string cn, byte[] sujetoAltSpki, byte[] emisorAltPkcs8)
+    {
+        using var clasica = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var sujeto = new X500DistinguishedName($"CN={cn}");
+        var desde = DateTimeOffset.UtcNow.AddDays(-1);
+        var hasta = DateTimeOffset.UtcNow.AddDays(30);
+        var generador = X509SignatureGenerator.CreateForECDsa(clasica);
+        var serial = new byte[] { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88 };
+
+        CertificateRequest Nueva(byte[]? sig74)
+        {
+            var r = new CertificateRequest(sujeto, clasica, HashAlgorithmName.SHA256);
+            r.CertificateExtensions.Add(
+                new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, critical: true));
+            r.CertificateExtensions.Add(
+                new X509Extension(HybridCsr.OidAltSpki, sujetoAltSpki, critical: false));
+            r.CertificateExtensions.Add(
+                new X509Extension(HybridCsr.OidAltSigAlg, MlDsaAlt.AlgorithmIdentifierDer(), critical: false));
+            if (sig74 is not null)
+            {
+                r.CertificateExtensions.Add(
+                    new X509Extension(HybridCsr.OidAltSigValue, HybridCsr.BitStringDer(sig74), critical: false));
+            }
+            return r;
+        }
+
+        using var sinAlt74 = Nueva(null).Create(sujeto, generador, desde, hasta, serial);
+        var firma = MlDsaAlt.Sign(TbsDe(sinAlt74.RawData), emisorAltPkcs8);
+        using var conAlt74 = Nueva(firma).Create(sujeto, generador, desde, hasta, serial);
+        return conAlt74.RawData;
+    }
+
     private static bool Contiene(byte[] heno, byte[] aguja)
     {
         if (aguja.Length == 0 || aguja.Length > heno.Length) return false;

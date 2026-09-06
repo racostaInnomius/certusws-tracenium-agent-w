@@ -861,8 +861,9 @@ private const int MaxPendingPushEvents = 50;
                                 Log($"Server cert issuer={serverCert.Issuer}");
                                 Log($"Server cert thumbprint={serverCert.Thumbprint}");
 
-                                // ADR-0015 punto 12 — la mitad alternativa del
-                                // servidor, EN MODO OBSERVACIÓN.
+                                // ADR-0015 punto 12 + D4 — la mitad alternativa,
+                                // EN MODO OBSERVACIÓN. La llamada va DESPUÉS del
+                                // Build; ver el comentario de ahí abajo.
                                 //
                                 // ⚠️ El veredicto NO participa en el valor de
                                 // retorno, y no es provisional: hoy no existe una
@@ -878,9 +879,22 @@ private const int MaxPendingPushEvents = 50;
                                 // no críticas. Ninguna pila TLS las verifica, así
                                 // que sin estas líneas nadie mira la mitad
                                 // post-cuántica del control plane.
+                                var ok = customChain.Build(serverCert);
+
+                                // ⚠️ AQUÍ, Y NO ANTES. La primera versión
+                                // observaba antes de `Build`, cuando
+                                // `ChainElements` está VACÍA: sólo veía el
+                                // ExtraStore, así que podía comprobar un eslabón
+                                // y jamás la cadena. La ruta construida es lo que
+                                // permite verificar el tramo Issuing←Root, que es
+                                // la razón entera de que la Root sea híbrida (D4).
+                                //
+                                // Se observa incluso si `Build` falló: un fallo de
+                                // cadena clásica con mitad alternativa presente es
+                                // justo el caso que interesa mirar, y observar no
+                                // decide nada.
                                 ObservarMitadAlternativa(serverCert, customChain);
 
-                                var ok = customChain.Build(serverCert);
                                 if (!ok) return false;
 
                                 var found = customChain.ChainElements
@@ -1777,20 +1791,43 @@ private const int MaxPendingPushEvents = 50;
     /// discrepar del certificado que el equipo usa de verdad. Ese
     /// desacuerdo se leería como «el servidor tiene la firma inválida».
     /// </summary>
+    /// <summary>
+    /// Recorre la mitad alternativa de la CADENA del servidor y la
+    /// REGISTRA. Nunca lanza y nunca decide nada.
+    ///
+    /// Se usa la cadena que `X509Chain` acaba de construir: es la ruta que
+    /// el sistema consideró válida, así que verificar la mitad alternativa
+    /// sobre ELLA responde a la pregunta correcta —«¿esta ruta concreta
+    /// está respaldada también en post-cuántico?»— y no a una aproximación
+    /// hecha con los certificados que teníamos a mano.
+    /// </summary>
     private static void ObservarMitadAlternativa(X509Certificate2 serverCert, X509Chain chain)
     {
         try
         {
-            var caDer = chain.ChainPolicy.ExtraStore
-                .Cast<X509Certificate2>()
-                .Select(c => c.RawData)
+            var cadena = chain.ChainElements
+                .Cast<X509ChainElement>()
+                .Select(e => e.Certificate.RawData)
                 .ToList();
 
-            var issuerAlt = CatalystReader.IssuerAltSpkiFrom(caDer);
-            var verdict = CatalystReader.Classify(serverCert.RawData, issuerAlt);
+            // Si `Build` falló, ChainElements puede venir corta o vacía. Se
+            // cae al par (hoja, CAs conocidas) para poder decir algo del
+            // primer tramo en vez de callarse.
+            if (cadena.Count < 2)
+            {
+                var caDer = chain.ChainPolicy.ExtraStore
+                    .Cast<X509Certificate2>()
+                    .Select(c => c.RawData)
+                    .ToList();
+                var issuerAlt = CatalystReader.IssuerAltSpkiFrom(caDer);
+                var v = CatalystReader.Classify(serverCert.RawData, issuerAlt);
+                Log($"[ADR-0015] mitad alternativa del servidor (sin cadena): {v}");
+                return;
+            }
 
-            Log($"[ADR-0015] mitad alternativa del servidor: {verdict} " +
-                $"(CA con clave alternativa: {(issuerAlt is null ? "no" : "si")})");
+            var r = CatalystReader.ClassifyChain(cadena);
+            Log($"[ADR-0015] cadena alternativa del servidor: {r}" +
+                (r.AnyInvalid ? "  ⚠️ ALGUN TRAMO INVALIDO" : ""));
         }
         catch (Exception ex)
         {
