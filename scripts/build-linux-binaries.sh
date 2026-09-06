@@ -541,6 +541,51 @@ if [ -z "$ROOT_CA_SRC" ] && [ -f "$ROOT_DIR/packaging/linux/assets/root-ca.crt" 
   echo "→ using bundled root CA from packaging/linux/assets"
 fi
 
+# ⚠️ GUARDIÁN AÑADIDO CON ADR-0015 / D4: si hay VARIOS candidatos y NO
+# coinciden, se para el build.
+#
+# Los tres caminos de arriba se prueban en orden y el primero gana. Hoy
+# sólo existe el de Windows, así que el orden no importa — pero cuando la
+# Root cambia (D4 la reemite con su mitad post-cuántica) el operador toca
+# UN fichero, y si algún día existiera además el de macOS, ése ganaría en
+# Linux y el .deb saldría con la Root VIEJA.
+#
+# El síntoma sería el peor posible: Windows y macOS con el ancla nueva,
+# Linux con la vieja, todo verde, y el fallo apareciendo el día que se
+# retire la Root clásica. Es «las 3 listas de un job» otra vez, con
+# ficheros en vez de listas.
+#
+# Se comparan las HUELLAS, no las rutas: dos copias idénticas del mismo
+# certificado no son un problema.
+_root_ca_fps=""
+for _cand in \
+  "$ROOT_DIR/privsvc/macos/distribution/resources/root-ca.crt" \
+  "$ROOT_DIR/privsvc/windows/Tracenium.PrivSvc.Windows/assets/root-ca.crt" \
+  "$ROOT_DIR/packaging/linux/assets/root-ca.crt"
+do
+  [ -f "$_cand" ] || continue
+  _fp="$(openssl x509 -in "$_cand" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2)"
+  [ -n "$_fp" ] || continue
+  case "$_root_ca_fps" in
+    *"$_fp"*) ;;
+    *) _root_ca_fps="$_root_ca_fps $_fp" ;;
+  esac
+done
+if [ "$(echo "$_root_ca_fps" | tr ' ' '\n' | grep -c .)" -gt 1 ]; then
+  echo "ERROR: hay varias Root CA distintas en el repositorio y Linux usaría la primera:" >&2
+  for _cand in \
+    "$ROOT_DIR/privsvc/macos/distribution/resources/root-ca.crt" \
+    "$ROOT_DIR/privsvc/windows/Tracenium.PrivSvc.Windows/assets/root-ca.crt" \
+    "$ROOT_DIR/packaging/linux/assets/root-ca.crt"
+  do
+    [ -f "$_cand" ] || continue
+    echo "  $(openssl x509 -in "$_cand" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2)  $_cand" >&2
+  done
+  echo "Déjalas iguales, o borra las que sobren. Un .deb con un ancla distinta" >&2
+  echo "que el MSI es un fallo que sólo aparece al retirar la CA vieja." >&2
+  exit 1
+fi
+
 if [ -z "$ROOT_CA_SRC" ]; then
   # Auto-fetch from the live gRPC backend. This requires network
   # connectivity from the build host — fail loudly if absent so the
