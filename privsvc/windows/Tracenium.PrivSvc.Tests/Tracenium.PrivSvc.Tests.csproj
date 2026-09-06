@@ -63,12 +63,23 @@
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\SeceditShape.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\AuditpolShape.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UserRegistryProbeShape.cs" />
+    <!-- ADR-0015 bloque 3. Las tres piezas de la mitad híbrida se
+         escribieron SIN nada de Windows dentro precisamente para poder
+         probarse aquí: `MlDsaAlt` es BouncyCastle gestionado,
+         `HybridCsr` usa CertificateRequest + System.Formats.Asn1, y
+         `CatalystReader` sólo lee DER. Lo que sí es de Windows —DPAPI y
+         el directorio de ProgramData— vive aparte en AltKeyStore.cs y no
+         entra aquí, que es lo que hace que esta suite corra en un Mac. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\MlDsaAlt.cs" />
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\HybridCsr.cs" />
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\CatalystReader.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
   </ItemGroup>
 
 </Project>

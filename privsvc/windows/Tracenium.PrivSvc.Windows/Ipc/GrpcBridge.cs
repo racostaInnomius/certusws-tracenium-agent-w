@@ -861,6 +861,25 @@ private const int MaxPendingPushEvents = 50;
                                 Log($"Server cert issuer={serverCert.Issuer}");
                                 Log($"Server cert thumbprint={serverCert.Thumbprint}");
 
+                                // ADR-0015 punto 12 — la mitad alternativa del
+                                // servidor, EN MODO OBSERVACIÓN.
+                                //
+                                // ⚠️ El veredicto NO participa en el valor de
+                                // retorno, y no es provisional: hoy no existe una
+                                // Issuing híbrida, así que ningún servidor puede
+                                // presentar una mitad válida. Cortar aquí dejaría
+                                // a la flota sin canal, y sin canal no se le puede
+                                // mandar el arreglo — una visita presencial por
+                                // equipo. Es el mismo criterio con el que los
+                                // pines nacen apagados.
+                                //
+                                // SChannel ya validó la mitad clásica y pasó de
+                                // largo por las tres extensiones catalyst, que son
+                                // no críticas. Ninguna pila TLS las verifica, así
+                                // que sin estas líneas nadie mira la mitad
+                                // post-cuántica del control plane.
+                                ObservarMitadAlternativa(serverCert, customChain);
+
                                 var ok = customChain.Build(serverCert);
                                 if (!ok) return false;
 
@@ -1746,6 +1765,40 @@ private const int MaxPendingPushEvents = 50;
         }
 
         return $"https://{t}";
+    }
+
+    /// <summary>
+    /// Mira la mitad alternativa del certificado del servidor y la
+    /// REGISTRA. Nunca lanza y nunca decide nada.
+    ///
+    /// La clave alternativa de la CA sale del propio almacén de CAs
+    /// aceptables, no de una variable nueva: la mitad alternativa de una
+    /// CA vive en su certificado por definición, y un valor aparte podría
+    /// discrepar del certificado que el equipo usa de verdad. Ese
+    /// desacuerdo se leería como «el servidor tiene la firma inválida».
+    /// </summary>
+    private static void ObservarMitadAlternativa(X509Certificate2 serverCert, X509Chain chain)
+    {
+        try
+        {
+            var caDer = chain.ChainPolicy.ExtraStore
+                .Cast<X509Certificate2>()
+                .Select(c => c.RawData)
+                .ToList();
+
+            var issuerAlt = CatalystReader.IssuerAltSpkiFrom(caDer);
+            var verdict = CatalystReader.Classify(serverCert.RawData, issuerAlt);
+
+            Log($"[ADR-0015] mitad alternativa del servidor: {verdict} " +
+                $"(CA con clave alternativa: {(issuerAlt is null ? "no" : "si")})");
+        }
+        catch (Exception ex)
+        {
+            // Un fallo OBSERVANDO no puede tirar una conexión que por lo
+            // demás es válida. Se deja constancia y se sigue.
+            try { Log($"[ADR-0015] no se pudo observar la mitad alternativa: {ex.Message}"); }
+            catch { }
+        }
     }
 
     private static X509Certificate2 LoadCertFromLocalMachineMyByThumbprint(string thumbprint)

@@ -326,6 +326,52 @@ if is_truthy "${DRY_RUN:-}"; then
 fi
 
 # -----------------------------------------------------------------------------
+# Gate de criptografía híbrida (ADR-0015 punto 13)
+# -----------------------------------------------------------------------------
+#
+# El gate de nativos de AgentCore (ac3fda1) nació de una lección concreta:
+# «los ficheros están ahí» no es «esto funciona». node-pty y
+# node-datachannel se empaquetaban a ciegas y el fallo aparecía en un
+# endpoint, en mitad de una sesión de soporte.
+#
+# La mitad post-cuántica del PrivSvc tiene el mismo riesgo con otra cara.
+# BouncyCastle es GESTIONADO, así que no hay .node que no cargue — pero sí
+# hay dos formas de romperlo en silencio:
+#
+#   · que el paquete deje de estar (un `dotnet restore` que lo pierda) y
+#     el PrivSvc compile igual porque nadie lo referencia en el camino
+#     clásico, que es el que corre hoy en toda la flota;
+#   · que una versión nueva cambie la forma de la firma —prehash en vez de
+#     pura, un AlgorithmIdentifier con parámetros— y el CSR híbrido salga
+#     bien formado y RECHAZADO por el backend.
+#
+# Ninguna de las dos la ve un `dotnet publish` correcto. Lo que las ve es
+# generar, firmar y VERIFICAR de verdad, que es lo que hacen estas
+# pruebas — y de paso comprueban el orden catalyst, que es lo único que
+# separa un CSR híbrido válido de uno que nadie puede verificar.
+#
+# ⚠️ Corre en la máquina de build y no sobre el binario publicado: las
+# pruebas son `net8.0` puro y el PrivSvc es `net8.0-windows`. Eso deja un
+# hueco declarado — que el ensamblado EMBEBIDO en el single-file sea el
+# mismo que se probó aquí— y no se finge cubierto. Lo que sí garantiza es
+# que la biblioteca elegida hace lo que este producto necesita.
+echo ""
+echo "── Gate ADR-0015: ML-DSA-65 gestionado ─────────────────────────"
+PRIVSVC_TESTS="$AGENT_REPO_DIR/privsvc/windows/Tracenium.PrivSvc.Tests/Tracenium.PrivSvc.Tests.csproj"
+if [ ! -f "$PRIVSVC_TESTS" ]; then
+  echo "ERROR: no se encuentra el proyecto de pruebas del PrivSvc: $PRIVSVC_TESTS" >&2
+  exit 1
+fi
+if ! dotnet test "$PRIVSVC_TESTS" --nologo --verbosity quiet; then
+  echo "" >&2
+  echo "ERROR: la criptografía híbrida del PrivSvc no pasa sus pruebas." >&2
+  echo "       Un paquete con esto roto produce CSR híbridos que el backend" >&2
+  echo "       RECHAZA, y el equipo se queda sin poder renovar." >&2
+  exit 1
+fi
+echo "  ✓ ML-DSA-65 genera, firma y verifica; el orden catalyst se respeta"
+
+# -----------------------------------------------------------------------------
 # Build · win-x64
 # -----------------------------------------------------------------------------
 

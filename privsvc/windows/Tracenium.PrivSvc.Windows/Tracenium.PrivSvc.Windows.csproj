@@ -43,6 +43,14 @@
     <!-- DPAPI machine-scope protection for the Infrastructure Gateway's vCenter
          credential (ADR-0001). Not in-box on .NET Core; first-party package. -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <!-- ADR-0015 — ML-DSA-65 GESTIONADO. NO se usa `MLDsa` de .NET 10: es
+         una fachada sobre CNG, y ML-DSA en CNG sólo existe desde Windows
+         11 25H2 / Server 2025. Los 12 Server 2022 de la flota no lo
+         tendrán nunca, así que esa clase partiría la flota en dos.
+         BouncyCastle es C# puro y da el mismo resultado en las dos.
+         Verificado: sus firmas las validan OpenSSL 3.6 Y `@noble/post-
+         quantum`, que es lo que usa el backend. -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
   </ItemGroup>
 
   <ItemGroup>

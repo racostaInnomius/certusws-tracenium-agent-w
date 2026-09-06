@@ -40,6 +40,19 @@ public static class CryptoCsr
             bool reuse = GetBool(p, "reuseExistingKey", true);
             string keyAlgorithm = GetString(p, "keyAlgorithm") ?? DefaultKeyAlgorithm;
 
+            // ADR-0015 punto 11 — la mitad alternativa, en OTRO eje.
+            //
+            // ⚠️ Ausente significa CLÁSICO, no error. Es lo que permite
+            // desplegar este agente antes de que exista una Issuing
+            // híbrida: un agente nuevo contra el backend de hoy enrola
+            // exactamente igual que el viejo.
+            string altKeyAlgorithm = (GetString(p, "altKeyAlgorithm") ?? "").ToUpperInvariant();
+            if (altKeyAlgorithm.Length > 0 && altKeyAlgorithm != "ML_DSA_65")
+            {
+                return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request",
+                    $"unsupported altKeyAlgorithm: {altKeyAlgorithm} (ML_DSA_65)"));
+            }
+
             if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(deviceId))
                 return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request", "tenantId/deviceId required"));
 
@@ -74,40 +87,29 @@ public static class CryptoCsr
 
             bool created;
 
-            CertificateRequest reqCsr;
             AsymmetricAlgorithm cngKeyWrapper;
 
             // Dispatch to the algorithm-specific key factory. Both
             // branches return an AsymmetricAlgorithm that the
             // CertificateRequest constructor can consume directly.
+            //
+            // ⚠️ Ya NO se construye aquí la CertificateRequest. La
+            // construye `NuevaPeticion`, que se llama DOS VECES cuando hay
+            // clave alternativa (ADR-0015: la firma de la 74 cubre el
+            // cuerpo sin ella). Una CertificateRequest reutilizada entre
+            // pasadas arrastraría extensiones de la anterior, y el síntoma
+            // sería una firma alternativa sobre un cuerpo que no viaja.
             switch (keyAlgorithm.ToUpperInvariant())
             {
                 case "RSA_2048":
-                {
-                    var rsa = OpenOrCreateMachineRsaKey(keyName, reuse, out created);
-                    cngKeyWrapper = rsa;
-                    reqCsr = new CertificateRequest(
-                        new X500DistinguishedName($"CN={EscapeDn(dnsName)}"),
-                        rsa,
-                        HashAlgorithmName.SHA256,
-                        RSASignaturePadding.Pkcs1
-                    );
+                    cngKeyWrapper = OpenOrCreateMachineRsaKey(keyName, reuse, out created);
                     break;
-                }
                 case "ECDSA_P256":
-                {
                     // Legacy path — kept so existing deployments that
                     // already have ECDSA keys in CNG can still rotate
                     // without us having to purge their key store.
-                    var ecdsa = OpenOrCreateMachineEcdsaKey(keyName, reuse, out created);
-                    cngKeyWrapper = ecdsa;
-                    reqCsr = new CertificateRequest(
-                        new X500DistinguishedName($"CN={EscapeDn(dnsName)}"),
-                        ecdsa,
-                        HashAlgorithmName.SHA256
-                    );
+                    cngKeyWrapper = OpenOrCreateMachineEcdsaKey(keyName, reuse, out created);
                     break;
-                }
                 default:
                     return Task.FromResult(
                         PrivSvcResponse.Fail(req.Id, "bad_request",
@@ -123,31 +125,39 @@ public static class CryptoCsr
 
             try
             {
-                // Key usage y EKU clientAuth
-                reqCsr.CertificateExtensions.Add(
-                    new X509KeyUsageExtension(
-                        X509KeyUsageFlags.DigitalSignature,
-                        critical: true
-                    )
-                );
-
-                var eku = new OidCollection();
-                eku.Add(new Oid("1.3.6.1.5.5.7.3.2")); // clientAuth
-                reqCsr.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(eku, critical: true));
-
-                // SAN: DNS hostname
-                var san = new SubjectAlternativeNameBuilder();
-                san.AddDnsName(dnsName);
-
-                // Opcional: URI que el backend también mete en cert final
-                // (no es obligatorio en CSR, pero ayuda a consistencia)
-                san.AddUri(new Uri($"tracenium://tenant/{tenantId}/device/{deviceId}"));
-
-                reqCsr.CertificateExtensions.Add(san.Build(critical: false));
-
                 // 3) Export CSR DER -> PEM
-                var csrDer = reqCsr.CreateSigningRequest();
+                //
+                // ADR-0015 punto 11. `HybridCsr.Build` monta la petición
+                // en DOS pasadas cuando hay clave alternativa, porque la
+                // firma de la 74 cubre el cuerpo SIN ella.
+                //
+                // ⚠️ La fábrica devuelve una `CertificateRequest` NUEVA
+                // en cada llamada. Reutilizar la misma limpiándole las
+                // extensiones arrastraría estado entre pasadas, y el
+                // síntoma sería una firma alternativa sobre un cuerpo que
+                // no es el que viaja.
+                MlDsaKeyPairDer? altKp = null;
+                bool altCreated = false;
+                if (altKeyAlgorithm.Length > 0)
+                {
+                    altKp = AltKeyStore.LoadOrCreate(reuse, out altCreated);
+                }
+
+                var csrDer = HybridCsr.Build(
+                    () => NuevaPeticion(dnsName!, tenantId, deviceId, keyAlgorithm, cngKeyWrapper),
+                    altKp?.Pkcs8Der,
+                    altKp?.SpkiDer);
+
                 var csrPem = PemEncode("CERTIFICATE REQUEST", csrDer);
+
+                try
+                {
+                    Console.WriteLine(
+                        $"[PrivSvc][Crypto] CSR {(altKp is null ? "clasico" : "hibrido")} " +
+                        $"({keyAlgorithm}{(altKp is null ? "" : " + ML_DSA_65")}) " +
+                        $"alt created: {altCreated}");
+                }
+                catch { }
 
                 var result = new
                 {
@@ -157,6 +167,10 @@ public static class CryptoCsr
                     csrPem,
                     algo = keyAlgorithm,
                     keyAlgorithm,
+                    // ⚠️ Se responde lo que se HIZO, no lo que se pidió. Un
+                    // agent-core que pidiera híbrido y recibiera clásico
+                    // sin enterarse creería tener una mitad que nadie le dio.
+                    altKeyAlgorithm = altKp is null ? null : "ML_DSA_65",
                     created
                 };
 
@@ -173,6 +187,45 @@ public static class CryptoCsr
         {
             return Task.FromResult(PrivSvcResponse.Fail(req.Id, "csr_error", ex.Message));
         }
+    }
+
+    /// <summary>
+    /// Una <see cref="CertificateRequest"/> recién hecha con el sujeto,
+    /// la clave clásica y las tres extensiones de siempre.
+    ///
+    /// ⚠️ NUEVA en cada llamada, y ésa es toda la razón de que exista como
+    /// función. `HybridCsr.Build` la invoca dos veces —una sin la 74 para
+    /// tener el cuerpo que firma ML-DSA, otra con ella— y una instancia
+    /// reutilizada arrastraría las extensiones de la pasada anterior.
+    /// </summary>
+    private static CertificateRequest NuevaPeticion(
+        string dnsName, string tenantId, string deviceId,
+        string keyAlgorithm, AsymmetricAlgorithm clave)
+    {
+        var sujeto = new X500DistinguishedName($"CN={EscapeDn(dnsName)}");
+
+        var req = clave switch
+        {
+            RSA rsa => new CertificateRequest(sujeto, rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1),
+            ECDsa ec => new CertificateRequest(sujeto, ec, HashAlgorithmName.SHA256),
+            _ => throw new InvalidOperationException($"clave clásica no soportada: {keyAlgorithm}")
+        };
+
+        // Key usage y EKU clientAuth
+        req.CertificateExtensions.Add(
+            new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, critical: true));
+
+        var eku = new OidCollection();
+        eku.Add(new Oid("1.3.6.1.5.5.7.3.2")); // clientAuth
+        req.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(eku, critical: true));
+
+        // SAN: DNS hostname + la URI que el backend valida como identidad.
+        var san = new SubjectAlternativeNameBuilder();
+        san.AddDnsName(dnsName);
+        san.AddUri(new Uri($"tracenium://tenant/{tenantId}/device/{deviceId}"));
+        req.CertificateExtensions.Add(san.Build(critical: false));
+
+        return req;
     }
 
     // ===== Helpers =====
