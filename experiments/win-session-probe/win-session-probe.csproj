@@ -17,6 +17,10 @@
     <!-- El CÓDIGO REAL del agente, no una reimplementación parecida. Si la
          sonda captura y el servicio no, la única variable es la sesión. -->
     <Compile Include="../../privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/Protocol.cs" />
+    <!-- Los structs de DXGI viven aparte desde fecf7fd; sin ellos esto no
+         compila. La sonda no la construye el CI, asi que se habria
+         descubierto el dia que hiciera falta usarla. -->
+    <Compile Include="../../privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/DxgiInteropTypes.cs" />
     <Compile Include="../../privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/ScreenCaptureDxgi.cs" />
     <Compile Include="../../privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/ScreenCapture.cs" />
   </ItemGroup>

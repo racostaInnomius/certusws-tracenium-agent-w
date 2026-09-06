@@ -30,6 +30,14 @@
          DXGI_OUTPUT_DESC habría que arreglarlo dos veces, y la segunda se
          olvida. Mismo motivo por el que la sonda de ADR-0006 los incluye. -->
     <Compile Include="../Tracenium.PrivSvc.Windows/Ipc/Protocol.cs" />
+    <!-- ⚠️ VA CON ScreenCaptureDxgi.cs, SIEMPRE. Los structs de DXGI
+         —POINT, RECT, DXGI_OUTPUT_DESC, DXGI_OUTDUPL_FRAME_INFO— salieron
+         de ahi dentro a su propio fichero para poder medirlos en las
+         pruebas (fecf7fd). El PrivSvc no se entero porque su .csproj coge
+         el arbol entero; los proyectos que listan ficheros a mano —este y
+         la sonda de ADR-0006— se quedaron sin ellos y el Release murio
+         con siete CS0246 (run 34067964253, los DOS binarios de Windows). -->
+    <Compile Include="../Tracenium.PrivSvc.Windows/Ipc/DxgiInteropTypes.cs" />
     <Compile Include="../Tracenium.PrivSvc.Windows/Ipc/ScreenCaptureDxgi.cs" />
     <Compile Include="../Tracenium.PrivSvc.Windows/Ipc/ScreenCapture.cs" />
     <!-- La inyección de entrada tiene el MISMO problema de sesión que la
