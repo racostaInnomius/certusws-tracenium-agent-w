@@ -30,8 +30,8 @@ import path from "path";
 import { buildCsr } from "../../privsvc/shared/pkcs10";
 import { getMlDsaProvider } from "../../privsvc/shared/mldsa";
 import { readTlv, children, contentOf, rawOf, DER_SEQUENCE } from "../../privsvc/shared/der";
+import { OPENSSL, opensslVerificaCsr, mencionaExtension } from "./openssl-compat";
 
-const OPENSSL = process.env.OPENSSL_BIN || "openssl";
 let tmp: string;
 
 beforeAll(() => {
@@ -169,12 +169,8 @@ describe("CSR clásico (sin clave alternativa)", () => {
       // `-verify` comprueba la prueba de posesión clásica: que la firma
       // del PKCS#10 cuadre con la clave pública que el propio CSR
       // declara. Es lo que el backend rehará antes de emitir.
-      const out = execFileSync(
-        OPENSSL,
-        ["req", "-in", guarda(`clasico-${alg}.pem`, pem), "-verify", "-noout"],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
-      );
-      expect(`${out}`).toMatch(/verify OK|Certificate request self-signature verify OK/i);
+      expect(opensslVerificaCsr(guarda(`clasico-${alg}.pem`, pem)))
+        .toMatch(/verify OK/i);
     });
   }
 
@@ -233,12 +229,7 @@ describe("CSR híbrido catalyst", () => {
     // de catalyst ve un CSR normal y lo acepta. Si esto fallara, el
     // formato híbrido rompería el enrolamiento en vez de ampliarlo.
     const { built } = hibrido();
-    const out = execFileSync(
-      OPENSSL,
-      ["req", "-in", guarda("hibrido.pem", built.pem), "-verify", "-noout"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
-    );
-    expect(`${out}`).toMatch(/verify OK|self-signature verify OK/i);
+    expect(opensslVerificaCsr(guarda("hibrido.pem", built.pem))).toMatch(/verify OK/i);
   });
 
   it("⚠️ openssl NOMBRA las tres extensiones catalyst dentro del extensionRequest", () => {
@@ -255,9 +246,9 @@ describe("CSR híbrido catalyst", () => {
     // que sigue sin hacer —y por eso existe el punto 9— es VERIFICARLAS.
     // Conocer el formato y comprobar la firma son cosas distintas.
     const texto = opensslText(hibrido().built.pem, "hibrido-text.pem");
-    expect(texto).toContain("X509v3 Subject Alternative Public Key Info");
-    expect(texto).toContain("X509v3 Alternative Signature Algorithm");
-    expect(texto).toContain("X509v3 Alternative Signature Value");
+    expect(mencionaExtension(texto, "2.5.29.72", "X509v3 Subject Alternative Public Key Info")).toBe(true);
+    expect(mencionaExtension(texto, "2.5.29.73", "X509v3 Alternative Signature Algorithm")).toBe(true);
+    expect(mencionaExtension(texto, "2.5.29.74", "X509v3 Alternative Signature Value")).toBe(true);
   });
 
   it("⚠️ la firma alternativa verifica sobre el cuerpo SIN la 74", () => {
