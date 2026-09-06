@@ -172,8 +172,26 @@ build_privsvc_bundle() {
     exit 1
   fi
 
-  if ! grep -qF "subjectAltName = @alt_names" "$BUILD_DIR/PrivSvc/macos/privsvc.js"; then
+  # ⚠️ ESTE CENTINELA CAMBIÓ CON ADR-0015, y era una trampa armada.
+  #
+  # Antes buscaba "subjectAltName = @alt_names", que era una línea del
+  # fichero de configuración que se le pasaba a `openssl req`. Ese camino
+  # ya no existe: el CSR lo construye privsvc/shared/pkcs10.ts, porque
+  # `openssl req` no puede emitir un CSR híbrido. Dejar el centinela viejo
+  # habría roto el empaquetado con un mensaje que apuntaría al sitio
+  # equivocado — «no incluye la lógica de CSR» cuando la lógica está, sólo
+  # que es otra.
+  #
+  # Se comprueban los dos extremos del CSR: el SAN URI (que es lo que el
+  # backend valida como identidad) y el OID de la extensión catalyst 72,
+  # que sólo aparece si el constructor híbrido entró en el bundle.
+  if ! grep -qF "tracenium://tenant/" "$BUILD_DIR/PrivSvc/macos/privsvc.js"; then
     echo "Generated PrivSvc bundle does not include the current CSR generation logic." >&2
+    exit 1
+  fi
+
+  if ! grep -qF "551d48" "$BUILD_DIR/PrivSvc/macos/privsvc.js"; then
+    echo "Generated PrivSvc bundle does not include the catalyst hybrid CSR builder (ADR-0015)." >&2
     exit 1
   fi
 }

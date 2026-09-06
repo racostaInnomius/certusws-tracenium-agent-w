@@ -12,6 +12,7 @@
   "dependencies": {
     "@grpc/grpc-js": "^1.14.3",
     "@grpc/proto-loader": "^0.8.0",
+    "@noble/post-quantum": "0.7.1",
     "better-sqlite3": "^12.6.2",
     "child_process": "^1.0.2",
     "crypto": "^1.0.1",

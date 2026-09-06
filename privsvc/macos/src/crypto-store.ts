@@ -17,6 +17,11 @@ import {
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
+// ADR-0015 — compartido con Linux a propósito: es aritmética sobre bytes
+// que el backend tiene que aceptar, y dos copias que divergen dejan una
+// plataforma sin poder enrolar. Ver privsvc/shared/der.ts.
+import { buildCsr, ClassicAlgorithm } from "../../shared/pkcs10";
+import { loadOrCreateAltKey } from "../../shared/alt-key";
 
 const execFileAsync = promisify(execFile);
 const OPENSSL_BIN = process.env.OPENSSL_BIN || "/usr/bin/openssl";
@@ -423,8 +428,31 @@ async function isRsaPrivateKey(keyPath: string): Promise<boolean> {
   }
 }
 
-async function ensureEnrollmentPrivateKey(keyPath: string, reuseExistingKey: boolean): Promise<void> {
-  const canReuse = reuseExistingKey && await isRsaPrivateKey(keyPath);
+/**
+ * ¿La clave de este fichero es del algoritmo que se ha pedido?
+ *
+ * ⚠️ Reutilizar sin comprobar el ALGORITMO fue el fallo latente del
+ * contrato viejo: `reuseExistingKey` sólo miraba que hubiera una RSA de
+ * 2048. Con dos algoritmos en juego, un equipo que ya tuviera RSA
+ * seguiría reutilizándola para siempre y nunca llegaría a P-384 — la
+ * migración se quedaría en el papel sin que nada fallara.
+ */
+async function keyMatchesAlgorithm(keyPath: string, alg: ClassicAlgorithm): Promise<boolean> {
+  if (alg === "RSA_2048") return isRsaPrivateKey(keyPath);
+  try {
+    const { stdout } = await execFileAsync(OPENSSL_BIN, ["pkey", "-in", keyPath, "-noout", "-text"]);
+    return /secp384r1|NIST CURVE: P-384/.test(stdout);
+  } catch {
+    return false;
+  }
+}
+
+async function ensureEnrollmentPrivateKey(
+  keyPath: string,
+  reuseExistingKey: boolean,
+  alg: ClassicAlgorithm
+): Promise<void> {
+  const canReuse = reuseExistingKey && await keyMatchesAlgorithm(keyPath, alg);
 
   if (canReuse) {
     return;
@@ -434,21 +462,45 @@ async function ensureEnrollmentPrivateKey(keyPath: string, reuseExistingKey: boo
     fs.rmSync(keyPath, { force: true });
   } catch {}
 
-  await execFileAsync(OPENSSL_BIN, [
-    "genpkey",
-    "-algorithm",
-    "RSA",
-    "-pkeyopt",
-    `rsa_keygen_bits:${MACOS_CSR_KEY_BITS}`,
-    "-out",
-    keyPath
-  ]);
+  const args = alg === "RSA_2048"
+    ? ["genpkey", "-algorithm", "RSA", "-pkeyopt", `rsa_keygen_bits:${MACOS_CSR_KEY_BITS}`, "-out", keyPath]
+    : null;
+
+  if (!args) {
+    // ⚠️ LA CLAVE P-384 LA GENERA NODE, NO `openssl`. Medido el
+    // 2026-09-05 y es la razón entera de esta rama:
+    //
+    // El `openssl` de macOS es /usr/bin/openssl = LibreSSL 3.3.6, y su
+    // `genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-384` produce
+    // una clave con PARÁMETROS EXPLÍCITOS de curva en vez del OID de la
+    // curva con nombre. La SPKI resultante pesa 464 bytes en vez de 120,
+    // y una clave con parámetros explícitos la rechazan o la maltratan
+    // muchos verificadores — un formato legal que casi nadie quiere.
+    //
+    // LibreSSL sí admite `-pkeyopt ec_param_enc:named_curve`, así que se
+    // podría arreglar con una bandera más. No se hace: una bandera que
+    // hay que acordarse de poner en dos ficheros, cuyo olvido no da
+    // error y sólo se nota mirando el DER, es una trampa. Node produce
+    // siempre la curva con nombre y ya es quien firma el CSR.
+    //
+    // La rama RSA se deja EXACTAMENTE como estaba: es el 100% de la
+    // flota de hoy y este cambio no tiene por qué tocarla.
+    const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "secp384r1" });
+    fs.writeFileSync(
+      keyPath,
+      privateKey.export({ format: "pem", type: "pkcs8" }) as string,
+      { encoding: "utf8", mode: 0o600 }
+    );
+    fs.chmodSync(keyPath, 0o600);
+    return;
+  }
+
+  await execFileAsync(OPENSSL_BIN, args);
   fs.chmodSync(keyPath, 0o600);
 }
 
 export async function handleGenerateCsr(req: PrivSvcRequest): Promise<PrivSvcResponse> {
   const paths = certPaths();
-  const csrConfigPath = `${paths.clientCsr}.cnf`;
 
   try {
     ensurePrivSvcDirs();
@@ -459,67 +511,84 @@ export async function handleGenerateCsr(req: PrivSvcRequest): Promise<PrivSvcRes
     const dnsName = os.hostname();
 
     // Cross-platform contract: agent-core passes `keyAlgorithm` to tell
-    // each PrivSvc which algorithm to produce. macOS has only ever
-    // generated RSA-2048 (via `openssl genpkey -algorithm RSA`), so for
-    // now the only accepted value is `RSA_2048`. Any other value is a
-    // contract mismatch and must fail loudly rather than silently
-    // producing the wrong algorithm — exactly the class of bug that
-    // broke Windows enrollment.
+    // each PrivSvc which algorithm to produce. Cualquier valor fuera de
+    // la lista falla RUIDOSAMENTE en vez de producir otro algoritmo en
+    // silencio — exactamente la clase de fallo que rompió el
+    // enrolamiento de Windows.
+    //
+    // ADR-0015 punto 7: la lista deja de ser sólo RSA_2048. Se añade
+    // EC_P384 (el suelo clásico de CNSA 2.0, lo que prepara
+    // rotate-phase0.sh) y, aparte, `altKeyAlgorithm` para la mitad
+    // post-cuántica. Son dos ejes distintos a propósito: la clásica
+    // decide qué firma el PKCS#10 y la alternativa si además hay una
+    // segunda prueba de posesión.
     const keyAlgorithm = String(params.keyAlgorithm || "RSA_2048").toUpperCase();
-    if (keyAlgorithm !== "RSA_2048") {
+    if (keyAlgorithm !== "RSA_2048" && keyAlgorithm !== "EC_P384") {
       return fail(
         req.id,
         "bad_request",
-        `unsupported keyAlgorithm on macOS: ${keyAlgorithm} (only RSA_2048)`
+        `unsupported keyAlgorithm on macOS: ${keyAlgorithm} (RSA_2048 | EC_P384)`
       );
     }
 
-    await ensureEnrollmentPrivateKey(paths.clientKey, reuseExistingKey);
+    // ⚠️ Ausente significa CLÁSICO, no error. Es lo que permite desplegar
+    // este agente antes de que exista una Issuing híbrida: un agente
+    // nuevo contra el backend de hoy sigue enrolando exactamente igual.
+    const altKeyAlgorithm = String(params.altKeyAlgorithm || "").toUpperCase();
+    if (altKeyAlgorithm && altKeyAlgorithm !== "ML_DSA_65") {
+      return fail(
+        req.id,
+        "bad_request",
+        `unsupported altKeyAlgorithm on macOS: ${altKeyAlgorithm} (ML_DSA_65)`
+      );
+    }
 
-    const csrConfig = [
-      "[req]",
-      "prompt = no",
-      "distinguished_name = dn",
-      "req_extensions = req_ext",
-      "[dn]",
-      `CN = ${dnsName}`,
-      "[req_ext]",
-      "keyUsage = critical,digitalSignature",
-      "extendedKeyUsage = clientAuth",
-      "subjectAltName = @alt_names",
-      "[alt_names]",
-      `DNS.1 = ${dnsName}`,
-      `URI.1 = tracenium://tenant/${tenantId}/device/${deviceId}`
-    ].join("\n");
-    fs.writeFileSync(csrConfigPath, `${csrConfig}\n`, { encoding: "utf8", mode: 0o600 });
+    await ensureEnrollmentPrivateKey(paths.clientKey, reuseExistingKey, keyAlgorithm);
 
-    await execFileAsync(OPENSSL_BIN, [
-      "req",
-      "-new",
-      "-sha256",
-      "-key",
-      paths.clientKey,
-      "-config",
-      csrConfigPath,
-      "-out",
-      paths.clientCsr
-    ]);
+    // ADR-0015 punto 8 — el CSR lo construimos nosotros.
+    //
+    // ⚠️ AQUÍ VIVÍA UN `openssl req -new -config`. No se sustituye por
+    // gusto: `openssl req` NO PUEDE hacer un CSR híbrido. La
+    // subjectAltPublicKeyInfo lleva una SPKI de ML-DSA que el openssl de
+    // macOS ni siquiera sabe construir —es LibreSSL— y la prueba de
+    // posesión alternativa tiene que firmarse sobre el propio
+    // CertificationRequestInfo y meterse DENTRO de él, que es un problema
+    // de huevo y gallina sin solución en línea de comandos.
+    //
+    // El camino es ÚNICO para clásico e híbrido a propósito: dos caminos
+    // dejarían el clásico —el 100% de la flota hoy— peor probado que el
+    // que casi nadie usa todavía.
+    const altKey = altKeyAlgorithm ? loadOrCreateAltKey(paths.clientKey, { reuse: reuseExistingKey }) : null;
+
+    const built = buildCsr({
+      classicKey: crypto.createPrivateKey(fs.readFileSync(paths.clientKey)),
+      classicAlgorithm: keyAlgorithm as ClassicAlgorithm,
+      commonName: dnsName,
+      tenantId,
+      deviceId,
+      dnsName,
+      altPrivateKeyPkcs8: altKey?.pkcs8Der ?? null,
+      altPublicKeySpki: altKey?.spkiDer ?? null
+    });
+
+    fs.writeFileSync(paths.clientCsr, built.pem, { encoding: "utf8", mode: 0o600 });
 
     const csrPem = fs.readFileSync(paths.clientCsr, "utf8");
     return success(req.id, {
       csrPem,
       deviceId,
       dnsName,
-      keyAlgorithm: "RSA_2048",
+      keyAlgorithm,
+      // ⚠️ Se responde lo que se HIZO, no lo que se pidió. Un agent-core
+      // que pidiera híbrido y recibiera clásico sin enterarse creería
+      // tener una mitad post-cuántica que nadie le dio.
+      altKeyAlgorithm: built.hybrid ? "ML_DSA_65" : null,
+      altKeyPath: altKey?.path ?? null,
       keyStore: "file",
       keyPath: paths.clientKey
     });
   } catch (err: any) {
     return fail(req.id, "csr_generate_failed", err?.message || String(err));
-  } finally {
-    try {
-      fs.rmSync(csrConfigPath, { force: true });
-    } catch {}
   }
 }
 
