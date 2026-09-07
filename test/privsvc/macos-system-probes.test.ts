@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { collectMacProbes, parsePwpolicy, parseProbe, type MacProbeDeps } from "../../privsvc/macos/src/macos-probes";
 import {
-  flattenProfiles, localUsers, parseDiskutilInfo, parseDiskutilList, parseHints, parseTimeMachine, parseUserprefKey,
+  flattenProfiles, localUsers, parseDiskutilInfo, parseDiskutilList, parseHints, parseProfilesStatus, parseTimeMachine, parseUserprefKey,
 } from "../../privsvc/macos/src/macos-system-probes";
 
 function deps(): MacProbeDeps {
@@ -37,6 +37,7 @@ function deps(): MacProbeDeps {
       if (bin.endsWith("/dscl")) return { stdout: ".\n-list /Users hint\nalice mydog\nbob\n_svc x\n", stderr: "", code: 0 };
       if (bin.endsWith("/find")) return args[0].includes("Applications") ? { stdout: "/System/Volumes/Data/Applications/Xcode.app\n/System/Volumes/Data/Applications/Bad.app\n", stderr: "", code: 0 } : { stdout: "", stderr: "", code: 0 };
       if (bin.endsWith("/diskutil")) {
+        if (args[0] === "cs") return { stdout: "CoreStorage logical volume groups (1 found)\n+-> Logical Volume Family X\n    Encryption Type: None\n", stderr: "", code: 0 };
         if (args[0] === "list") return args[1] === "internal" ? { stdout: "/dev/disk3 (synthesized):\n   1: APFS Volume Macintosh HD 10 GB disk3s1\n   2: APFS Volume Preboot 1 GB disk3s2\n   3: APFS Volume Data 100 GB disk3s5\n", stderr: "", code: 0 } : { stdout: "/dev/disk4 (external, physical):\n   1: Apple_HFS Backup 1 TB disk4s2\n   2: Microsoft Basic Data STICK 32 GB disk5s1\n", stderr: "", code: 0 };
         const id = args[1];
         return { stdout: `   Volume Name:               ${id === "disk3s2" ? "Preboot" : id === "disk3s5" ? "Data" : id === "disk4s2" ? "Backup" : "Macintosh HD"}\n   FileVault:                 ${id === "disk3s5" ? "No" : "Yes"}\n`, stderr: "", code: 0 };
@@ -44,6 +45,7 @@ function deps(): MacProbeDeps {
       if (bin.endsWith("/sysctl")) return { stdout: args[1] === "hw.model" ? "Mac15,6\n" : "Apple M3 Pro\n", stderr: "", code: 0 };
       if (bin.endsWith("/pmset")) return { stdout: "Battery Power:\n sleep                10\n displaysleep         15\n standbydelaylow      600\n hibernatemode        25\n", stderr: "", code: 0 };
       if (bin.endsWith("/bioutil")) return { stdout: "System Touch ID configuration:\nTouch ID timeout (in seconds): 172800\n", stderr: "", code: 0 };
+      if (bin.endsWith("/profiles")) return { stdout: "Enrolled via DEP: No\nMDM enrollment: Yes (User Approved)\n", stderr: "", code: 0 };
       if (bin.endsWith("/sqlite3")) return { stdout: "", stderr: "unable to open database", code: 1 };
       return { stdout: "", stderr: "", code: 1 };
     },
@@ -85,7 +87,7 @@ describe("collectMacProbes — fase 5", () => {
     const r = await collectMacProbes([
       "userpref.host:com~apple~Bluetooth:PrefKeyServicesEnabled", "userpref.com~apple~dock:wvous-bl-corner", "userpref.home:Library/Containers/com~apple~Safari/Data/Library/Preferences/com~apple~Safari:WBSPrivacyProxyAvailabilityTraffic", "userpref.nope",
       "profile.AutoOpenSafeDownloads", "profile.WebKitPreferences~storageBlockingPolicy", "profile.ShowOverlayStatusBar", "profile.Missing",
-      "mac.timemachine", "mac.hints", "mac.homefolders", "mac.wwapps", "mac.wwsystem", "mac.volumes", "mac.policybanner", "mac.sleep", "mac.touchid", "mac.locationclients", "mac.fulldiskaccess",
+      "mac.mdm", "mac.efi", "mac.timemachine", "mac.hints", "mac.homefolders", "mac.wwapps", "mac.wwsystem", "mac.volumes", "mac.policybanner", "mac.sleep", "mac.touchid", "mac.locationclients", "mac.fulldiskaccess",
     ], deps());
     expect(r.errors).toEqual({});
     expect(r.probes.userpref["host:com~apple~Bluetooth:PrefKeyServicesEnabled"]).toMatchObject({ users: 2, present: 1, missing: 1, distinct: ["1"], byUser: { alice: 1 } });
@@ -101,12 +103,15 @@ describe("collectMacProbes — fase 5", () => {
     expect(r.probes.mac.homefolders).toEqual({ checked: 2, insecure: ["bob: 0755"] });
     expect(r.probes.mac.wwapps).toMatchObject({ count: 1, sample: ["/System/Volumes/Data/Applications/Bad.app"], timedOut: false });
     expect(r.probes.mac.wwsystem).toMatchObject({ count: 0 });
-    expect(r.probes.mac.volumes).toMatchObject({ internalUnencrypted: 1, externalUnencrypted: 0, externalFat: ["disk5s1"] });
+    expect(r.probes.mac.volumes).toMatchObject({ internalUnencrypted: 1, externalUnencrypted: 0, externalFat: ["disk5s1"], coreStorageFamilies: 1, coreStorageUnencrypted: 1 });
     expect((r.probes.mac.volumes as any).internal.map((v: any) => v.name)).toEqual(["Macintosh HD", "Data"]);
     expect(r.probes.mac.policybanner).toEqual({ exists: true, files: [{ name: "PolicyBanner.txt", mode: "0644", worldReadable: true }], modeOk: true });
     expect(r.probes.mac.sleep).toMatchObject({ isMacBook: false, appleSilicon: true, battery: { sleep: 10, displaysleep: 15, standbydelaylow: 600, hibernatemode: 25 }, displaySleepLeSleep: false });
     expect(r.probes.mac.touchid).toMatchObject({ timeoutSeconds: 172800, users: 2, byUser: { alice: { unlock: 1, applePay: 0 } } });
     expect(r.probes.mac.locationclients).toMatchObject({ available: true, clients: ["com.apple.Maps", "com.example.app"], count: 2 });
     expect(r.probes.mac.fulldiskaccess).toMatchObject({ available: false });
+    expect(r.probes.mac.mdm).toEqual({ available: true, enrolled: true, userApproved: true, enrolledViaDep: false, raw: "Yes (User Approved)" });
+    expect(r.probes.mac.efi).toEqual({ appleSilicon: true, t2: null, efiCheck: null, compliant: true });
+    expect(parseProfilesStatus("MDM enrollment: No\n")).toMatchObject({ enrolled: false, userApproved: false });
   });
 });

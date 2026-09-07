@@ -12,7 +12,7 @@
 //   profile.<Key>                  system_profiler SPConfigurationProfileDataType,
 //                                  una ejecución, claves aplanadas (última gana)
 //   mac.timemachine|hints|homefolders|wwapps|wwsystem|wwlibrary|volumes|
-//       policybanner|sleep|touchid|locationclients|fulldiskaccess
+//       policybanner|sleep|touchid|locationclients|fulldiskaccess|mdm|efi
 //
 // Los usuarios locales son las carpetas de /Users con dueño uid >= 500
 // (fuera Shared y Guest). Un valor que no existe para un usuario no cuenta
@@ -187,7 +187,37 @@ export async function probeVolumes(deps: MacProbeDeps): Promise<Obj> {
     out[`${scope}Unencrypted`] = vols.filter((v) => v.encrypted === false).length;
     if (scope === "external") out.externalFat = list.fat;
   }
+  // CoreStorage (macOS 12 2.5.1.3): familias de volúmenes lógicos y cuántas sin cifrar.
+  const cs = (await deps.exec("/usr/sbin/diskutil", ["cs", "list"])).stdout;
+  out.coreStorageFamilies = (cs.match(/Logical Volume Family/g) || []).length;
+  out.coreStorageUnencrypted = (cs.match(/Encryption Type:\s*None/g) || []).length;
   return out;
+}
+
+// ── mac.mdm / mac.efi (macOS 12) ─────────────────────────────────────
+
+export function parseProfilesStatus(stdout: string): Obj {
+  const mdm = stdout.match(/MDM enrollment:\s*(.+)$/m);
+  const dep = stdout.match(/Enrolled via DEP:\s*(.+)$/m);
+  const v = mdm ? mdm[1].trim() : null;
+  return { enrolled: !!v && /^Yes/i.test(v), userApproved: !!v && /User Approved/i.test(v), enrolledViaDep: dep ? /^Yes/i.test(dep[1].trim()) : null, raw: v };
+}
+
+export async function probeMdm(deps: MacProbeDeps): Promise<Obj> {
+  const r = await deps.exec("/usr/bin/profiles", ["status", "-type", "enrollment"]);
+  return { available: r.code === 0, ...parseProfilesStatus(r.stdout) };
+}
+
+export async function probeEfi(deps: MacProbeDeps): Promise<Obj> {
+  const cpu = (await deps.exec("/usr/sbin/sysctl", ["-n", "machdep.cpu.brand_string"])).stdout.trim();
+  const appleSilicon = /Apple/i.test(cpu);
+  if (appleSilicon) return { appleSilicon: true, t2: null, efiCheck: null, compliant: true };
+  const bridge = (await deps.exec("/usr/sbin/system_profiler", ["SPiBridgeDataType"])).stdout;
+  const t2 = /T2/.test(bridge);
+  if (t2) return { appleSilicon: false, t2: true, efiCheck: null, compliant: true };
+  const r = await deps.exec("/usr/libexec/firmwarecheckers/eficheck/eficheck", ["--integrity-check"], undefined, FIND_TIMEOUT_MS);
+  const ok = /No changes detected/i.test(r.stdout);
+  return { appleSilicon: false, t2: false, efiCheck: ok ? "ok" : r.stdout.trim().slice(0, 120) || null, compliant: ok };
 }
 
 export function probePolicyBanner(deps: MacProbeDeps): Obj {

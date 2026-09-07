@@ -49,7 +49,7 @@ export const MAC_PROBE_KINDS = ["pref", "pmset", "launchctl", "systemsetup", "ma
 export type MacProbeKind = (typeof MAC_PROBE_KINDS)[number];
 export const SYSTEMSETUP_FLAGS = new Set(["getremotelogin", "getremoteappleevents", "getusingnetworktime", "getnetworktimeserver", "getwakeonnetworkaccess", "getcomputersleep", "getdisplaysleep", "getrestartfreeze", "getcomputername", "getlocalsubnetname"]);
 export const MAC_CMDS = new Set(["csrutil", "spctl", "fdesetup", "amfi", "screenlock", "pwpolicy", "cupsctl", "xprotect", "rootaccount", "ardagent", "sudo", "smbguest", "nfsd", "ssv",
-  "timemachine", "hints", "homefolders", "wwapps", "wwsystem", "wwlibrary", "volumes", "policybanner", "sleep", "touchid", "locationclients", "fulldiskaccess"]);
+  "timemachine", "hints", "homefolders", "wwapps", "wwsystem", "wwlibrary", "volumes", "policybanner", "sleep", "touchid", "locationclients", "fulldiskaccess", "mdm", "efi"]);
 
 export function decodeKey(k: string): string {
   return k.replace(/~/g, ".");
@@ -241,6 +241,8 @@ async function macCmd(cmd: string, deps: MacProbeDeps): Promise<Record<string, u
     case "touchid": return sys.probeTouchId(sys.localUsers(deps), deps);
     case "locationclients": return sys.probeLocationClients(deps);
     case "fulldiskaccess": return sys.probeFullDiskAccess(deps);
+    case "mdm": return sys.probeMdm(deps);
+    case "efi": return sys.probeEfi(deps);
     default: return null;
   }
 }

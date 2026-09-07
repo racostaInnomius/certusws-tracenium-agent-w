@@ -57,6 +57,7 @@ const NON_LINUX = new Set([
   "/usr/sbin/system_profiler", // macOS: perfiles de configuración
   "/usr/bin/bioutil", // macOS: Touch ID
   "/usr/bin/sqlite3", // macOS: TCC.db (Full Disk Access)
+  "/usr/bin/profiles", // macOS: estado de enrolamiento MDM
 ]);
 
 const BIN_RE = /"((?:\/usr\/bin|\/usr\/sbin|\/bin|\/sbin)\/[a-zA-Z0-9._-]+)"/g;
