@@ -16,6 +16,13 @@ export type HardwareStatic = {
     distro?: string;
     release?: string;
     kernel?: string;
+    /**
+     * Arquitectura del PROCESO del agente (`os.arch()`), no necesariamente la
+     * de la máquina. Ver el comentario en device-facts-builder.ts: coinciden
+     * en una compilación nativa, que es el caso de toda la flota hoy, pero un
+     * proceso emulado reportaría la suya.
+     */
+    arch?: string;
   };
 
   uuid?: string;

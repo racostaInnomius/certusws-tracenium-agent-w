@@ -16,10 +16,15 @@
 //     realmente consume (no hay I/O nativo en el test).
 
 import { describe, it, expect, vi } from "vitest";
+import nodeOs from "node:os";
 
 vi.mock("systeminformation", () => {
   const stub = {
-    osInfo: vi.fn(async () => ({ platform: "linux", distro: "Ubuntu", release: "22.04", kernel: "5.15" })),
+    // ⚠️ `arch` MIENTE A PROPÓSITO. systeminformation lo obtiene lanzando un
+    // proceso, y en máquinas reales de la flota eso vuelve vacío (el mismo
+    // motivo por el que distro/release tienen fallback a os-release). El
+    // colector debe tomarlo de `os.arch()`, y este valor imposible lo prueba.
+    osInfo: vi.fn(async () => ({ platform: "linux", distro: "Ubuntu", release: "22.04", kernel: "5.15", arch: "mentira-de-si" })),
     system: vi.fn(async () => ({
       manufacturer: "Dell Inc.",
       model: "Latitude 7420",
@@ -267,5 +272,71 @@ describe("buildDeviceFacts — strips internal hasChanges from scp/pmp/cdp (B8)"
     expect(facts.namespaces.scp).toBeUndefined();
     expect(facts.namespaces.pmp).toBeUndefined();
     expect(facts.namespaces.cdp).toBeUndefined();
+  });
+});
+
+describe("buildDeviceFacts — la arquitectura del equipo", () => {
+  // ⚠️ POR QUÉ EXISTE ESTE CAMPO.
+  //
+  // Hasta el 7-sep-2026 `arch` no estaba en NINGUNA parte: ni en el control DB,
+  // ni en la del tenant, ni en el payload crudo — `static.os` guardaba
+  // distro/kernel/platform/release y nada más. Y no era falta de recolección:
+  // providers/windows.ts calculaba `os.arch()` y lo tiraba sin usarlo, igual
+  // que pasó con `uptimeSeconds` y con `antivirus.products`.
+  //
+  // El catálogo global (ADR-0016) lo necesita para decidir qué binario le toca
+  // a cada equipo, y la alternativa era adivinarlo del modelo de CPU.
+  it("viaja en static.os", async () => {
+    const namespaces = {
+      amp: {
+        hardware: { static: {} as any, runtime: {} as any },
+        security: { status: "unknown" } as any,
+        software: { count: 0, delta: null, items: [], hasChanges: false }
+      }
+    } as any;
+
+    const facts = await buildDeviceFacts(makeCtx(), namespaces);
+    const osBlock: any = (facts.namespaces.amp?.hardware as any)?.static?.os;
+
+    expect(osBlock?.arch).toBeTruthy();
+  });
+
+  // ⚠️ LA ASERCIÓN QUE IMPORTA, Y NO ES "vale arm64".
+  //
+  // Comparar contra un literal fijaría la máquina donde corre el test, no la
+  // propiedad. Lo que se afirma es el ORIGEN: sale de `os.arch()`, que Node da
+  // sin shell ni PATH, y NO de systeminformation, cuyo stub aquí devuelve un
+  // valor imposible.
+  it("sale de os.arch(), no de systeminformation", async () => {
+    const namespaces = {
+      amp: {
+        hardware: { static: {} as any, runtime: {} as any },
+        security: { status: "unknown" } as any,
+        software: { count: 0, delta: null, items: [], hasChanges: false }
+      }
+    } as any;
+
+    const facts = await buildDeviceFacts(makeCtx(), namespaces);
+    const osBlock: any = (facts.namespaces.amp?.hardware as any)?.static?.os;
+
+    expect(osBlock.arch).toBe(nodeOs.arch());
+    expect(osBlock.arch).not.toBe("mentira-de-si");
+  });
+
+  // No rompe lo que ya viajaba en ese bloque.
+  it("no desplaza a platform ni kernel", async () => {
+    const namespaces = {
+      amp: {
+        hardware: { static: {} as any, runtime: {} as any },
+        security: { status: "unknown" } as any,
+        software: { count: 0, delta: null, items: [], hasChanges: false }
+      }
+    } as any;
+
+    const facts = await buildDeviceFacts(makeCtx(), namespaces);
+    const osBlock: any = (facts.namespaces.amp?.hardware as any)?.static?.os;
+
+    expect(["windows", "macos", "linux"]).toContain(osBlock.platform);
+    expect(osBlock.kernel).toBe("5.15");
   });
 });

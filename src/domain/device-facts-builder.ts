@@ -421,7 +421,26 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
       // wins whenever it answers, so working machines are unaffected.
       distro: isUnknown(osInfo.distro) ? osRelease.distro ?? osInfo.distro : osInfo.distro,
       release: isUnknown(osInfo.release) ? osRelease.release ?? osInfo.release : osInfo.release,
-      kernel: osInfo.kernel
+      kernel: osInfo.kernel,
+      // ⚠️ DE `os.arch()`, NO DE `osInfo.arch`, Y POR EL MISMO MOTIVO QUE
+      // distro/release de arriba: lo que si obtiene lanzando un proceso vuelve
+      // vacío en máquinas reales de la flota. `os.arch()` lo da Node sin shell,
+      // sin PATH y sin privilegios — no puede fallar de esa manera.
+      //
+      // Este campo faltaba, y no por descuido de recolección: el valor ya se
+      // calculaba en providers/windows.ts y se descartaba sin usarlo. Igual que
+      // pasó con `uptimeSeconds` y con `antivirus.products`: el dato llegaba y
+      // nadie lo guardaba. Sin él, `arch` no existe en NINGUNA parte —ni en el
+      // control DB, ni en la del tenant, ni en el payload crudo— y el catálogo
+      // global (ADR-0016) no puede decidir qué binario le toca a cada equipo.
+      //
+      // ⚠️ ES LA ARQUITECTURA DEL PROCESO, NO LA DE LA MÁQUINA. Coinciden en
+      // una compilación nativa —hay builds por arquitectura para Linux y macOS,
+      // ver `pkg:linux:arm64` / `pkg:macos:x64`— pero un agente x64 emulado
+      // sobre ARM64 diría "x64". Hoy Windows sólo se compila x64, así que
+      // Windows-on-ARM caería justo en ese hueco: quien consuma este campo para
+      // elegir un instalador tiene que saberlo.
+      arch: os.arch()
     },
     uuid: system.uuid,
     versions: {
