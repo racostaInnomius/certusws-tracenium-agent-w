@@ -26,30 +26,54 @@ import { collectAdcs, hostMatches } from "../../src/plugins/cdp/providers/adcs";
 // MSIG-RADIUS-CA en modo csv el 2026-09-07; la forma de las lineas
 // «Row N:» / «  Etiqueta: valor» y el PEM sin comillas son el formato de
 // volcado documentado, por confirmar con la primera lectura real.
-const row = (id: number, disp: string, who: string, tpl: string, pem: string | null, labels = EN) =>
+const row = (n: number, id: number, disp: string, who: string, tpl: string, pem: string | null, labels = EN) =>
   [
-    `Row ${id}:`,
-    `  ${labels[0]}: 0x${id.toString(16)} (${id})`,
+    `Row ${n}:`,
+    `  ${labels[0]}: 0x${id.toString(16)}`,
     `  ${labels[1]}: ${disp}`,
     `  ${labels[2]}: "${who}"`,
-    `  ${labels[3]}: ${tpl === "EMPTY" ? "EMPTY" : `"${tpl}"`}`,
+    // La plantilla sale con comillas SOLO alrededor del OID: «"<OID>" Nombre».
+    `  ${labels[3]}: ${tpl === "EMPTY" ? "EMPTY" : /^\d/.test(tpl) ? `"${tpl.split(" ")[0]}" ${tpl.split(" ").slice(1).join(" ")}` : `"${tpl}"`}`,
     `  ${labels[4]}:`,
-    ...(pem === null ? ["EMPTY"] : pem === "garbage" ? ["-----BEGIN CERTIFICATE-----", "not-base64-at-all", "-----END CERTIFICATE-----"] : [pem.trimEnd()])
+    ...(pem === null ? ["EMPTY"] : pem === "garbage" ? ["-----BEGIN CERTIFICATE-----", "not-base64-at-all", "-----END CERTIFICATE-----"] : [pem.trimEnd()]),
+    ""
   ].join("\n");
 const EN = ["Issued Request ID", "Request Disposition", "Requester Name", "Certificate Template", "Binary Certificate"];
 const ES = ["Id. de solicitud emitida", "Disposición de la solicitud", "Nombre del solicitante", "Plantilla de certificado", "Certificado binario"];
 const RDP = "1.3.6.1.4.1.311.21.8.9904716.11557025.2180029.13202864.4813877.207.10850930.7780789 RDP_Template";
+// Preambulo y cola tal como los imprime certutil (medido 2026-09-07).
+const SCHEMA = [
+  "Schema:",
+  "  Column Name                   Localized Name                Type    MaxLength",
+  "  ----------------------------  ----------------------------  ------  ---------",
+  "  RequestID                     Issued Request ID             Long    4 -- Indexed",
+  "  Request.Disposition           Request Disposition           Long    4 -- Indexed",
+  "  Request.RequesterName         Requester Name                String  2048 -- Indexed",
+  "  CertificateTemplate           Certificate Template          String  254 -- Indexed",
+  "  RawCertificate                Binary Certificate            Binary  16384",
+  ""
+].join("\n");
+const TRAILER = [
+  "",
+  "Maximum Row Index: 5",
+  "",
+  "5 Rows",
+  "  25 Row Properties, Total Size = 3535, Max Size = 1657, Ave Size = 353",
+  "   0 Request Attributes, Total Size = 0, Max Size = 0, Ave Size = 0",
+  "CertUtil: -view command completed successfully.",
+  ""
+].join("\n");
 
-const DUMP = [
-  row(1, "0xf (15) -- CA Cert", "MOUNTAINSIDE\\MSIG-RADIUS$", "EMPTY", FIXTURE_CERT),
-  row(3, "0x14 (20) -- Issued", "MOUNTAINSIDE\\MSIG-RADIUS$", "Machine", FIXTURE_CERT),
-  row(4, "0x15 (21) -- Revoked", "MOUNTAINSIDE\\MSIG-QBOOKS$", RDP, FIXTURE_CERT),
-  row(22, "0x1e (30) -- Error", "MOUNTAINSIDE\\MSIG-DOMAIN01$", "EMPTY", null),
-  row(23, "0x14 (20) -- Issued", "MOUNTAINSIDE\\MSIG-DOMAIN01$", RDP, "garbage")
-].join("\n") + "\n";
+const DUMP = SCHEMA + [
+  row(1, 1, "0xf (15) -- CA Cert", "MOUNTAINSIDE\\MSIG-RADIUS$", "EMPTY", FIXTURE_CERT),
+  row(2, 3, "0x14 (20) -- Issued", "MOUNTAINSIDE\\MSIG-RADIUS$", "Machine", FIXTURE_CERT),
+  row(3, 4, "0x15 (21) -- Revoked", "MOUNTAINSIDE\\MSIG-QBOOKS$", RDP, FIXTURE_CERT),
+  row(4, 22, "0x1e (30) -- Error", "MOUNTAINSIDE\\MSIG-DOMAIN01$", "EMPTY", null),
+  row(5, 23, "0x14 (20) -- Issued", "MOUNTAINSIDE\\MSIG-DOMAIN01$", RDP, "garbage")
+].join("\n") + TRAILER;
 
 describe("splitCertutilDump", () => {
-  it("una fila por «Row N:», campos en orden y el PEM aparte", () => {
+  it("una fila por «Row N:», campos en orden y el PEM aparte; el Schema y la cola no cuentan", () => {
     const rows = splitCertutilDump(DUMP);
     expect(rows.length).toBe(5);
     expect(rows[1].fields.map((f) => f.label)).toEqual(EN);
@@ -76,7 +100,7 @@ describe("parseCertutilDump", () => {
   });
 
   it("⭐ etiquetas LOCALIZADAS → se lee por posicion (el orden de -out es fijo) y se dice", () => {
-    const dump = row(9, "0x14 (20) -- Emitido", "CORP\\host09$", "Servidor RADIUS", FIXTURE_CERT, ES) + "\n";
+    const dump = row(1, 9, "0x14 (20) -- Emitido", "CORP\\host09$", "Servidor RADIUS", FIXTURE_CERT, ES);
     const out = parseCertutilDump(dump, "CA");
     expect(out.issued.length).toBe(1);
     expect(out.issued[0].requestId).toBe(9);
@@ -92,7 +116,7 @@ describe("parseCertutilDump", () => {
   });
 
   it("respeta el tope", () => {
-    const dump = Array.from({ length: 5 }, (_, i) => row(i + 1, "0x14 (20) -- Issued", "w", "T", FIXTURE_CERT)).join("\n");
+    const dump = Array.from({ length: 5 }, (_, i) => row(i + 1, i + 1, "0x14 (20) -- Issued", "w", "T", FIXTURE_CERT)).join("\n");
     expect(parseCertutilDump(dump, "CA", 2).issued.length).toBe(2);
   });
 });

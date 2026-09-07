@@ -10,27 +10,31 @@
 // no hay huella, ni clave, ni fecha. El volcado por filas (sin `csv`) si
 // imprime el binario como PEM. Asi que se lee el volcado:
 //
-//   Row 2:
-//     Issued Request ID: 0x2 (2)
+//   Schema:                              ← preambulo, se ignora
+//     Column Name   Localized Name  Type  MaxLength
+//     RequestID     Issued Request ID  Long  4 -- Indexed
+//     …
+//   Row 1:                               ← numero de fila, NO el RequestId
+//     Issued Request ID: 0x2             ← solo hex
 //     Request Disposition: 0x14 (20) -- Issued
 //     Requester Name: "MOUNTAINSIDE\MSIG-RADIUS$"
-//     Certificate Template: "1.3.6.1.4.1.311.21.8.…207.1845288.9471314 NetworkPolicyServer"
+//     Certificate Template: "1.3.6.1.4.1.311.21.8.…207.1845288.9471314" NetworkPolicyServer
 //     Binary Certificate:
 //   -----BEGIN CERTIFICATE-----
-//   MIIC…
+//   MIIG…
 //   -----END CERTIFICATE-----
 //
-// Puro: sin IPC ni ficheros, para probarlo con un fixture. Tolerante a lo
-// que no esta confirmado: valores con o sin `0x… (n)`, con o sin comillas,
-// PEM con o sin comillas, y etiquetas LOCALIZADAS — los campos se asignan
-// por ORDEN dentro de cada fila, que es el orden de `-out` (fijo en
-// CdpAdcs.cs), y los nombres en ingles solo se usan como confirmacion.
+//   Maximum Row Index: 2                 ← cola, se ignora
+//   2 Rows
+//   CertUtil: -view command completed successfully.
 //
-// Lo que si esta confirmado (CSV real): las etiquetas en ingles son
-// «Issued Request ID», «Request Disposition», «Requester Name»,
-// «Certificate Template», «Binary Certificate»; la disposicion viene como
-// «20 -- Issued» / «21 -- Revoked» / «15 -- CA Cert» / «30 -- Error»; la
-// plantilla como «<OID> <nombre>» o solo el nombre («Machine»).
+// Formato MEDIDO en MSIG-RADIUS-CA el 2026-09-07 (dos filas reales). Puro:
+// sin IPC ni ficheros, para probarlo con un fixture. Los campos se asignan
+// por ORDEN dentro de cada fila, que es el orden de `-out` (fijo en
+// CdpAdcs.cs); los nombres en ingles solo confirman. Asi una CA en otro
+// idioma («Id. de solicitud emitida») se lee igual y se marca `positional`.
+// La disposicion: «20 -- Issued» / «21 -- Revoked» / «15 -- CA Cert» /
+// «30 -- Error»; la plantilla: «"<OID>" <nombre>» o «"<nombre>"» («Machine»).
 
 import { parseCertToItem } from "./parse-cert";
 import type { CdpCertItem, CdpStoreInfo } from "../../domain/cdp-types";
@@ -105,15 +109,22 @@ export function splitCertutilDump(text: string): Row[] {
   return rows;
 }
 
-/** «0x14 (20) -- Issued» → 20; «20 -- Issued» → 20; «"x"» → null. */
+/**
+ * «0x14 (20) -- Issued» → 20; «0x2» → 2 (el RequestId sale SOLO en hex,
+ * medido); «20 -- Issued» → 20; «"x"» → null.
+ */
 function parseNumber(v: string): number | null {
   const paren = /\((\d+)\)/.exec(v);
   if (paren) return Number(paren[1]);
-  const lead = /^\s*(\d+)/.exec(v);
+  const hex = /^\s*0x([0-9a-f]+)\b/i.exec(v);
+  if (hex) return parseInt(hex[1], 16);
+  const lead = /^\s*(\d+)\b/.exec(v);
   if (lead) return Number(lead[1]);
   return null;
 }
-const unquote = (v: string) => v.trim().replace(/^"(.*)"$/s, "$1");
+/** Quita TODAS las comillas: la plantilla sale como «"<OID>" <nombre>», con
+ *  comillas solo alrededor del OID (medido en MSIG-RADIUS-CA). */
+const unquote = (v: string) => v.replace(/"/g, "").trim();
 
 export function parseCertutilDump(text: string, caName: string, max = 5000): AdcsParseResult {
   const rows = splitCertutilDump(text);
