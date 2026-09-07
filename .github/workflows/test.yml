@@ -32,6 +32,60 @@ jobs:
       - name: Test
         run: npm test
 
+      # ── Que los .csproj de Windows compilen, DESDE UBUNTU ──────────────
+      #
+      # Esto existe por una rotura concreta: el Release del 06-sep se cayó
+      # con siete CS0246 en los DOS binarios de Windows (run 34067964253)
+      # porque `DxgiInteropTypes.cs` —los structs de DXGI, sacados a su
+      # propio fichero en fecf7fd— se añadió al .csproj de pruebas y no a
+      # los otros dos.
+      #
+      # El patrón que lo permite: `Tracenium.PrivSvc.Windows` coge el árbol
+      # entero, mientras que `Tracenium.ScreenCap` y la sonda de ADR-0006
+      # ENUMERAN los ficheros a mano —a propósito, para incluir el código
+      # de captura por referencia en vez de forkearlo—. El que globa nunca
+      # avisa de que la lista de los otros se quedó corta, así que la
+      # rotura no aparece hasta el Release, o sea después del merge.
+      #
+      # Corre en ubuntu sin nada de Windows: `EnableWindowsTargeting` ya
+      # está puesto en los .csproj y el compilador no necesita el SO
+      # destino. Medido sobre `mcr.microsoft.com/dotnet/sdk:8.0` con el
+      # árbol y el caché de NuGet vacíos —lo que ve un runner—: 15-20 s
+      # los cuatro, restore incluido. Por eso no lleva caché de paquetes:
+      # montarla no lo bajó (16 s vs 20 s), y sería una pieza más que
+      # mantener.
+      #
+      # Es solo COMPILAR. Las 127 pruebas de C# siguen sin correr en el CI
+      # —hoy no las corre nadie más que quien las lanza a mano—; eso es
+      # otro hueco y se cierra aparte.
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          # La misma que usa el Release. Si divergen, el CI diría verde
+          # sobre un compilador que no es el que construye el MSI.
+          dotnet-version: '8.0.x'
+
+      - name: Build .NET projects (los que enumeran ficheros a mano)
+        run: |
+          # Sin `set -e` a propósito: se construyen los CUATRO y se falla al
+          # final. Pararse en el primero escondería que la misma lista corta
+          # rompió también a los demás — que es justo lo que pasó: cayeron
+          # ScreenCap y la sonda a la vez.
+          rotos=""
+          for p in \
+            privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj \
+            privsvc/windows/Tracenium.ScreenCap/Tracenium.ScreenCap.csproj \
+            privsvc/windows/Tracenium.PrivSvc.Tests/Tracenium.PrivSvc.Tests.csproj \
+            experiments/win-session-probe/win-session-probe.csproj
+          do
+            echo "── $p"
+            dotnet build "$p" --nologo -v minimal || rotos="$rotos $p"
+          done
+          if [ -n "$rotos" ]; then
+            for p in $rotos; do echo "::error::no compila: $p"; done
+            exit 1
+          fi
+
       # La cobertura de exec del perfil la comprueba un test de vitest
       # (test/packaging/apparmor-exec-coverage.test.ts), que corre en el paso
       # anterior y es multiplataforma. Lo que ese test NO puede hacer es
