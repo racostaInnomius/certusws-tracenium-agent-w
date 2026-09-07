@@ -54,8 +54,21 @@ function serveBinary(onData: (sock: net.Socket, chunk: Buffer, upgrade: (rest?: 
     // `rest`: bytes que llegaron pegados al ultimo paquete en claro (el
     // ClientHello del cliente MySQL, que no espera respuesta al SSLRequest).
     // Se devuelven al stream para que los lea el lado TLS.
+    //
+    // ⚠️ EL `pause()` NO ES DECORATIVO: sin el, este doble fallaba una de
+    // cada dos veces (run 34066976193 y ~50 % en local).
+    //
+    // Quitar los oyentes de `data` no saca al socket del modo FLUIDO, y
+    // un stream fluido SIN oyentes tira lo que llega. Asi que el
+    // `unshift` devolvia el ClientHello a un stream que lo descartaba
+    // acto seguido: el TLSSocket no veia handshake y la sonda expiraba.
+    // Se notaba solo cuando el cliente mandaba el SSLRequest y el
+    // ClientHello en el MISMO segmento —lo que hace de verdad, porque no
+    // espera respuesta—, y eso depende del reloj: con `rest` vacio no
+    // habia nada que perder y el test pasaba.
     const upgrade = (rest?: Buffer) => {
       sock.removeAllListeners("data");
+      sock.pause();
       if (rest && rest.length > 0) sock.unshift(rest);
       const secure = new tls.TLSSocket(sock, { isServer: true, key: FIXTURE_KEY, cert: FIXTURE_CERT });
       secure.on("error", () => undefined);
@@ -197,8 +210,16 @@ describe("preambulos contra servidores reales", () => {
     expect(mysqlServerOffersSsl(handshake(0x0200))).toBe(false);
     expect(mysqlSslRequestPacket().length).toBe(36);
 
+    // Se ACUMULA en vez de mirar el chunk suelto: el SSLRequest son 36
+    // bytes y nada garantiza que lleguen en una sola lectura. Con la
+    // condicion sobre el chunk, un corte a mitad del paquete dejaba esos
+    // bytes tirados y el test caia con un timeout que no dice nada. Es
+    // la misma suposicion de stream que el `pause()` de arriba, por el
+    // otro lado.
+    let visto = Buffer.alloc(0);
     const yes = await serveBinary((sock, chunk, upgrade) => {
-      if (chunk.length >= 36 && chunk[3] === 1) upgrade(chunk.subarray(36));
+      visto = Buffer.concat([visto, chunk]);
+      if (visto.length >= 36 && visto[3] === 1) upgrade(visto.subarray(36));
     }, handshake(0x0800 | 0x0200 | 0x8000));
     const r = await withProtocol(yes, "mysql", () => probeTlsEndpointDetailed("127.0.0.1", yes, "localhost"));
     expect(r.ok).toBe(true);

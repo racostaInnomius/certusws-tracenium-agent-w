@@ -26,6 +26,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
+import { OPENSSL, opensslVerificaCsr, mencionaExtension } from "./openssl-compat";
+
 const raiz = fs.mkdtempSync(path.join(os.tmpdir(), "privsvc-wiring-"));
 
 // Las rutas se fijan ANTES de importar: los módulos de `paths` leen el
@@ -35,7 +37,6 @@ process.env.TRACENIUM_PRIVSVC_CONFIG_DIR = path.join(raiz, "etc");
 process.env.TRACENIUM_PRIVSVC_LOG_DIR = path.join(raiz, "log");
 process.env.TRACENIUM_PRIVSVC_SOCKET_PATH = path.join(raiz, "privsvc.sock");
 
-const OPENSSL = process.env.OPENSSL_BIN || "openssl";
 const TENANT = "1";
 const DEVICE = "11111111-2222-3333-4444-555555555555";
 
@@ -98,8 +99,15 @@ for (const plat of plataformas) {
       const p = path.join(raiz, `${plat.nombre}.csr.pem`);
       fs.writeFileSync(p, r.result.csrPem);
       const texto = execFileSync(OPENSSL, ["req", "-in", p, "-text", "-noout"], { encoding: "utf8" });
-      expect(texto).toContain("X509v3 Subject Alternative Public Key Info");
-      expect(texto).toContain("X509v3 Alternative Signature Value");
+      // Por OID o por nombre según la versión de openssl — ver
+      // openssl-compat.ts. Lo que se comprueba es que un tercero
+      // DECODIFICA las extensiones catalyst, no cómo las rotula.
+      expect(
+        mencionaExtension(texto, "2.5.29.72", "X509v3 Subject Alternative Public Key Info")
+      ).toBe(true);
+      expect(
+        mencionaExtension(texto, "2.5.29.74", "X509v3 Alternative Signature Value")
+      ).toBe(true);
     });
 
     it("⚠️ y la clave alternativa queda en disco con 0600", async () => {
@@ -175,11 +183,9 @@ for (const plat of plataformas) {
       const r = await handle(peticion({ keyAlgorithm: "EC_P384", altKeyAlgorithm: "ML_DSA_65" }));
       const p = path.join(raiz, `${plat.nombre}-verify.csr.pem`);
       fs.writeFileSync(p, r.result.csrPem);
-      const out = execFileSync(OPENSSL, ["req", "-in", p, "-verify", "-noout"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"]
-      });
-      expect(`${out}`).toMatch(/verify OK|self-signature verify OK/i);
+      // Se asserta el MENSAJE, no el código de salida: en OpenSSL 3.0
+      // sale 0 aunque la firma esté rota. Ver openssl-compat.ts.
+      expect(opensslVerificaCsr(p)).toMatch(/verify OK/i);
     });
 
     it("reutilizar conserva la MISMA clave alternativa", async () => {
