@@ -191,6 +191,31 @@ export const windowsProvider = {
       // keep unknown
     }
 
+    // ⚠️ Las impresoras se recogen AQUÍ, ANTES del software, y no después.
+    //
+    // El bloque de software de abajo tiene un `return` temprano cuando no hay
+    // cambios —el caso normal en una flota estable—, así que con las
+    // impresoras detrás la función salía sin ellas y el colector NI SIQUIERA
+    // se ejecutaba. Medido el 07-sep: CERO equipos Windows con impresoras en
+    // los cuatro tenants, con agentes 1.1.54 a 1.1.61, mientras los macOS del
+    // mismo tenant y la misma versión sí las reportaban. Los tres `return` de
+    // este colector las llevan ahora.
+    //
+    // macOS y Linux ya lo hacían así, y el comentario que lo explica lleva
+    // meses en macos.ts. Esta es la misma lección, aprendida dos veces.
+    //
+    // Su propio try/catch: un fallo leyendo impresoras no puede envenenar el
+    // resto del namespace AMP.
+    let printers = emptyPrinterInventory();
+    try {
+      const raw = await collectWindowsPrinters(ctx);
+      printers = buildPrinterInventoryWithBaseline(raw);
+    } catch (err: any) {
+      ctx.logger?.warn?.("[printers] collection failed, shipping empty inventory", {
+        error: err?.message || String(err)
+      });
+    }
+
     try {
       const result = await collectWindowsSoftwareInventory(ctx);
       // ensure typing
@@ -208,6 +233,7 @@ export const windowsProvider = {
         return {
           hardware: base.hardware,
           security,
+          printers,
           software: {
             count: 0,
             items: [],
@@ -312,7 +338,8 @@ export const windowsProvider = {
           return {
             hardware: base.hardware,
             security,
-            software
+            software,
+            printers
           };
         }
       }
@@ -330,20 +357,6 @@ export const windowsProvider = {
 
     } catch {
       // keep empty
-    }
-
-    // Printers — independent of software/security so we wrap in its
-    // own try/catch. A printer-collection failure should never
-    // poison the rest of the AMP namespace; we just ship an empty
-    // (hasChanges=false) PrinterInventory and move on.
-    let printers = emptyPrinterInventory();
-    try {
-      const raw = await collectWindowsPrinters(ctx);
-      printers = buildPrinterInventoryWithBaseline(raw);
-    } catch (err: any) {
-      ctx.logger?.warn?.("[printers] collection failed, shipping empty inventory", {
-        error: err?.message || String(err)
-      });
     }
 
     return {

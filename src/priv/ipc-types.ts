@@ -10,6 +10,10 @@ export type PrivSvcMethod =
   | "ping"
   | "identity"
   | "software.inventory"
+  // Faltaba en la union: el metodo lleva en el Router del PrivSvc desde
+  // 1.1.18 y el agente lo llama, pero el tipo nunca lo supo — y sin entrada
+  // en el mapa de presupuestos heredaba el default de 8s.
+  | "printer.inventory"
   | "security.compliance"
   | "patch.scan"
   | "patch.install"
