@@ -753,7 +753,7 @@ export function sanitizeLinuxProbes(raw: unknown): string[] {
   return out;
 }
 
-export const MACOS_PROBE_KINDS = ["pref", "pmset", "launchctl", "systemsetup", "mac", "authdb", "file", "files", "lines"] as const;
+export const MACOS_PROBE_KINDS = ["pref", "pmset", "launchctl", "systemsetup", "mac", "authdb", "file", "files", "lines", "userpref", "profile"] as const;
 
 /** Sondas de macOS: como las de Linux, pero la clave admite espacios
  *  (nombres de preferencia como "Siri Data Sharing Opt-In Status"). */

@@ -21,14 +21,20 @@
 //                        authenticate-session-owner
 //   file / files / lines igual que en Linux
 //
+// Fase 5 (macos-system-probes.ts): userpref.<domain>:<key> por usuario
+// local, profile.<Key> de los perfiles de configuración instalados, y
+// mac.timemachine|hints|homefolders|wwapps|wwsystem|wwlibrary|volumes|
+// policybanner|sleep|touchid|locationclients|fulldiskaccess.
+//
 // Claves con punto viajan con "~" (com~apple~screensaver). La evidencia se
 // indexa por la clave tal cual llegó. Un valor que no existe se omite (el
 // catálogo decide con onMissing); lo que no se pudo leer va a `errors`.
 
 import * as fsDefault from "fs";
 import * as pathMod from "path";
+import * as sys from "./macos-system-probes";
 
-export type ExecFn = (bin: string, args: string[], input?: string) => Promise<{ stdout: string; stderr: string; code: number | null }>;
+export type ExecFn = (bin: string, args: string[], input?: string, timeoutMs?: number) => Promise<{ stdout: string; stderr: string; code: number | null }>;
 
 export interface MacProbeDeps {
   readFile(p: string): string | null;
@@ -39,10 +45,11 @@ export interface MacProbeDeps {
   groupName(gid: number): string | null;
 }
 
-export const MAC_PROBE_KINDS = ["pref", "pmset", "launchctl", "systemsetup", "mac", "authdb", "file", "files", "lines"] as const;
+export const MAC_PROBE_KINDS = ["pref", "pmset", "launchctl", "systemsetup", "mac", "authdb", "file", "files", "lines", "userpref", "profile"] as const;
 export type MacProbeKind = (typeof MAC_PROBE_KINDS)[number];
-export const SYSTEMSETUP_FLAGS = new Set(["getremotelogin", "getremoteappleevents", "getusingnetworktime", "getnetworktimeserver", "getwakeonnetworkaccess", "getcomputersleep", "getdisplaysleep", "getrestartfreeze"]);
-export const MAC_CMDS = new Set(["csrutil", "spctl", "fdesetup", "amfi", "screenlock", "pwpolicy", "cupsctl", "xprotect", "rootaccount", "ardagent", "sudo", "smbguest", "nfsd", "ssv"]);
+export const SYSTEMSETUP_FLAGS = new Set(["getremotelogin", "getremoteappleevents", "getusingnetworktime", "getnetworktimeserver", "getwakeonnetworkaccess", "getcomputersleep", "getdisplaysleep", "getrestartfreeze", "getcomputername", "getlocalsubnetname"]);
+export const MAC_CMDS = new Set(["csrutil", "spctl", "fdesetup", "amfi", "screenlock", "pwpolicy", "cupsctl", "xprotect", "rootaccount", "ardagent", "sudo", "smbguest", "nfsd", "ssv",
+  "timemachine", "hints", "homefolders", "wwapps", "wwsystem", "wwlibrary", "volumes", "policybanner", "sleep", "touchid", "locationclients", "fulldiskaccess"]);
 
 export function decodeKey(k: string): string {
   return k.replace(/~/g, ".");
@@ -144,8 +151,13 @@ export function parsePwpolicy(stdout: string): Record<string, number | boolean> 
   if (ml) out.minLength = Number(ml[1]);
   const mn = stdout.match(/<key>minimumLength<\/key>\s*<integer>(\d+)</);
   if (mn) out.minLength = Number(mn[1]);
-  out.requiresAlpha = /policyAttributePassword matches '[^']*\[A-Za-z\]|minimumAlphaCharacters/.test(stdout);
-  out.requiresNumeric = /policyAttributePassword matches '[^']*\[0-9\]|minimumNumericCharacters/.test(stdout);
+  const minAtLeast1 = (key: string) => { const m = stdout.match(new RegExp(`<key>${key}</key>\\s*<integer>(\\d+)</`)); return !!m && Number(m[1]) >= 1; };
+  const alphaNumPhrase = /Contain at least one number and one alphabetic character/.test(stdout);
+  // CIS 5.2.3–5.2.6: la frase de la política, el parámetro minimumX o la regex del atributo.
+  out.requiresAlpha = alphaNumPhrase || minAtLeast1("minimumLetters") || minAtLeast1("minimumAlphaCharacters") || /policyAttributePassword matches '[^']*\[A-Za-z\]/.test(stdout);
+  out.requiresNumeric = alphaNumPhrase || minAtLeast1("minimumNumericCharacters") || /policyAttributePassword matches '[^']*\[0-9\]/.test(stdout);
+  out.requiresSpecial = minAtLeast1("minimumSymbols") || /policyAttributePassword matches '\(\.\*\[\^a-zA-Z0-9\]\.\*\)\{1,\}'/.test(stdout);
+  out.requiresMixedCase = minAtLeast1("minimumMixedCaseCharacters") || (/\[A-Z\]/.test(stdout) && /\[a-z\]/.test(stdout));
   return out;
 }
 
@@ -218,6 +230,17 @@ async function macCmd(cmd: string, deps: MacProbeDeps): Promise<Record<string, u
     case "smbguest": { const r = await deps.exec("/usr/sbin/sysadminctl", ["-smbGuestAccess", "status"]); return { enabled: /enabled/i.test(r.stdout + r.stderr) && !/disabled/i.test(r.stdout + r.stderr) }; }
     case "nfsd": { const r = await deps.exec("/sbin/nfsd", ["status"]); return { running: /nfsd service is enabled|nfsd is running/i.test(r.stdout) && !/not running/i.test(r.stdout) }; }
     case "ssv": { const r = await deps.exec("/usr/bin/csrutil", ["authenticated-root", "status"]); return { enabled: /enabled/i.test(r.stdout) && !/disabled/i.test(r.stdout) }; }
+    // ── Fase 5 ──
+    case "timemachine": { const r = await deps.exec("/usr/bin/defaults", ["read", "/Library/Preferences/com.apple.TimeMachine.plist"]); return sys.parseTimeMachine(r.stdout); }
+    case "hints": { const r = await deps.exec("/usr/bin/dscl", [".", "-list", "/Users", "hint"]); return { usersWithHint: sys.parseHints(r.stdout) }; }
+    case "homefolders": return sys.probeHomeFolders(deps);
+    case "wwapps": case "wwsystem": case "wwlibrary": return sys.probeWorldWritable(cmd, deps);
+    case "volumes": return sys.probeVolumes(deps);
+    case "policybanner": return sys.probePolicyBanner(deps);
+    case "sleep": return sys.probeSleep(deps);
+    case "touchid": return sys.probeTouchId(sys.localUsers(deps), deps);
+    case "locationclients": return sys.probeLocationClients(deps);
+    case "fulldiskaccess": return sys.probeFullDiskAccess(deps);
     default: return null;
   }
 }
@@ -245,11 +268,24 @@ export async function collectMacProbes(probes: string[], deps: MacProbeDeps): Pr
 
   let pmset: Record<string, number | string> | null = null;
   let launch: Set<string> | null = null;
+  let users: sys.LocalUser[] | null = null;
+  let profiles: Record<string, unknown> | null = null;
   for (const { probe, parsed: { kind, key } } of parsed) {
     if (kind === "pref") continue;
     const bucket = (out[kind] ??= {});
     try {
       switch (kind) {
+        case "userpref": {
+          const v = await sys.probeUserpref(key, (users ??= sys.localUsers(deps)), deps);
+          if (v) bucket[key] = v;
+          break;
+        }
+        case "profile": {
+          profiles ??= await sys.loadProfiles(deps);
+          const v = profiles[decodeKey(key)];
+          if (v !== undefined && v !== null) bucket[key] = v;
+          break;
+        }
         case "pmset": {
           pmset ??= parsePmsetCustom((await deps.exec("/usr/bin/pmset", ["-g", "custom"])).stdout);
           if (pmset[key] !== undefined) bucket[key] = pmset[key];
