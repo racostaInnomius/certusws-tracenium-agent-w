@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { collectLinuxProbes, parseProbe, type ProbeDeps } from "../../privsvc/linux/src/linux-probes";
 import {
-  bannerIssues, classifyFindOutput, localMountsForScan, parseDconfValue, parseIni, parsePasswdStatus, parseProcNet, parseSudoVersion,
+  bannerIssues, classifyFindOutput, localMountsForScan, parseDconfValue, parseIni, parsePasswdStatus, parseProcNet, parseSudoVersion, parseAptConfigDump,
 } from "../../privsvc/linux/src/linux-system-probes";
 
 function deps(over: Partial<ProbeDeps> = {}): ProbeDeps {
@@ -59,6 +59,7 @@ function deps(over: Partial<ProbeDeps> = {}): ProbeDeps {
     "/sys/class/net/wlan0/wireless": st(0o40755), "/etc/aide/aide.conf": st(0o100644),
     "/home/alice/.bashrc": st(0o100644, 1000, 1000), "/home/alice/.bash_history": st(0o100644, 1000, 1000), "/home/alice/.netrc": st(0o100600, 1000, 1000),
     "/home/bob/.profile": st(0o100664, 1001, 0), "/root/.bashrc": st(0o100644),
+    "/home/alice/.ssh": st(0o40755, 1000, 1000), "/home/alice/.config": st(0o40750, 1000, 1000), "/home/bob/.cache": st(0o40775, 1001, 1001),
     "/etc/apt/sources.list.d/ubuntu.sources": st(0o100644), "/etc/apt/sources.list.d/vendor.list": st(0o100644),
   };
   const dirs: Record<string, string[]> = {
@@ -82,6 +83,7 @@ function deps(over: Partial<ProbeDeps> = {}): ProbeDeps {
       if (bin.endsWith("/find")) return { stdout: "f\t666\t0\t0\t/var/tmp/ww.txt\nd\t1777\t0\t0\t/tmp\nd\t777\t0\t0\t/opt/open\nf\t644\t4242\t0\t/opt/orphan\nf\t4755\t0\t0\t/usr/bin/sudo\nf\t2755\t0\t0\t/usr/bin/wall\n", stderr: "find: '/x': Permission denied\n", code: 0 };
       if (bin.endsWith("/auditctl")) return args[0] === "-l" ? { stdout: "-a always,exit -F path=/usr/bin/sudo -F perm=x -k privileged\n", stderr: "", code: 0 } : { stdout: "enabled 2\nfailure 1\n", stderr: "", code: 0 };
       if (bin.endsWith("/sudo")) return { stdout: "Sudo version 1.9.15p5\nAuthentication timestamp timeout: 15.0 minutes\nPassword prompt timeout: 5.0 minutes\n", stderr: "", code: 0 };
+      if (bin.endsWith("/apt-config")) return { stdout: 'APT "";\nAPT::Install-Recommends "0";\nAcquire::AllowInsecureRepositories "0";\nAcquire::Check-Date "true";\nDir "/";\n', stderr: "", code: 0 };
       if (bin.endsWith("/augenrules")) return { stdout: "/usr/sbin/augenrules: No change\n", stderr: "", code: 0 };
       if (bin.endsWith("/sshd")) return { stdout: "banner /etc/issue.net\nkexalgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256\n", stderr: "", code: 0 };
       return { stdout: "", stderr: "", code: 1 };
@@ -223,5 +225,13 @@ describe("collectLinuxProbes — dedicated collectors", () => {
     expect(parseSudoVersion("Authentication timestamp timeout: -1.0 minutes\n").timestampTimeoutMinutes).toBe(-1);
     expect(r.probes.auditd.merged).toMatchObject({ available: true, noChange: true });
     expect(r.probes.listen.all).toMatchObject({ count: 3, nonLoopback: 1 });
+  });
+
+  it("dot directories by stat and apt-config dump", async () => {
+    const r = await collectLinuxProbes(["users.dotdirs", "apt.config"], deps());
+    expect(r.errors).toEqual({});
+    expect(r.probes.users.dotdirs).toMatchObject({ checked: 3, violations: 2, sample: ["alice: .ssh/ mode 0755", "bob: .cache/ mode 0775, group bob"] });
+    expect(r.probes.apt.config).toEqual({ available: true, "APT::Install-Recommends": "0", "Acquire::AllowInsecureRepositories": "0", "Acquire::Check-Date": "true" });
+    expect(parseAptConfigDump('Acquire::AllowWeakRepositories "0";\nDir::Etc "etc";\n')).toEqual({ "Acquire::AllowWeakRepositories": "0" });
   });
 });

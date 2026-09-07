@@ -569,6 +569,8 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   /usr/bin/sudo                                     Ux,
   # augenrules --check: ¿las reglas cargadas son las de rules.d? (6.2.3.30).
   /usr/sbin/augenrules                              ix,
+  # apt-config dump: configuración efectiva de APT (CIS 26.04 1.2.1.12–15).
+  /usr/bin/apt-config                               ix,
   /sbin/augenrules                                  ix,
   /usr/sbin/ufw                                     ix,
   /usr/sbin/iptables                                ix,

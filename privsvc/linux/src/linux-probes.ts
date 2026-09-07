@@ -347,9 +347,11 @@ export async function collectLinuxProbes(probes: string[], deps: ProbeDeps): Pro
         case "users":
           if (key === "audit") bucket[key] = await (usersAudit ??= sys.probeUsersAudit(deps));
           else if (key === "dotfiles") bucket[key] = sys.probeDotfiles(deps);
+          else if (key === "dotdirs") bucket[key] = sys.probeDotdirs(deps);
           break;
         case "apt":
           if (key === "sources") bucket[key] = sys.probeAptSources(deps);
+          else if (key === "config") bucket[key] = await sys.probeAptConfig(deps);
           break;
         case "sudo":
           if (key === "settings") bucket[key] = await sys.probeSudoSettings(deps);

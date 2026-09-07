@@ -808,3 +808,53 @@ export async function probeSudoSettings(deps: ProbeDeps): Promise<Obj> {
   const r = await deps.exec("/usr/bin/sudo", ["-V"]);
   return { available: r.code === 0, ...parseSudoVersion(r.stdout) };
 }
+
+// ── users.dotdirs (CIS 26.04 7.2.11) ─────────────────────────────────
+
+const DOTDIRS_0700 = [".ssh", ".gnupg"];
+const DOTDIRS_0750 = [".config", ".cache", ".local", ".mozilla", ".vim", ".emacs.d", ".pki", ".kube", ".docker", ".aws", ".npm", ".cargo"];
+
+export function probeDotdirs(deps: ProbeDeps): Obj {
+  const passwd = parsePasswd(deps.readFile("/etc/passwd") ?? "");
+  const shells = nonCommentLines(deps.readFile("/etc/shells") ?? "").filter((x) => x.startsWith("/") && !NOLOGIN_RE.test(x));
+  const valid = new Set(shells);
+  const users = passwd.filter((u) => valid.has(u.shell) && u.home.startsWith("/"));
+  const sample: string[] = [];
+  let violations = 0, checked = 0;
+  for (const u of users) {
+    if (!deps.stat(u.home)?.isDir) continue;
+    for (const [names, mask] of [[DOTDIRS_0700, 0o077], [DOTDIRS_0750, 0o027]] as const) {
+      for (const name of names) {
+        const st = deps.stat(pathMod.join(u.home, name));
+        if (!st?.isDir) continue;
+        checked++;
+        const bad: string[] = [];
+        if ((st.mode & mask) !== 0) bad.push(`mode ${modeOctal(st.mode)}`);
+        if (st.uid !== u.uid) bad.push(`owner ${deps.userName(st.uid) ?? st.uid}`);
+        if (st.gid !== u.gid) bad.push(`group ${deps.groupName(st.gid) ?? st.gid}`);
+        if (bad.length) { violations++; if (sample.length < SAMPLE) sample.push(`${u.name}: ${name}/ ${bad.join(", ")}`); }
+      }
+    }
+  }
+  return { users: users.length, checked, violations, sample, knownNamesOnly: true };
+}
+
+// ── apt.config ───────────────────────────────────────────────────────
+//
+// `apt-config dump` es la configuración EFECTIVA (compilada + apt.conf +
+// apt.conf.d), que es lo que CIS 26.04 1.2.1.12–15 mira. Sólo las claves
+// Acquire::* y APT::Install-*; el volcado entero no aporta nada al catálogo.
+
+export function parseAptConfigDump(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const m = line.match(/^\s*((?:Acquire|APT)::[A-Za-z0-9:_-]+)\s+"(.*)";\s*$/);
+    if (m && /^(Acquire::(AllowInsecureRepositories|AllowWeakRepositories|AllowDowngradeToInsecureRepositories|Check-Date|AllowInsecureRepositories)|APT::Install-(Recommends|Suggests))$/.test(m[1])) out[m[1]] = m[2];
+  }
+  return out;
+}
+
+export async function probeAptConfig(deps: ProbeDeps): Promise<Obj> {
+  const r = await deps.exec("/usr/bin/apt-config", ["dump"]);
+  return { available: r.code === 0, ...parseAptConfigDump(r.stdout) };
+}
