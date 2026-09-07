@@ -48,8 +48,6 @@ async function collectWindowsDeviceAndHardware(): Promise<
     si.fsSize().catch(() => [] as any[])
   ]);
 
-  const arch = os.arch() as "x64" | "arm64" | "x86";
-
   return {
     hardware: {
       static: {

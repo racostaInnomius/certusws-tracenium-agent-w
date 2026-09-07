@@ -733,7 +733,7 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
   // macos-probes.ts.
   const requestedProbes = probesFromParams((req as any).params);
   const probed = requestedProbes.length > 0
-    ? await collectMacProbes(requestedProbes, realMacProbeDeps(async (bin, args) => { const r = await run(bin, args, 15000); return { stdout: r.output, stderr: "", code: r.ok ? 0 : 1 }; }))
+    ? await collectMacProbes(requestedProbes, realMacProbeDeps(async (bin, args, _input, timeoutMs) => { const r = await run(bin, args, timeoutMs ?? 15000); return { stdout: r.output, stderr: "", code: r.ok ? 0 : 1 }; }))
     : null;
 
   return success(req.id, {

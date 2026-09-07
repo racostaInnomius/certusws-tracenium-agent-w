@@ -52,6 +52,12 @@ const NON_LINUX = new Set([
   "/usr/bin/stat", // macOS: -f%Su sobre /dev/console (en Linux sería otra sintaxis)
   "/usr/sbin/installer", // macOS: instalador de .pkg
   "/usr/sbin/pkgutil", // macOS: consulta de recibos
+  "/usr/bin/defaults", // macOS: preferencias (fase 5 CIS)
+  "/usr/sbin/diskutil", // macOS: volúmenes APFS/HFS
+  "/usr/sbin/system_profiler", // macOS: perfiles de configuración
+  "/usr/bin/bioutil", // macOS: Touch ID
+  "/usr/bin/sqlite3", // macOS: TCC.db (Full Disk Access)
+  "/usr/bin/profiles", // macOS: estado de enrolamiento MDM
 ]);
 
 const BIN_RE = /"((?:\/usr\/bin|\/usr\/sbin|\/bin|\/sbin)\/[a-zA-Z0-9._-]+)"/g;

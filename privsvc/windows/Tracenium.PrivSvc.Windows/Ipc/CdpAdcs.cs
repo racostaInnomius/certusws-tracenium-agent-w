@@ -12,8 +12,8 @@
 //
 // 1. Comprueba si ESTE equipo es una CA (clave `Active` de CertSvc en el
 //    registro). Si no lo es, lo dice y no ejecuta nada.
-// 2. Ejecuta `certutil -view -csv` acotado por RequestID (incremental) y
-//    con presupuesto de tiempo y de bytes, y devuelve el CSV CRUDO.
+// 2. Ejecuta `certutil -view` (volcado por filas) acotado por RequestId y
+//    con presupuesto de tiempo y de bytes, y devuelve el TEXTO CRUDO.
 //    El parseo va en Node, igual que con los almacenes: el PrivSvc
 //    devuelve bytes, el agente interpreta. Asi un cambio de formato se
 //    arregla en TypeScript, con tests, sin rebuild del MSI.
@@ -24,10 +24,10 @@
 // servicio (SYSTEM), que en un CA server tiene permiso de lectura sobre
 // la base por defecto.
 //
-// ⚠️ NO PROBADO EN UNA CA REAL AL ESCRIBIRLO. Se escribio desde una Mac
-// contra la documentacion de certutil. Lo que puede fallar: el nombre
-// exacto de las columnas en `-out` y la forma del CSV. Por eso el CSV
-// viaja crudo y el parser de Node registra la cabecera que recibio.
+// Sintaxis y cabecera comprobadas contra MSIG-RADIUS-CA el 2026-09-07 en
+// modo csv (que resulto inutil para el binario). El formato exacto del
+// volcado por filas se confirma con la primera lectura real; por eso el
+// texto viaja crudo y el parser de Node registra las etiquetas que vio.
 
 using System.Diagnostics;
 using System.Text;
@@ -39,7 +39,7 @@ public static class CdpAdcs
 {
     public const int HandlerBudgetMs = 90_000;
     // certutil escupe RawCertificate en base64 multilinea: ~2 KB por
-    // certificado. 20 MB son ~8.000 filas, mas que el tope por lectura.
+    // certificado (PEM). 20 MB son ~8.000 filas, mas que el tope por lectura.
     public const int MaxOutputBytes = 20 * 1024 * 1024;
     public const int DefaultMaxRows = 2000;
 
@@ -83,14 +83,19 @@ public static class CdpAdcs
                 RedirectStandardError = true,
                 StandardOutputEncoding = Encoding.UTF8
             };
+            // Sintaxis REAL de certutil (medida en MSIG-RADIUS-CA, 2026-09-07):
+            //   CertUtil [Options] -view [Queue|Log|LogFail|Revoked|...] [csv]
+            // SIN `csv`: en modo CSV las columnas binarias salen como su
+            // tamano («1657 Bytes»), no el certificado. El volcado por filas
+            // ("Row N:" + "  Columna: valor") imprime RawCertificate en PEM.
+            // Sin tabla = Log (emitidos, revocados y fallidos).
             psi.ArgumentList.Add("-view");
-            psi.ArgumentList.Add("-csv");
-            // Incremental por RequestID. Sin `Disposition` en el filtro: se
+            // Incremental por RequestId. Sin `Disposition` en el filtro: se
             // quieren tambien las revocadas (21) y se distingue en Node.
             psi.ArgumentList.Add("-restrict");
-            psi.ArgumentList.Add($"RequestID>{since}");
+            psi.ArgumentList.Add($"RequestId>{since}");
             psi.ArgumentList.Add("-out");
-            psi.ArgumentList.Add("RequestID,Request.Disposition,Request.RequesterName,CertificateTemplate,RawCertificate");
+            psi.ArgumentList.Add("RequestId,Request.Disposition,Request.RequesterName,CertificateTemplate,RawCertificate");
 
             var clock = Stopwatch.StartNew();
             using var proc = Process.Start(psi);
@@ -112,25 +117,19 @@ public static class CdpAdcs
                     truncated = true;
                     break;
                 }
-                sb.Append(line).Append('\n');
-                // Una fila del CSV empieza por un RequestID entre comillas.
-                // Las lineas del base64 no; las de cabecera tampoco.
-                if (line.StartsWith("\"", StringComparison.Ordinal) && line.Length > 2 && char.IsDigit(line[1]))
+                // Cada fila del volcado empieza por "Row N:". Al llegar al
+                // tope se corta ANTES de empezar la siguiente fila, asi la
+                // ultima queda completa (su PEM incluido).
+                if (line.StartsWith("Row ", StringComparison.Ordinal) && line.TrimEnd().EndsWith(":", StringComparison.Ordinal))
                 {
-                    rows += 1;
                     if (rows >= maxRows)
                     {
-                        // Se deja terminar la fila actual (el RawCertificate
-                        // multilinea) leyendo hasta la linea que cierra.
-                        while ((line = proc.StandardOutput.ReadLine()) != null)
-                        {
-                            sb.Append(line).Append('\n');
-                            if (line.EndsWith("\"", StringComparison.Ordinal) && line.Contains("END CERTIFICATE")) break;
-                        }
                         truncated = true;
                         break;
                     }
+                    rows += 1;
                 }
+                sb.Append(line).Append('\n');
             }
             try { if (!proc.HasExited) proc.Kill(true); } catch { /* ya salio */ }
             var stderr = "";
@@ -142,7 +141,7 @@ public static class CdpAdcs
                 isCa = true,
                 caName,
                 sinceRequestId = since,
-                csv = sb.ToString(),
+                dump = sb.ToString(),
                 rows,
                 truncated,
                 elapsedMs = clock.ElapsedMilliseconds,

@@ -293,9 +293,9 @@ export type CdpAdcsReport = {
   sinceRequestId: number;
   lastRequestId: number;
   /** Emisiones nuevas desde el cursor, con su plantilla y solicitante. */
-  issued: Array<CdpCertItem & { requestId: number; disposition: number | null; requester?: string; template?: string }>;
+  issued: Array<CdpCertItem & { requestId: number; disposition: number | null; requester?: string; template?: string; templateOid?: string }>;
   truncated: boolean;
   parseFailures: number;
   /** Que columnas reconocio el parser: si falta una, se ve aqui. */
-  columnsFound: { requestId: boolean; disposition: boolean; requester: boolean; template: boolean; rawCertificate: boolean } | null;
+  columnsFound: { requestId: boolean; disposition: boolean; requester: boolean; template: boolean; rawCertificate: boolean; positional?: boolean } | null;
 };
