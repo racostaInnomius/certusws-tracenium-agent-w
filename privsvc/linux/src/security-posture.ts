@@ -318,11 +318,18 @@ async function collectApparmor(family: string) {
         if (v === "enforce") enforced += 1;
         else if (v === "complain") complain += 1;
       }
+      // CIS 1.3.1.3 también pide que ningún proceso corra sin confinar
+      // teniendo perfil: aa-status --json lo lista con status "unconfined".
+      let unconfined = 0;
+      for (const list of Object.values(parsed?.processes || {})) {
+        if (Array.isArray(list)) for (const pr of list) if (pr?.status === "unconfined") unconfined += 1;
+      }
       return {
         applicable: true,
         enabled: true,
         profilesEnforced: enforced,
         profilesComplain: complain,
+        processesUnconfined: unconfined,
         raw: truncate(r.stdout),
       };
     } catch {
@@ -775,7 +782,7 @@ export async function handleSecurityPosture(req: PrivSvcRequest): Promise<PrivSv
     // bloque, y el catálogo resuelve not_applicable. Ver linux-probes.ts.
     const requestedProbes = probesFromParams((req as any).params);
     const probed = requestedProbes.length > 0
-      ? await collectLinuxProbes(requestedProbes, realProbeDeps((bin, args) => runCheck(bin, args), distro.family as any))
+      ? await collectLinuxProbes(requestedProbes, realProbeDeps((bin, args, timeoutMs) => runCheck(bin, args, timeoutMs), distro.family as any))
       : null;
     const shares = collectShares();
     const mounts = collectMounts();

@@ -23,6 +23,11 @@
 //   sysctl.<key>      /proc/sys/<key con / por .>
 //   sshd.<key>        `sshd -T` (una ejecución para todas las claves)
 //
+// Fase 4 — colectores dedicados (linux-system-probes.ts): users, fs, dconf,
+// ini, listen, net, grub, auditd, aide, banner, proc, sshkeys. Cada uno
+// resume el estado del sistema en campos contables; el kind sigue
+// decidiendo lo único que se toca.
+//
 // ── Claves con punto ─────────────────────────────────────────────────
 //
 // El evaluador del backend parte los paths por ".", así que una clave con
@@ -40,8 +45,9 @@
 
 import * as fsDefault from "fs";
 import * as pathMod from "path";
+import * as sys from "./linux-system-probes";
 
-export type ExecFn = (bin: string, args: string[]) => Promise<{ stdout: string; stderr: string; code: number | null }>;
+export type ExecFn = (bin: string, args: string[], timeoutMs?: number) => Promise<{ stdout: string; stderr: string; code: number | null }>;
 
 export interface ProbeDeps {
   readFile(p: string): string | null;
@@ -55,7 +61,7 @@ export interface ProbeDeps {
   family: "debian" | "rhel" | "suse" | "unknown";
 }
 
-export const PROBE_KINDS = ["kmod", "mount", "unit", "pkg", "file", "files", "conf", "lines", "sysctl", "sshd"] as const;
+export const PROBE_KINDS = ["kmod", "mount", "unit", "pkg", "file", "files", "conf", "lines", "sysctl", "sshd", "users", "fs", "dconf", "ini", "listen", "net", "grub", "auditd", "aide", "banner", "proc", "sshkeys"] as const;
 export type ProbeKind = (typeof PROBE_KINDS)[number];
 
 export function decodeKey(k: string): string {
@@ -261,6 +267,24 @@ export async function collectLinuxProbes(probes: string[], deps: ProbeDeps): Pro
   const errors: Record<string, string> = {};
   let mounts: Map<string, { fstype: string; source: string; options: string[] }> | null = null;
   let sshd: Map<string, string> | null = null;
+  const loadSshd = async (): Promise<Map<string, string>> => {
+    if (sshd) return sshd;
+    const r = await deps.exec("/usr/sbin/sshd", ["-T"]);
+    const m = new Map<string, string>();
+    for (const line of (r.stdout || "").split("\n")) {
+      const t = line.trim();
+      const sp = t.indexOf(" ");
+      if (sp > 0) m.set(t.slice(0, sp).toLowerCase(), t.slice(sp + 1).trim());
+    }
+    sshd = m;
+    return m;
+  };
+  // Fase 4: cachés compartidas entre sondas del mismo kind (una lectura de
+  // dconf, un escaneo de disco, una pasada por passwd).
+  let dconfDb: ReturnType<typeof sys.loadDconf> | null = null;
+  let fsScan: Promise<sys.FsScanResult> | null = null;
+  let usersAudit: Promise<Record<string, unknown>> | null = null;
+  const getFsScan = () => (fsScan ??= sys.probeFsScan(deps));
   for (const probe of probes) {
     const parsed = parseProbe(probe);
     if (!parsed) continue;
@@ -315,21 +339,69 @@ export async function collectLinuxProbes(probes: string[], deps: ProbeDeps): Pro
           break;
         }
         case "sshd": {
-          sshd ??= await (async () => {
-            const r = await deps.exec("/usr/sbin/sshd", ["-T"]);
-            if (!r.stdout) return new Map<string, string>();
-            const m = new Map<string, string>();
-            for (const line of r.stdout.split("\n")) {
-              const t = line.trim();
-              const sp = t.indexOf(" ");
-              if (sp > 0) m.set(t.slice(0, sp).toLowerCase(), t.slice(sp + 1).trim());
-            }
-            return m;
-          })();
-          const v = sshd.get(key.toLowerCase());
+          const v = (await loadSshd()).get(key.toLowerCase());
           if (v !== undefined) bucket[key] = /^-?\d+$/.test(v) ? Number(v) : v;
           break;
         }
+        // ── Fase 4: colectores dedicados ──────────────────────────────
+        case "users":
+          if (key === "audit") bucket[key] = await (usersAudit ??= sys.probeUsersAudit(deps));
+          break;
+        case "fs":
+          if (key === "scan") bucket[key] = await getFsScan();
+          else if (key === "varlog") bucket[key] = sys.probeVarLog(deps);
+          break;
+        case "dconf": {
+          if (key === "profile") { dconfDb ??= sys.loadDconf(deps); bucket[key] = { profiles: dconfDb.profiles, keys: dconfDb.values.size, locks: dconfDb.locks.size }; break; }
+          dconfDb ??= sys.loadDconf(deps);
+          const r = sys.probeDconf(key, dconfDb);
+          if (r) bucket[key] = r;
+          break;
+        }
+        case "ini": {
+          // ini.<file>:<section>:<key> — el fichero puede llevar "~" por ".".
+          const parts = key.split(":");
+          if (parts.length !== 3) break;
+          const t = deps.readFile(decodeKey(parts[0]));
+          if (t === null) break;
+          const v = sys.parseIni(t).get(parts[1].toLowerCase())?.get(parts[2].toLowerCase());
+          if (v !== undefined) bucket[key] = v;
+          break;
+        }
+        case "listen": {
+          const r = sys.probeListen(key, deps);
+          if (r) bucket[key] = r;
+          break;
+        }
+        case "net":
+          if (key === "wireless") bucket[key] = sys.probeWireless(deps);
+          break;
+        case "grub":
+          if (key === "password") bucket[key] = sys.probeGrubPassword(deps);
+          else if (key === "cmdline") bucket[key] = sys.probeGrubCmdline(deps);
+          break;
+        case "auditd":
+          if (key === "privileged") bucket[key] = await sys.probeAuditdPrivileged(deps, (await getFsScan()).suidSgid);
+          else if (key === "immutable") bucket[key] = await sys.probeAuditdImmutable(deps);
+          else if (key === "logfiles") bucket[key] = sys.probeAuditdLogfiles(deps);
+          else if (key === "configfiles") bucket[key] = sys.probeAuditdConfigfiles(deps);
+          else if (key === "tools") bucket[key] = sys.probeAuditdTools(deps);
+          break;
+        case "aide":
+          if (key === "integrity") bucket[key] = sys.probeAideIntegrity(deps);
+          break;
+        case "banner":
+          if (key === "motd") bucket[key] = sys.probeBannerMotd(deps);
+          else if (key === "pam_motd") bucket[key] = sys.probeBannerPamMotd(deps);
+          else if (key === "sshd") bucket[key] = sys.probeBannerSshd((await loadSshd()).get("banner"), deps);
+          else if (key.startsWith("/")) bucket[key] = sys.probeBannerFile(decodeKey(key), deps);
+          break;
+        case "proc":
+          bucket[key] = sys.probeProc(decodeKey(key), deps);
+          break;
+        case "sshkeys":
+          if (key === "host") bucket[key] = sys.probeSshHostKeys(deps);
+          break;
         case "sysctl": {
           const t = deps.readFile("/proc/sys/" + key.replace(/\./g, "/"));
           if (t !== null) {

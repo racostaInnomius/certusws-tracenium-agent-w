@@ -724,7 +724,7 @@ export function sanitizeRegistryUserProbes(raw: unknown): string[] {
 }
 
 /** Kinds de sonda que el PrivSvc de Linux implementa. Cerrada a propósito. */
-export const LINUX_PROBE_KINDS = ["kmod", "mount", "unit", "pkg", "file", "files", "conf", "lines", "sysctl", "sshd"] as const;
+export const LINUX_PROBE_KINDS = ["kmod", "mount", "unit", "pkg", "file", "files", "conf", "lines", "sysctl", "sshd", "users", "fs", "dconf", "ini", "listen", "net", "grub", "auditd", "aide", "banner", "proc", "sshkeys"] as const;
 
 /**
  * Sondas de Linux: `kind.key`. Se rechaza un kind fuera de la lista, un key
