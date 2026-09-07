@@ -12,7 +12,7 @@
 //
 // 1. Comprueba si ESTE equipo es una CA (clave `Active` de CertSvc en el
 //    registro). Si no lo es, lo dice y no ejecuta nada.
-// 2. Ejecuta `certutil -view -csv` acotado por RequestID (incremental) y
+// 2. Ejecuta `certutil -view … csv` acotado por RequestId (incremental) y
 //    con presupuesto de tiempo y de bytes, y devuelve el CSV CRUDO.
 //    El parseo va en Node, igual que con los almacenes: el PrivSvc
 //    devuelve bytes, el agente interpreta. Asi un cambio de formato se
@@ -83,14 +83,19 @@ public static class CdpAdcs
                 RedirectStandardError = true,
                 StandardOutputEncoding = Encoding.UTF8
             };
+            // Sintaxis REAL de certutil (medida en MSIG-RADIUS-CA, 2026-09-07):
+            //   CertUtil [Options] -view [Queue|Log|LogFail|Revoked|...] [csv]
+            // `csv` es un argumento POSICIONAL al final, no una opcion:
+            // `-csv` devuelve "Unknown arg" y ninguna fila. Sin tabla = Log
+            // (emitidos, revocados y fallidos). Los -out van ANTES del csv.
             psi.ArgumentList.Add("-view");
-            psi.ArgumentList.Add("-csv");
-            // Incremental por RequestID. Sin `Disposition` en el filtro: se
+            // Incremental por RequestId. Sin `Disposition` en el filtro: se
             // quieren tambien las revocadas (21) y se distingue en Node.
             psi.ArgumentList.Add("-restrict");
-            psi.ArgumentList.Add($"RequestID>{since}");
+            psi.ArgumentList.Add($"RequestId>{since}");
             psi.ArgumentList.Add("-out");
-            psi.ArgumentList.Add("RequestID,Request.Disposition,Request.RequesterName,CertificateTemplate,RawCertificate");
+            psi.ArgumentList.Add("RequestId,Request.Disposition,Request.RequesterName,CertificateTemplate,RawCertificate");
+            psi.ArgumentList.Add("csv");
 
             var clock = Stopwatch.StartNew();
             using var proc = Process.Start(psi);

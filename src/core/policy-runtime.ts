@@ -105,7 +105,7 @@ export type RuntimePolicy = {
      * reportarla. Opt-in: es una lectura grande y solo tiene sentido en
      * un CA server.
      */
-    adcs?: { enabled?: boolean; maxPerScan?: number };
+    adcs?: { enabled?: boolean; maxPerScan?: number; /** Hostnames de los CA servers: solo ellos leen. Vacio = apagado. */ hosts?: string[] };
   };
   /** Remote Control tuning that isn't a simple on/off capability gate.
    *  The `features.remote*` flags decide WHETHER a capability runs; this
@@ -889,10 +889,24 @@ export class PolicyRuntime extends EventEmitter {
    * seria inutil (demasiado estrecho) o un escaneo recursivo de algo
    * grande en cada endpoint de la flota.
    */
-  /** Conector AD CS: si leer la base de la CA, y cuantas filas por escaneo. */
-  getCdpAdcs(): { enabled: boolean; maxPerScan: number } {
+  /**
+   * Conector AD CS: en que equipos leer la base de la CA (`hosts`, por
+   * nombre) y cuantas filas por escaneo. Sin hosts esta APAGADO aunque
+   * `enabled` sea true: un toggle a nivel de tenant para algo que solo
+   * aplica a los servidores con rol de CA era la forma equivocada
+   * (repaso 2026-09-07). `enabled:false` explicito sigue apagando.
+   */
+  getCdpAdcs(): { enabled: boolean; maxPerScan: number; hosts: string[] } {
     const a = this.policy.cdp?.adcs;
-    return { enabled: a?.enabled === true, maxPerScan: Number(a?.maxPerScan) || 2000 };
+    const hosts = Array.from(
+      new Set(
+        (Array.isArray(a?.hosts) ? a!.hosts : [])
+          .filter((h): h is string => typeof h === "string")
+          .map((h) => h.trim().toLowerCase())
+          .filter((h) => h.length > 0 && h.length <= 253)
+      )
+    ).slice(0, 50);
+    return { enabled: a?.enabled !== false && hosts.length > 0, maxPerScan: Number(a?.maxPerScan) || 2000, hosts };
   }
 
   /** Objetivos remotos ya saneados, como pares host/port. */
@@ -1101,8 +1115,9 @@ export class PolicyRuntime extends EventEmitter {
       certFilePaths: sanitizeJavaKeystorePaths(policy.cdp?.certFilePaths, this.logger),
       probeTargets: sanitizeProbeTargets(policy.cdp?.probeTargets, this.logger),
       adcs: {
-        enabled: policy.cdp?.adcs?.enabled === true,
-        maxPerScan: Math.min(Math.max(Number(policy.cdp?.adcs?.maxPerScan) || 2000, 50), 5000)
+        enabled: policy.cdp?.adcs?.enabled !== false,
+        maxPerScan: Math.min(Math.max(Number(policy.cdp?.adcs?.maxPerScan) || 2000, 50), 5000),
+        hosts: Array.isArray(policy.cdp?.adcs?.hosts) ? policy.cdp.adcs.hosts.filter((h: unknown) => typeof h === "string").slice(0, 50) : []
       }
     };
     // rcp.file confinement. Path lists get the same hard sanitation as

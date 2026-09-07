@@ -17,7 +17,7 @@ vi.mock("../../src/domain/cdp-adcs-repo", () => ({
   writeAdcsCursor: (ca: string, id: number) => cursors.set(ca, id)
 }));
 
-import { collectAdcs } from "../../src/plugins/cdp/providers/adcs";
+import { collectAdcs, hostMatches } from "../../src/plugins/cdp/providers/adcs";
 
 const PEM_BODY = FIXTURE_CERT.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").trim();
 const HEADER = `"Request ID","Request Disposition","Requester Name","Certificate Template","Binary Certificate"`;
@@ -111,22 +111,39 @@ describe("parseCertutilCsv", () => {
 
 describe("collectAdcs", () => {
   beforeEach(() => cursors.clear());
-  const ctx = (enabled: boolean, log: any[] = []) =>
+  // La policy nombra los CA servers; este equipo se llama MSIG-RADIUS-CA.
+  const HOSTS = ["msig-radius-ca"];
+  const ctx = (enabled: boolean, log: any[] = [], hosts: string[] = HOSTS) =>
     ({
       logger: { info: (...a: any[]) => log.push(["info", ...a]), warn: (...a: any[]) => log.push(["warn", ...a]) },
-      policyRuntime: { getCdpAdcs: () => ({ enabled, maxPerScan: 2000 }) },
+      policyRuntime: { getCdpAdcs: () => ({ enabled, maxPerScan: 2000, hosts }) },
       enrollment: { tenantId: "T1", deviceId: "D1" }
     }) as any;
+  const ME = { hostname: "MSIG-RADIUS-CA" };
 
   it("policy apagada → no llama al PrivSvc", async () => {
     let calls = 0;
-    const r = await collectAdcs(ctx(false), { call: async () => (calls++, { ok: true }) });
+    const r = await collectAdcs(ctx(false), { ...ME, call: async () => (calls++, { ok: true }) });
     expect(r).toBeUndefined();
     expect(calls).toBe(0);
   });
 
+  it("⭐ este equipo no esta en la lista de CAs → ni se pregunta al PrivSvc", async () => {
+    let calls = 0;
+    const r = await collectAdcs(ctx(true, [], ["ca02.corp.example"]), { hostname: "WS-JPACHECO", call: async () => (calls++, { ok: true }) });
+    expect(r).toBeUndefined();
+    expect(calls).toBe(0);
+  });
+
+  it("el nombre casa en NetBIOS o FQDN, sin mayusculas", () => {
+    expect(hostMatches(["msig-radius-ca"], "MSIG-RADIUS-CA.corp.example")).toBe(true);
+    expect(hostMatches(["MSIG-RADIUS-CA.corp.example"], "msig-radius-ca")).toBe(true);
+    expect(hostMatches(["ca02"], "msig-radius-ca")).toBe(false);
+    expect(hostMatches([], "msig-radius-ca")).toBe(false);
+  });
+
   it("no es CA → bloque isCa:false, sin emisiones", async () => {
-    const r = await collectAdcs(ctx(true), { call: async () => ({ ok: true, result: { isCa: false } }) });
+    const r = await collectAdcs(ctx(true), { ...ME, call: async () => ({ ok: true, result: { isCa: false } }) });
     expect(r).toEqual(expect.objectContaining({ isCa: false, caName: null, issued: [] }));
   });
 
@@ -134,6 +151,7 @@ describe("collectAdcs", () => {
     cursors.set("*", 100);
     const params: any[] = [];
     const r = await collectAdcs(ctx(true), {
+      ...ME,
       call: async (p) => (params.push(p), { ok: true, result: { isCa: true, caName: "MSIG-RADIUS-CA", csv: CSV, rows: 4, truncated: false } })
     });
     expect(params[0]).toEqual({ sinceRequestId: 100, maxRows: 2000 });
@@ -149,6 +167,7 @@ describe("collectAdcs", () => {
   it("cabecera no reconocida → warn con la cabecera, cursor intacto", async () => {
     const log: any[] = [];
     const r = await collectAdcs(ctx(true, log), {
+      ...ME,
       call: async () => ({ ok: true, result: { isCa: true, caName: "CA", csv: `"Foo","Bar"\n"1","2"\n`, stderr: "" } })
     });
     expect(r?.issued).toEqual([]);
@@ -157,14 +176,14 @@ describe("collectAdcs", () => {
   });
 
   it("error del PrivSvc → undefined (fallo blando)", async () => {
-    const r = await collectAdcs(ctx(true), { call: async () => ({ ok: false, error: { code: "adcs_read_failed", message: "x" } }) });
+    const r = await collectAdcs(ctx(true), { ...ME, call: async () => ({ ok: false, error: { code: "adcs_read_failed", message: "x" } }) });
     expect(r).toBeUndefined();
   });
 
   it("tope de policy acotado a [50, 5000]", async () => {
     const params: any[] = [];
-    const c = { ...ctx(true), policyRuntime: { getCdpAdcs: () => ({ enabled: true, maxPerScan: 99999 }) } };
-    await collectAdcs(c, { call: async (p) => (params.push(p), { ok: true, result: { isCa: false } }) });
+    const c = { ...ctx(true), policyRuntime: { getCdpAdcs: () => ({ enabled: true, maxPerScan: 99999, hosts: HOSTS }) } };
+    await collectAdcs(c, { ...ME, call: async (p) => (params.push(p), { ok: true, result: { isCa: false } }) });
     expect(params[0].maxRows).toBe(5000);
   });
 });

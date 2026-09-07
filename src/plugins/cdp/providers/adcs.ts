@@ -21,6 +21,7 @@
 // en SQLite) y con tope por escaneo. El primer escaneo trae los ultimos
 // N; el resto llega en escaneos sucesivos, hasta ponerse al dia.
 
+import os from "os";
 import type { AgentContext } from "../../../core/agent-context";
 import type { CdpAdcsReport } from "../../../domain/cdp-types";
 import { parseCertutilCsv } from "../adcs-csv";
@@ -29,11 +30,31 @@ import { readAdcsCursor, writeAdcsCursor } from "../../../domain/cdp-adcs-repo";
 type Options = {
   /** Test seam. */
   call?: (params: { sinceRequestId: number; maxRows: number }) => Promise<any>;
+  /** Test seam: el nombre de este equipo. */
+  hostname?: string;
 };
+
+/**
+ * La policy nombra los CA servers; solo ellos leen. Casa el nombre NetBIOS
+ * con el FQDN en las dos direcciones («msig-radius-ca» ≡
+ * «msig-radius-ca.corp.example»), sin mayusculas.
+ */
+export function hostMatches(hosts: string[], hostname: string): boolean {
+  const me = String(hostname || "").trim().toLowerCase();
+  if (!me) return false;
+  const meShort = me.split(".")[0];
+  return hosts.some((h) => {
+    const x = String(h || "").trim().toLowerCase();
+    if (!x) return false;
+    return x === me || x === meShort || x.split(".")[0] === me || x.split(".")[0] === meShort;
+  });
+}
 
 export async function collectAdcs(ctx: AgentContext, options: Options = {}): Promise<CdpAdcsReport | undefined> {
   const cfg = ctx.policyRuntime.getCdpAdcs?.();
   if (!cfg?.enabled) return undefined;
+  // Este equipo no esta en la lista de CAs: ni se pregunta al PrivSvc.
+  if (!hostMatches(cfg.hosts ?? [], options.hostname ?? os.hostname())) return undefined;
   const maxRows = Math.min(Math.max(Number(cfg.maxPerScan) || 2000, 50), 5000);
 
   const call =
