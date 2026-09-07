@@ -54,10 +54,6 @@ jobs:
       # los cuatro, restore incluido. Por eso no lleva caché de paquetes:
       # montarla no lo bajó (16 s vs 20 s), y sería una pieza más que
       # mantener.
-      #
-      # Es solo COMPILAR. Las 127 pruebas de C# siguen sin correr en el CI
-      # —hoy no las corre nadie más que quien las lanza a mano—; eso es
-      # otro hueco y se cierra aparte.
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -71,11 +67,13 @@ jobs:
           # final. Pararse en el primero escondería que la misma lista corta
           # rompió también a los demás — que es justo lo que pasó: cayeron
           # ScreenCap y la sonda a la vez.
+          # `Tracenium.PrivSvc.Tests` no está en la lista: lo construye el
+          # paso siguiente al correrlo. Meterlo aquí sería compilarlo dos
+          # veces y, peor, dejar dos sitios que actualizar.
           rotos=""
           for p in \
             privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj \
             privsvc/windows/Tracenium.ScreenCap/Tracenium.ScreenCap.csproj \
-            privsvc/windows/Tracenium.PrivSvc.Tests/Tracenium.PrivSvc.Tests.csproj \
             experiments/win-session-probe/win-session-probe.csproj
           do
             echo "── $p"
@@ -85,6 +83,27 @@ jobs:
             for p in $rotos; do echo "::error::no compila: $p"; done
             exit 1
           fi
+
+      # ── Las 127 pruebas de C#, que hasta hoy no corrían en ningún sitio ──
+      #
+      # Existían desde hace meses y sólo las veía quien las lanzaba a mano:
+      # ni el job de test ni el Release las tocaban. Una suite que no corre
+      # sola es documentación, no una red.
+      #
+      # Corre en ubuntu porque está escrita para eso: el .csproj de pruebas
+      # tiene TFM `net8.0` a secas —sin `-windows`— e incluye a mano sólo
+      # las partes que no llaman a Win32. Lo que sí lo llama (DPAPI, el
+      # registro, la captura) se queda fuera a propósito. Un `[DllImport]`
+      # sólo falla al INVOCARLO, y estas pruebas no invocan: miden formas y
+      # parsean texto.
+      #
+      # Comprobado antes de añadirlo, dentro de `dotnet/sdk:8.0`: 127/127 en
+      # 323 ms, y muerde — un campo de más en `DXGI_OUTDUPL_FRAME_INFO`
+      # pone 2 en rojo (el tamaño en memoria y la posición del puntero),
+      # que es justo el fallo que en Windows no da excepción sino un
+      # proceso caído más tarde y en otro sitio.
+      - name: Test .NET (PrivSvc)
+        run: dotnet test privsvc/windows/Tracenium.PrivSvc.Tests/Tracenium.PrivSvc.Tests.csproj --nologo -v minimal
 
       # La cobertura de exec del perfil la comprueba un test de vitest
       # (test/packaging/apparmor-exec-coverage.test.ts), que corre en el paso
