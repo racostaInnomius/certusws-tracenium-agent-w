@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { collectLinuxProbes, parseProbe, type ProbeDeps } from "../../privsvc/linux/src/linux-probes";
 import {
-  bannerIssues, classifyFindOutput, localMountsForScan, parseDconfValue, parseIni, parsePasswdStatus, parseProcNet,
+  bannerIssues, classifyFindOutput, localMountsForScan, parseDconfValue, parseIni, parsePasswdStatus, parseProcNet, parseSudoVersion,
 } from "../../privsvc/linux/src/linux-system-probes";
 
 function deps(over: Partial<ProbeDeps> = {}): ProbeDeps {
@@ -40,6 +40,9 @@ function deps(over: Partial<ProbeDeps> = {}): ProbeDeps {
     "/proc/100/status": "Name:\tchronyd\nUid:\t123\t123\t123\t123\n",
     "/proc/101/status": "Name:\tchronyd\nUid:\t0\t0\t0\t0\n",
     "/sys/class/net/wlan0/operstate": "up\n",
+    "/etc/apt/sources.list": "# stub only\n",
+    "/etc/apt/sources.list.d/ubuntu.sources": "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n",
+    "/etc/apt/sources.list.d/vendor.list": "deb https://pkg.example.com stable main\n",
   };
   const st = (mode: number, uid = 0, gid = 0) => ({ mode, uid, gid, isDir: (mode & 0o170000) === 0o040000, isFile: (mode & 0o170000) === 0o100000 });
   const stats: Record<string, ReturnType<typeof st>> = {
@@ -54,13 +57,16 @@ function deps(over: Partial<ProbeDeps> = {}): ProbeDeps {
     "/var/log": st(0o40755), "/var/log/syslog": st(0o100640, 0, 4), "/var/log/lastlog": st(0o100664, 0, 43), "/var/log/app.log": st(0o100666, 0, 0), "/var/log/journal": st(0o40755), "/var/log/journal/system.journal": st(0o100640, 0, 190),
     "/etc/ssh/ssh_host_ed25519_key": st(0o100600), "/etc/ssh/ssh_host_ed25519_key.pub": st(0o100644), "/etc/ssh/ssh_host_rsa_key": st(0o100644, 0, 0),
     "/sys/class/net/wlan0/wireless": st(0o40755), "/etc/aide/aide.conf": st(0o100644),
+    "/home/alice/.bashrc": st(0o100644, 1000, 1000), "/home/alice/.bash_history": st(0o100644, 1000, 1000), "/home/alice/.netrc": st(0o100600, 1000, 1000),
+    "/home/bob/.profile": st(0o100664, 1001, 0), "/root/.bashrc": st(0o100644),
+    "/etc/apt/sources.list.d/ubuntu.sources": st(0o100644), "/etc/apt/sources.list.d/vendor.list": st(0o100644),
   };
   const dirs: Record<string, string[]> = {
     "/etc/profile.d": [], "/etc/dconf/db": ["gdm.d", "local.d"], "/etc/dconf/db/gdm.d": ["00-login", "locks"], "/etc/dconf/db/gdm.d/locks": ["00-login"], "/etc/dconf/profile": ["gdm"],
     "/etc/audit": ["auditd.conf", "rules.d"], "/etc/audit/rules.d": ["50-priv.rules", "99-finalize.rules"], "/var/log/audit": ["audit.log", "audit.log.1"],
     "/var/log": ["syslog", "lastlog", "app.log", "journal", "audit"], "/var/log/journal": ["system.journal"],
     "/etc/ssh": ["ssh_host_ed25519_key", "ssh_host_ed25519_key.pub", "ssh_host_rsa_key", "sshd_config"], "/proc": ["100", "101", "self"], "/sys/class/net": ["lo", "eth0", "wlan0"],
-    "/etc/aide/aide.conf.d": [], "/etc/motd.d": [],
+    "/etc/aide/aide.conf.d": [], "/etc/motd.d": [], "/etc/apt/sources.list.d": ["ubuntu.sources", "vendor.list"],
   };
   const users: Record<number, string> = { 0: "root", 1: "daemon", 900: "svc", 1000: "alice", 1001: "bob", 123: "_chrony" };
   const groups: Record<number, string> = { 0: "root", 4: "adm", 42: "shadow", 43: "utmp", 190: "systemd-journal", 1000: "alice", 1001: "bob" };
@@ -75,6 +81,8 @@ function deps(over: Partial<ProbeDeps> = {}): ProbeDeps {
       if (bin.endsWith("/bash")) return { stdout: "/usr/local/sbin:/usr/bin::/nope:.", stderr: "", code: 0 };
       if (bin.endsWith("/find")) return { stdout: "f\t666\t0\t0\t/var/tmp/ww.txt\nd\t1777\t0\t0\t/tmp\nd\t777\t0\t0\t/opt/open\nf\t644\t4242\t0\t/opt/orphan\nf\t4755\t0\t0\t/usr/bin/sudo\nf\t2755\t0\t0\t/usr/bin/wall\n", stderr: "find: '/x': Permission denied\n", code: 0 };
       if (bin.endsWith("/auditctl")) return args[0] === "-l" ? { stdout: "-a always,exit -F path=/usr/bin/sudo -F perm=x -k privileged\n", stderr: "", code: 0 } : { stdout: "enabled 2\nfailure 1\n", stderr: "", code: 0 };
+      if (bin.endsWith("/sudo")) return { stdout: "Sudo version 1.9.15p5\nAuthentication timestamp timeout: 15.0 minutes\nPassword prompt timeout: 5.0 minutes\n", stderr: "", code: 0 };
+      if (bin.endsWith("/augenrules")) return { stdout: "/usr/sbin/augenrules: No change\n", stderr: "", code: 0 };
       if (bin.endsWith("/sshd")) return { stdout: "banner /etc/issue.net\nkexalgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256\n", stderr: "", code: 0 };
       return { stdout: "", stderr: "", code: 1 };
     },
@@ -144,6 +152,7 @@ describe("collectLinuxProbes — dedicated collectors", () => {
     expect(u.rootPasswordStatus).toBe("P");
     expect(u.inactiveDefault).toBe(45);
     expect(u.inactiveOver45).toEqual(["svc"]);
+    expect(u.minDaysZero).toEqual(["root", "svc", "alice", "toor", "orphan"]);
     expect(u.lastChangeInFuture).toEqual(["alice"]);
     expect(u.homeIssues).toEqual([{ user: "svc", issue: "owner:root" }, { user: "alice", issue: "mode:0755" }, { user: "orphan", issue: "missing" }]);
     expect(u.tmout).toMatchObject({ configured: true, value: 600, readonly: true, exported: true });
@@ -201,5 +210,18 @@ describe("collectLinuxProbes — dedicated collectors", () => {
     expect(r.probes.auditd.logfiles).toMatchObject({ dir: "/var/log/audit", exists: true, dirMode: "0750", files: 2, worstMode: "0640", nonRootOwner: 0, groupNotRootAdm: 0 });
     expect(r.probes.auditd.configfiles).toEqual({ count: 3, worstMode: "0644", nonRootOwner: 0, nonRootGroup: 1 });
     expect(r.probes.auditd.tools).toMatchObject({ present: 4, missing: ["autrace", "augenrules"], worstMode: "0775", nonRootGroup: 1 });
+  });
+
+  it("group C + A extras: dotfiles by stat, apt sources, sudo -V, augenrules, listen.all", async () => {
+    const r = await collectLinuxProbes(["users.dotfiles", "apt.sources", "sudo.settings", "auditd.merged", "listen.all"], deps());
+    expect(r.errors).toEqual({});
+    // alice: .bash_history 0644 (>0600) y .netrc existe; bob: .profile 0664 y grupo root ≠ primario (0 es su gid → ok grupo); root sin problemas.
+    expect(r.probes.users.dotfiles).toMatchObject({ violations: 3, knownNamesOnly: true });
+    expect((r.probes.users.dotfiles as any).sample).toEqual(["alice: .netrc exists", "alice: .bash_history mode 0644", "bob: .profile mode 0664"]);
+    expect(r.probes.apt.sources).toEqual({ files: 2, withoutSignedBy: ["/etc/apt/sources.list.d/vendor.list"] });
+    expect(r.probes.sudo.settings).toMatchObject({ available: true, timestampTimeoutMinutes: 15, version: "1.9.15p5" });
+    expect(parseSudoVersion("Authentication timestamp timeout: -1.0 minutes\n").timestampTimeoutMinutes).toBe(-1);
+    expect(r.probes.auditd.merged).toMatchObject({ available: true, noChange: true });
+    expect(r.probes.listen.all).toMatchObject({ count: 3, nonLoopback: 1 });
   });
 });

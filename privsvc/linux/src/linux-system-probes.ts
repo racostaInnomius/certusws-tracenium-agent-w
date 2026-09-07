@@ -69,8 +69,8 @@ export function parseGroup(text: string): GroupEntry[] {
 }
 
 /** `passwd -S -a`: `name status date min max warn inactive`. status P|L|NP. */
-export function parsePasswdStatus(text: string): Map<string, { status: string; changed: Date | null; inactive: number | null }> {
-  const out = new Map<string, { status: string; changed: Date | null; inactive: number | null }>();
+export function parsePasswdStatus(text: string): Map<string, { status: string; changed: Date | null; inactive: number | null; minDays: number | null }> {
+  const out = new Map<string, { status: string; changed: Date | null; inactive: number | null; minDays: number | null }>();
   for (const line of text.split("\n")) {
     const f = line.trim().split(/\s+/);
     if (f.length < 3) continue;
@@ -80,7 +80,8 @@ export function parsePasswdStatus(text: string): Map<string, { status: string; c
     if (iso) changed = new Date(Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])));
     else if (us) changed = new Date(Date.UTC(Number(us[3]), Number(us[1]) - 1, Number(us[2])));
     const inactive = f.length >= 7 && /^-?\d+$/.test(f[6]) ? Number(f[6]) : null;
-    out.set(f[0], { status: f[1], changed, inactive });
+    const minDays = f.length >= 4 && /^-?\d+$/.test(f[3]) ? Number(f[3]) : null;
+    out.set(f[0], { status: f[1], changed, inactive, minDays });
   }
   return out;
 }
@@ -227,6 +228,7 @@ export async function probeUsersAudit(deps: ProbeDeps): Promise<Obj> {
     rootPasswordStatus: status.get("root")?.status ?? null,
     inactiveDefault: Number.isFinite(inactiveDefault) ? inactiveDefault : null,
     inactiveOver45: [...status.entries()].filter(([n, s]) => withPassword(n) && s.inactive !== null && s.inactive > 45).map(([n]) => n),
+    minDaysZero: [...status.entries()].filter(([n, s]) => withPassword(n) && s.minDays !== null && s.minDays < 1).map(([n]) => n),
     lastChangeInFuture: [...status.entries()].filter(([n, s]) => withPassword(n) && s.changed !== null && s.changed.getTime() > now).map(([n]) => n),
     homeIssues: homeIssues.slice(0, SAMPLE),
     homeIssueCount: homeIssues.length,
@@ -702,4 +704,107 @@ export function probeSshHostKeys(deps: ProbeDeps): Obj {
     }
   }
   return { private: priv, public: pub, privateViolations: privViolations.length, publicViolations: pubViolations.length, sample: [...privViolations, ...pubViolations].slice(0, SAMPLE) };
+}
+
+// ── users.dotfiles ───────────────────────────────────────────────────
+//
+// El perfil AppArmor niega LISTAR /home, pero `stat` no está mediado: se
+// comprueba una lista conocida de dot files por usuario interactivo. Cubre
+// lo que CIS 7.2.10 enumera, no "cualquier fichero que empiece por punto";
+// el catálogo lo declara como límite.
+
+const DOTFILES_FORBIDDEN = [".forward", ".rhosts", ".netrc"];
+const DOTFILES_0600 = [".bash_history", ".zsh_history"];
+const DOTFILES_0644 = [".bashrc", ".profile", ".bash_profile", ".bash_login", ".bash_logout", ".bash_aliases", ".zshrc", ".zprofile", ".zlogin", ".vimrc", ".gitconfig", ".inputrc", ".kshrc", ".cshrc", ".tcshrc", ".login", ".logout", ".exrc", ".emacs"];
+
+export function probeDotfiles(deps: ProbeDeps): Obj {
+  const passwd = parsePasswd(deps.readFile("/etc/passwd") ?? "");
+  const shells = nonCommentLines(deps.readFile("/etc/shells") ?? "").filter((x) => x.startsWith("/") && !NOLOGIN_RE.test(x));
+  const valid = new Set(shells);
+  const users = passwd.filter((u) => valid.has(u.shell) && u.home.startsWith("/"));
+  const sample: string[] = [];
+  let violations = 0;
+  let checked = 0;
+  const flag = (msg: string) => { violations++; if (sample.length < SAMPLE) sample.push(msg); };
+  for (const u of users) {
+    if (!deps.stat(u.home)?.isDir) continue;
+    for (const name of DOTFILES_FORBIDDEN) {
+      if (deps.stat(pathMod.join(u.home, name))) flag(`${u.name}: ${name} exists`);
+    }
+    for (const [names, mask] of [[DOTFILES_0600, 0o177], [DOTFILES_0644, 0o133]] as const) {
+      for (const name of names) {
+        const st = deps.stat(pathMod.join(u.home, name));
+        if (!st?.isFile) continue;
+        checked++;
+        const bad: string[] = [];
+        if ((st.mode & mask) !== 0) bad.push(`mode ${modeOctal(st.mode)}`);
+        if (st.uid !== u.uid) bad.push(`owner ${deps.userName(st.uid) ?? st.uid}`);
+        if (st.gid !== u.gid) bad.push(`group ${deps.groupName(st.gid) ?? st.gid}`);
+        if (bad.length) flag(`${u.name}: ${name} ${bad.join(", ")}`);
+      }
+    }
+  }
+  return { users: users.length, checked, violations, sample, knownNamesOnly: true };
+}
+
+// ── apt.sources ──────────────────────────────────────────────────────
+
+export function probeAptSources(deps: ProbeDeps): Obj {
+  const files: string[] = [];
+  if (deps.exists("/etc/apt/sources.list")) files.push("/etc/apt/sources.list");
+  for (const n of deps.readdir("/etc/apt/sources.list.d").sort()) if (/\.(list|sources)$/.test(n)) files.push(pathMod.join("/etc/apt/sources.list.d", n));
+  const withoutSignedBy: string[] = [];
+  let active = 0;
+  for (const f of files) {
+    const t = deps.readFile(f);
+    if (t === null) continue;
+    const lines = nonCommentLines(t);
+    if (!lines.length) continue; // stub sólo con comentarios (sources.list de 24.04)
+    active++;
+    if (!lines.some((l) => /\bsigned-by\b/i.test(l))) withoutSignedBy.push(f);
+  }
+  return { files: active, withoutSignedBy };
+}
+
+// ── auditd.merged ────────────────────────────────────────────────────
+
+export async function probeAuditdMerged(deps: ProbeDeps): Promise<Obj> {
+  const r = await deps.exec("/usr/sbin/augenrules", ["--check"]);
+  const out = (r.stdout + "\n" + r.stderr).trim();
+  return { available: r.code !== null && !/not found|No such file/i.test(out), noChange: /No change/i.test(out), output: out.slice(0, 200) };
+}
+
+// ── listen.all ───────────────────────────────────────────────────────
+
+export function probeListenAll(deps: ProbeDeps): Obj {
+  const sockets: string[] = [];
+  for (const [file, tcp] of [["/proc/net/tcp", true], ["/proc/net/tcp6", true], ["/proc/net/udp", false], ["/proc/net/udp6", false]] as const) {
+    const t = deps.readFile(file);
+    if (t === null) continue;
+    for (const line of t.split("\n").slice(1)) {
+      const f = line.trim().split(/\s+/);
+      if (f.length < 4) continue;
+      if (tcp ? f[3] !== "0A" : f[3] !== "07") continue;
+      const [addr, portHex] = f[1].split(":");
+      sockets.push(`${tcp ? "tcp" : "udp"} ${hexAddr(addr)}:${parseInt(portHex, 16)}`);
+    }
+  }
+  const uniq = [...new Set(sockets)].sort();
+  return { count: uniq.length, nonLoopback: uniq.filter((s) => !isLoopback(s.split(" ")[1].replace(/:\d+$/, ""))).length, sockets: uniq.slice(0, 100) };
+}
+
+// ── sudo.settings ────────────────────────────────────────────────────
+//
+// `sudo -V` imprime la configuración efectiva sin volcar sudoers, que el
+// perfil AppArmor niega a propósito; corre sin confinar (Ux), igual que el
+// `mac.sudo` de macOS.
+
+export function parseSudoVersion(text: string): Obj {
+  const m = text.match(/Authentication timestamp timeout:\s*(-?[\d.]+)\s*minutes/i);
+  return { timestampTimeoutMinutes: m ? Number(m[1]) : null, version: (text.match(/^Sudo version\s+(\S+)/m) || [])[1] ?? null };
+}
+
+export async function probeSudoSettings(deps: ProbeDeps): Promise<Obj> {
+  const r = await deps.exec("/usr/bin/sudo", ["-V"]);
+  return { available: r.code === 0, ...parseSudoVersion(r.stdout) };
 }

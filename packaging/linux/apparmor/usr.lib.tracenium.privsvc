@@ -564,6 +564,12 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   # y el daemon no debe poder. El binario solo imprime estado; los hashes
   # nunca salen de el.
   /usr/bin/passwd                                   Ux,
+  # sudo -V: timeout efectivo del timestamp (CIS 5.2.6) sin leer sudoers,
+  # que sigue negado abajo. Sin confinar por el mismo motivo que passwd.
+  /usr/bin/sudo                                     Ux,
+  # augenrules --check: ¿las reglas cargadas son las de rules.d? (6.2.3.30).
+  /usr/sbin/augenrules                              ix,
+  /sbin/augenrules                                  ix,
   /usr/sbin/ufw                                     ix,
   /usr/sbin/iptables                                ix,
   /usr/sbin/nft                                     ix,

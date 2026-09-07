@@ -61,7 +61,7 @@ export interface ProbeDeps {
   family: "debian" | "rhel" | "suse" | "unknown";
 }
 
-export const PROBE_KINDS = ["kmod", "mount", "unit", "pkg", "file", "files", "conf", "lines", "sysctl", "sshd", "users", "fs", "dconf", "ini", "listen", "net", "grub", "auditd", "aide", "banner", "proc", "sshkeys"] as const;
+export const PROBE_KINDS = ["kmod", "mount", "unit", "pkg", "file", "files", "conf", "lines", "sysctl", "sshd", "users", "fs", "dconf", "ini", "listen", "net", "grub", "auditd", "aide", "banner", "proc", "sshkeys", "apt", "sudo"] as const;
 export type ProbeKind = (typeof PROBE_KINDS)[number];
 
 export function decodeKey(k: string): string {
@@ -346,6 +346,13 @@ export async function collectLinuxProbes(probes: string[], deps: ProbeDeps): Pro
         // ── Fase 4: colectores dedicados ──────────────────────────────
         case "users":
           if (key === "audit") bucket[key] = await (usersAudit ??= sys.probeUsersAudit(deps));
+          else if (key === "dotfiles") bucket[key] = sys.probeDotfiles(deps);
+          break;
+        case "apt":
+          if (key === "sources") bucket[key] = sys.probeAptSources(deps);
+          break;
+        case "sudo":
+          if (key === "settings") bucket[key] = await sys.probeSudoSettings(deps);
           break;
         case "fs":
           if (key === "scan") bucket[key] = await getFsScan();
@@ -369,6 +376,7 @@ export async function collectLinuxProbes(probes: string[], deps: ProbeDeps): Pro
           break;
         }
         case "listen": {
+          if (key === "all") { bucket[key] = sys.probeListenAll(deps); break; }
           const r = sys.probeListen(key, deps);
           if (r) bucket[key] = r;
           break;
@@ -386,6 +394,7 @@ export async function collectLinuxProbes(probes: string[], deps: ProbeDeps): Pro
           else if (key === "logfiles") bucket[key] = sys.probeAuditdLogfiles(deps);
           else if (key === "configfiles") bucket[key] = sys.probeAuditdConfigfiles(deps);
           else if (key === "tools") bucket[key] = sys.probeAuditdTools(deps);
+          else if (key === "merged") bucket[key] = await sys.probeAuditdMerged(deps);
           break;
         case "aide":
           if (key === "integrity") bucket[key] = sys.probeAideIntegrity(deps);
