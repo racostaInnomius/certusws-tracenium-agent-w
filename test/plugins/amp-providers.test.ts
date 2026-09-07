@@ -86,6 +86,19 @@ vi.mock("../../src/plugins/amp/providers/printers-windows", () => ({
   collectWindowsPrinters: vi.fn(async () => [])
 }));
 
+// Pipeline de impresoras → identidad. Lo que se prueba abajo es el ORDEN en
+// que el provider recoge las cosas, no el cálculo del delta (que tiene sus
+// propios tests y toca la SQLite del agente).
+vi.mock("../../src/plugins/amp/providers/printers-pipeline", () => ({
+  emptyPrinterInventory: () => ({ count: 0, items: undefined, delta: null, hasChanges: false }),
+  buildPrinterInventoryWithBaseline: (raw: any[]) => ({
+    count: raw.length,
+    items: raw,
+    delta: null,
+    hasChanges: raw.length > 0
+  })
+}));
+
 import os from "os";
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -441,5 +454,93 @@ describe("AMP Windows — normalización de software.inventory (contrato items/a
     expect(amp.software.items).toEqual([]);
     expect(amp.software.hasChanges).toBe(true);
     expect(repo.deleteSoftwareByIds).toHaveBeenCalledWith(["sha256:old"]);
+  });
+
+  // ───────────────────────────────────────────────────────────────────
+  // Impresoras: el orden de recolección, que es el bug real.
+  //
+  // ⚠️ El bloque de software tiene un `return` temprano cuando no hay
+  // cambios —el caso normal en una flota estable—. Con las impresoras
+  // recogidas DESPUÉS, ese return salía sin ellas y el colector ni se
+  // ejecutaba. Medido en producción el 07-sep: cero equipos Windows con
+  // impresoras en los cuatro tenants, con agentes 1.1.54 a 1.1.61,
+  // mientras los macOS del mismo tenant y versión sí las reportaban.
+  //
+  // Por eso los tests van sobre los TRES caminos de salida: el que se
+  // rompió no era el final, era uno de los early returns.
+  // ───────────────────────────────────────────────────────────────────
+  async function collectDosVeces(ctx: any) {
+    const { windowsProvider } = await import("../../src/plugins/amp/providers/windows");
+    // Primera pasada: siembra el baseline de software.
+    await windowsProvider.collect(ctx);
+    // Segunda: mismo inventario → sin cambios → early return.
+    return windowsProvider.collect(ctx);
+  }
+
+  it("⚠️ un ciclo SIN cambios de software sigue llevando las impresoras", async () => {
+    const printersWin = await import("../../src/plugins/amp/providers/printers-windows");
+    (printersWin.collectWindowsPrinters as any).mockResolvedValue([
+      { installId: "windows-spooler:HP LaserJet", name: "HP LaserJet", isNetwork: true }
+    ]);
+
+    const ctx = makeCtx(
+      privRouter({
+        "security.compliance": () => ({ ok: true, result: {} }),
+        "software.inventory": () => ({
+          ok: true,
+          result: { items: [{ name: "Slack", version: "4.38", source: "win32-registry" }] }
+        })
+      })
+    );
+
+    const amp = await collectDosVeces(ctx);
+
+    // La prueba de que se salió por el early return del software...
+    expect(amp.software.hasChanges).toBe(false);
+    // ...y aun así las impresoras viajan.
+    expect(amp.printers?.count).toBe(1);
+    expect(amp.printers?.items?.[0].name).toBe("HP LaserJet");
+  });
+
+  it("el ciclo de inventario VACÍO también las lleva", async () => {
+    const printersWin = await import("../../src/plugins/amp/providers/printers-windows");
+    (printersWin.collectWindowsPrinters as any).mockResolvedValue([
+      { installId: "windows-spooler:Xerox", name: "Xerox", isNetwork: true }
+    ]);
+
+    const { windowsProvider } = await import("../../src/plugins/amp/providers/windows");
+    const ctx = makeCtx(
+      privRouter({
+        "security.compliance": () => ({ ok: false, error: { code: "x" } }),
+        "software.inventory": () => ({ ok: true, result: { items: [] } })
+      })
+    );
+
+    const amp = await windowsProvider.collect(ctx);
+
+    expect(amp.software.hasChanges).toBe(true);
+    expect(amp.printers?.count).toBe(1);
+  });
+
+  it("y un fallo leyendo impresoras no tumba el resto del namespace", async () => {
+    const printersWin = await import("../../src/plugins/amp/providers/printers-windows");
+    (printersWin.collectWindowsPrinters as any).mockRejectedValue(new Error("spooler down"));
+
+    const { windowsProvider } = await import("../../src/plugins/amp/providers/windows");
+    const ctx = makeCtx(
+      privRouter({
+        "security.compliance": () => ({ ok: true, result: { bitlocker: { status: "enabled" } } }),
+        "software.inventory": () => ({
+          ok: true,
+          result: { items: [{ name: "Slack", version: "4.38", source: "win32-registry" }] }
+        })
+      })
+    );
+
+    const amp = await windowsProvider.collect(ctx);
+
+    expect(amp.software.count).toBe(1);
+    expect(amp.security.bitlocker?.status).toBe("enabled");
+    expect(amp.printers?.count).toBe(0);
   });
 });

@@ -68,6 +68,16 @@ export function getTimeoutForMethod(method: string): number {
       return 150000;
     case "software.inventory":
       return 60000; // inventory can be heavy (WMI/registry)
+    // ⚠️ 25s, y el número sale del handler, no del optimismo. PrinterInventory
+    // se permite 15s antes de matar su PowerShell, así que un cliente con el
+    // default de 8s rompía THE INVARIANT: el llamador tiene que sobrevivir al
+    // handler. Un `Get-Printer` contra un servidor de impresión lento —el caso
+    // normal cuando las impresoras son de red— habría dado timeout del lado
+    // del agente mientras el privsvc seguía trabajando, y el agente lo habría
+    // registrado como "sin impresoras". El mismo silencio que este arreglo
+    // viene a quitar, por otra puerta.
+    case "printer.inventory":
+      return 25000;
     case "security.compliance":
       // 270s. History: 30s → 90s after DESKTOP-9G467VM's slow WU
       // history query (~30% of scans gave up mid-handler and the
