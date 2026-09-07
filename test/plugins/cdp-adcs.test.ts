@@ -49,7 +49,7 @@ describe("parseCsv", () => {
 describe("parseCertutilCsv", () => {
   it("⭐ parsea el PEM multilinea y trae plantilla, solicitante y disposicion", () => {
     const out = parseCertutilCsv(CSV, "MSIG-RADIUS-CA");
-    expect(out.columnsFound).toEqual({ requestId: true, disposition: true, requester: true, template: true, rawCertificate: true });
+    expect(out.columnsFound).toEqual({ requestId: true, disposition: true, requester: true, template: true, rawCertificate: true, positional: false });
     expect(out.issued.map((i) => i.requestId)).toEqual([101, 102]);
     const first = out.issued[0];
     expect(first.source).toBe("adcs");
@@ -85,6 +85,22 @@ describe("parseCertutilCsv", () => {
     expect(out.columnsFound.rawCertificate).toBe(false);
     expect(out.header).toEqual(["Foo", "Bar"]);
     expect(out.parseFailures).toBe(1);
+  });
+
+  it("⭐ cabecera LOCALIZADA (Windows en espanol) → se lee por posicion, porque el orden de -out es fijo", () => {
+    const csv = `"Id. de solicitud","Disposición de la solicitud","Nombre del solicitante","Plantilla de certificado","Certificado binario"\n` + row(9, "20 -- Emitido", `CORP\\host09$`, "Servidor RADIUS", PEM_BODY) + "\n";
+    const out = parseCertutilCsv(csv, "CA");
+    expect(out.issued.length).toBe(1);
+    expect(out.issued[0].requestId).toBe(9);
+    expect(out.issued[0].template).toBe("Servidor RADIUS");
+    expect(out.columnsFound.positional).toBe(true);
+    expect(out.columnsFound.rawCertificate).toBe(true);
+  });
+
+  it("con un numero de columnas distinto de cinco NO se adivina por posicion", () => {
+    const out = parseCertutilCsv(`"Foo","Bar","Baz"\n"1","2","3"\n`, "CA");
+    expect(out.columnsFound.positional).toBe(false);
+    expect(out.issued).toEqual([]);
   });
 
   it("respeta el tope", () => {

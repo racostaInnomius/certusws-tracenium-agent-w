@@ -80,7 +80,7 @@ export type AdcsParseResult = {
   issued: AdcsIssued[];
   parseFailures: number;
   lastRequestId: number;
-  columnsFound: { requestId: boolean; disposition: boolean; requester: boolean; template: boolean; rawCertificate: boolean };
+  columnsFound: { requestId: boolean; disposition: boolean; requester: boolean; template: boolean; rawCertificate: boolean; positional: boolean };
 };
 
 /** Base64 con o sin cabeceras PEM y con saltos de linea → PEM limpio. */
@@ -92,12 +92,23 @@ function toPem(raw: string): string | null {
 
 export function parseCertutilCsv(text: string, caName: string, max = 5000): AdcsParseResult {
   const { header, rows } = parseCsv(text);
-  const iReq = findCol(header, "RequestID", "Request ID", "Issued Request ID");
-  const iDisp = findCol(header, "Request.Disposition", "Request Disposition", "Disposition");
-  const iWho = findCol(header, "Request.RequesterName", "Requester Name", "RequesterName");
-  const iTpl = findCol(header, "CertificateTemplate", "Certificate Template");
-  const iRaw = findCol(header, "RawCertificate", "Binary Certificate", "Raw Certificate");
-  const columnsFound = { requestId: iReq >= 0, disposition: iDisp >= 0, requester: iWho >= 0, template: iTpl >= 0, rawCertificate: iRaw >= 0 };
+  let iReq = findCol(header, "RequestID", "Request ID", "Issued Request ID");
+  let iDisp = findCol(header, "Request.Disposition", "Request Disposition", "Disposition");
+  let iWho = findCol(header, "Request.RequesterName", "Requester Name", "RequesterName");
+  let iTpl = findCol(header, "CertificateTemplate", "Certificate Template");
+  let iRaw = findCol(header, "RawCertificate", "Binary Certificate", "Raw Certificate");
+  // certutil pinta la cabecera con los nombres LOCALIZADOS de columna
+  // («Id. de solicitud», «Certificado binario» en un Windows en espanol).
+  // Pero el orden es el que pedimos en `-out`, siempre el mismo (ver
+  // CdpAdcs.cs): RequestID, Disposition, RequesterName, Template,
+  // RawCertificate. Si los nombres no casan y hay exactamente cinco
+  // columnas, se leen por posicion y se dice (`positional`).
+  let positional = false;
+  if ((iReq < 0 || iRaw < 0) && header.length === 5) {
+    [iReq, iDisp, iWho, iTpl, iRaw] = [0, 1, 2, 3, 4];
+    positional = true;
+  }
+  const columnsFound = { requestId: iReq >= 0, disposition: iDisp >= 0, requester: iWho >= 0, template: iTpl >= 0, rawCertificate: iRaw >= 0, positional };
 
   const store: CdpStoreInfo = { id: `adcs/${caName}`, name: caName, scope: "network" };
   const issued: AdcsIssued[] = [];

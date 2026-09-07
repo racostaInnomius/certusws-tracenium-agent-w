@@ -297,5 +297,5 @@ export type CdpAdcsReport = {
   truncated: boolean;
   parseFailures: number;
   /** Que columnas reconocio el parser: si falta una, se ve aqui. */
-  columnsFound: { requestId: boolean; disposition: boolean; requester: boolean; template: boolean; rawCertificate: boolean } | null;
+  columnsFound: { requestId: boolean; disposition: boolean; requester: boolean; template: boolean; rawCertificate: boolean; positional?: boolean } | null;
 };
