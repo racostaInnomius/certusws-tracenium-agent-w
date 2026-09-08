@@ -19,7 +19,8 @@ vi.mock("../../src/domain/cdp-adcs-repo", () => ({
   writeAdcsCursor: (k: string, v: number) => cursors.set(k, v)
 }));
 
-import { collectAdcs, hostMatches } from "../../src/plugins/cdp/providers/adcs";
+import { collectAdcs } from "../../src/plugins/cdp/providers/adcs";
+import { hostMatches } from "../../src/core/host-match";
 
 // Volcado por filas de `certutil -view -out … ` (sin csv). Etiquetas en
 // ingles y formato de disposicion/plantilla tal como los imprimio

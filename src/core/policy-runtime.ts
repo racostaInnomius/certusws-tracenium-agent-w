@@ -1,4 +1,5 @@
 // src/core/policy-runtime.ts
+import { sanitizeHostList } from "./host-match";
 import { parseProbeTarget, probeTargetKey, type ProbeTarget } from "../domain/probe-target";
 import { EventEmitter } from "events";
 import { PolicyStore } from "./policy-store";
@@ -99,6 +100,12 @@ export type RuntimePolicy = {
      * el agente no descubre. Saneado y acotado al recibir la policy.
      */
     probeTargets?: string[];
+    /**
+     * Quien sondea: hostnames de los equipos que ejecutan las sondas
+     * remotas (NetBIOS o FQDN). Vacio = nadie, aunque haya objetivos. Sin
+     * esto todo el parque sondeaba cada objetivo (repaso 2026-09-07).
+     */
+    probeHosts?: string[];
     /**
      * Conector AD CS (fase 4): en un equipo con el rol Certification
      * Authority, leer la base de emisiones por RequestID (incremental) y
@@ -898,15 +905,13 @@ export class PolicyRuntime extends EventEmitter {
    */
   getCdpAdcs(): { enabled: boolean; maxPerScan: number; hosts: string[] } {
     const a = this.policy.cdp?.adcs;
-    const hosts = Array.from(
-      new Set(
-        (Array.isArray(a?.hosts) ? a!.hosts : [])
-          .filter((h): h is string => typeof h === "string")
-          .map((h) => h.trim().toLowerCase())
-          .filter((h) => h.length > 0 && h.length <= 253)
-      )
-    ).slice(0, 50);
+    const hosts = sanitizeHostList(a?.hosts);
     return { enabled: a?.enabled !== false && hosts.length > 0, maxPerScan: Number(a?.maxPerScan) || 2000, hosts };
+  }
+
+  /** Los equipos que ejecutan las sondas remotas. Vacio = nadie. */
+  getCdpProbeHosts(): string[] {
+    return sanitizeHostList(this.policy.cdp?.probeHosts);
   }
 
   /** Objetivos remotos ya saneados, como pares host/port. */
@@ -1114,6 +1119,7 @@ export class PolicyRuntime extends EventEmitter {
       tlsListenerPorts: sanitizeTlsListenerPorts(policy.cdp?.tlsListenerPorts, this.logger),
       certFilePaths: sanitizeJavaKeystorePaths(policy.cdp?.certFilePaths, this.logger),
       probeTargets: sanitizeProbeTargets(policy.cdp?.probeTargets, this.logger),
+      probeHosts: sanitizeHostList(policy.cdp?.probeHosts),
       adcs: {
         enabled: policy.cdp?.adcs?.enabled !== false,
         maxPerScan: Math.min(Math.max(Number(policy.cdp?.adcs?.maxPerScan) || 2000, 50), 5000),

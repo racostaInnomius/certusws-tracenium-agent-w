@@ -11,6 +11,7 @@
 //
 // Design: certusws-tracenium/docs/adr/ADR-0004-crypto-inventory-to-pqc-migration.md
 
+import { hostMatches, thisHostname } from "../../core/host-match";
 import os from "os";
 import crypto from "crypto";
 import type { AgentContext } from "../../core/agent-context";
@@ -312,7 +313,10 @@ async function collectOnce(
   // Llamada opcional a proposito: un runtime que no conozca el metodo —una
   // policy vieja, o un doble de test— equivale a «sin objetivos», y eso no
   // puede tumbar el escaneo del propio equipo, que ya termino bien.
-  if ((ctx.policyRuntime.getCdpProbeTargets?.() ?? []).length > 0) {
+  // Y solo desde los equipos nombrados en `cdp.probeHosts`: sin esto, cada
+  // equipo bajo la policy sondeaba cada objetivo (repaso 2026-09-07).
+  const probeHosts = ctx.policyRuntime.getCdpProbeHosts?.() ?? [];
+  if ((ctx.policyRuntime.getCdpProbeTargets?.() ?? []).length > 0 && hostMatches(probeHosts, thisHostname())) {
     try {
       const { collectTlsProbes } = await import("./providers/tls-probes");
       const probes = await collectTlsProbes(ctx);
