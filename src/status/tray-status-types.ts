@@ -78,6 +78,17 @@ export type TrayCatalogItem = {
   version: string;
   description?: string;
   requiresReboot?: boolean;
+  /**
+   * Versión que el inventario de AMP vio instalada en ESTE equipo, si la vio.
+   *
+   * ⚠️ ES UN RÓTULO, NO UNA DECISIÓN. Llega del servidor y refleja el último
+   * barrido del colector, no el estado de ahora: justo después de instalar
+   * todavía dirá que no está. Quien decide si se instala o no sigue siendo
+   * `sdp.detect` en el equipo, que mira el registro en vivo. Usarlo para
+   * saltarse una instalación reintroduciría la carrera que la detección
+   * existe para evitar.
+   */
+  installedVersion?: string;
 };
 
 export type TrayCatalogStatus = {

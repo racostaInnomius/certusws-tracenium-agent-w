@@ -371,6 +371,16 @@ message SoftwareCatalogItem {
   string version = 4;
   string description = 5;
   bool requiresReboot = 6;
+  // Versión que el inventario de AMP vio instalada en ESTE equipo, o "" si
+  // no la ve. Deja al tray decir «Installed» / «Update available» en vez de
+  // ofrecer Install sobre algo ya puesto — que en un MSI no reinstala, entra
+  // en mantenimiento y muere con 1603.
+  //
+  // ⚠️ Es lo último que vio el colector, no la verdad de ahora: sirve para
+  // rotular, NO para decidir. Quien decide sigue siendo `sdp.detect` en el
+  // equipo. Campo añadido: los agentes viejos lo leen como "" y se comportan
+  // igual que antes.
+  string installedVersion = 7;
 }
 
 // Server -> Agent.

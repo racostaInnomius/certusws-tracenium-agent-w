@@ -128,6 +128,17 @@ internal sealed class TrayCatalogItem
     public string Version { get; set; } = "";
     public string? Description { get; set; }
     public bool? RequiresReboot { get; set; }
+
+    /// <summary>
+    /// Versión que el último inventario vio instalada en este equipo, si la
+    /// vio. Null/"" cuando el servidor no lo sabe — y también cuando el
+    /// backend es anterior a este campo, que para la UI significa lo mismo.
+    ///
+    /// ⚠️ ES UN RÓTULO, NO UNA DECISIÓN. Refleja el último barrido del
+    /// colector, no el estado de ahora. Quien decide si un paquete se instala
+    /// sigue siendo `sdp.detect` en el propio equipo.
+    /// </summary>
+    public string? InstalledVersion { get; set; }
 }
 
 internal sealed class TrayCatalogStatus

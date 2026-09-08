@@ -1,3 +1,4 @@
+using Microsoft.Win32;
 using Tracenium.AgentTray.Models;
 
 namespace Tracenium.AgentTray;
@@ -13,8 +14,17 @@ internal sealed class StatusForm : Form
     private readonly ProgressBar _jobProgress;
     private readonly Label _jobNote;
     private readonly TabPage _catalogPage;
-    private readonly FlowLayoutPanel _catalogFlow;
+    private readonly Panel _catalogList;
     private readonly Label _catalogEmptyLabel;
+    // packageId -> la fila está desplegada. Vive fuera del render porque el
+    // catálogo se reconstruye entero cada 5s: sin esto, la fila que el usuario
+    // acaba de abrir se cerraría sola al siguiente tick.
+    private readonly HashSet<string> _expandedPackages = new();
+    // Iconos ya resueltos desde el registro, por packageId. Se cachean porque
+    // el render corre cada 5s y ExtractAssociatedIcon toca disco: repetirlo
+    // 30 veces cada 5 segundos sería un sondeo de disco continuo. `null` es un
+    // resultado legítimo y se cachea igual — significa «ya miré, no hay».
+    private readonly Dictionary<string, Image?> _iconCache = new();
     // Grace window a just-clicked Install button stays "Installing…" even
     // if the next 5s poll hasn't yet reflected a running job — avoids a
     // one-tick flash back to enabled between the click and the job
@@ -315,34 +325,31 @@ internal sealed class StatusForm : Form
         // render tick, unlike a TableLayoutPanel's row/cell bookkeeping.
         _catalogPage = new TabPage("Catalog") { BackColor = Color.White, UseVisualStyleBackColor = true };
 
-        var catalogScroll = new Panel
+        // ⚠️ LAS FILAS SE ACOPLAN, NO SE MIDEN. Antes esto era un
+        // FlowLayoutPanel de 560 px con tarjetas de 540 px clavadas a mano:
+        // anchos absolutos dentro de una ventana cuyo ancho no es 560, así que
+        // la fila se veía cortada por la derecha. Un Panel con AutoScroll y
+        // filas en DockStyle.Top da el ancho del contenedor sin que nadie
+        // tenga que saber cuánto mide. Si vuelves a poner un `Width = N` aquí
+        // dentro, vuelve el recorte.
+        _catalogList = new Panel
         {
             Dock = DockStyle.Fill,
             AutoScroll = true,
             Padding = new Padding(18, 14, 18, 18)
         };
 
-        _catalogFlow = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
-            Width = 560
-        };
-
         _catalogEmptyLabel = new Label
         {
             Text = "Nothing available right now.",
+            Dock = DockStyle.Top,
             AutoSize = true,
             Font = new Font(Font.FontFamily, 9.5f),
             ForeColor = Color.Gray,
             Margin = new Padding(0, 6, 0, 0)
         };
 
-        catalogScroll.Controls.Add(_catalogFlow);
-        _catalogPage.Controls.Add(catalogScroll);
+        _catalogPage.Controls.Add(_catalogList);
 
         tabs.TabPages.Add(devicePage);
         tabs.TabPages.Add(agentPage);
@@ -541,107 +548,250 @@ internal sealed class StatusForm : Form
             _recentInstallFailures.Remove(staleFailureKey);
         }
 
-        _catalogFlow.SuspendLayout();
-        _catalogFlow.Controls.Clear();
+        // Una fila que ya no está en el catálogo no debe dejar su estado de
+        // desplegado detrás: si el paquete vuelve más tarde, aparecería
+        // abierto sin que nadie lo tocara.
+        _expandedPackages.IntersectWith(items.Select(i => i.PackageId));
+
+        _catalogList.SuspendLayout();
+        _catalogList.Controls.Clear();
 
         if (items.Count == 0)
         {
-            _catalogFlow.Controls.Add(_catalogEmptyLabel);
-            _catalogFlow.ResumeLayout();
+            _catalogList.Controls.Add(_catalogEmptyLabel);
+            _catalogList.ResumeLayout();
             return;
         }
 
-        foreach (var item in items)
+        // ⚠️ EN ORDEN INVERSO, A PROPÓSITO. Con DockStyle.Top el último
+        // control añadido queda ARRIBA, así que añadir en el orden natural
+        // dejaría el catálogo del revés.
+        foreach (var item in Enumerable.Reverse(items))
         {
-            _catalogFlow.Controls.Add(BuildCatalogRow(item, jobRunning));
+            _catalogList.Controls.Add(BuildCatalogRow(item, jobRunning));
         }
 
-        _catalogFlow.ResumeLayout();
+        _catalogList.ResumeLayout();
     }
 
     /// <summary>
-    /// One card per catalog package: bordered, padded, with a bold title
-    /// row (name + Install), an optional muted meta line (vendor ·
-    /// version · description), and optional status chips below (restart
-    /// required, install failed). Replaces the old bare two-column row —
-    /// a plain label/button pair with no visual separation between
-    /// packages, tiny 8.5pt gray detail text, and a literal "vunknown"
-    /// whenever the catalog's version field was the placeholder string
-    /// "unknown" rather than a real version.
+    /// Una fila por paquete: una sola línea —icono, nombre, versión, estado y
+    /// el botón— y el detalle escondido detrás de una flecha.
+    ///
+    /// ⚠️ ERA UNA TARJETA DE TRES LÍNEAS Y NO ESCALA. Con vendor, descripción
+    /// y chips siempre visibles, cada paquete ocupaba ~90 px: tres se ven
+    /// bien, treinta son una lista por la que hay que hacer scroll para saber
+    /// si Chrome está. Lo que el operador busca al abrir esta pestaña es
+    /// «¿qué hay y puedo instalarlo?»; la descripción es lo que consulta
+    /// DESPUÉS de encontrar la fila, no mientras la busca.
+    ///
+    /// ⚠️ NINGÚN ANCHO EN PÍXELES. La fila va en DockStyle.Top dentro de
+    /// _catalogList y toma el ancho del contenedor. Los `Width = 540` que
+    /// había aquí son la razón de que se viera cortada por la derecha.
     /// </summary>
     private Control BuildCatalogRow(TrayCatalogItem item, bool jobRunning)
     {
-        var card = new TableLayoutPanel
+        var expanded = _expandedPackages.Contains(item.PackageId);
+        var isPending = _pendingInstallClicks.ContainsKey(item.PackageId);
+
+        // ⚠️ «ESTE PAQUETE SE ESTÁ INSTALANDO» Y «HAY ALGO INSTALÁNDOSE» SON
+        // DOS COSAS. Compartían variable (`isPending || jobRunning`), así que
+        // arrancar Chrome dejaba a Edge y a WinZip diciendo «Installing…» de
+        // algo que nadie pidió. Sigue estando bien DESHABILITAR los demás
+        // —no queremos dos instalaciones a la vez— pero no rotularlos.
+        var installingThis = isPending;
+        var busy = isPending || jobRunning;
+
+        var installedVersion = item.InstalledVersion;
+        var isInstalled = !string.IsNullOrWhiteSpace(installedVersion);
+        var hasUpdate = isInstalled &&
+                        !string.IsNullOrWhiteSpace(item.Version) &&
+                        !string.Equals(item.Version, "unknown", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(installedVersion, item.Version, StringComparison.OrdinalIgnoreCase);
+
+        var card = new Panel
         {
-            ColumnCount = 1,
-            RowCount = 1,
+            Dock = DockStyle.Top,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Width = 540,
-            Padding = new Padding(16, 14, 16, 14),
-            Margin = new Padding(0, 0, 0, 10),
+            Padding = new Padding(10, 8, 10, 8),
+            Margin = new Padding(0),
             BackColor = Color.White
         };
-        card.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         card.Paint += (_, e) =>
         {
             using var pen = new Pen(BrandAssets.CardBorder);
-            e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
+            e.Graphics.DrawLine(pen, 0, card.Height - 1, card.Width, card.Height - 1);
         };
 
-        var body = new TableLayoutPanel
+        // El detalle se añade ANTES que la cabecera: con DockStyle.Top el
+        // último en entrar queda arriba (la misma regla que RenderCatalog).
+        if (expanded)
         {
-            ColumnCount = 2,
+            var detail = BuildCatalogDetail(item, isInstalled, installedVersion);
+            if (detail != null) card.Controls.Add(detail);
+        }
+
+        var header = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            ColumnCount = 4,
+            RowCount = 1,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Width = 508
+            Margin = new Padding(0)
         };
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // flecha + icono
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // nombre
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); // estado, se come el hueco
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // botón
+        header.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        var leading = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Margin = new Padding(0, 2, 8, 0)
+        };
+
+        var chevron = new Label
+        {
+            Text = expanded ? "▾" : "▸",
+            AutoSize = true,
+            ForeColor = Color.FromArgb(120, 120, 120),
+            Font = new Font(Font.FontFamily, 9f),
+            Margin = new Padding(0, 3, 6, 0)
+        };
+        leading.Controls.Add(chevron);
+
+        var icon = ResolveCatalogIcon(item);
+        if (icon != null)
+        {
+            leading.Controls.Add(new PictureBox
+            {
+                Image = icon,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Size = new Size(16, 16),
+                Margin = new Padding(0, 2, 0, 0)
+            });
+        }
 
         var nameField = new Label
         {
             Text = item.Name,
             AutoSize = true,
-            Font = new Font(Font.FontFamily, 10.5f, FontStyle.Bold)
+            Font = new Font(Font.FontFamily, 9.5f, FontStyle.Bold),
+            Margin = new Padding(0, 3, 10, 0)
         };
 
-        var isPending = _pendingInstallClicks.ContainsKey(item.PackageId);
-        var installing = isPending || jobRunning;
-        var installButton = new Button
+        // Estado en la propia línea: lo que decide si pulsas o no.
+        var statusText = installingThis
+            ? "Installing…"
+            : hasUpdate
+                ? $"v{installedVersion} installed · v{item.Version} available"
+                : isInstalled
+                    ? $"Installed · v{installedVersion}"
+                    : VersionLabel(item.Version);
+        var statusField = new Label
         {
-            Text = installing ? "Installing…" : "Install",
+            Text = statusText,
             AutoSize = true,
-            Padding = new Padding(10, 3, 10, 3),
-            Enabled = !installing,
-            FlatStyle = FlatStyle.Flat,
-            UseVisualStyleBackColor = false,
-            BackColor = installing ? Color.FromArgb(240, 240, 240) : BrandAssets.PrimaryButtonBackground,
-            ForeColor = installing ? Color.Gray : BrandAssets.SectionTeal,
-            Font = new Font(Font.FontFamily, 9f, FontStyle.Bold)
+            Font = new Font(Font.FontFamily, 8.5f),
+            ForeColor = hasUpdate
+                ? BrandAssets.ChipWarningText
+                : isInstalled ? BrandAssets.SectionTeal : Color.FromArgb(120, 120, 120),
+            Margin = new Padding(0, 4, 10, 0)
         };
-        installButton.FlatAppearance.BorderSize = 1;
-        installButton.FlatAppearance.BorderColor = installing ? Color.FromArgb(210, 210, 210) : BrandAssets.SectionTeal;
-        installButton.Click += (_, _) =>
+
+        // Ya instalado y sin novedad: no se ofrece «Install». Lanzar msiexec /i
+        // sobre un MSI ya puesto NO reinstala — entra en mantenimiento y muere
+        // con 1603, que es exactamente lo que pasó en RAV-LAB-HI.
+        var offerButton = !isInstalled || hasUpdate;
+        Control action;
+        if (offerButton)
         {
-            _pendingInstallClicks[item.PackageId] = DateTime.UtcNow;
-            _recentInstallFailures.Remove(item.PackageId);
-            installButton.Text = "Installing…";
-            installButton.Enabled = false;
-            installButton.BackColor = Color.FromArgb(240, 240, 240);
-            installButton.ForeColor = Color.Gray;
-            installButton.FlatAppearance.BorderColor = Color.FromArgb(210, 210, 210);
-            CatalogInstallSink.Write(item.PackageId);
+            var installButton = new Button
+            {
+                Text = installingThis ? "Installing…" : hasUpdate ? "Update" : "Install",
+                AutoSize = true,
+                Padding = new Padding(10, 2, 10, 2),
+                Enabled = !busy,
+                FlatStyle = FlatStyle.Flat,
+                UseVisualStyleBackColor = false,
+                BackColor = busy ? Color.FromArgb(240, 240, 240) : BrandAssets.PrimaryButtonBackground,
+                ForeColor = busy ? Color.Gray : BrandAssets.SectionTeal,
+                Font = new Font(Font.FontFamily, 8.5f, FontStyle.Bold),
+                Margin = new Padding(0)
+            };
+            installButton.FlatAppearance.BorderSize = 1;
+            installButton.FlatAppearance.BorderColor = busy ? Color.FromArgb(210, 210, 210) : BrandAssets.SectionTeal;
+            installButton.Click += (_, _) =>
+            {
+                _pendingInstallClicks[item.PackageId] = DateTime.UtcNow;
+                _recentInstallFailures.Remove(item.PackageId);
+                installButton.Text = "Installing…";
+                installButton.Enabled = false;
+                installButton.BackColor = Color.FromArgb(240, 240, 240);
+                installButton.ForeColor = Color.Gray;
+                installButton.FlatAppearance.BorderColor = Color.FromArgb(210, 210, 210);
+                CatalogInstallSink.Write(item.PackageId);
+            };
+            action = installButton;
+        }
+        else
+        {
+            action = new Label
+            {
+                Text = "✓ Installed",
+                AutoSize = true,
+                ForeColor = BrandAssets.SectionTeal,
+                Font = new Font(Font.FontFamily, 8.5f, FontStyle.Bold),
+                Margin = new Padding(0, 4, 2, 0)
+            };
+        }
+
+        header.Controls.Add(leading, 0, 0);
+        header.Controls.Add(nameField, 1, 0);
+        header.Controls.Add(statusField, 2, 0);
+        header.Controls.Add(action, 3, 0);
+
+        // Toda la cabecera despliega, no sólo la flecha: un objetivo de 8 px
+        // es una promesa de fallar el clic.
+        void Toggle(object? _, EventArgs __)
+        {
+            if (!_expandedPackages.Remove(item.PackageId)) _expandedPackages.Add(item.PackageId);
+            if (_lastStatus != null) RenderCatalog(_lastStatus.Catalog, _lastStatus.Jobs);
+        }
+        header.Click += Toggle;
+        chevron.Click += Toggle;
+        nameField.Click += Toggle;
+        statusField.Click += Toggle;
+        leading.Click += Toggle;
+        foreach (Control c in new Control[] { chevron, nameField, statusField })
+        {
+            c.Cursor = Cursors.Hand;
+        }
+
+        card.Controls.Add(header);
+        return card;
+    }
+
+    /// <summary>El detalle que estaba siempre visible y ahora vive plegado.</summary>
+    private Control? BuildCatalogDetail(TrayCatalogItem item, bool isInstalled, string? installedVersion)
+    {
+        var stack = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Margin = new Padding(0),
+            Padding = new Padding(24, 4, 0, 4)
         };
 
-        body.Controls.Add(nameField, 0, 0);
-        body.Controls.Add(installButton, 1, 0);
-
-        // Meta line: vendor + description. Version only when it's a real
-        // value — the catalog sometimes ships the literal string
-        // "unknown" for packages with no version metadata, which used to
-        // render as "vunknown" here.
         var detailParts = new List<string>();
         if (!string.IsNullOrWhiteSpace(item.Vendor)) detailParts.Add(item.Vendor!);
         if (!string.IsNullOrWhiteSpace(item.Version) &&
@@ -651,40 +801,137 @@ internal sealed class StatusForm : Form
         }
         if (!string.IsNullOrWhiteSpace(item.Description)) detailParts.Add(item.Description!);
 
-        var nextRow = 1;
         if (detailParts.Count > 0)
         {
-            var detailField = new Label
+            stack.Controls.Add(new Label
             {
                 Text = string.Join("  ·  ", detailParts),
                 AutoSize = true,
-                MaximumSize = new Size(490, 0),
-                Font = new Font(Font.FontFamily, 9f),
+                MaximumSize = new Size(460, 0),
+                Font = new Font(Font.FontFamily, 8.5f),
                 ForeColor = Color.FromArgb(96, 96, 96),
-                Margin = new Padding(0, 5, 0, 0)
-            };
-            body.Controls.Add(detailField, 0, nextRow);
-            body.SetColumnSpan(detailField, 2);
-            nextRow++;
+                Margin = new Padding(0, 0, 0, 2)
+            });
+        }
+
+        // El inventario tiene retardo: decirlo evita que «Installed» se lea
+        // como una comprobación en vivo del equipo, que no lo es.
+        if (isInstalled)
+        {
+            stack.Controls.Add(new Label
+            {
+                Text = $"Reported installed at v{installedVersion} by the last inventory scan.",
+                AutoSize = true,
+                MaximumSize = new Size(460, 0),
+                Font = new Font(Font.FontFamily, 8f),
+                ForeColor = Color.FromArgb(140, 140, 140),
+                Margin = new Padding(0, 0, 0, 2)
+            });
         }
 
         if (item.RequiresReboot == true)
         {
-            var chip = BuildChip("Requires a restart", BrandAssets.ChipWarningBackground, BrandAssets.ChipWarningText);
-            body.Controls.Add(chip, 0, nextRow);
-            body.SetColumnSpan(chip, 2);
-            nextRow++;
+            stack.Controls.Add(BuildChip("Requires a restart", BrandAssets.ChipWarningBackground, BrandAssets.ChipWarningText));
         }
 
         if (_recentInstallFailures.ContainsKey(item.PackageId))
         {
-            var chip = BuildChip("Install failed — try again.", BrandAssets.ChipErrorBackground, BrandAssets.ChipErrorText);
-            body.Controls.Add(chip, 0, nextRow);
-            body.SetColumnSpan(chip, 2);
+            stack.Controls.Add(BuildChip("Install failed — try again.", BrandAssets.ChipErrorBackground, BrandAssets.ChipErrorText));
         }
 
-        card.Controls.Add(body, 0, 0);
-        return card;
+        return stack.Controls.Count == 0 ? null : stack;
+    }
+
+    /// <summary>
+    /// El icono del paquete, cuando aplica.
+    ///
+    /// ⚠️ SALE DEL EQUIPO, NO DEL SERVIDOR, Y SÓLO PARA LO YA INSTALADO.
+    /// Windows guarda `DisplayIcon` en la clave de desinstalación de cada
+    /// programa, así que para algo instalado el icono real está a una lectura
+    /// de registro. Sacarlo del instalador —tabla Icon de un MSI, recursos PE
+    /// de un EXE— exigiría parsearlo en el intake, guardarlo con el paquete y
+    /// mandarlo por el proto: mucha maquinaria para un adorno, y aun así sin
+    /// icono hasta que alguien vuelva a subir el binario. Esto no cuesta nada
+    /// y acierta justo donde el usuario ya reconoce el programa.
+    ///
+    /// Se cachea (null incluido) porque el catálogo se repinta cada 5 s y esto
+    /// toca disco.
+    /// </summary>
+    private Image? ResolveCatalogIcon(TrayCatalogItem item)
+    {
+        if (_iconCache.TryGetValue(item.PackageId, out var cached)) return cached;
+
+        Image? resolved = null;
+        try
+        {
+            var path = FindDisplayIconPath(item.Name);
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                // DisplayIcon suele venir como "C:\...\chrome.exe,0" — el
+                // sufijo es el índice del recurso, no parte de la ruta.
+                var comma = path!.LastIndexOf(',');
+                if (comma > 2) path = path.Substring(0, comma);
+                path = path.Trim('"');
+                if (File.Exists(path))
+                {
+                    using var extracted = Icon.ExtractAssociatedIcon(path);
+                    if (extracted != null) resolved = extracted.ToBitmap();
+                }
+            }
+        }
+        catch
+        {
+            // Un icono es un adorno: cualquier fallo aquí deja la fila sin él
+            // y sigue. Nunca romper el catálogo por no poder dibujar 16 px.
+            resolved = null;
+        }
+
+        _iconCache[item.PackageId] = resolved;
+        return resolved;
+    }
+
+    /// <summary>
+    /// El `DisplayIcon` registrado para el programa cuyo DisplayName casa con
+    /// <paramref name="name"/>. Mira las dos vistas del registro por la misma
+    /// razón que la detección del privsvc: un instalador de 32 bits registra
+    /// bajo WOW6432Node aunque el Windows sea de 64.
+    /// </summary>
+    private static string? FindDisplayIconPath(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        var views = new[] { RegistryView.Registry64, RegistryView.Registry32 };
+        const string subPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+
+        foreach (var view in views)
+        {
+            using var hive = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+            using var uninstall = hive.OpenSubKey(subPath);
+            if (uninstall == null) continue;
+
+            foreach (var keyName in uninstall.GetSubKeyNames())
+            {
+                using var entry = uninstall.OpenSubKey(keyName);
+                if (entry == null) continue;
+                var displayName = entry.GetValue("DisplayName") as string;
+                if (string.IsNullOrWhiteSpace(displayName)) continue;
+                if (!string.Equals(displayName, name, StringComparison.OrdinalIgnoreCase)) continue;
+
+                var icon = entry.GetValue("DisplayIcon") as string;
+                if (!string.IsNullOrWhiteSpace(icon)) return icon;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// La versión del catálogo, o nada cuando es el literal "unknown" — que
+    /// se renderizaba como «vunknown».
+    /// </summary>
+    private static string VersionLabel(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version)) return "";
+        if (string.Equals(version, "unknown", StringComparison.OrdinalIgnoreCase)) return "";
+        return $"v{version}";
     }
 
     private Label BuildChip(string text, Color background, Color foreground)

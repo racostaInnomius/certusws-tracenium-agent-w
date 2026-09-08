@@ -16,6 +16,7 @@ import { runUpdateTask, ackForUpdateOutcome } from "../update/update-task";
 // `require("../update/update-task")` further down.
 import { describeError } from "../update/describe-error";
 import { consumePendingCatalogInstallRequest } from "../status/catalog-install-request-watcher";
+import type { TrayCatalogItem } from "../status/tray-status-types";
 
 const ACK_TIMEOUT_MS = 60_000;
 const MAX_IN_FLIGHT = 3;
@@ -1399,6 +1400,29 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
   }
 }
 
+/**
+ * Un `SoftwareCatalogItem` del proto → el ítem que el tray lee del JSON.
+ *
+ * ⚠️ ESTÁ FUERA DEL HANDLER PARA PODER PROBARLA. Vivía dentro de un `.map()`
+ * anidado en `startGrpcStream`, donde ningún test la alcanza — y una
+ * proyección es exactamente donde un campo nuevo se pierde en silencio: el
+ * proto lo lleva, el backend lo manda, el tray no lo enseña y no falla nada.
+ */
+export function mapCatalogItem(item: any): TrayCatalogItem {
+  return {
+    packageId: String(item?.packageId || ""),
+    name: String(item?.name || ""),
+    vendor: item?.vendor ? String(item.vendor) : undefined,
+    version: String(item?.version || ""),
+    description: item?.description ? String(item.description) : undefined,
+    requiresReboot: Boolean(item?.requiresReboot),
+    // "" cuando el servidor no lo sabe Y cuando el backend es anterior a este
+    // campo: los dos significan «no lo enseñes», así que colapsan al mismo
+    // undefined en vez de pintar «Installed · v».
+    installedVersion: item?.installedVersion ? String(item.installedVersion) : undefined
+  };
+}
+
 export function startGrpcStream(ctx: AgentContext) {
   shutdownRequested = false;
   // We're actively starting a stream now; if scheduleReconnect fires
@@ -2016,17 +2040,7 @@ stream = client.Connect();
       try {
         const items = Array.isArray(msg.catalogResponse.items) ? msg.catalogResponse.items : [];
         const catalogVersion = String(msg.catalogResponse.catalogVersion || "");
-        ctx.trayStatus.updateCatalog(
-          items.map((item: any) => ({
-            packageId: String(item?.packageId || ""),
-            name: String(item?.name || ""),
-            vendor: item?.vendor ? String(item.vendor) : undefined,
-            version: String(item?.version || ""),
-            description: item?.description ? String(item.description) : undefined,
-            requiresReboot: Boolean(item?.requiresReboot)
-          })),
-          catalogVersion
-        );
+        ctx.trayStatus.updateCatalog(items.map(mapCatalogItem), catalogVersion);
         ctx.logger?.info?.("[catalog] catalogResponse applied", {
           itemCount: items.length,
           catalogVersion
