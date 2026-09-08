@@ -38,7 +38,7 @@ import { logger } from "./logger";
 // que el backend tiene que aceptar, y dos copias que divergen dejan una
 // plataforma sin poder enrolar. Ver privsvc/shared/der.ts.
 import { buildCsr, ClassicAlgorithm } from "../../shared/pkcs10";
-import { loadOrCreateAltKey } from "../../shared/alt-key";
+import { loadOrCreateAltKey, altKeyPathFor } from "../../shared/alt-key";
 
 const execFileRaw = promisify(execFile);
 
@@ -188,6 +188,35 @@ async function ensureEnrollmentPrivateKey(
     fs.rmSync(keyPath, { force: true });
   } catch {}
 
+  await generatePrivateKeyInto(keyPath, alg);
+}
+
+/**
+ * Qué forma tiene HOY la identidad instalada: algoritmo clásico y si
+ * lleva mitad alternativa. La renovación la usa para no degradar por
+ * omisión. Ante la duda, `RSA_2048` clásico — lo que tiene la flota.
+ */
+async function formaInstalada(paths: { clientKey: string }): Promise<{
+  classic: ClassicAlgorithm;
+  hybrid: boolean;
+}> {
+  const hybrid = fs.existsSync(altKeyPathFor(paths.clientKey));
+  try {
+    if (await keyMatchesAlgorithm(paths.clientKey, "EC_P384")) {
+      return { classic: "EC_P384", hybrid };
+    }
+  } catch {}
+  return { classic: "RSA_2048", hybrid };
+}
+
+/**
+ * Escribe una clave privada nueva del algoritmo pedido.
+ *
+ * Extraído para que la RENOVACIÓN use el mismo generador que el
+ * enrolamiento: duplicarlo es cómo se acaba con un equipo que enrola en
+ * P-384 y se renueva a sí mismo en RSA sin que nadie lo note.
+ */
+async function generatePrivateKeyInto(keyPath: string, alg: ClassicAlgorithm): Promise<void> {
   const args = alg === "RSA_2048"
     ? ["genpkey", "-algorithm", "RSA", "-pkeyopt", `rsa_keygen_bits:${LINUX_CSR_KEY_BITS}`, "-out", keyPath]
     : null;
@@ -503,47 +532,62 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
     if (!serverBaseUrl) return fail(req.id, "bad_request", "serverBaseUrl required");
     if (!tenantId) return fail(req.id, "bad_request", "tenantId required");
 
-    const conf = [
-      "[req]",
-      "prompt = no",
-      "distinguished_name = dn",
-      "req_extensions = req_ext",
-      "[dn]",
-      `CN = tracenium-agent-${deviceId}`,
-      "O = Tracenium",
-      `OU = ${tenantId}`,
-      "[req_ext]",
-      "keyUsage = critical,digitalSignature",
-      "extendedKeyUsage = clientAuth",
-      `subjectAltName = URI:tracenium://tenant/${tenantId}/device/${deviceId}`,
-    ].join("\n");
+    // ── ADR-0015: la renovación CONSERVA la forma del equipo ──────────
+    //
+    // ⚠️ AQUÍ VIVÍA UN `openssl genpkey RSA` + `openssl req -config`. El
+    // bloque 2 migró `handleGenerateCsr` a `buildCsr` y dejó ESTE camino
+    // intacto, así que el CSR híbrido llegaba al ENROLAMIENTO y nunca a
+    // la RENOVACIÓN — que es justo la vía de la rotación de flota. Un
+    // equipo podía enrolar híbrido y volverse clásico en su primera
+    // renovación, en silencio. `openssl req` no puede armar un CSR
+    // híbrido: la prueba de posesión alternativa se firma sobre el propio
+    // CertificationRequestInfo y va dentro de él.
+    //
+    // Por defecto se conserva lo que el equipo YA tiene en vez de
+    // esperar que el control plane lo diga en cada rotación: no hace
+    // falta protocolo nuevo y una renovación no puede DEGRADAR por
+    // omisión. Ver el gemelo de macOS.
+    const forma = await formaInstalada(paths);
 
-    fs.writeFileSync(pendingConf, conf + "\n", { encoding: "utf8", mode: 0o600 });
+    const keyAlgorithm = String(params.keyAlgorithm || forma.classic).toUpperCase();
+    if (keyAlgorithm !== "RSA_2048" && keyAlgorithm !== "EC_P384") {
+      return fail(
+        req.id,
+        "bad_request",
+        `unsupported keyAlgorithm on linux: ${keyAlgorithm} (RSA_2048 | EC_P384)`
+      );
+    }
 
-    await execFileAsync(OPENSSL_BIN, [
-      "genpkey",
-      "-algorithm",
-      "RSA",
-      "-pkeyopt",
-      `rsa_keygen_bits:${LINUX_CSR_KEY_BITS}`,
-      "-out",
-      pendingKey,
-    ]);
-    fs.chmodSync(pendingKey, 0o600);
+    const altPedido = params.altKeyAlgorithm === undefined
+      ? (forma.hybrid ? "ML_DSA_65" : "")
+      : String(params.altKeyAlgorithm || "").toUpperCase();
+    if (altPedido && altPedido !== "ML_DSA_65") {
+      return fail(
+        req.id,
+        "bad_request",
+        `unsupported altKeyAlgorithm on linux: ${altPedido} (ML_DSA_65)`
+      );
+    }
 
-    await execFileAsync(OPENSSL_BIN, [
-      "req",
-      "-new",
-      "-sha256",
-      "-key",
-      pendingKey,
-      "-out",
-      pendingCsr,
-      "-config",
-      pendingConf,
-    ]);
+    await generatePrivateKeyInto(pendingKey, keyAlgorithm as ClassicAlgorithm);
 
-    const csrPem = fs.readFileSync(pendingCsr, "utf8");
+    // ⚠️ La clave alternativa se REUTILIZA y cuelga de la clave
+    // INSTALADA, no de la `.pending`: cambiarla en cada renovación
+    // dejaría certificados vivos nombrando una clave que ya no existe.
+    const altKey = altPedido ? loadOrCreateAltKey(paths.clientKey, { reuse: true }) : null;
+
+    const built = buildCsr({
+      classicKey: crypto.createPrivateKey(fs.readFileSync(pendingKey)),
+      classicAlgorithm: keyAlgorithm as ClassicAlgorithm,
+      commonName: `tracenium-agent-${deviceId}`,
+      tenantId,
+      deviceId,
+      altPrivateKeyPkcs8: altKey?.pkcs8Der ?? null,
+      altPublicKeySpki: altKey?.spkiDer ?? null
+    });
+
+    fs.writeFileSync(pendingCsr, built.pem, { encoding: "utf8", mode: 0o600 });
+    const csrPem = built.pem;
     const identity = loadInstalledIdentity();
     const response = await postJsonMtls(
       `${serverBaseUrl}/api/v1/security/certificates/renew`,
@@ -590,6 +634,8 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
       clientCertThumbprint,
       issuingCaThumbprint,
       notAfter: x509.validTo,
+      keyAlgorithm,
+      altKeyAlgorithm: built.hybrid ? "ML_DSA_65" : null,
     });
 
     return success(req.id, {
@@ -599,6 +645,12 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
       clientCertThumbprint,
       issuingCaThumbprint,
       notAfter: x509.validTo,
+      // ⚠️ Se responde lo que se HIZO, no lo que se pidió. Es el único
+      // sitio donde el control plane puede enterarse de que una
+      // renovación salió CLÁSICA cuando debía salir híbrida — sin esto,
+      // una flota entera podría degradarse en silencio.
+      keyAlgorithm,
+      altKeyAlgorithm: built.hybrid ? "ML_DSA_65" : null,
       status: response.status || "pending",
       keyStore: "file",
       keychainLabel: null,
