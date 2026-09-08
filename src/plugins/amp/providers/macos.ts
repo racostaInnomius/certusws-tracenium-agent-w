@@ -245,7 +245,139 @@ export function mergeMacAppsBySource(
     } as SoftwareApplication);
   }
 
-  return [...byPfn.values(), ...unkeyed];
+  return collapseReceiptsByName([...byPfn.values(), ...unkeyed]);
+}
+
+/** La fuente que NO es un inventario de lo instalado, sino de lo que se instaló. */
+const RECEIPT_SOURCE = "pkgutil";
+
+function nameKey(app: SoftwareApplication): string {
+  return (app.name ?? "").trim().toLowerCase();
+}
+
+/**
+ * Compara versiones por segmentos numéricos. `14.5.1.1761239430` > `13.2.1.…`
+ *
+ * No es semver: los recibos de macOS traen cuatro y cinco segmentos y el
+ * último es una marca de tiempo. Sólo hace falta un orden total y estable.
+ */
+function versionSegments(v?: string | null): number[] {
+  if (typeof v !== "string") return [];
+  return v
+    .split(/[.\-+]/)
+    .map((x) => Number.parseInt(x, 10))
+    .map((n) => (Number.isFinite(n) ? n : -1));
+}
+
+function isNewerVersion(a?: string | null, b?: string | null): boolean {
+  const A = versionSegments(a);
+  const B = versionSegments(b);
+  for (let i = 0; i < Math.max(A.length, B.length); i++) {
+    const x = A[i] ?? -1;
+    const y = B[i] ?? -1;
+    if (x !== y) return x > y;
+  }
+  return false;
+}
+
+/**
+ * Colapsa los RECIBOS de pkgutil que describen la misma app.
+ *
+ * ⚠️ Por qué hace falta una tercera pasada por NOMBRE, cuando la anterior se
+ * niega a adivinar por nombre a propósito: `pkgutil` no lista software
+ * instalado, lista recibos de instalación, y macOS los guarda para siempre.
+ * Apple además versiona el identificador del recibo, así que un Mac acumula
+ * uno por cada versión mayor que ha visto en su vida:
+ *
+ *   com.apple.iWork.Numbers   14.5                    ← la app de verdad
+ *   com.apple.pkg.Numbers10   10.3.9.0.1.1610096085   ← recibo histórico
+ *   com.apple.pkg.Numbers11   11.2.1.1631719887
+ *   … hasta Numbers15
+ *
+ * La pasada por packageFamilyName no puede unir nada de eso: los seis ids son
+ * distintos entre sí y distintos del bundle. Medido en el tenant 1 el 08-sep:
+ * 8 Macs producían 24 filas de "Numbers" con 15 versiones, y la tarjeta de
+ * fragmentación de versiones —que cuenta versiones distintas por app— era la
+ * que peor lo reflejaba. Lo mismo con Keynote, Pages, Office y los drivers de
+ * Epson, que instalan varios subpaquetes bajo un mismo nombre visible.
+ *
+ * ⚠️ La regla es DELIBERADAMENTE estrecha, porque unir por nombre es
+ * peligroso: sólo colapsa cuando el que sobra es un RECIBO. Dos apps de
+ * verdad con el mismo nombre siguen siendo dos filas — si eso pasa, es un
+ * hecho del equipo y no un artefacto del colector.
+ *
+ * ⚠️ Y no borra información: el recibo que sobrevive es el de versión más
+ * alta, y si hay una app de verdad con ese nombre, sus campos vacíos se
+ * rellenan con los del recibo antes de descartarlo. Es lo que ya hacía la
+ * pasada anterior, por la misma razón: PMP y la detección de CVE cruzan por
+ * nombre + versión.
+ */
+export function collapseReceiptsByName(
+  apps: SoftwareApplication[]
+): SoftwareApplication[] {
+  const grupos = new Map<string, SoftwareApplication[]>();
+
+  for (const app of apps) {
+    const key = nameKey(app);
+    // Sin nombre no hay con qué agrupar; pasa tal cual.
+    if (!key) continue;
+    const g = grupos.get(key);
+    if (g) g.push(app);
+    else grupos.set(key, [app]);
+  }
+
+  const salida: SoftwareApplication[] = apps.filter((a) => !nameKey(a));
+
+  for (const grupo of grupos.values()) {
+    const recibos = grupo.filter((a) => a.source?.toLowerCase?.() === RECEIPT_SOURCE);
+    const reales = grupo.filter((a) => a.source?.toLowerCase?.() !== RECEIPT_SOURCE);
+
+    if (recibos.length === 0) {
+      // Nada que colapsar: dos apps de verdad con el mismo nombre se quedan
+      // como están. Ver el aviso de arriba.
+      salida.push(...grupo);
+      continue;
+    }
+
+    // El recibo superviviente: el de versión más alta, y a igualdad el de
+    // installId menor, para que el resultado no dependa del orden de entrada.
+    let recibo = recibos[0];
+    for (const r of recibos.slice(1)) {
+      if (
+        isNewerVersion(r.version, recibo.version) ||
+        (!isNewerVersion(recibo.version, r.version) &&
+          String(r.installId) < String(recibo.installId))
+      ) {
+        recibo = r;
+      }
+    }
+
+    if (reales.length === 0) {
+      salida.push(recibo);
+      continue;
+    }
+
+    // Hay app de verdad: los recibos se van, pero antes rellenan lo que le
+    // falte a UNA de ellas — la de installId menor, para ser deterministas.
+    const destino = reales.reduce((a, b) =>
+      String(a.installId) <= String(b.installId) ? a : b
+    );
+
+    for (const real of reales) {
+      salida.push(
+        real === destino
+          ? ({
+              ...real,
+              version: real.version ?? recibo.version ?? null,
+              publisher: real.publisher ?? recibo.publisher,
+              installLocation: real.installLocation ?? recibo.installLocation
+            } as SoftwareApplication)
+          : real
+      );
+    }
+  }
+
+  return salida;
 }
 
 async function collectMacSoftware(): Promise<SoftwareApplication[]> {

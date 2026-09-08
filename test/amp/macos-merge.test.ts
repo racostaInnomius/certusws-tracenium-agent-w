@@ -110,15 +110,33 @@ describe("mergeMacAppsBySource", () => {
     expect(orden2[0].version).toBe("1.0");
   });
 
-  it("una app sin identificador NO se fusiona con nadie", () => {
-    // ⚠️ Sin llave, unir por nombre juntaría cosas distintas. Una fila suelta
-    // de más es mucho menos dañina que dos apps colapsadas en una.
+  it("dos apps DE VERDAD con el mismo nombre siguen siendo dos filas", () => {
+    // ⚠️ La mitad que sigue en pie de la regla original: sin llave, unir por
+    // nombre juntaría cosas distintas, y una fila suelta de más es mucho menos
+    // dañina que dos apps colapsadas en una. Ninguna de estas dos es un
+    // recibo, así que nada las toca.
+    const out = mergeMacAppsBySource([
+      app({ name: "FoxOneMX", source: "macos-app-bundle", packageFamilyName: null }),
+      app({ name: "FoxOneMX", source: "homebrew", packageFamilyName: null }),
+    ]);
+
+    expect(out).toHaveLength(2);
+  });
+
+  it("⚠️ pero una app y su RECIBO con el mismo nombre sí se colapsan", () => {
+    // Aquí la regla anterior decía 2, y el campo demostró que se equivocaba:
+    // `pkgutil` no lista lo instalado, lista recibos de instalación, y macOS
+    // los guarda para siempre. Medido en el tenant 1 el 08-sep, 8 Macs daban
+    // 24 filas de "Numbers" con 15 versiones. Que uno de los dos lados sea un
+    // recibo es lo que hace segura la unión por nombre; sin esa condición,
+    // el test de arriba sigue mandando.
     const out = mergeMacAppsBySource([
       app({ name: "FoxOneMX", source: "macos-app-bundle", packageFamilyName: null }),
       app({ name: "FoxOneMX", source: "pkgutil", packageFamilyName: null }),
     ]);
 
-    expect(out).toHaveLength(2);
+    expect(out).toHaveLength(1);
+    expect(out[0].source).toBe("macos-app-bundle");
   });
 
   it("no colapsa apps distintas que comparten fuente", () => {
@@ -148,5 +166,79 @@ describe("mergeMacAppsBySource", () => {
     ];
     expect(mergeMacAppsBySource(entrada)).toHaveLength(3);
     expect(mergeMacAppsBySource([])).toEqual([]);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Los tres casos reales de producción (tenant 1, 08-sep).
+  // ─────────────────────────────────────────────────────────────────────
+  it("⚠️ Numbers: un bundle y seis recibos de Apple quedan en UNA fila", () => {
+    // Apple versiona el identificador del recibo —Numbers10…Numbers15—, así
+    // que la fusión por packageFamilyName no podía unir absolutamente nada:
+    // los seis ids son distintos entre sí y distintos del bundle.
+    const out = mergeMacAppsBySource([
+      app({ name: "Numbers", source: "macos-app-bundle", packageFamilyName: "com.apple.iWork.Numbers", version: "14.5" }),
+      app({ name: "Numbers", source: "pkgutil", packageFamilyName: "com.apple.pkg.Numbers10", version: "10.3.9.0.1.1610096085" }),
+      app({ name: "Numbers", source: "pkgutil", packageFamilyName: "com.apple.pkg.Numbers11", version: "11.2.1.1631719887" }),
+      app({ name: "Numbers", source: "pkgutil", packageFamilyName: "com.apple.pkg.Numbers12", version: "12.1.1.1667669062" }),
+      app({ name: "Numbers", source: "pkgutil", packageFamilyName: "com.apple.pkg.Numbers13", version: "13.2.1.1694639406" }),
+      app({ name: "Numbers", source: "pkgutil", packageFamilyName: "com.apple.pkg.Numbers14", version: "14.5.1.1761239430" }),
+      app({ name: "Numbers", source: "pkgutil", packageFamilyName: "com.apple.pkg.Numbers15", version: "15.3.1.1.1785016684" }),
+    ]);
+
+    expect(out).toHaveLength(1);
+    expect(out[0].source).toBe("macos-app-bundle");
+    // La versión de la app real gana sobre la del recibo: 14.5 es lo que
+    // ejecuta el usuario, 14.5.1.1761239430 es la versión del paquete.
+    expect(out[0].version).toBe("14.5");
+  });
+
+  it("Microsoft PowerPoint: el recibo tiene otro id y aun así se une", () => {
+    const out = mergeMacAppsBySource([
+      app({ name: "Microsoft PowerPoint", source: "macos-app-bundle", packageFamilyName: "com.microsoft.Powerpoint", version: "16.112.2" }),
+      app({ name: "Microsoft PowerPoint", source: "pkgutil", packageFamilyName: "com.microsoft.package.Microsoft_PowerPoint.app", version: "16.112.26083020" }),
+    ]);
+
+    expect(out).toHaveLength(1);
+    expect(out[0].version).toBe("16.112.2");
+  });
+
+  it("Epson: nueve subpaquetes de un mismo driver quedan en uno, el más nuevo", () => {
+    // Sin app de verdad detrás: sobrevive el recibo, y el que sobrevive es el
+    // de versión más alta.
+    const out = mergeMacAppsBySource([
+      app({ name: "Epson Inkjet Printer Driver", source: "pkgutil", packageFamilyName: "com.epson.pkg.ijpdrv.remoteprint.w.Machine_106_and_later", version: "12.64" }),
+      app({ name: "Epson Inkjet Printer Driver", source: "pkgutil", packageFamilyName: "com.epson.pkg.ijpdrv.et-1110series.w.Module_110_and_later", version: "13.26" }),
+      app({ name: "Epson Inkjet Printer Driver", source: "pkgutil", packageFamilyName: "com.epson.pkg.ijpdrv.sc-p5000series.a.Machine_106_and_later", version: "13.26" }),
+    ]);
+
+    expect(out).toHaveLength(1);
+    expect(out[0].version).toBe("13.26");
+  });
+
+  it("⚠️ un recibo SIN app detrás no se pierde: es software real", () => {
+    // 259 de las 329 filas de pkgutil del tenant 1 son lo único que se sabe
+    // de ese software —drivers, kexts, herramientas sin .app—. Colapsar no
+    // puede convertirse en descartar.
+    const out = mergeMacAppsBySource([
+      app({ name: "Rosetta", source: "pkgutil", packageFamilyName: "com.apple.pkg.RosettaUpdateAuto", version: "2.0" }),
+    ]);
+
+    expect(out).toHaveLength(1);
+    expect(out[0].name).toBe("Rosetta");
+  });
+
+  it("el resultado no depende del orden de entrada, tampoco con recibos", () => {
+    const entrada = [
+      app({ name: "Numbers", source: "pkgutil", packageFamilyName: "com.apple.pkg.Numbers13", version: "13.2.1.1694639406" }),
+      app({ name: "Numbers", source: "pkgutil", packageFamilyName: "com.apple.pkg.Numbers14", version: "14.5.1.1761239430" }),
+      app({ name: "Numbers", source: "macos-app-bundle", packageFamilyName: "com.apple.iWork.Numbers", version: "14.5" }),
+    ];
+
+    const a = mergeMacAppsBySource([...entrada]);
+    const b = mergeMacAppsBySource([...entrada].reverse());
+
+    expect(a).toHaveLength(1);
+    expect(a[0].installId).toBe(b[0].installId);
+    expect(a[0].version).toBe(b[0].version);
   });
 });
