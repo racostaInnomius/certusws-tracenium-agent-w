@@ -256,7 +256,9 @@ export async function runRemediation(
       v: 1,
       id: `pmp-read-${jobId}-${Date.now()}`,
       method: "pmp.read_check_state",
-      params: { checkId },
+      // Los handlers genéricos leen el estado de LAS escrituras pedidas:
+      // sin params no saben qué clave mirar. Los dedicados los ignoran.
+      params: { checkId, params: payload?.params ?? {} },
       meta: {
         tenantId: ctx.enrollment.tenantId,
         deviceId: ctx.enrollment.deviceId,
@@ -355,7 +357,9 @@ export async function runRemediation(
       v: 1,
       id: `pmp-read-${jobId}-${Date.now()}`,
       method: "pmp.read_check_state",
-      params: { checkId },
+      // Los handlers genéricos leen el estado de LAS escrituras pedidas:
+      // sin params no saben qué clave mirar. Los dedicados los ignoran.
+      params: { checkId, params: payload?.params ?? {} },
       meta: {
         tenantId: ctx.enrollment.tenantId,
         deviceId: ctx.enrollment.deviceId,

@@ -78,6 +78,17 @@ const ENTRIES: AgentCheckEntry[] = [
     checkId: "windows.shares.no_everyone_full_control",
     applicableTo: new Set<CheckOsApplicability>(["windows"]),
   },
+  // Handlers GENÉRICOS (2026-09): escriben el valor que el catálogo espera.
+  // Las escrituras viajan en `params.writes` y el PrivSvc las valida una
+  // por una (HKLM sólo, tipo acorde, claves guardadas rechazadas).
+  {
+    checkId: "windows.registry.set_value",
+    applicableTo: new Set<CheckOsApplicability>(["windows"]),
+  },
+  {
+    checkId: "windows.secedit.set_value",
+    applicableTo: new Set<CheckOsApplicability>(["windows"]),
+  },
 
   // ── Linux Phase 8 ───────────────────────────────────────────────
   // These four checkIds are implemented in

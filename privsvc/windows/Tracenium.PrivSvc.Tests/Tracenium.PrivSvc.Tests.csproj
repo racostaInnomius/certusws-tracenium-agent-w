@@ -40,6 +40,10 @@
          RegistryProbeShape.cs precisamente para poder compilarse aqui;
          RegistryProbes.cs (Microsoft.Win32.Registry) se queda fuera. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\RegistryProbeShape.cs" />
+    <!-- Remediacion generica (registro/secedit): el parseo y la validacion de
+         las escrituras, las guardas y la plantilla .inf son puros
+         (System.Text.Json); la escritura real queda en PmpRemediation.cs. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\GenericWriteShape.cs" />
     <!-- Parseo de la salida de `gpresult`. Solo System y
          System.Collections.Generic: texto puro, sin nada de Windows
          dentro pese al namespace, asi que cumple la regla de arriba. -->

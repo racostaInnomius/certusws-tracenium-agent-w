@@ -20,6 +20,11 @@
 //   * windows.firewall.profiles_enabled
 // Phase 2 adds:
 //   * windows.shares.no_everyone_full_control
+// Generic (2026-09, parameterised — see GenericWriteShape.cs):
+//   * windows.registry.set_value   params.writes[] of kind "registry"
+//   * windows.secedit.set_value    params.writes[] of kind "secedit"
+//   The value to write is the catalog's expected value; every write is
+//   re-validated here (HKLM only, typed value, guarded keys refused).
 //
 // The dispatch keys MUST match exactly what the backend snapshots
 // from the catalog and what the agent's remediation-checks.ts
@@ -66,6 +71,8 @@ public static class PmpRemediation
                 "windows.network_sharing.smbv1_disabled" => ReadSmbV1(),
                 "windows.firewall.profiles_enabled" => ReadFirewallProfiles(),
                 "windows.shares.no_everyone_full_control" => ReadSharesEveryoneFullControl(),
+                "windows.registry.set_value" => ReadGenericRegistry(req.Params),
+                "windows.secedit.set_value" => ReadGenericSecedit(req.Params),
                 _ => null
             };
 
@@ -107,6 +114,8 @@ public static class PmpRemediation
                 "windows.network_sharing.smbv1_disabled" => await ApplySmbV1Disabled(),
                 "windows.firewall.profiles_enabled" => await ApplyFirewallProfilesEnabled(),
                 "windows.shares.no_everyone_full_control" => await ApplySharesEveryoneFullControlRevoked(),
+                "windows.registry.set_value" => ApplyGenericRegistry(req.Params),
+                "windows.secedit.set_value" => ApplyGenericSecedit(req.Params),
                 _ => RemediateResult.ForUnsupported(checkId),
             };
 
@@ -758,6 +767,258 @@ public static class PmpRemediation
             RequiresReboot = false, // share ACL changes apply immediately
             ChangesApplied = changes,
         };
+    }
+
+
+    // ── Generic: registry values ──────────────────────────────────
+    //
+    // Escribe los valores que el catálogo declara como esperados. Las
+    // escrituras llegan tipadas en params.params.writes y se validan en
+    // GenericWriteShape (HKLM sólo, sin "..", tipo acorde, guardas). Un
+    // check es todo o nada: una escritura rechazada aborta el lote antes
+    // de tocar el registro, para no dejar el check en fail con un cambio
+    // a medias. Si la clave existe con OTRO tipo de valor (un REG_SZ donde
+    // se pide DWORD) no se sobreescribe: es señal de que la sonda y el
+    // sistema no hablan de lo mismo.
+
+    private static ReadResult ReadGenericRegistry(Dictionary<string, object>? p)
+    {
+        var writes = GenericWriteShape.FromParams(p);
+        if (writes.Rejected.Count > 0 || writes.Registry.Count == 0)
+            throw new InvalidOperationException("invalid writes: " + string.Join("; ", writes.Rejected.DefaultIfEmpty("none")));
+
+        var entries = new List<object>();
+        var compliant = true;
+        foreach (var w in writes.Registry)
+        {
+            object? current = null;
+            string? kind = null;
+            var present = false;
+            using (var key = Registry.LocalMachine.OpenSubKey(w.SubKey))
+            {
+                if (key is not null)
+                {
+                    var raw = key.GetValue(w.ValueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+                    if (raw is not null)
+                    {
+                        present = true;
+                        current = RegistryProbeShape.Normalize(raw);
+                        kind = key.GetValueKind(w.ValueName).ToString();
+                    }
+                }
+            }
+            var matches = present && GenericWriteShape.RegistryValueMatches(w, current);
+            if (!matches) compliant = false;
+            entries.Add(new { key = @"HKLM\" + w.SubKey, name = w.ValueName, present, kind, current, expected = w.Describe(), matches });
+        }
+        return new ReadResult { State = new { writes = entries }, IsCompliant = compliant };
+    }
+
+    private static RemediateResult ApplyGenericRegistry(Dictionary<string, object>? p)
+    {
+        var sw = Stopwatch.StartNew();
+        var writes = GenericWriteShape.FromParams(p);
+        if (writes.Rejected.Count > 0 || writes.Registry.Count == 0)
+        {
+            return new RemediateResult
+            {
+                ExitCode = 2, DurationMs = sw.ElapsedMilliseconds,
+                StderrExcerpt = Truncate("rejected: " + string.Join("; ", writes.Rejected.DefaultIfEmpty("no writes")), 1024),
+                ChangesApplied = new List<string>(),
+            };
+        }
+
+        // Comprobación de tipos ANTES de escribir nada.
+        foreach (var w in writes.Registry)
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(w.SubKey);
+            if (key is null || key.GetValue(w.ValueName) is null) continue;
+            var existing = key.GetValueKind(w.ValueName);
+            var wanted = KindOf(w.Kind);
+            var compatible = existing == wanted
+                || (wanted == RegistryValueKind.String && existing == RegistryValueKind.ExpandString);
+            if (!compatible)
+            {
+                return new RemediateResult
+                {
+                    ExitCode = 3, DurationMs = sw.ElapsedMilliseconds,
+                    StderrExcerpt = $@"HKLM\{w.SubKey}:{w.ValueName} exists as {existing}, expected {wanted}; not overwritten",
+                    ChangesApplied = new List<string>(),
+                };
+            }
+        }
+
+        var changes = new List<string>();
+        foreach (var w in writes.Registry)
+        {
+            using var key = Registry.LocalMachine.CreateSubKey(w.SubKey, writable: true)
+                ?? throw new InvalidOperationException($@"could not open or create HKLM\{w.SubKey}");
+            object value = w.Kind switch
+            {
+                GenericValueKind.DWord => unchecked((int)w.DwordValue),
+                GenericValueKind.String => w.StringValue ?? "",
+                _ => w.MultiValue ?? Array.Empty<string>(),
+            };
+            key.SetValue(w.ValueName, value, KindOf(w.Kind));
+            changes.Add(w.Describe());
+        }
+        sw.Stop();
+        return new RemediateResult { ExitCode = 0, DurationMs = sw.ElapsedMilliseconds, RequiresReboot = false, ChangesApplied = changes };
+    }
+
+    private static RegistryValueKind KindOf(GenericValueKind k) => k switch
+    {
+        GenericValueKind.DWord => RegistryValueKind.DWord,
+        GenericValueKind.String => RegistryValueKind.String,
+        _ => RegistryValueKind.MultiString,
+    };
+
+    // ── Generic: secedit [System Access] ──────────────────────────
+    //
+    // Exporta la directiva actual (secedit /export), compara la clave, y
+    // para aplicar escribe una plantilla con SOLO [System Access] y las
+    // claves pedidas, que `secedit /configure /areas SECURITYPOLICY`
+    // aplica sin tocar lo que no se nombra. Después se vuelve a exportar
+    // para verificar: secedit devuelve 0 aunque una clave no cambie.
+
+    private static ReadResult ReadGenericSecedit(Dictionary<string, object>? p)
+    {
+        var writes = GenericWriteShape.FromParams(p);
+        if (writes.Rejected.Count > 0 || writes.Secedit.Count == 0)
+            throw new InvalidOperationException("invalid writes: " + string.Join("; ", writes.Rejected.DefaultIfEmpty("none")));
+
+        var ini = ExportSecedit();
+        ini.TryGetValue("System Access", out var access);
+        var entries = new List<object>();
+        var compliant = true;
+        foreach (var w in writes.Secedit)
+        {
+            string? current = null;
+            if (access is not null && access.TryGetValue(w.Key, out var v)) current = v.Trim().Trim('"');
+            var matches = current is not null && SeceditValueMatches(w, current);
+            if (!matches) compliant = false;
+            entries.Add(new { key = w.Key, current, expected = w.Value, matches });
+        }
+        return new ReadResult { State = new { section = "System Access", writes = entries }, IsCompliant = compliant };
+    }
+
+    private static RemediateResult ApplyGenericSecedit(Dictionary<string, object>? p)
+    {
+        var sw = Stopwatch.StartNew();
+        var writes = GenericWriteShape.FromParams(p);
+        if (writes.Rejected.Count > 0 || writes.Secedit.Count == 0)
+        {
+            return new RemediateResult
+            {
+                ExitCode = 2, DurationMs = sw.ElapsedMilliseconds,
+                StderrExcerpt = Truncate("rejected: " + string.Join("; ", writes.Rejected.DefaultIfEmpty("no writes")), 1024),
+                ChangesApplied = new List<string>(),
+            };
+        }
+
+        var stamp = Guid.NewGuid().ToString("N");
+        var inf = Path.Combine(Path.GetTempPath(), $"trc-fix-{stamp}.inf");
+        var db = Path.Combine(Path.GetTempPath(), $"trc-fix-{stamp}.sdb");
+        var log = Path.Combine(Path.GetTempPath(), $"trc-fix-{stamp}.log");
+        try
+        {
+            // secedit lee la plantilla como UTF-16 (Unicode=yes).
+            File.WriteAllText(inf, GenericWriteShape.RenderSeceditInf(writes.Secedit), Encoding.Unicode);
+            var run = RunProcess("secedit.exe", $"/configure /db \"{db}\" /cfg \"{inf}\" /areas SECURITYPOLICY /log \"{log}\" /quiet", 60_000);
+            if (run.ExitCode != 0)
+            {
+                return new RemediateResult
+                {
+                    ExitCode = run.ExitCode, DurationMs = sw.ElapsedMilliseconds,
+                    StderrExcerpt = CombinedExcerpt(run.Stdout, run.Stderr) ?? $"secedit exit {run.ExitCode}",
+                    ChangesApplied = new List<string>(),
+                };
+            }
+
+            // Verificación: lo que dice la directiva después.
+            var after = ExportSecedit();
+            after.TryGetValue("System Access", out var access);
+            var changes = new List<string>();
+            var missing = new List<string>();
+            foreach (var w in writes.Secedit)
+            {
+                var ok = access is not null && access.TryGetValue(w.Key, out var v) && SeceditValueMatches(w, v.Trim().Trim('"'));
+                if (ok) changes.Add($"[System Access] {w.Key}={w.Value}");
+                else missing.Add(w.Key);
+            }
+            sw.Stop();
+            return new RemediateResult
+            {
+                ExitCode = missing.Count == 0 ? 0 : 4,
+                DurationMs = sw.ElapsedMilliseconds,
+                StderrExcerpt = missing.Count == 0 ? null : "not applied (domain policy may override): " + string.Join(", ", missing),
+                RequiresReboot = false,
+                ChangesApplied = changes,
+            };
+        }
+        finally
+        {
+            foreach (var f in new[] { inf, db, log })
+            {
+                try { if (File.Exists(f)) File.Delete(f); } catch { /* best effort */ }
+            }
+        }
+    }
+
+    private static bool SeceditValueMatches(SeceditWriteSpec w, string current)
+    {
+        if (w.IsNumeric)
+        {
+            return long.TryParse(current, NumberStyles.Integer, CultureInfo.InvariantCulture, out var have)
+                && long.TryParse(w.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var want)
+                && have == want;
+        }
+        return string.Equals(current, w.Value, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static Dictionary<string, Dictionary<string, string>> ExportSecedit()
+    {
+        var cfg = Path.Combine(Path.GetTempPath(), $"trc-secedit-{Guid.NewGuid():N}.cfg");
+        try
+        {
+            var run = RunProcess("secedit.exe", $"/export /cfg \"{cfg}\" /areas SECURITYPOLICY /quiet", 30_000);
+            if (run.ExitCode != 0 || !File.Exists(cfg))
+                throw new InvalidOperationException($"secedit /export failed (exit {run.ExitCode}): {CombinedExcerpt(run.Stdout, run.Stderr)}");
+            // La exportación sale en UTF-16; File.ReadAllText detecta el BOM.
+            var text = File.ReadAllText(cfg).Replace("\0", "");
+            return SeceditShape.ParseIni(text);
+        }
+        finally
+        {
+            try { if (File.Exists(cfg)) File.Delete(cfg); } catch { /* best effort */ }
+        }
+    }
+
+    private sealed class ProcRun
+    {
+        public int ExitCode { get; init; }
+        public string Stdout { get; init; } = "";
+        public string Stderr { get; init; } = "";
+    }
+
+    private static ProcRun RunProcess(string file, string args, int timeoutMs)
+    {
+        var psi = new ProcessStartInfo(file, args)
+        {
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"could not start {file}");
+        var stdout = proc.StandardOutput.ReadToEndAsync();
+        var stderr = proc.StandardError.ReadToEndAsync();
+        if (!proc.WaitForExit(timeoutMs))
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            throw new TimeoutException($"{file} did not finish within {timeoutMs} ms");
+        }
+        return new ProcRun { ExitCode = proc.ExitCode, Stdout = stdout.Result, Stderr = stderr.Result };
     }
 
     // ── Helpers ───────────────────────────────────────────────────
