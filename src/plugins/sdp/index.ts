@@ -749,9 +749,17 @@ export async function runSoftwareInstall(
     if (!isExpected) {
       // Installer ran to completion but exit code says it failed.
       outcome = "failed";
-      extraReason = stderrExcerpt
-        ? `unexpected_exit_${exitCode}:${stderrExcerpt.slice(0, 80)}`
-        : `unexpected_exit_${exitCode}`;
+      // ⚠️ EL DIAGNÓSTICO DEL LOG GANA AL STDERR, Y NO ES ARBITRARIO: para un
+      // MSI silencioso el stderr llega SIEMPRE vacío —msiexec /qn no escribe
+      // nada— así que sin esto el reason es un `unexpected_exit_1603` pelado
+      // que no dice nada. El privsvc ya leyó el log y sacó el código canónico;
+      // eso es lo que el operador necesita ver.
+      const diagnosis = trimStderr(installResult.installerDiagnosis);
+      extraReason = diagnosis
+        ? `unexpected_exit_${exitCode}:${diagnosis.slice(0, 120)}`
+        : stderrExcerpt
+          ? `unexpected_exit_${exitCode}:${stderrExcerpt.slice(0, 80)}`
+          : `unexpected_exit_${exitCode}`;
       return {
         ackStatus: 2,
         ackMessage: encodeAckMessage(outcome, deploymentId, {

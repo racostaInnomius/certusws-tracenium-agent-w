@@ -50,6 +50,38 @@ public static class Sdp
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "Tracenium", "PrivSvc", "sdp-staging");
 
+    // ── Logs de Windows Installer ─────────────────────────────────
+    //
+    // C:\ProgramData\Tracenium\PrivSvc\sdp-logs\
+    //   pkg-<packageId>-<jobNonce>.log
+    //
+    // ⚠️ EXISTE PORQUE msiexec /qn NO DICE NADA POR STDOUT. RunInstallerProcess
+    // captura stdout+stderr y ese extracto llega hasta el ack, así que para un
+    // EXE ya teníamos con qué diagnosticar. Para un MSI silencioso el extracto
+    // llega SIEMPRE vacío: todo lo que Windows Installer tiene que decir va a
+    // su propio log, y sin /l*v ese log no se escribe.
+    //
+    // Costó una tarde entera: un `exit=0` que no instalaba nada y un `exit=1603`
+    // sin explicación, indiagnosticables hasta que un operador añadió /l*v a
+    // mano. Con el log, la respuesta —1729, reconfiguración de un producto ya
+    // instalado— estaba en una lectura.
+    //
+    // ⚠️ VA EN EL RUNNER, NO EN silentInstallArgs DEL CATÁLOGO. Ahí sería dato
+    // por paquete: los que ya existen nacerían sin él, un operador podría
+    // borrarlo sin saber qué borra, y quien lo propone (la IA del intake) es el
+    // componente menos fiable para decidir un argumento que en un EXE puede
+    // dejar el instalador esperando en una ventana que nadie ve.
+    private static readonly string MsiLogDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "Tracenium", "PrivSvc", "sdp-logs");
+
+    // Más largo que el TTL del staging (24 h) porque un log sirve DESPUÉS del
+    // fallo, cuando alguien viene a preguntar qué pasó; el binario ya no.
+    private const long MsiLogTtlMs = 7L * 24 * 60 * 60 * 1000;
+    // Tope por número además del TTL: un bucle de reintentos puede escribir
+    // decenas de logs en minutos, mucho antes de que 7 días signifiquen nada.
+    private const int MsiLogMaxFiles = 50;
+
     private const long MaxDownloadBytes = 2L * 1024 * 1024 * 1024; // 2 GB ceiling
     private const int DefaultDownloadTimeoutSeconds = 600;          // 10 min
 
@@ -736,6 +768,7 @@ public static class Sdp
                 exitCode = result.ExitCode,
                 stderrExcerpt = result.StderrExcerpt,
                 durationMs = result.DurationMs,
+                installerDiagnosis = result.InstallerDiagnosis,
             });
         }
         catch (Exception ex)
@@ -806,6 +839,7 @@ public static class Sdp
                 exitCode = result.ExitCode,
                 stderrExcerpt = result.StderrExcerpt,
                 durationMs = result.DurationMs,
+                installerDiagnosis = result.InstallerDiagnosis,
             });
         }
         catch (Exception ex)
@@ -1207,6 +1241,17 @@ public static class Sdp
         public int ExitCode { get; set; }
         public string? StderrExcerpt { get; set; }
         public long DurationMs { get; set; }
+
+        /// <summary>
+        /// La causa sacada del log de Windows Installer, cuando la hay.
+        ///
+        /// ⚠️ CAMPO APARTE DE StderrExcerpt A PROPÓSITO. Podría haberse
+        /// colado ahí —para un MSI silencioso siempre está vacío— pero
+        /// entonces el nombre mentiría y nadie sabría después si «1729: …»
+        /// lo dijo el proceso por stderr o lo dedujimos nosotros leyendo un
+        /// fichero. Son dos procedencias con dos fiabilidades.
+        /// </summary>
+        public string? InstallerDiagnosis { get; set; }
     }
 
     private static async Task<InstallRunResult> RunMsiInstaller(
@@ -1223,7 +1268,101 @@ public static class Sdp
             ? new List<string> { "/i", stagingPath, "/qn", "/norestart" }
             : new List<string> { "/i", stagingPath }.Concat(SplitArgs(args!)).ToList();
 
-        return await RunInstallerProcess("msiexec.exe", argList, timeoutSeconds);
+        // El log SIEMPRE, salvo que el operador ya haya puesto el suyo: dos
+        // `/l` en la misma línea es una pelea por el mismo fichero, y el que
+        // pidió el operador gana — sabe algo que nosotros no.
+        var logPath = HasOwnMsiLogFlag(argList) ? null : PrepareMsiLogPath(stagingPath);
+        if (logPath != null)
+        {
+            argList.Add("/l*v");
+            argList.Add(logPath);
+        }
+
+        var result = await RunInstallerProcess("msiexec.exe", argList, timeoutSeconds);
+
+        // Sólo se lee cuando algo fue mal: en el camino feliz el log es ruido
+        // de megabytes que nadie mira, y leerlo costaría lo mismo.
+        if (result.ExitCode != 0 && logPath != null)
+        {
+            result.InstallerDiagnosis = MsiLogDiagnosis.Extract(logPath);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// ¿Trae ya el operador su propia opción de log? msiexec la escribe como
+    /// `/l*v`, `/L*V`, `/log`… y también con guion (`-l*v`).
+    /// </summary>
+    private static bool HasOwnMsiLogFlag(IEnumerable<string> args)
+    {
+        foreach (var a in args)
+        {
+            if (a.Length < 2) continue;
+            if (a[0] != '/' && a[0] != '-') continue;
+            if (a[1] == 'l' || a[1] == 'L') return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Prepara el directorio de logs, lo poda y devuelve la ruta de este.
+    ///
+    /// El nombre sale del propio fichero en staging (`pkg-&lt;id&gt;-&lt;nonce&gt;`), así
+    /// que el log queda atado al paquete Y al intento concreto sin necesidad
+    /// de pasar el jobId hasta aquí. Devuelve null si algo falla: un log es
+    /// diagnóstico, nunca puede impedir una instalación.
+    /// </summary>
+    private static string? PrepareMsiLogPath(string stagingPath)
+    {
+        try
+        {
+            Directory.CreateDirectory(MsiLogDir);
+            SweepOldMsiLogs();
+            var stem = Path.GetFileNameWithoutExtension(stagingPath);
+            if (string.IsNullOrWhiteSpace(stem)) stem = "install";
+            return Path.Combine(MsiLogDir, stem + ".log");
+        }
+        catch (Exception ex)
+        {
+            IpcLog.Write($"[install] could not prepare msi log dir: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Poda por edad Y por número. El TTL solo no basta: un job que reintenta
+    /// cinco veces escribe cinco logs en minutos, y siete días no llegan a
+    /// tiempo de evitar que el disco se llene.
+    /// </summary>
+    private static void SweepOldMsiLogs()
+    {
+        try
+        {
+            var files = new DirectoryInfo(MsiLogDir).GetFiles("*.log");
+            var cutoffUtc = DateTime.UtcNow.AddMilliseconds(-MsiLogTtlMs);
+
+            foreach (var f in files)
+            {
+                if (f.LastWriteTimeUtc < cutoffUtc)
+                {
+                    try { f.Delete(); } catch { /* bloqueado o ya borrado */ }
+                }
+            }
+
+            var survivors = files
+                .Where(f => f.LastWriteTimeUtc >= cutoffUtc)
+                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .Skip(MsiLogMaxFiles);
+            foreach (var f in survivors)
+            {
+                try { f.Delete(); } catch { /* bloqueado o ya borrado */ }
+            }
+        }
+        catch
+        {
+            // El directorio aún no existe, o no se puede enumerar. Podar es
+            // higiene: no puede tumbar una instalación.
+        }
     }
 
     private static async Task<InstallRunResult> RunExeInstaller(

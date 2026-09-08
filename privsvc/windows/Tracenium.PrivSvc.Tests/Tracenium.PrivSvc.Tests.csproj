@@ -77,6 +77,13 @@
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\MlDsaAlt.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\HybridCsr.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\CatalystReader.cs" />
+    <!-- El extractor del log de Windows Installer. System.IO y System.Text
+         y nada mas: el fichero se escribio asi para poder probarse aqui.
+         Importa que corra, porque es un parser de un formato ajeno que
+         nadie controla — el tipo de codigo que falla en silencio y
+         devuelve "no se" en vez de la causa. Sus fixtures son cola de un
+         log real, no inventada. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\MsiLogDiagnosis.cs" />
   </ItemGroup>
 
   <ItemGroup>
