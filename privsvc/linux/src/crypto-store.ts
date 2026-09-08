@@ -40,7 +40,33 @@ import { logger } from "./logger";
 import { buildCsr, ClassicAlgorithm } from "../../shared/pkcs10";
 import { loadOrCreateAltKey } from "../../shared/alt-key";
 
-const execFileAsync = promisify(execFile);
+const execFileRaw = promisify(execFile);
+
+/**
+ * Tope por defecto de CUALQUIER proceso que lance este módulo.
+ *
+ * ⚠️ UN EXEC SIN TOPE AQUÍ NO CUELGA UNA OPERACIÓN: SACA AL EQUIPO DEL
+ * PORTAL. El IPC es un carril SERIE y por él viaja el heartbeat, así que
+ * un hijo que no vuelve deja al equipo encendido y "caído" en el portal.
+ * Medido el 2026-09-08 en macOS —mismo código, misma forma— 57 minutos
+ * fuera por un `crypto.cert.renew` que no volvía.
+ *
+ * Se envuelve la función en vez de poner `timeout` en cada llamada: la
+ * que se olvide es exactamente el fallo. Ver el gemelo de macOS.
+ */
+const EXEC_TIMEOUT_MS = 20_000;
+
+function execFileAsync(
+  file: string,
+  args: readonly string[],
+  options: Record<string, unknown> = {}
+): Promise<{ stdout: string; stderr: string }> {
+  return execFileRaw(file, args as string[], {
+    timeout: EXEC_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+    ...options
+  }) as unknown as Promise<{ stdout: string; stderr: string }>;
+}
 
 // openssl is universally available on every Linux distro we target
 // (ssh-server / coreutils dependencies pull it in transitively).

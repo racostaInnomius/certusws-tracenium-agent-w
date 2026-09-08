@@ -179,6 +179,30 @@ export function getTimeoutForMethod(method: string): number {
       // arbol por cada hive de usuario cargado, asi que el peor caso es
       // de la misma familia.
       return 60 * 1000; // privsvc: 45s + margin
+    // ── Identidad mTLS (ADR-0015) ────────────────────────────────────
+    //
+    // ⚠️ 8ª APARICIÓN DEL INVARIANTE, Y LA MÁS CARA HASTA AHORA.
+    //
+    // Ninguno de estos métodos tenía presupuesto, así que la renovación
+    // —clave nueva, CSR, POST mTLS contra el plano REST y dos
+    // instalaciones en el llavero— corría contra el default de 8s.
+    // Medido el 2026-09-08 sobre una Mac: el cliente se rindió a los 8s
+    // y reportó "renewal failed", pero el privsvc SIGUIÓ trabajando
+    // reteniendo el carril SERIE. Como por ese carril viaja el
+    // heartbeat, el equipo estuvo 57 minutos dado por caído en el portal
+    // estando encendido y sano. El job se reintentó y lo repitió igual.
+    //
+    // Techo del handler tras acotar cada hijo (EXEC_TIMEOUT_MS = 20s en
+    // los dos crypto-store): keygen 20 + CSR 20 + POST 30 + pkcs12 20 +
+    // 3 × `security` 20 = 150s. El cliente espera más — el invariante es
+    // ése y no un número bonito.
+    case "crypto.cert.renew":
+      return 240 * 1000;
+    case "crypto.cert.install":
+    case "crypto.cert.stage":
+      return 120 * 1000; // pkcs12 + hasta 3 llamadas a `security`
+    case "crypto.csr.generate":
+      return 60 * 1000; // clave + CSR en proceso, sin red
     default:
       return DEFAULT_TIMEOUT_MS;
   }

@@ -27,6 +27,11 @@ const HANDLER_CEILING_SECONDS: Record<string, number> = {
   "sdp.install": 1740,
   "sdp.uninstall": 1740,
   "sdp.dp.prefetch": 840,
+  // ADR-0015. Techo del handler de renovación sumando lo que puede tardar
+  // cada paso con los hijos ya acotados (EXEC_TIMEOUT_MS = 20s en los dos
+  // crypto-store): keygen 20 + CSR 20 + POST mTLS 30 + pkcs12 20 +
+  // 3 × `security` 20 = 150s.
+  "crypto.cert.renew": 150,
 };
 
 function clientSource(platform: string): string {
@@ -92,5 +97,34 @@ describe.each(CLIENTS)("privsvc-client-%s IPC timeouts", (platform) => {
 
   it("keeps signature verification well above the default (chain build can do network I/O)", () => {
     expect(timeouts.get("sdp.verifySignature")!).toBeGreaterThanOrEqual(30 * 1000);
+  });
+
+  // ── ADR-0015: la identidad mTLS ────────────────────────────────────
+  //
+  // ⚠️ ESTE CASO NO ES «UNA OPERACIÓN QUE FALLA». Es el equipo saliendo
+  // del portal.
+  //
+  // El carril IPC es SERIE y por él viaja el heartbeat, así que cuando el
+  // cliente se rinde y el handler sigue trabajando, lo que se pierde no
+  // es la renovación: es la presencia del equipo. Medido el 2026-09-08
+  // sobre una Mac, 57 minutos dada por caída estando encendida — y al
+  // reintentarse el job, otra vez.
+  //
+  // Se comprueban los cuatro métodos y no sólo el que falló: los cuatro
+  // caían al default de 8s, y `crypto.cert.renew` fue el primero en
+  // ejercerse porque es el que usa la rotación.
+  it("⚠️ da presupuesto explícito a TODA la identidad mTLS, nunca el default de 8s", () => {
+    for (const method of [
+      "crypto.cert.renew",
+      "crypto.cert.install",
+      "crypto.cert.stage",
+      "crypto.csr.generate",
+    ]) {
+      expect(timeouts.has(method), `${method} se quedaría en el default de 8s`).toBe(true);
+      expect(
+        timeouts.get(method)!,
+        `${method}: ${timeouts.get(method)}ms no da margen ni para un POST mTLS`
+      ).toBeGreaterThan(30 * 1000);
+    }
   });
 });

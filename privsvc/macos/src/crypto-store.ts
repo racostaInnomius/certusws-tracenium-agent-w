@@ -23,7 +23,42 @@ import { logger } from "./logger";
 import { buildCsr, ClassicAlgorithm } from "../../shared/pkcs10";
 import { loadOrCreateAltKey } from "../../shared/alt-key";
 
-const execFileAsync = promisify(execFile);
+const execFileRaw = promisify(execFile);
+
+/**
+ * Tope por defecto de CUALQUIER proceso que lance este módulo.
+ *
+ * ⚠️ UN EXEC SIN TOPE AQUÍ NO CUELGA UNA OPERACIÓN: SACA AL EQUIPO DEL
+ * PORTAL.
+ *
+ * El IPC del privsvc es un carril SERIE —atiende de a uno—, así que un
+ * hijo que no vuelve retiene el carril, y por ese carril viaja el
+ * heartbeat. El equipo sigue encendido, con su agente vivo, y el portal
+ * lo da por caído. Medido el 2026-09-08 sobre una Mac: 57 minutos fuera
+ * por un `crypto.cert.renew` que no volvía.
+ *
+ * Se envuelve `execFileAsync` en vez de poner `timeout` en cada llamada
+ * porque hay once en este fichero: la que se olvide es exactamente el
+ * fallo. Quien necesite otro tope lo pasa en `options`.
+ *
+ * SIGKILL y no SIGTERM: `security` puede quedarse esperando una
+ * interacción de UI que en un demonio headless no llega nunca, y ahí un
+ * SIGTERM educado no siempre basta.
+ */
+const EXEC_TIMEOUT_MS = 20_000;
+
+function execFileAsync(
+  file: string,
+  args: readonly string[],
+  options: Record<string, unknown> = {}
+): Promise<{ stdout: string; stderr: string }> {
+  return execFileRaw(file, args as string[], {
+    timeout: EXEC_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+    ...options
+  }) as unknown as Promise<{ stdout: string; stderr: string }>;
+}
+
 const OPENSSL_BIN = process.env.OPENSSL_BIN || "/usr/bin/openssl";
 const MACOS_CSR_KEY_BITS = "2048";
 
