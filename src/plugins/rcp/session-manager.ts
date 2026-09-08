@@ -22,6 +22,7 @@ import {
   SESSION_CONSENT_TIMEOUT_S,
   type ConsentDecision,
 } from "./consent-prompt";
+import { consentAppliesTo } from "./consent-text";
 
 // M1.S1: hardcoded ceiling. The backend already caps sessions per
 // device at 3 + per operator at 10. This 8 is a "if the backend
@@ -293,9 +294,16 @@ export class SessionManager {
     // is injected on ctx; absent one, the fail-closed default denies — the
     // backend should have already blocked this via the rcp.consent capability
     // gate, but we enforce here too (defense in depth).
-    const requireConsent = Boolean(
-      this.ctx.policyRuntime?.isFeatureEnabled?.("remoteRequireConsent")
-    );
+    // ⚠️ Y a QUÉ aplica. Ver `CONSENT_CAPABILITIES` en consent-text.ts.
+    //
+    // Sin esta condición se preguntaba también antes de una shell o una
+    // transferencia. En un servidor virtual no hay nadie que conteste: el
+    // aviso vencía solo y la sesión moría por `consent_timeout` — medido en
+    // producción el 2026-09-08 con el backend YA arreglado, porque este lado
+    // decide por su cuenta (defensa en profundidad, misma ceguera).
+    const requireConsent =
+      consentAppliesTo(capability) &&
+      Boolean(this.ctx.policyRuntime?.isFeatureEnabled?.("remoteRequireConsent"));
     // Una reconstrucción por reinicio de ICE NO vuelve a preguntar: es la
     // misma sesión y la persona ya decidió. Ver `consentGranted`.
     if (requireConsent && this.consentGranted.has(sessionId)) {

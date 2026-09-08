@@ -111,3 +111,32 @@ export function consentButtons(kind: ConsentKind): { allow: string; deny: string
 export function kindForCapability(capability: string): ConsentKind {
   return capability === "rcp.screen.control" ? "control" : "view";
 }
+
+/**
+ * ⚠️ A QUÉ se le pregunta al usuario del equipo. Hoy, solo a la pantalla.
+ *
+ * Preguntar tiene sentido cuando lo que se pide es mirar SU pantalla: hay
+ * alguien delante, ve el aviso, y consiente algo que va a ocurrir ante sus
+ * ojos. Una shell o una transferencia de ficheros no son eso — y en un
+ * servidor virtual no hay nadie esperando en el sitio, así que el aviso vence
+ * solo y la sesión muere por `consent_timeout`.
+ *
+ * Medido en producción el 2026-09-08, tenant 1: una sesión de ficheros que el
+ * BACKEND había resuelto sin consentimiento (`consentRequired: false` en su
+ * evento `requested`) murió igualmente a los 61 s con `consent_timeout` y
+ * `source: agent`. El control plane ya no preguntaba; este lado sí.
+ *
+ * Espeja `CONSENT_CAPABILITIES` de `consent-gate.ts` en el backend. Son dos
+ * listas a propósito —el agente decide solo, como defensa en profundidad—,
+ * así que llevan el mismo nombre para que quien cambie una encuentre la otra.
+ *
+ * `rcp.screen.control` va incluida aunque no pase por este gate: la pide
+ * `screen-session.ts` directamente al prompter cuando el operador quiere
+ * conducir. Está aquí para que la lista diga la verdad sobre qué se consiente.
+ */
+export const CONSENT_CAPABILITIES = ["rcp.screen", "rcp.screen.control"] as const;
+
+/** ¿Se le pregunta al usuario del equipo antes de abrir esta capacidad? */
+export function consentAppliesTo(capability: string | undefined | null): boolean {
+  return (CONSENT_CAPABILITIES as readonly string[]).includes(String(capability || ""));
+}
