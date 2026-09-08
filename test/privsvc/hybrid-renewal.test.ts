@@ -134,6 +134,47 @@ function servidorRenovacion(): Promise<{ port: number; visto: () => string | nul
   );
 }
 
+// ── Windows, que tiene el mismo agujero por otra razón ───────────────
+//
+// Su renovación DELEGA en el mismo generador que el enrolamiento —la
+// arquitectura buena de las tres, sin dos caminos que migrar— pero le
+// pasaba cuatro parámetros y ninguno decía qué forma producir. El efecto
+// era idéntico: renovar degradaba a clásico.
+//
+// Se comprueba sobre la FUENTE porque el fallo es exactamente «un
+// parámetro que no se reenvía», y porque `CryptoCertRenew` toca el
+// almacén de certificados de Windows y no compila en el proyecto de
+// pruebas (que es `net8.0` a secas para poder correr en cualquier
+// máquina). Es el mismo criterio que `test/priv/ipc-timeouts.test.ts`.
+describe("handleRenewCert — Windows", () => {
+  const src = fs.readFileSync(
+    path.join(
+      __dirname, "..", "..",
+      "privsvc", "windows", "Tracenium.PrivSvc.Windows", "Ipc", "CryptoCertRenew.cs"
+    ),
+    "utf8"
+  );
+
+  it("⚠️ reenvía altKeyAlgorithm al generador, o la renovación sale clásica", () => {
+    expect(src).toContain('csrParams["altKeyAlgorithm"]');
+    // Y por defecto conserva lo que el equipo ya tiene.
+    expect(src).toContain("AltKeyStore.Exists()");
+  });
+
+  it("⚠️ reenvía también el algoritmo clásico, leído del certificado actual", () => {
+    expect(src).toContain('["keyAlgorithm"]');
+    expect(src).toContain("ClassicAlgorithmOf(currentCert)");
+  });
+
+  it("lo explícito manda sobre lo heredado", () => {
+    // `GetString(req.Params, ...) ?? <heredado>`: si alguien pide una
+    // forma concreta, gana. Sin esto no habría manera de migrar a un
+    // equipo por orden del control plane.
+    expect(src).toMatch(/GetString\(req\.Params, "keyAlgorithm"\)\s*\n?\s*\?\?/);
+    expect(src).toMatch(/GetString\(req\.Params, "altKeyAlgorithm"\)\s*\n?\s*\?\?/);
+  });
+});
+
 /** Los OIDs catalyst, leídos del DER y no de cómo los rotule un openssl. */
 function extensionesCatalyst(csrPem: string): number {
   const der = Buffer.from(

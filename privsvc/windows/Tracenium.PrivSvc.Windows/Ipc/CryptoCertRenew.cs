@@ -29,18 +29,50 @@ public static class CryptoCertRenew
             var currentCert = LoadCertFromLocalMachineMyByThumbprint(currentThumbprint);
             var pendingKeyName = $"tracenium-{deviceId}-renew-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
 
+            // ── ADR-0015: la renovación CONSERVA la forma del equipo ──────
+            //
+            // ⚠️ AQUÍ NO SE REENVIABA NI `keyAlgorithm` NI
+            // `altKeyAlgorithm`, y ése era el agujero.
+            //
+            // Windows tiene la buena arquitectura de los tres —la
+            // renovación DELEGA en el mismo generador que el
+            // enrolamiento, así que no hay dos caminos que migrar— pero
+            // le pasaba cuatro parámetros y ninguno decía qué forma
+            // producir. Resultado idéntico al de macOS y Linux, donde el
+            // fallo era un camino viejo sin migrar: un equipo enrolado en
+            // híbrido se volvía CLÁSICO en su primera renovación, en
+            // silencio y para siempre. Y la renovación es justo la vía
+            // por la que rota la flota.
+            //
+            // Se conserva lo que el equipo YA tiene en vez de esperar que
+            // el control plane lo diga en cada rotación: no hace falta
+            // protocolo nuevo, y una renovación no puede DEGRADAR por
+            // omisión. Lo explícito manda sobre lo heredado.
+            var csrParams = new Dictionary<string, object>
+            {
+                ["tenantId"] = tenantId,
+                ["deviceId"] = deviceId,
+                ["reuseExistingKey"] = false,
+                ["keyName"] = pendingKeyName,
+                ["keyAlgorithm"] = GetString(req.Params, "keyAlgorithm")
+                    ?? ClassicAlgorithmOf(currentCert)
+            };
+
+            // Ausente significa clásico, así que sólo se manda la clave si
+            // el equipo ya la tiene o si alguien la pide a propósito.
+            var altPedido = GetString(req.Params, "altKeyAlgorithm")
+                ?? (AltKeyStore.Exists() ? "ML_DSA_65" : null);
+            if (!string.IsNullOrWhiteSpace(altPedido))
+            {
+                csrParams["altKeyAlgorithm"] = altPedido;
+            }
+
             var csrResponse = await CryptoCsr.HandleGenerateCsr(new PrivSvcRequest
             {
                 Version = 1,
                 Id = $"{req.Id}_csr",
                 Method = "crypto.csr.generate",
-                Params = new Dictionary<string, object>
-                {
-                    ["tenantId"] = tenantId,
-                    ["deviceId"] = deviceId,
-                    ["reuseExistingKey"] = false,
-                    ["keyName"] = pendingKeyName
-                },
+                Params = csrParams,
                 Meta = req.Meta ?? new PrivSvcMeta { TenantId = tenantId, DeviceId = deviceId }
             });
 
@@ -151,6 +183,30 @@ public static class CryptoCertRenew
             return je.ToString();
         }
         return val.ToString();
+    }
+
+    /// <summary>
+    /// Qué algoritmo clásico usa HOY este equipo, leído de su propio
+    /// certificado.
+    ///
+    /// ⚠️ Se deduce del certificado y no de una preferencia guardada: el
+    /// certificado es lo que el backend aceptó, y una preferencia que
+    /// discrepe de él produciría una renovación que cambia de algoritmo
+    /// sin que nadie lo haya pedido. Ante la duda, `RSA_2048`, que es lo
+    /// que tiene la flota entera hoy.
+    /// </summary>
+    internal static string ClassicAlgorithmOf(X509Certificate2? cert)
+    {
+        try
+        {
+            if (cert?.GetECDsaPublicKey() is not null) return "ECDSA_P256";
+        }
+        catch
+        {
+            // Un certificado ilegible no debe impedir renovar: se cae al
+            // default, que es lo que el equipo tenía antes de todo esto.
+        }
+        return "RSA_2048";
     }
 
     private static string? GetStringFromObject(object? value, string key)
