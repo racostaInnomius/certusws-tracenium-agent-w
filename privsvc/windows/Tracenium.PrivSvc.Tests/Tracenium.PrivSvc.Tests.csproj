@@ -84,6 +84,11 @@
          devuelve "no se" en vez de la causa. Sus fixtures son cola de un
          log real, no inventada. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\MsiLogDiagnosis.cs" />
+    <!-- ADR-0019 F0. La identidad de desinstalacion es texto puro y vive
+         aparte de SoftwareInventory.cs justamente para poder probarse: una
+         ruta de clave mal construida no falla, se guarda, y el error sale
+         meses despues cuando alguien intenta desinstalar con ella. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UninstallIdentity.cs" />
   </ItemGroup>
 
   <ItemGroup>

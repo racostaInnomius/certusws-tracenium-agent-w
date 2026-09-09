@@ -134,6 +134,8 @@ public static class SoftwareInventory
             if (string.IsNullOrWhiteSpace(uninstallString) && string.IsNullOrWhiteSpace(installLocation))
                 continue;
 
+            var quietUninstallString = sub.GetValue("QuietUninstallString") as string;
+
             list.Add(new Dictionary<string, object?>
             {
                 ["name"] = displayName,
@@ -141,7 +143,46 @@ public static class SoftwareInventory
                 ["publisher"] = publisher,
                 ["installLocation"] = installLocation,
                 ["packageFamilyName"] = null,
-                ["source"] = "win32-registry"
+                ["source"] = "win32-registry",
+
+                // ── ADR-0019 F0: la identidad para poder QUITARLO ──────────
+                //
+                // ⚠️ `uninstallString` YA SE LEÍA AQUÍ, y sólo para decidir si
+                // la fila merecía guardarse (el filtro de arriba). El campo más
+                // valioso del inventario se tocaba y se tiraba. Medido en T111:
+                // 1.264 de 2.088 filas win32 no tienen installLocation, así que
+                // están guardadas PRECISAMENTE porque tenían UninstallString —
+                // el único campo que las hacía dignas de guardarse era el que
+                // no viajaba.
+                //
+                // Tercer caso del mismo patrón, después de `uptimeSeconds` y de
+                // `antivirus.products`.
+                ["uninstallString"] = uninstallString,
+                ["quietUninstallString"] = quietUninstallString,
+
+                // El ProductCode del MSI. La clave del registro ES el GUID
+                // cuando lo instaló Windows Installer, así que no hay que
+                // buscarlo en ningún otro sitio — pero un instalador EXE pone
+                // ahí lo que quiere, y por eso sólo se emite cuando de verdad
+                // tiene forma de GUID. Inventarse un ProductCode es peor que
+                // no tenerlo: `msiexec /x` con basura no falla, desinstala otra
+                // cosa o nada.
+                ["productCode"] = UninstallIdentity.LooksLikeProductCode(subName) ? subName : null,
+
+                // ⚠️ LA RUTA COMPLETA, CON HIVE Y VISTA, Y NO SÓLO EL NOMBRE.
+                //
+                // Este colector lee CUATRO sitios: HKLM y HKCU, cada uno en
+                // vista de 64 y de 32 bits. Sin el prefijo, dos apps distintas
+                // en hives distintos son indistinguibles — y sobre todo, HKCU
+                // aquí es el del usuario bajo el que corre el PrivSvc, que es
+                // LocalSystem, NO el humano sentado delante. Desinstalar una
+                // entrada de HKCU desde LocalSystem es otra operación (y a
+                // menudo imposible), así que quien decida tiene que poder verlo
+                // sin adivinar.
+                ["uninstallKeyPath"] = UninstallIdentity.BuildKeyPath(
+                    hive == RegistryHive.LocalMachine,
+                    view == RegistryView.Registry32,
+                    subName)
             });
         }
 
