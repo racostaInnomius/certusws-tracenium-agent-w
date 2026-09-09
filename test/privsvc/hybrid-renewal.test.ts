@@ -77,11 +77,28 @@ beforeAll(() => {
   const srvCrt = path.join(raiz, "srv.crt");
   execFileSync(OPENSSL, ["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", srvKey]);
   execFileSync(OPENSSL, ["req", "-new", "-key", srvKey, "-subj", "/CN=localhost", "-out", srvCsr]);
+  // ⚠️ Las extensiones van en un FICHERO, no por `-extfile /dev/stdin`.
+  //
+  // Con `/dev/stdin` esto funciona en un terminal y muere en el CI:
+  //
+  //   BIO_new_file: No such device or address: calling fopen(/dev/stdin, r)
+  //
+  // openssl abre esa ruta como un fichero cualquiera, y en el runner el
+  // proceso no tiene un stdin que se pueda abrir así — da igual que
+  // `execFileSync` reciba `input`, porque eso llena el descriptor, no crea
+  // el nodo en /dev. Tumbó el `test` de dos versiones seguidas (runs
+  // 34376357673 y 34414787168), y de forma determinista: ningún test
+  // fallaba, se caía el fichero entero en el beforeAll.
+  //
+  // El fichero temporal es lo que ya hace `cdp-cert-install.test.ts`, y no
+  // depende del entorno. `raiz` se borra en el afterAll.
+  const srvExt = path.join(raiz, "srv.ext");
+  fs.writeFileSync(srvExt, "subjectAltName=DNS:localhost,IP:127.0.0.1\n");
   execFileSync(OPENSSL, [
     "x509", "-req", "-in", srvCsr, "-CA", caCrt, "-CAkey", caKey, "-CAcreateserial",
     "-days", "2", "-out", srvCrt,
-    "-extfile", "/dev/stdin"
-  ], { input: "subjectAltName=DNS:localhost,IP:127.0.0.1\n" });
+    "-extfile", srvExt
+  ]);
   servidorPem = { cert: fs.readFileSync(srvCrt, "utf8"), key: fs.readFileSync(srvKey, "utf8") };
 });
 
