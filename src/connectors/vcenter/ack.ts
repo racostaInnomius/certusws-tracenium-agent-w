@@ -89,6 +89,16 @@ export interface SnapshotAckFields {
   matchedBy?: string;
   durationMs?: number;
   reason?: string;
+  /**
+   * Human-readable numbers behind `reason`, for the operator.
+   *
+   * `reason` is a CODE the control plane matches on (`snapshotVerdictOnHealth`
+   * keys off `datastore_*`), so the figures cannot be folded into it. They used
+   * to go only to the agent's local log, which meant the portal could say a
+   * snapshot was refused for datastore space without saying how much was
+   * missing — the operator had to open vCenter to find out.
+   */
+  detail?: string;
   retryable?: boolean;
   /**
    * The snapshot already existed under this deployment's name and was
@@ -111,6 +121,9 @@ export function buildSnapshotAck(f: SnapshotAckFields): { status: number; messag
     duration: f.durationMs,
     reason: f.reason,
     reused: f.reused ? "true" : undefined,
+    // Free text, LAST on the wire so a truncation upstream costs the prose and
+    // not a field the reducer needs. `kv()` neutralises `;` and `=`.
+    detail: f.detail,
   });
   return {
     status,

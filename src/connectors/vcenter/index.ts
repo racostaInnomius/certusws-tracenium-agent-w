@@ -603,8 +603,17 @@ export async function runVcenterSnapshot(
     // VM itself — strictly worse than not patching it. Fail-OPEN when nothing
     // can be measured (see datastore-check), fail-CLOSED on a measurement that
     // actually says "too full".
+    //
+    // The floors come from the gateway's own configuration. They used to be the
+    // module defaults, unreachable from the control plane, so an operator whose
+    // datastore legitimately runs tighter than 10% had no way to say so — and
+    // when the gate refused wrongly there was no lever at all. Converted here,
+    // at the single point of use: percent → ratio, GiB → bytes.
     try {
-      const capacity = checkDatastores(await client.datastoresForVm(vmMoref));
+      const capacity = checkDatastores(await client.datastoresForVm(vmMoref), {
+        minFreeRatio: cfg.snapshot.minFreePercent / 100,
+        minFreeBytes: cfg.snapshot.minFreeGiB * 1024 ** 3,
+      });
       if (!capacity.proceed) {
         deps.logger?.warn?.("snapshot blocked by datastore capacity", { detail: capacity.detail });
         return buildSnapshotAck({
@@ -614,6 +623,10 @@ export async function runVcenterSnapshot(
           vmMoref,
           matchedBy,
           reason: `datastore_${capacity.reason}`,
+          // The figures travel too. Without them the portal could say "refused
+          // for datastore space" and the operator had to open vCenter to learn
+          // whether 2 GiB were missing or 2 TB.
+          detail: capacity.detail,
           retryable: false,
         });
       }

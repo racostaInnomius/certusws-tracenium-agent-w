@@ -24,6 +24,31 @@
  * capacity forecast. It exists to refuse the clearly-dangerous case: taking a
  * snapshot on a datastore that is nearly full can wedge the VM itself, which is
  * strictly worse than not patching.
+ *
+ * ⚠️ WHY `uncommitted` IS REPORTED AND NOT SUBTRACTED
+ * It used to be subtracted, and that made the gate reject the very datastore
+ * the table above was calibrated on. The first real snapshot ever attempted
+ * (2026-09-09, MSIG-RADIUS-CA on datastore3) came back
+ * `rejected / low_free_ratio` with 4.06 TB free of 21.83 TB — 18.6%, comfortably
+ * over the 10% floor.
+ *
+ * The calibration tests never caught it because their fixtures omit
+ * `uncommitted`, while `datastoresForVm()` always asks vCenter for
+ * `summary.uncommitted` — so production rows always carry it and the fixtures
+ * never did. The figures in the table above are RAW free space; the code gated
+ * on free-minus-uncommitted. Two different rules wearing the same name.
+ *
+ * And subtracting it in full is the wrong rule anyway: `summary.uncommitted` is
+ * the total additional space every thin disk on the datastore COULD eventually
+ * consume. It is a capacity-planning horizon, not occupied space, and on any
+ * normally thin-provisioned datastore it dwarfs free space — so the gate fired
+ * on the common case. Over-commitment is also not made worse by a snapshot that
+ * lives for the length of a patch window: the risk it describes exists whether
+ * or not we patch, and blocking on it converts a planning problem into an
+ * unpatched fleet.
+ *
+ * So both floors now measure real free space, and over-commitment travels in
+ * the detail line where an operator can see it.
  */
 
 export interface DatastoreInfo {
@@ -33,9 +58,9 @@ export interface DatastoreInfo {
   /** Bytes. */
   freeSpace: number;
   /**
-   * Bytes vCenter expects to be consumed by thin-provisioned growth that has
-   * not happened yet. Counted against free space when present, because that
-   * space is already spoken for.
+   * Bytes every thin-provisioned disk on this datastore could eventually
+   * consume (`summary.uncommitted`). REPORTED, never subtracted — see the note
+   * at the top of this file. It is a planning horizon, not occupied space.
    */
   uncommitted?: number;
 }
@@ -58,13 +83,32 @@ const GiB = (n: number) => (n / 1024 ** 3).toFixed(1) + " GiB";
 const pct = (n: number) => (n * 100).toFixed(1) + "%";
 
 /**
- * Effective free space: what vCenter reports, minus growth already promised to
- * thin-provisioned disks. Ignoring `uncommitted` would let us green-light a
- * datastore whose free space is already committed elsewhere.
+ * Free space left if every thin disk on the datastore grew to its full size.
+ *
+ * INFORMATIONAL ONLY — it does not gate anything. Useful context for an
+ * operator ("this datastore is over-committed") and useless as a threshold,
+ * because on a normally thin-provisioned datastore it is near zero while the
+ * datastore is in no danger at all. Gating on it blocked the one snapshot the
+ * lab had proved worked.
  */
 export function effectiveFree(ds: DatastoreInfo): number {
-  const uncommitted = Number.isFinite(ds.uncommitted) ? Math.max(0, ds.uncommitted as number) : 0;
-  return Math.max(0, ds.freeSpace - uncommitted);
+  return Math.max(0, ds.freeSpace - uncommittedOf(ds));
+}
+
+function uncommittedOf(ds: DatastoreInfo): number {
+  return Number.isFinite(ds.uncommitted) ? Math.max(0, ds.uncommitted as number) : 0;
+}
+
+/** True when thin-provisioned promises exceed what is actually left. */
+export function isOvercommitted(ds: DatastoreInfo): boolean {
+  return uncommittedOf(ds) > ds.freeSpace;
+}
+
+/** The over-commitment note appended to a detail line, or "" when there is none. */
+function overcommitNote(ds: DatastoreInfo): string {
+  const u = uncommittedOf(ds);
+  if (u <= 0) return "";
+  return `, ${GiB(u)} promised to thin disks${u > ds.freeSpace ? " (over-committed)" : ""}`;
 }
 
 export function checkDatastore(
@@ -84,25 +128,27 @@ export function checkDatastore(
     };
   }
 
-  const free = effectiveFree(ds);
+  // Real free space, both floors. Not free-minus-uncommitted — see the top.
+  const free = ds.freeSpace;
   const ratio = free / ds.capacity;
+  const note = overcommitNote(ds);
 
   if (ratio < minRatio) {
     return {
       ok: false,
       reason: "low_free_ratio",
-      detail: `${ds.name}: ${pct(ratio)} free (${GiB(free)} of ${GiB(ds.capacity)}), below the ${pct(minRatio)} floor`,
+      detail: `${ds.name}: ${pct(ratio)} free (${GiB(free)} of ${GiB(ds.capacity)}), below the ${pct(minRatio)} floor${note}`,
     };
   }
   if (free < minBytes) {
     return {
       ok: false,
       reason: "low_free_bytes",
-      detail: `${ds.name}: only ${GiB(free)} free, below the ${GiB(minBytes)} floor`,
+      detail: `${ds.name}: only ${GiB(free)} free, below the ${GiB(minBytes)} floor${note}`,
     };
   }
 
-  return { ok: true, detail: `${ds.name}: ${GiB(free)} free (${pct(ratio)})` };
+  return { ok: true, detail: `${ds.name}: ${GiB(free)} free (${pct(ratio)})${note}` };
 }
 
 export interface CapacityDecision {
@@ -144,8 +190,9 @@ export function checkDatastores(
   const blocking = verdicts.filter((x) => !x.v.ok && x.v.reason !== "no_capacity_data");
 
   if (blocking.length) {
-    // Report the tightest one — that is the one an operator must fix.
-    const worst = blocking.sort((a, b) => effectiveFree(a.ds) - effectiveFree(b.ds))[0];
+    // Report the tightest one — that is the one an operator must fix. Ranked by
+    // REAL free space, the same measure the verdict above gates on.
+    const worst = blocking.sort((a, b) => a.ds.freeSpace - b.ds.freeSpace)[0];
     const v = worst.v as Extract<CapacityVerdict, { ok: false }>;
     return { proceed: false, unknown: false, reason: v.reason, detail: v.detail };
   }

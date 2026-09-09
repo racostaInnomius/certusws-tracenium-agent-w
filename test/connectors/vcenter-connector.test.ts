@@ -257,6 +257,26 @@ describe("ack encoding", () => {
     expect(ack.message.match(/reason=/g)).toHaveLength(1);
   });
 
+  it("⭐ carries the capacity figures alongside the code, and keeps them apart", () => {
+    // `reason` is the code the control plane matches on; `detail` is the prose
+    // for the operator. Folding the numbers into `reason` would break
+    // snapshotVerdictOnHealth, which keys off `datastore_*`.
+    const ack = buildSnapshotAck({
+      outcome: "rejected",
+      reason: "datastore_low_free_ratio",
+      detail: "datastore3: 7.2% free (1.5 TiB of 21.8 TiB), below the 10.0% floor, 9.1 TiB promised to thin disks (over-committed)",
+    });
+    expect(ack.message).toContain("reason=datastore_low_free_ratio");
+    expect(ack.message).toContain("detail=datastore3: 7.2% free");
+    // The prose must not smuggle in a field boundary.
+    expect(ack.message.match(/reason=/g)).toHaveLength(1);
+    expect(ack.message.split(";").filter((s) => s.startsWith("detail="))).toHaveLength(1);
+  });
+
+  it("omits detail entirely when there is none, so the wire stays as it was", () => {
+    expect(buildSnapshotAck({ outcome: "created", snapshotId: "snapshot-1" }).message).not.toContain("detail=");
+  });
+
   it("returns null when a message carries no report", () => {
     expect(decodeReport("vcenter_snapshot:created;moref=vm-1")).toBeNull();
   });

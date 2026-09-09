@@ -152,6 +152,36 @@ describe("snapshot tuning is bounded on both ends", () => {
     expect(t(99999)).toBe(3600);
   });
 
+  it("⭐ carries the datastore floors the operator configured, in percent and GiB", () => {
+    const s = parseGatewayConfig({ ...VALID, snapshot: { minFreePercent: 5, minFreeGiB: 50 } })!.snapshot;
+    expect(s.minFreePercent).toBe(5);
+    expect(s.minFreeGiB).toBe(50);
+  });
+
+  it("defaults the floors to the values the module was calibrated on", () => {
+    const s = parseGatewayConfig({ vcenter: VALID.vcenter })!.snapshot;
+    expect(s.minFreePercent).toBe(10);
+    expect(s.minFreeGiB).toBe(10);
+  });
+
+  it("⭐ 0 is allowed and means 'do not gate on this floor' — it is a real choice", () => {
+    // A 200 TB datastore at 4% free still has 8 TB. The percentage is the wrong
+    // instrument there, and the absolute floor still covers the small case.
+    const s = parseGatewayConfig({ ...VALID, snapshot: { minFreePercent: 0, minFreeGiB: 0 } })!.snapshot;
+    expect(s.minFreePercent).toBe(0);
+    expect(s.minFreeGiB).toBe(0);
+  });
+
+  it("refuses a percentage floor above half the datastore, and nonsense values", () => {
+    const p = (minFreePercent: unknown) =>
+      parseGatewayConfig({ ...VALID, snapshot: { minFreePercent } })!.snapshot.minFreePercent;
+    // Above 50% is not a margin, it is "never snapshot".
+    expect(p(90)).toBe(50);
+    expect(p(-5)).toBe(0);
+    expect(p("abc")).toBe(10); // unparseable falls back to the default
+    expect(parseGatewayConfig({ ...VALID, snapshot: { minFreeGiB: 99999 } })!.snapshot.minFreeGiB).toBe(4096);
+  });
+
   it("keeps memory off and quiesce on by default", () => {
     const s = parseGatewayConfig({ vcenter: VALID.vcenter })!.snapshot;
     expect(s.memory).toBe(false);

@@ -3,6 +3,7 @@ import {
   checkDatastore,
   checkDatastores,
   effectiveFree,
+  isOvercommitted,
   DEFAULT_MIN_FREE_RATIO,
   DEFAULT_MIN_FREE_BYTES,
   type DatastoreInfo,
@@ -13,19 +14,30 @@ const GB = (n: number) => n * 1024 ** 3;
 /**
  * Real measurements from the lab (ADR-0001 Inc 3). These are the calibration
  * data for the thresholds, so they are asserted directly.
+ *
+ * ⚠️ EVERY FIXTURE CARRIES `uncommitted`, and that is the point.
+ * These fixtures used to omit it while `datastoresForVm()` always asks vCenter
+ * for `summary.uncommitted` — so every production row had it and no test did.
+ * The gate subtracted it, and on 2026-09-09 the first real snapshot ever
+ * attempted was refused on THIS datastore (18.6% free) while this very file
+ * asserted it should pass. A fixture missing a field the real caller always
+ * sends is not a fixture, it is a blindfold.
  */
 const LAB = {
-  // Where MSIG-VEEAM-SRV lives, and where a snapshot DID succeed.
-  datastore3: { name: "datastore3", capacity: GB(22354.3), freeSpace: GB(4188.1) },
-  nfsBackup: { name: "VeeamBackup_NFS", capacity: GB(8192), freeSpace: GB(993.9) },
-  datastore1: { name: "datastore1", capacity: GB(95.3), freeSpace: GB(93.8) },
+  // Where MSIG-VEEAM-SRV and MSIG-RADIUS-CA live, and where a snapshot DID
+  // succeed. `uncommitted` from the same vCenter: thin disks across 17 VMs
+  // promise far more than the 4.1 TB actually left.
+  datastore3: { name: "datastore3", capacity: GB(22354.3), freeSpace: GB(4188.1), uncommitted: GB(9120.4) },
+  nfsBackup: { name: "VeeamBackup_NFS", capacity: GB(8192), freeSpace: GB(993.9), uncommitted: GB(0) },
+  datastore1: { name: "datastore1", capacity: GB(95.3), freeSpace: GB(93.8), uncommitted: GB(0) },
   datastore2: { name: "datastore2", capacity: GB(21896.8), freeSpace: GB(14127.8), uncommitted: GB(743.1) },
 } satisfies Record<string, DatastoreInfo>;
 
 describe("calibration against the real lab", () => {
-  it("ALLOWS the datastore where a snapshot actually succeeded (18.7% free)", () => {
-    // A naive "require 20% free" would have blocked a snapshot we know worked.
-    // 4.1 TB is ample room for a delta; the ratio alone is misleading at scale.
+  it("⭐ ALLOWS the datastore where a snapshot actually succeeded (18.7% free), over-committed or not", () => {
+    // The regression this file exists for. A naive "require 20% free" would have
+    // blocked a snapshot we know worked; so did subtracting `uncommitted`, which
+    // is 9.1 TB here against 4.1 TB free.
     expect(checkDatastore(LAB.datastore3).ok).toBe(true);
   });
 
@@ -37,10 +49,27 @@ describe("calibration against the real lab", () => {
     expect(checkDatastore(LAB.datastore1).ok).toBe(true);
   });
 
-  it("counts uncommitted thin-provisioned growth against free space", () => {
-    // That space is already spoken for; ignoring it would green-light a
-    // datastore whose headroom is already promised elsewhere.
+  it("⭐ says so in the detail when thin disks promise more than is left", () => {
+    // Reported, not gated: the operator sees the over-commitment and the
+    // snapshot still proceeds.
+    const v = checkDatastore(LAB.datastore3);
+    expect(v.detail).toContain("promised to thin disks");
+    expect(v.detail).toContain("over-committed");
+    expect(isOvercommitted(LAB.datastore3)).toBe(true);
+  });
+
+  it("a merely thin datastore is noted without being called over-committed", () => {
+    const v = checkDatastore(LAB.datastore2);
+    expect(v.ok).toBe(true);
+    expect(v.detail).toContain("promised to thin disks");
+    expect(v.detail).not.toContain("over-committed");
+    expect(isOvercommitted(LAB.datastore2)).toBe(false);
+  });
+
+  it("effectiveFree still reports the over-commitment horizon, and gates nothing", () => {
     expect(effectiveFree(LAB.datastore2)).toBe(GB(14127.8) - GB(743.1));
+    expect(effectiveFree(LAB.datastore3)).toBe(0); // 9.1 TB promised vs 4.1 TB free
+    expect(checkDatastore(LAB.datastore3).ok).toBe(true); // …and it still passes
   });
 });
 
@@ -78,6 +107,22 @@ describe("both floors must hold", () => {
     // The stricter policy the lab data argues against — still available to an
     // operator who wants it.
     expect(checkDatastore(LAB.datastore3, { minFreeRatio: 0.2 }).ok).toBe(false);
+  });
+
+  it("⭐ a floor of 0 disables that check, which is what the UI's 0 has to mean", () => {
+    const nearlyFull = { name: "brim", capacity: GB(1000), freeSpace: GB(1) };
+    // Ratio off, absolute still guarding: 1 GiB is under the 10 GiB floor.
+    expect(checkDatastore(nearlyFull, { minFreeRatio: 0 }).ok).toBe(false);
+    expect((checkDatastore(nearlyFull, { minFreeRatio: 0 }) as any).reason).toBe("low_free_bytes");
+    // Both off: the operator has explicitly accepted the risk.
+    expect(checkDatastore(nearlyFull, { minFreeRatio: 0, minFreeBytes: 0 }).ok).toBe(true);
+  });
+
+  it("a looser percentage lets a tight-but-large datastore through", () => {
+    // The lever that did not exist: 6% of 22 TB is 1.3 TB, ample for a delta.
+    const tight = { name: "big", capacity: GB(22000), freeSpace: GB(1400) };
+    expect(checkDatastore(tight).ok).toBe(false);
+    expect(checkDatastore(tight, { minFreeRatio: 0.05 }).ok).toBe(true);
   });
 
   it("includes actionable numbers in the message", () => {

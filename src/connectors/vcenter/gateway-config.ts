@@ -53,6 +53,14 @@ export interface VCenterSnapshotConfig {
   maxConcurrent: number;
   /** Per-VM ceiling for a single snapshot task. */
   perVmTimeoutSec: number;
+  /**
+   * Datastore floors below which the gateway refuses to snapshot, in the units
+   * the operator configures them: PERCENT and GiB. Converted to the ratio and
+   * bytes `checkDatastores()` wants at the single point of use, so no field here
+   * can be mistaken for the other unit. 0 disables that floor.
+   */
+  minFreePercent: number;
+  minFreeGiB: number;
 }
 
 export interface GatewayConfig {
@@ -67,6 +75,8 @@ export const SNAPSHOT_DEFAULTS: VCenterSnapshotConfig = {
   retentionHours: 24,
   maxConcurrent: 5,
   perVmTimeoutSec: 900,
+  minFreePercent: 10,
+  minFreeGiB: 10,
 };
 
 const clampInt = (v: unknown, min: number, max: number, dflt: number): number => {
@@ -136,6 +146,10 @@ function parseSnapshot(raw: any): VCenterSnapshotConfig {
     // Snapshotting an entire cluster at once will stun vCenter and the datastore.
     maxConcurrent: clampInt(raw?.maxConcurrent, 1, 32, SNAPSHOT_DEFAULTS.maxConcurrent),
     perVmTimeoutSec: clampInt(raw?.perVmTimeoutSec, 60, 3600, SNAPSHOT_DEFAULTS.perVmTimeoutSec),
+    // Re-clamped here even though the control plane already clamps: a policy
+    // document is input, and an agent that trusts its bounds has none.
+    minFreePercent: clampInt(raw?.minFreePercent, 0, 50, SNAPSHOT_DEFAULTS.minFreePercent),
+    minFreeGiB: clampInt(raw?.minFreeGiB, 0, 4096, SNAPSHOT_DEFAULTS.minFreeGiB),
   };
 }
 
