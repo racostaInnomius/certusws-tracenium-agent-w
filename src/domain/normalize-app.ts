@@ -12,6 +12,25 @@ export interface RawAppInput {
   source: string;
   installLocation?: string | null;
   packageFamilyName?: string | null;
+
+  // ── ADR-0019 F0 — la identidad para poder quitarlo ────────────────
+  //
+  // ⚠️ ESTA LISTA ES UN FILTRO, NO UNA DECLARACIÓN. Todo campo que no esté
+  // aquí se pierde en silencio aunque el colector lo mande: el objeto que
+  // construye el llamador se arma nombrando campos uno a uno, así que un
+  // campo nuevo no da error de tipos ni de ejecución — simplemente no llega.
+  //
+  // El colector de Windows (`SoftwareInventory.cs`) llevaba estos cuatro
+  // campos desde 1.1.65 y las cuatro columnas del backend seguían VACÍAS en
+  // los 52 equipos que ya corrían esa versión, porque se caían aquí y en el
+  // llamador. Es el mismo patrón de `uptimeSeconds` y `antivirus.products`.
+  //
+  // Sólo `win32-registry` los trae; los demás orígenes los dejan undefined,
+  // que es la respuesta correcta y no un hueco: «no sabemos cómo quitarlo».
+  uninstallString?: string | null;
+  quietUninstallString?: string | null;
+  productCode?: string | null;
+  uninstallKeyPath?: string | null;
 }
 
 export interface SoftwareApplication {
@@ -30,6 +49,13 @@ export interface SoftwareApplication {
   rawPublisher?: string;
   userFacing?: boolean;
   category?: SoftwareDisplayCategory;
+
+  // ADR-0019 F0. Se propagan tal cual: normalizar un ProductCode o un comando
+  // de desinstalación sería estropearlos — se ejecutan literalmente.
+  uninstallString?: string;
+  quietUninstallString?: string;
+  productCode?: string;
+  uninstallKeyPath?: string;
 }
 
 const SOURCE_ONLY_PUBLISHERS = new Set([
@@ -147,6 +173,16 @@ export function normalizeApp(input: RawAppInput): SoftwareApplication | null {
     rawName,
     rawPublisher,
     userFacing: display.userFacing,
-    category: display.category
+    category: display.category,
+
+    // ⚠️ SIN `cleanString`. Ese helper existe para nombres que se muestran, y
+    // aquí no se muestra nada: un `UninstallString` puede llevar comillas y
+    // rutas con espacios que hay que ejecutar EXACTAMENTE como el instalador
+    // las registró, y un ProductCode es un GUID que sólo vale entero.
+    // `?? undefined` para no plantar `null` en un campo opcional.
+    uninstallString: input.uninstallString ?? undefined,
+    quietUninstallString: input.quietUninstallString ?? undefined,
+    productCode: input.productCode ?? undefined,
+    uninstallKeyPath: input.uninstallKeyPath ?? undefined
   };
 }

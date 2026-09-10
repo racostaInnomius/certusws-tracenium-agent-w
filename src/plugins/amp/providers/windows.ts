@@ -24,6 +24,11 @@ function invDebug(...args: any[]) {
   if (INVENTORY_DEBUG) console.log(...args);
 }
 
+// Lo que el PrivSvc devuelve por IPC. Es un `as RawApp[]` sobre JSON crudo, así
+// que este tipo no valida nada: describe lo que ESPERAMOS. Un campo que el
+// colector manda y que no esté declarado aquí es invisible para el resto del
+// fichero — la tercera de las tres listas que hay que tocar para que un campo
+// nuevo del inventario llegue de verdad al backend.
 type RawApp = {
   name?: string | null;
   version?: string | null;
@@ -31,6 +36,12 @@ type RawApp = {
   installLocation?: string | null;
   packageFamilyName?: string | null;
   source?: string | null;
+
+  // ADR-0019 F0 — sólo los emite `win32-registry`.
+  uninstallString?: string | null;
+  quietUninstallString?: string | null;
+  productCode?: string | null;
+  uninstallKeyPath?: string | null;
 };
 
 /**
@@ -146,7 +157,21 @@ export async function collectWindowsSoftwareInventory(ctx: AgentContext) {
         publisher: a.publisher ?? null,
         installLocation: a.installLocation ?? null,
         packageFamilyName: a.packageFamilyName ?? null,
-        source: a.source ?? "win32-registry"
+        source: a.source ?? "win32-registry",
+
+        // ── ADR-0019 F0 ────────────────────────────────────────────
+        //
+        // ⚠️ ESTE OBJETO SE ARMA CAMPO A CAMPO, así que es un filtro: lo
+        // que no se nombre aquí NO llega, aunque el PrivSvc lo mande y
+        // aunque el backend tenga columna para guardarlo.
+        //
+        // Fue exactamente lo que pasó: `SoftwareInventory.cs` emitía los
+        // cuatro desde 1.1.65, y con 52 equipos ya en esa versión las
+        // cuatro columnas seguían en cero — se caían aquí.
+        uninstallString: a.uninstallString ?? null,
+        quietUninstallString: a.quietUninstallString ?? null,
+        productCode: a.productCode ?? null,
+        uninstallKeyPath: a.uninstallKeyPath ?? null
       })
     )
     .filter((x) => x && x.name);
