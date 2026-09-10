@@ -17,6 +17,16 @@ let certRenewalTimer: NodeJS.Timeout | undefined;
 // ADR-0015 — guard de exclusión entre la renovación periódica y el
 // gatillo remoto. Ver runCertRenewal.
 let certRenewalRunning = false;
+/**
+ * La renovación que está corriendo ahora mismo, si la hay.
+ *
+ * ⚠️ Existe para que una SEGUNDA petición devuelva la promesa de la
+ * primera en vez de una ya resuelta. Quien llama —el manejador de
+ * `rotateCert`— usa el final de esa promesa para levantar la pausa del
+ * envío; resolver de inmediato la levantaría con la identidad del equipo
+ * a medio cambiar.
+ */
+let certRenewalInFlight: Promise<void> | null = null;
 let livenessWatchdogTimer: NodeJS.Timeout | undefined;
 let stopGrpcStream: (() => void) | null = null;
 
@@ -426,7 +436,12 @@ export async function startService() {
       if (!currentCtx || shuttingDown) return;
       if (certRenewalRunning) {
         log.info("[cert-renewal] ya hay una renovación en curso, se ignora la petición", { force });
-        return;
+        // ⚠️ Se devuelve la que YA ESTÁ CORRIENDO, no una promesa ya
+        // resuelta. Quien llama usa el final de esta promesa para soltar
+        // `rotationInProgress`, así que resolver aquí de inmediato
+        // levantaría la pausa mientras la otra renovación todavía está
+        // cambiando la identidad del equipo.
+        return certRenewalInFlight ?? undefined;
       }
       certRenewalRunning = true;
 
@@ -488,14 +503,23 @@ export async function startService() {
     //
     // No se espera al resultado a propósito: quien llama está dentro del
     // manejador del stream que esta renovación puede reiniciar.
-    ctx.requestCertRotation = (reason: string, altKeyAlgorithm?: string) => {
+    ctx.requestCertRotation = (reason: string, altKeyAlgorithm?: string): Promise<void> => {
       log.warn("[cert-renewal] reemisión solicitada por el control plane", {
         reason,
         altKeyAlgorithm: altKeyAlgorithm || "(clásico)"
       });
-      runCertRenewal(true, altKeyAlgorithm).catch((e: any) => {
-        log.error("[cert-renewal] la reemisión forzada falló", { err: e?.message || e });
-      });
+      // ⚠️ Se DEVUELVE la promesa aunque aquí ya se traguen los errores.
+      // El manejador del stream no la espera: la usa para saber cuándo
+      // soltar `rotationInProgress`. Devolver `void` es lo que dejaba al
+      // equipo mudo cuando la reemisión fallaba de forma asíncrona.
+      certRenewalInFlight = runCertRenewal(true, altKeyAlgorithm)
+        .catch((e: any) => {
+          log.error("[cert-renewal] la reemisión forzada falló", { err: e?.message || e });
+        })
+        .finally(() => {
+          certRenewalInFlight = null;
+        });
+      return certRenewalInFlight;
     };
 
     armCertRenewal();

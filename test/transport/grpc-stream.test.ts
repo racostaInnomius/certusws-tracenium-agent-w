@@ -513,6 +513,68 @@ describe("rotateCert (ADR-0015)", () => {
     expect(requestCertRotation).toHaveBeenCalledWith("corte a la G2", "ML_DSA_65");
   });
 
+  // ── La bandera que dejaba al equipo MUDO ───────────────────────────
+  //
+  // ⚠️ INCIDENTE DE PRODUCCIÓN, 2026-09-09, DOS VECES SOBRE LA MISMA MAC.
+  //
+  // `rotationInProgress` silencia el heartbeat mientras la identidad
+  // cambia — correcto— y hasta este arreglo sólo se soltaba en `bridge
+  // ready`, o sea cuando la reemisión SALÍA BIEN y el puente volvía con
+  // el certificado nuevo. Si fallaba, READY no llegaba nunca: la bandera
+  // se quedaba puesta, el equipo dejaba de latir, y el portal lo daba por
+  // caído estando encendido y sano. Once minutos la primera vez.
+  //
+  // El `catch` que había cubría sólo un fallo SÍNCRONO, y los fallos de
+  // una renovación son asíncronos por definición: es una petición de red.
+  // El que nos tocó fue un 401.
+  //
+  // Se observa por el efecto —¿late o no late?— porque la bandera es una
+  // variable de cierre. Que es además la pregunta que le importa a quien
+  // mira el portal.
+  function heartbeatsDe(s: any): number {
+    return s.write.mock.calls.filter((c: any[]) => c[0]?.heartbeat).length;
+  }
+
+  it("⚠️ si la reemisión FALLA, el equipo vuelve a latir", async () => {
+    (ctx as any).requestCertRotation = vi
+      .fn()
+      .mockRejectedValue(new Error('HTTP 401: {"error":"MTLS_CLIENT_CERT_REQUIRED"}'));
+
+    await startFresh();
+    const s = latestStream();
+    s.emit("data", { connected: true });
+    const antes = heartbeatsDe(s);
+    s.emit("data", { rotateCert: { reason: "la que falló en produccion" } });
+
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS + 1_000);
+
+    expect(heartbeatsDe(s)).toBeGreaterThan(antes);
+  });
+
+  it("⚠️ mientras la reemisión SIGUE en curso, NO late — la pausa es real", async () => {
+    // El contrapeso. Sin él, un arreglo que soltara la bandera de
+    // inmediato pasaría el caso de arriba y habría roto la pausa: se
+    // mandarían facts con la identidad a medio cambiar.
+    let resolver: (() => void) | null = null;
+    (ctx as any).requestCertRotation = vi
+      .fn()
+      .mockReturnValue(new Promise<void>((r) => { resolver = () => r(); }));
+
+    await startFresh();
+    const s = latestStream();
+    s.emit("data", { connected: true });
+    const antes = heartbeatsDe(s);
+    s.emit("data", { rotateCert: { reason: "una que tarda" } });
+
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS + 1_000);
+    expect(heartbeatsDe(s)).toBe(antes);
+
+    // Y en cuanto termina, vuelve a latir.
+    resolver!();
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS + 1_000);
+    expect(heartbeatsDe(s)).toBeGreaterThan(antes);
+  });
+
   it("un backend que no manda el campo sigue produciendo una rotación CLÁSICA", async () => {
     // La compatibilidad hacia atrás del proto, comprobada y no supuesta:
     // un agente nuevo contra un backend viejo lee ausencia y hace lo de

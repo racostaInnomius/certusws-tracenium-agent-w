@@ -2126,7 +2126,31 @@ stream = client.Connect();
         // espera aquí, porque este manejador atiende el stream que la
         // renovación va a reiniciar.
         try {
-          ctx.requestCertRotation(reason, altKeyAlgorithm);
+          // ⚠️ NO SE ESPERA, PERO SÍ SE ESCUCHA EL FINAL. La diferencia
+          // costó un equipo mudo dos veces el 2026-09-09.
+          //
+          // `rotationInProgress` silencia el heartbeat mientras la
+          // identidad cambia, y hasta aquí sólo se soltaba en `bridge
+          // ready` —o sea, cuando la reemisión SALÍA BIEN y el puente se
+          // reiniciaba con el certificado nuevo—. Si fallaba, READY no
+          // llegaba nunca: la bandera se quedaba puesta, el equipo dejaba
+          // de latir y el portal lo daba por caído estando encendido y
+          // sano. El `catch` de abajo sólo cubría un fallo SÍNCRONO, y
+          // los fallos de una renovación son asíncronos por definición
+          // —una petición de red—. El que nos tocó fue un 401.
+          //
+          // Esperar aquí no es opción: este manejador atiende el stream
+          // que la propia reemisión va a reiniciar. Así que se sigue sin
+          // esperar y se suelta la bandera cuando la promesa se asienta,
+          // salga bien o mal. En el camino feliz `bridge ready` la
+          // soltará también; soltarla dos veces no cuesta nada, y no
+          // soltarla nunca cuesta un equipo.
+          const rotacion = ctx.requestCertRotation(reason, altKeyAlgorithm);
+          Promise.resolve(rotacion)
+            .catch(() => undefined)
+            .finally(() => {
+              rotationInProgress = false;
+            });
         } catch (err: any) {
           rotationInProgress = false;
           ctx.logger?.error?.("rotateCert: no se pudo encolar la reemisión", {

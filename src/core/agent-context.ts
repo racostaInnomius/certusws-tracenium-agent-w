@@ -63,5 +63,14 @@ export type AgentContext = {
    * producir un certificado híbrido — los handlers del privsvc lo
    * aceptaban, el emisor sabía firmarlo, y nadie lo pedía.
    */
-  requestCertRotation?: (reason: string, altKeyAlgorithm?: string) => void;
+  /**
+   * ⚠️ DEVUELVE UNA PROMESA, y el llamador NO la espera: la usa para
+   * saber CUÁNDO TERMINÓ. Esa diferencia es un bug de producción del
+   * 2026-09-09: el manejador de `rotateCert` ponía `rotationInProgress`
+   * y sólo lo limpiaba si esta llamada lanzaba SÍNCRONAMENTE. Un fallo
+   * asíncrono —el 401 de la renovación— la dejaba puesta, y con ella
+   * puesta no se manda heartbeat: el equipo quedaba dado por caído en el
+   * portal, encendido y sano, hasta un reinicio.
+   */
+  requestCertRotation?: (reason: string, altKeyAlgorithm?: string) => Promise<void>;
 };
