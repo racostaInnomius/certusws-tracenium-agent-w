@@ -1397,6 +1397,37 @@ export async function handleFactsChunk(req: PrivSvcRequest): Promise<PrivSvcResp
  *
  * Va por el canal existente: ni conexión ni handshake nuevos.
  */
+/**
+ * Invalida el canal porque la IDENTIDAD que lo autentica ha cambiado.
+ *
+ * ⚠️ RENOVAR NO REHACÍA EL HANDSHAKE, Y ESO HACÍA INÚTIL LA RENOVACIÓN.
+ *
+ * El certificado de cliente se fija en el handshake TLS, que es por
+ * CONEXIÓN, no por stream. `startConnection()` lee la identidad de disco
+ * —`loadInstalledIdentity()` haría lo correcto— pero su primera línea es
+ * `if (state.connected || state.connecting) return;`. Así que tras
+ * instalar un certificado nuevo, el agente reiniciaba su stream, el
+ * privsvc veía la conexión viva y volvía de inmediato: el canal seguía
+ * presentando el certificado VIEJO.
+ *
+ * Medido en campo el 2026-09-10 (macOS, mismo código): un certificado
+ * emitido a las 04:39 quedó en disco y no se activó hasta las 12:40
+ * —ocho horas—, cuando el canal se cayó por su cuenta. Y como el control
+ * plane sólo da la rotación por terminada cuando el equipo se PRESENTA
+ * con el certificado nuevo, el job reintentaba mientras tanto… y cada
+ * reintento emitía otro certificado. De una sola petición salieron
+ * cuatro.
+ *
+ * Derribar el puente aquí no corta nada que no fuera a cortarse: el
+ * agente ya reinicia su stream tras renovar, y esa reconexión es la que
+ * ahora sí reconstruye las credenciales desde disco. El latido viaja por
+ * el carril IPC, no por este canal, así que el equipo no desaparece del
+ * portal mientras tanto.
+ */
+export function invalidateBridgeForNewIdentity(reason = "cert_renewed") {
+  teardownBridge(reason);
+}
+
 export function renewCertOverGrpc(
   csrPem: string,
   timeoutMs = 60_000

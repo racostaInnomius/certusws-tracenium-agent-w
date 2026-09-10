@@ -152,6 +152,47 @@ public static class CryptoCertRenew
             if (!installResponse.Ok)
                 return PrivSvcResponse.Fail(req.Id, "cert_install_error", installResponse.Error?.Message ?? "Certificate install failed");
 
+            // ── El canal tiene que rehacerse: la identidad ha cambiado ────
+            //
+            // ⚠️ RENOVAR NO REHACÍA EL HANDSHAKE, Y ESO HACÍA INÚTIL LA
+            // RENOVACIÓN.
+            //
+            // El certificado de cliente se fija en el handshake TLS, que es
+            // por CONEXIÓN, no por stream. `Connect()` construye el canal
+            // con la identidad instalada, pero su primera guardia es
+            // `if (_state == Connected || _state == Connecting) return;`.
+            // Así que tras instalar el certificado nuevo, el agente
+            // reiniciaba su stream, el puente veía la conexión viva y
+            // volvía de inmediato: el canal seguía presentando el VIEJO.
+            //
+            // Medido en campo el 2026-09-10 en macOS, que tiene la misma
+            // guardia: un certificado emitido a las 04:39 quedó instalado y
+            // no se activó hasta las 12:40 —ocho horas—, cuando el canal se
+            // cayó por su cuenta. Y como el control plane sólo da la
+            // rotación por terminada cuando el equipo se PRESENTA con el
+            // certificado nuevo, el job reintentaba mientras tanto y cada
+            // reintento emitía otro certificado. De una sola petición
+            // salieron cuatro.
+            //
+            // `Close()` empuja `grpc.disconnected` al agente, que reconecta
+            // por su camino de siempre — y esa reconexión sí construye el
+            // canal con la identidad recién instalada. Va ANTES de devolver
+            // la respuesta: el agente reinicia su stream en cuanto la
+            // recibe, y si el puente siguiera en pie en ese instante la
+            // guardia lo devolvería al certificado viejo.
+            try
+            {
+                GrpcBridgeSingleton.Instance.Close();
+            }
+            catch (Exception ex)
+            {
+                // No se convierte en fallo de la renovación: el certificado
+                // ya está instalado y es bueno. Lo peor que pasa es que el
+                // canal tarde en reciclarse, que es el comportamiento que
+                // había antes de este arreglo.
+                Console.WriteLine($"[PrivSvc][Crypto] bridge close after renew failed: {ex.Message}");
+            }
+
             var result = new
             {
                 deviceId,

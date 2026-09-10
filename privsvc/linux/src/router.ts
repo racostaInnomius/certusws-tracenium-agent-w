@@ -44,6 +44,7 @@ import {
   handleRemoteFileTransferAudit,
   handleRemoteScreenAudit,
   renewCertOverGrpc,
+  invalidateBridgeForNewIdentity,
 } from "./grpc-bridge";
 import { handleSecurityPosture } from "./security-posture";
 import { handleScreenCapture } from "./screen-capture";
@@ -188,12 +189,28 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     case "cdp.anchor.state":
       return handleCdpAnchorState(req);
 
-    case "crypto.cert.renew":
+    case "crypto.cert.renew": {
       // ADR-0015 — el transporte se INYECTA aquí y no se importa en
       // `crypto-store`: `grpc-bridge` ya importa de ese fichero
       // (`loadInstalledIdentity`), así que importarlo al revés cerraría
       // el ciclo. El router es quien compone.
-      return handleRenewCert(req, renewCertOverGrpc);
+      const renovado = await handleRenewCert(req, renewCertOverGrpc);
+
+      // ⚠️ Y por el mismo motivo la invalidación del canal se compone
+      // aquí: instalar la identidad nueva no sirve de nada mientras el
+      // canal siga presentando la vieja. Ver
+      // invalidateBridgeForNewIdentity.
+      //
+      // Va ANTES de devolver la respuesta a propósito. El agente
+      // reinicia su stream en cuanto la recibe; si el puente siguiera en
+      // pie en ese instante, `startConnection()` volvería de inmediato
+      // por su guardia de `state.connected` y la reconexión heredaría
+      // otra vez el certificado viejo — que es exactamente el fallo.
+      if (renovado.ok) {
+        invalidateBridgeForNewIdentity("cert_renewed");
+      }
+      return renovado;
+    }
 
     // ── gRPC bridge (Phase 2) ─────────────────────────────────────
     case "grpc.connect":
