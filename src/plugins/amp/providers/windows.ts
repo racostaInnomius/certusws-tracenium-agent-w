@@ -233,12 +233,18 @@ export const windowsProvider = {
     // resto del namespace AMP.
     let printers = emptyPrinterInventory();
     try {
-      const raw = await collectWindowsPrinters(ctx);
-      printers = buildPrinterInventoryWithBaseline(raw);
+      const lectura = await collectWindowsPrinters(ctx);
+      printers = buildPrinterInventoryWithBaseline(lectura.printers, {
+        machineScope: lectura.machineScope,
+        userScope: lectura.userScope
+      });
     } catch (err: any) {
-      ctx.logger?.warn?.("[printers] collection failed, shipping empty inventory", {
+      // ⚠️ Y se DECLARA que no se pudo mirar, en vez de mandar un cero que
+      // se lee como un hecho sobre el equipo.
+      ctx.logger?.warn?.("[printers] collection failed, scope unavailable", {
         error: err?.message || String(err)
       });
+      printers = { ...printers, machineScope: "unavailable", userScope: "unavailable" };
     }
 
     try {

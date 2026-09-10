@@ -83,7 +83,7 @@ vi.mock("../../src/plugins/amp/providers/printers-cups", () => ({
   collectCupsPrinters: vi.fn(async () => [])
 }));
 vi.mock("../../src/plugins/amp/providers/printers-windows", () => ({
-  collectWindowsPrinters: vi.fn(async () => [])
+  collectWindowsPrinters: vi.fn(async () => ({ printers: [], machineScope: "collected", userScope: "collected" }))
 }));
 
 // Pipeline de impresoras → identidad. Lo que se prueba abajo es el ORDEN en
@@ -91,11 +91,15 @@ vi.mock("../../src/plugins/amp/providers/printers-windows", () => ({
 // propios tests y toca la SQLite del agente).
 vi.mock("../../src/plugins/amp/providers/printers-pipeline", () => ({
   emptyPrinterInventory: () => ({ count: 0, items: undefined, delta: null, hasChanges: false }),
-  buildPrinterInventoryWithBaseline: (raw: any[]) => ({
+  // ⚠️ El doble PROPAGA los alcances. Si se los tragara, los tests de arriba
+  // pasarían con un provider que los pierde por el camino — que es
+  // exactamente el bug que se está arreglando.
+  buildPrinterInventoryWithBaseline: (raw: any[], scopes?: any) => ({
     count: raw.length,
     items: raw,
     delta: null,
-    hasChanges: raw.length > 0
+    hasChanges: raw.length > 0,
+    ...(scopes ?? {})
   })
 }));
 
@@ -479,9 +483,11 @@ describe("AMP Windows — normalización de software.inventory (contrato items/a
 
   it("⚠️ un ciclo SIN cambios de software sigue llevando las impresoras", async () => {
     const printersWin = await import("../../src/plugins/amp/providers/printers-windows");
-    (printersWin.collectWindowsPrinters as any).mockResolvedValue([
-      { installId: "windows-spooler:HP LaserJet", name: "HP LaserJet", isNetwork: true }
-    ]);
+    (printersWin.collectWindowsPrinters as any).mockResolvedValue({
+      printers: [{ installId: "windows-spooler:HP LaserJet", name: "HP LaserJet", isNetwork: true }],
+      machineScope: "collected",
+      userScope: "collected"
+    });
 
     const ctx = makeCtx(
       privRouter({
@@ -504,9 +510,11 @@ describe("AMP Windows — normalización de software.inventory (contrato items/a
 
   it("el ciclo de inventario VACÍO también las lleva", async () => {
     const printersWin = await import("../../src/plugins/amp/providers/printers-windows");
-    (printersWin.collectWindowsPrinters as any).mockResolvedValue([
-      { installId: "windows-spooler:Xerox", name: "Xerox", isNetwork: true }
-    ]);
+    (printersWin.collectWindowsPrinters as any).mockResolvedValue({
+      printers: [{ installId: "windows-spooler:Xerox", name: "Xerox", isNetwork: true }],
+      machineScope: "collected",
+      userScope: "collected"
+    });
 
     const { windowsProvider } = await import("../../src/plugins/amp/providers/windows");
     const ctx = makeCtx(
@@ -520,6 +528,64 @@ describe("AMP Windows — normalización de software.inventory (contrato items/a
 
     expect(amp.software.hasChanges).toBe(true);
     expect(amp.printers?.count).toBe(1);
+  });
+
+  it("⚠️ una lectura CIEGA no se graba como 'este equipo no tiene impresoras'", async () => {
+    // El fallo que costó tres pasadas de diagnóstico: privsvc corre como
+    // LocalSystem y no ve las colas de red del usuario. Devolvía cero, la
+    // primera ejecución PERSISTÍA esa lista vacía como baseline, y a partir de
+    // ahí ya no había cambio nunca: el equipo se quedaba sin impresoras para
+    // siempre. Ahora el alcance viaja y no se toca la baseline.
+    const printersWin = await import("../../src/plugins/amp/providers/printers-windows");
+    (printersWin.collectWindowsPrinters as any).mockResolvedValue({
+      printers: [],
+      machineScope: "unavailable",
+      userScope: "unavailable"
+    });
+
+    const { windowsProvider } = await import("../../src/plugins/amp/providers/windows");
+    const ctx = makeCtx(
+      privRouter({
+        "security.compliance": () => ({ ok: true, result: {} }),
+        "software.inventory": () => ({
+          ok: true,
+          result: { items: [{ name: "Slack", version: "4.38", source: "win32-registry" }] }
+        })
+      })
+    );
+
+    const amp = await windowsProvider.collect(ctx);
+
+    expect(amp.printers?.count).toBe(0);
+    // Lo que este test puede afirmar es el CABLEADO: que el alcance llega
+    // hasta el payload. Que además no se grabe la baseline vacía lo prueba
+    // printers-pipeline.test.ts, contra la función de verdad.
+    expect(amp.printers?.machineScope).toBe("unavailable");
+    expect(amp.printers?.userScope).toBe("unavailable");
+  });
+
+  it("⚠️ si la máquina falla pero SÍ se leyeron las colas del usuario, cuenta como medido", async () => {
+    // El caso que motivó todo: Spooler mudo para el servicio, conexiones de red
+    // del usuario legibles en HKEY_USERS. Descartarlo por el fallo de máquina
+    // volvería a esconder justo las impresoras que este cambio viene a ver.
+    const printersWin = await import("../../src/plugins/amp/providers/printers-windows");
+    (printersWin.collectWindowsPrinters as any).mockResolvedValue({
+      printers: [{ installId: "windows-spooler:\\\\SRV\\Cola", name: "\\\\SRV\\Cola", isNetwork: true }],
+      machineScope: "unavailable",
+      userScope: "collected"
+    });
+
+    const { windowsProvider } = await import("../../src/plugins/amp/providers/windows");
+    const ctx = makeCtx(
+      privRouter({
+        "security.compliance": () => ({ ok: true, result: {} }),
+        "software.inventory": () => ({ ok: true, result: { items: [] } })
+      })
+    );
+
+    const amp = await windowsProvider.collect(ctx);
+    expect(amp.printers?.count).toBe(1);
+    expect(amp.printers?.userScope).toBe("collected");
   });
 
   it("y un fallo leyendo impresoras no tumba el resto del namespace", async () => {

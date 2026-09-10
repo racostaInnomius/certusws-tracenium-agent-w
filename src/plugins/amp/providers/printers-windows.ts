@@ -76,7 +76,14 @@ function normalizeStatus(raw?: string | null): PrinterStatus {
   return "unknown";
 }
 
-export async function collectWindowsPrinters(ctx: AgentContext): Promise<Printer[]> {
+export type WindowsPrinterRead = {
+  printers: Printer[];
+  /** Ver PrinterInventory.machineScope. `unavailable` = no se pudo mirar. */
+  machineScope: string;
+  userScope: string;
+};
+
+export async function collectWindowsPrinters(ctx: AgentContext): Promise<WindowsPrinterRead> {
   let resp: any;
   try {
     resp = await ctx.priv.call({
@@ -89,10 +96,12 @@ export async function collectWindowsPrinters(ctx: AgentContext): Promise<Printer
   } catch (err: any) {
     // PrivSvc not reachable / IPC pipe broken. Treat as "no data" so
     // the caller's `try/catch` doesn't blow up the whole AMP cycle.
-    ctx.logger?.warn?.("[printers] privsvc call failed, returning empty", {
+    // ⚠️ NO es "cero impresoras": es que no se pudo preguntar. El que lo
+    // reciba tiene que poder distinguirlo o volvemos al punto de partida.
+    ctx.logger?.warn?.("[printers] privsvc call failed, scope unavailable", {
       error: err?.message || String(err)
     });
-    return [];
+    return { printers: [], machineScope: "unavailable", userScope: "unavailable" };
   }
 
   if (!resp?.ok) {
@@ -100,7 +109,7 @@ export async function collectWindowsPrinters(ctx: AgentContext): Promise<Printer
       code: resp?.error?.code,
       message: resp?.error?.message
     });
-    return [];
+    return { printers: [], machineScope: "unavailable", userScope: "unavailable" };
   }
 
   const items: RawPrinter[] = Array.isArray(resp.result?.items) ? resp.result.items : [];
@@ -131,5 +140,13 @@ export async function collectWindowsPrinters(ctx: AgentContext): Promise<Printer
 
   // Deterministic ordering → stable baseline hash across reruns
   printers.sort((a, b) => a.installId.localeCompare(b.installId));
-  return printers;
+
+  // Los alcances viajan tal cual los declara privsvc: aquí no se reinterpretan
+  // ni se colapsan en un booleano. Un privsvc viejo no los manda, y entonces
+  // se marcan `unknown` — que tampoco es "collected".
+  return {
+    printers,
+    machineScope: typeof resp.result?.machineScope === "string" ? resp.result.machineScope : "unknown",
+    userScope: typeof resp.result?.userScope === "string" ? resp.result.userScope : "unknown"
+  };
 }

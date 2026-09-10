@@ -30,8 +30,33 @@ import {
 } from "../../../domain/printer-baseline-repo";
 
 export function buildPrinterInventoryWithBaseline(
-  current: Printer[]
+  current: Printer[],
+  /**
+   * Alcances de la lectura (Windows). Ver PrinterInventory.machineScope.
+   *
+   * ⚠️ `measured=false` significa que NO se pudo mirar. Es distinto de mirar y
+   * no encontrar nada, y la diferencia importa aquí más que en ningún sitio:
+   * la primera ejecución PERSISTE la baseline, así que grabar una lista vacía
+   * que en realidad era un fallo de lectura convierte "no pude" en "no tiene"
+   * de forma permanente — las ejecuciones siguientes ya no ven cambio y el
+   * equipo se queda sin impresoras para siempre.
+   */
+  scopes?: { machineScope: string; userScope: string }
 ): PrinterInventory {
+  const measured =
+    !scopes || scopes.machineScope !== "unavailable" || scopes.userScope === "collected";
+
+  if (!measured) {
+    return {
+      count: 0,
+      items: undefined,
+      delta: null,
+      hasChanges: false,
+      machineScope: scopes!.machineScope,
+      userScope: scopes!.userScope
+    };
+  }
+
   const previous = loadPrinterBaseline() ?? [];
   const isFirstRun = previous.length === 0;
 
@@ -45,7 +70,8 @@ export function buildPrinterInventoryWithBaseline(
       count: current.length,
       items: current,
       delta: null,
-      hasChanges: true
+      hasChanges: true,
+      ...scopes
     };
   }
 
@@ -56,7 +82,8 @@ export function buildPrinterInventoryWithBaseline(
       count: deltaResult.currentCount,
       items: undefined,
       delta: null,
-      hasChanges: false
+      hasChanges: false,
+      ...scopes
     };
   }
 

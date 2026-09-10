@@ -163,6 +163,22 @@ export type PrinterInventory = {
   count: number;
 
   /**
+   * POR QUÉ este inventario está vacío, cuando lo está.
+   *
+   * ⚠️ Mismo motivo que `geoStatus`: hasta 2026-09-10 un fallo de lectura y un
+   * equipo sin impresoras producían la MISMA fila, y el portal enseñaba cero
+   * como si fuera un hecho sobre la empresa. En Windows hay DOS lecturas y
+   * pueden fallar por separado — la de máquina (`Get-Printer` desde el
+   * servicio) y la de usuario (conexiones de red en HKEY_USERS).
+   *
+   * Valores de máquina: collected | timeout | empty_output | unavailable.
+   * Valores de usuario: collected | no_user_hive | unavailable.
+   * Ausentes en macOS y Linux, donde sólo hay una lectura.
+   */
+  machineScope?: string;
+  userScope?: string;
+
+  /**
    * Present ONLY when hasChanges = true OR forced (baseline snapshot).
    * On a no-changes cycle we elide this to keep FACTS_SNAPSHOT slim;
    * the backend already knows the current state via its projection.

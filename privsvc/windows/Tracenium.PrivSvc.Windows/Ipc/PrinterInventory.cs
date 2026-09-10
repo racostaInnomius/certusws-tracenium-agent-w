@@ -31,12 +31,21 @@ namespace Tracenium.PrivSvc.Windows.Ipc;
 //     ]
 //   }
 //
-// Errors collapse to `{ count: 0, items: [] }` on the wire — same
-// degradation contract as software.inventory: an empty result is the
-// canonical "couldn't read" response, never an exception. The agent
-// turns that into an empty PrinterInventory (hasChanges=false on
-// subsequent runs) so a broken Spooler service doesn't poison the
-// rest of the AMP namespace.
+// ⚠️ EL CONTRATO DE DEGRADACIÓN CAMBIÓ (2026-09-10).
+//
+// Antes cualquier fallo se colapsaba en `{ count: 0, items: [] }`, con el
+// argumento de que un resultado vacío es la respuesta canónica a "no pude
+// leer". Eso costó un diagnóstico de tres pasadas: "Spooler caído", "sin
+// impresoras" e "invisibles desde esta cuenta" producían la MISMA fila, y el
+// portal enseñaba cero como si fuera un hecho sobre la empresa.
+//
+// Ahora la respuesta lleva `machineScope` y `userScope`, y quien la lea puede
+// distinguir medido-y-vacío de no-medido. Los campos `count`/`items` no
+// cambian, así que un agente viejo sigue funcionando igual.
+//
+// Y se añade la mitad que faltaba: `Get-Printer` sólo ve las impresoras de la
+// cuenta que llama, y las de RED son conexiones por usuario. Ver
+// UserPrinterConnections.cs.
 
 public static class PrinterInventory
 {
@@ -114,12 +123,8 @@ try {
             if (!proc.WaitForExit(15_000))
             {
                 try { proc.Kill(); } catch { }
-                Console.WriteLine("[PrivSvc][PrinterInventory] timeout, returning empty");
-                return Task.FromResult(PrivSvcResponse.Success(req.Id, new
-                {
-                    count = 0,
-                    items = Array.Empty<object>()
-                }));
+                Console.WriteLine("[PrivSvc][PrinterInventory] timeout, machine scope unavailable");
+                return Merge(req, new List<object>(), "timeout");
             }
 
             string stdout = proc.StandardOutput.ReadToEnd().Trim();
@@ -132,11 +137,9 @@ try {
 
             if (string.IsNullOrEmpty(stdout))
             {
-                return Task.FromResult(PrivSvcResponse.Success(req.Id, new
-                {
-                    count = 0,
-                    items = Array.Empty<object>()
-                }));
+                // Salida vacía del PowerShell: no se puede afirmar que la
+                // máquina no tenga impresoras, sólo que no dijo nada.
+                return Merge(req, new List<object>(), "empty_output");
             }
 
             // ConvertTo-Json emits either a JSON object (1 printer) OR
@@ -168,24 +171,50 @@ try {
                 items = new List<JsonElement>();
             }
 
-            Console.WriteLine($"[PrivSvc][PrinterInventory] collected {items.Count} printer(s)");
-
-            return Task.FromResult(PrivSvcResponse.Success(req.Id, new
-            {
-                count = items.Count,
-                items
-            }));
+            Console.WriteLine($"[PrivSvc][PrinterInventory] machine scope: {items.Count} printer(s)");
+            return Merge(req, items.Cast<object>().ToList(), "collected",
+                         items.Select(e => e.TryGetProperty("name", out var n) ? n.GetString() ?? "" : ""));
         }
         catch (Exception ex)
         {
             // Any unexpected exception → empty result instead of
             // failure response. Keeps the agent-side AMP cycle whole.
             Console.WriteLine($"[PrivSvc][PrinterInventory] ERROR: {ex.Message}");
-            return Task.FromResult(PrivSvcResponse.Success(req.Id, new
-            {
-                count = 0,
-                items = Array.Empty<object>()
-            }));
+            return Merge(req, new List<object>(), "unavailable");
         }
+    }
+
+    /// <summary>
+    /// Une lo de la máquina con las conexiones de los usuarios conectados.
+    ///
+    /// ⚠️ Se llama SIEMPRE, incluso cuando la mitad de máquina falló: un
+    /// Spooler caído no impide leer las conexiones del registro, y devolver
+    /// cero por eso volvería a esconder justo las impresoras que motivaron
+    /// este cambio.
+    /// </summary>
+    private static Task<PrivSvcResponse> Merge(
+        PrivSvcRequest req,
+        List<object> machineItems,
+        string machineScope,
+        IEnumerable<string>? machineNames = null)
+    {
+        var (userScope, userItems) = UserPrinterConnections.Collect();
+        var extra = UserPrinterConnectionsShape.MergeByName(
+            machineNames ?? Enumerable.Empty<string>(), userItems);
+
+        var todos = new List<object>(machineItems);
+        todos.AddRange(extra);
+
+        Console.WriteLine(
+            $"[PrivSvc][PrinterInventory] machine={machineScope}({machineItems.Count}) " +
+            $"user={userScope}({extra.Count} new) total={todos.Count}");
+
+        return Task.FromResult(PrivSvcResponse.Success(req.Id, new
+        {
+            count = todos.Count,
+            items = todos,
+            machineScope,
+            userScope
+        }));
     }
 }
