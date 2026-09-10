@@ -230,6 +230,55 @@ public static class CryptoCertInstall
                 throw new Exception("Client certificate missing required EKU: Client Authentication");
             }
 
+            // ── El certificado tiene que ENCADENAR de verdad ──────────
+            //
+            // ⚠️ ESTA COMPROBACION NO EXISTIA, y un error de
+            // configuracion DEL SERVIDOR dejo un equipo incomunicado.
+            //
+            // El backend emitio una hoja que declaraba «Tracenium Issuing
+            // CA G2» pero firmada con la clave RSA de la G1: al mover la
+            // renovacion a gRPC (ADR-0015) se sustituyo
+            // ISSUING_CA_CERT_PEM y no ISSUING_CA_KEY_PEM. Nadie puede
+            // validar un certificado asi.
+            //
+            // Windows llegaba mas lejos que macOS y Linux —
+            // CopyWithPrivateKey ya revienta si la hoja no es de NUESTRA
+            // clave, y el EKU se mira— pero ninguna de las dos cosas
+            // detecta esto: el certificado salio de nuestro propio CSR y
+            // traia su EKU. Habria entrado igual.
+            //
+            // Se construye la cadena contra el bundle que acompaña a la
+            // hoja, como raiz de confianza a medida: no vale el trust
+            // store del sistema, porque lo que hay que responder es
+            // «¿podra este equipo autenticarse con esto?» y la respuesta
+            // depende de ESE bundle. De paso cubre la ventana de validez.
+            //
+            // Falla ANTES de tocar el almacen. Un agente que RECHAZA una
+            // renovacion conserva su certificado viejo y sigue siendo
+            // alcanzable —se arregla por red—; uno que la acepta a ciegas
+            // puede dejar de serlo para siempre.
+            if (bundleCerts != null && bundleCerts.Count > 0)
+            {
+                using var cadena = new X509Chain();
+                cadena.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                cadena.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+                foreach (var ca in bundleCerts)
+                {
+                    cadena.ChainPolicy.ExtraStore.Add(ca);
+                    cadena.ChainPolicy.CustomTrustStore.Add(ca);
+                }
+
+                if (!cadena.Build(certWithKey))
+                {
+                    var motivos = string.Join("; ", cadena.ChainStatus
+                        .Select(s => $"{s.Status}: {s.StatusInformation?.Trim()}"));
+                    var anclas = string.Join(" | ", bundleCerts.Select(c => c.Subject));
+                    throw new Exception(
+                        $"Client certificate does not chain to the delivered CA bundle. " +
+                        $"issuer='{certWithKey.Issuer}' bundle=[{anclas}] reasons=[{motivos}]");
+                }
+            }
+
             using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
             store.Open(OpenFlags.ReadWrite);
 

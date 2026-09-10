@@ -77,7 +77,8 @@ afterAll(() => {
   try { fs.rmSync(raiz, { recursive: true, force: true }); } catch {}
 });
 
-/** Emite una hoja cualquiera: el handler sólo la parsea, no la valida. */
+/** Una hoja cualquiera, autofirmada. Sirve como certificado YA INSTALADO:
+ *  de él sólo se lee la forma, nunca se valida. */
 function hojaDeMentira(): string {
   const k = path.join(raiz, `hoja-${Math.random().toString(36).slice(2)}.key`);
   const c = `${k}.crt`;
@@ -87,15 +88,79 @@ function hojaDeMentira(): string {
 }
 
 /**
+ * Lo que devuelve un servidor SANO: la hoja emitida A PARTIR DEL CSR y
+ * firmada por la CA cuyo certificado viaja en el bundle.
+ *
+ * ⚠️ Antes se devolvía una hoja autofirmada al azar y los tests pasaban,
+ * porque el handler no miraba lo que instalaba. Eso hacía que este arnés
+ * fuera incapaz de distinguir un servidor sano de uno que devuelve
+ * basura — que es exactamente la avería que hubo en campo.
+ */
+function emitirDesdeCsr(csrPem: string): string {
+  const base = path.join(raiz, `emitida-${Math.random().toString(36).slice(2)}`);
+  fs.writeFileSync(`${base}.csr`, csrPem);
+  execFileSync(OPENSSL, [
+    "x509", "-req", "-in", `${base}.csr`,
+    "-CA", ca.certPath, "-CAkey", ca.keyPath, "-CAcreateserial",
+    "-days", "2", "-out", `${base}.crt`
+  ], { stdio: "pipe" });
+  return fs.readFileSync(`${base}.crt`, "utf8");
+}
+
+/**
+ * Una hoja YA CADUCADA, firmada por la CA buena.
+ *
+ * ⚠️ Va por `openssl ca` y no por `openssl x509 -req -not_before/-not_after`
+ * porque esas dos opciones no existen hasta OpenSSL 3.4: en el 3.1 de CI
+ * el test reventaría por la herramienta y no por la propiedad. Es la
+ * tercera vez que esta diferencia de versión muerde en este repo, así
+ * que se comprobó en un contenedor antes de escribirlo, no después.
+ */
+function emitirCaducada(csrPem: string): string {
+  const dir = fs.mkdtempSync(path.join(raiz, "caducada-"));
+  const csr = path.join(dir, "req.csr");
+  const crt = path.join(dir, "out.crt");
+  fs.writeFileSync(csr, csrPem);
+  fs.writeFileSync(path.join(dir, "index.txt"), "");
+  fs.writeFileSync(path.join(dir, "index.txt.attr"), "unique_subject = no\n");
+  fs.writeFileSync(path.join(dir, "serial"), "01\n");
+  fs.writeFileSync(
+    path.join(dir, "ca.cnf"),
+    [
+      "[ca]", "default_ca = CA_default", "[CA_default]",
+      `dir = ${dir}`,
+      "database = $dir/index.txt", "serial = $dir/serial",
+      "new_certs_dir = $dir",
+      `certificate = ${ca.certPath}`, `private_key = ${ca.keyPath}`,
+      "default_md = sha256", "policy = pol", "email_in_dn = no",
+      "[pol]", "commonName = optional", "countryName = optional",
+      "organizationName = optional", ""
+    ].join("\n")
+  );
+  execFileSync(OPENSSL, [
+    "ca", "-batch", "-config", path.join(dir, "ca.cnf"),
+    "-in", csr, "-out", crt, "-notext",
+    "-startdate", "20200101000000Z", "-enddate", "20200102000000Z"
+  ], { stdio: "pipe" });
+  return fs.readFileSync(crt, "utf8");
+}
+
+/**
  * El transporte, doblado. CAPTURA el CSR que el handler manda, que es el
  * punto entero del fichero: lo que importa no es lo que devuelva, sino
  * lo que sale del equipo.
+ *
+ * `respuesta` permite sustituir lo que contesta el servidor para poder
+ * reproducir un backend averiado sin tocar el handler.
  */
-function transporte() {
+function transporte(
+  respuesta?: (csrPem: string) => { clientCertPem: string; caBundlePem: string; status?: string }
+) {
   let visto: string | null = null;
   const enviar = async (csrPem: string) => {
     visto = csrPem;
-    return { clientCertPem: hojaDeMentira(), caBundlePem: ca.certPem, status: "pending" };
+    if (respuesta) return respuesta(csrPem);
+    return { clientCertPem: emitirDesdeCsr(csrPem), caBundlePem: ca.certPem, status: "pending" };
   };
   return { enviar, visto: () => visto };
 }
@@ -201,6 +266,116 @@ for (const plat of plataformas) {
         expect(r.ok).toBe(false);
         expect(s.visto(), "no debió llegar a mandar nada").toBeNull();
       }
+    });
+
+    // ── El certificado que llega NO se instala a ciegas ────────────────
+    //
+    // ⚠️ ESTO ES EL LADRILLAZO DE 2026-09-10, y la razón por la que un
+    // error de configuración DEL SERVIDOR costó un equipo en campo.
+    //
+    // El backend emitió una hoja que declaraba «Tracenium Issuing CA G2»
+    // firmada con la clave RSA de la G1. El agente la escribió encima de
+    // la que funcionaba: el único control era que el texto contuviera
+    // «BEGIN CERTIFICATE», y lo contenía. Sólo se enteró en el siguiente
+    // handshake, cuando ya no tenía canal por el que pedir ayuda.
+    //
+    // Lo que estos tests sostienen es la asimetría que hace el fallo
+    // recuperable: RECHAZAR una renovación deja al equipo con su
+    // certificado viejo y alcanzable —se arregla por red—; ACEPTARLA a
+    // ciegas puede dejarlo inalcanzable para siempre.
+
+    /** Lo que quedó instalado tras el intento. */
+    function instalado() {
+      const f = path.join(plat.certDir(), "client.crt.pem");
+      return fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null;
+    }
+
+    it("⚠️ una hoja firmada por OTRA CA no llega a instalarse", async () => {
+      identidadInstalada(false);
+      const previo = instalado();
+
+      // El caso de campo: firmada por una CA que no está en el bundle.
+      const otraKey = path.join(raiz, `impostora-${plat.nombre}.key`);
+      const otraCrt = `${otraKey}.crt`;
+      execFileSync(OPENSSL, ["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", otraKey]);
+      execFileSync(OPENSSL, [
+        "req", "-x509", "-new", "-key", otraKey, "-days", "2",
+        "-subj", "/CN=CA de prueba", // MISMO sujeto: el DN no distingue
+        "-addext", "basicConstraints=critical,CA:TRUE", "-out", otraCrt
+      ]);
+
+      const s = transporte((csrPem) => {
+        const base = path.join(raiz, `impostor-${Math.random().toString(36).slice(2)}`);
+        fs.writeFileSync(`${base}.csr`, csrPem);
+        execFileSync(OPENSSL, [
+          "x509", "-req", "-in", `${base}.csr`,
+          "-CA", otraCrt, "-CAkey", otraKey, "-CAcreateserial",
+          "-days", "2", "-out", `${base}.crt`
+        ], { stdio: "pipe" });
+        return {
+          clientCertPem: fs.readFileSync(`${base}.crt`, "utf8"),
+          caBundlePem: ca.certPem,
+          status: "pending"
+        };
+      });
+
+      const r = await renovar(s);
+      expect(r.ok, "debió rechazarse").toBe(false);
+      expect(JSON.stringify(r.error)).toMatch(/no verifica contra ninguna|cert_renew_failed/);
+      expect(instalado(), "el certificado que funcionaba se conservó").toBe(previo);
+    });
+
+    it("⚠️ una hoja que no corresponde a nuestra clave no llega a instalarse", async () => {
+      identidadInstalada(false);
+      const previo = instalado();
+
+      // Firmada por la CA buena, pero para OTRA clave: sería el
+      // certificado de otro equipo.
+      const s = transporte(() => {
+        const k = path.join(raiz, `ajena-${Math.random().toString(36).slice(2)}.key`);
+        const c = `${k}.csr`;
+        execFileSync(OPENSSL, ["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", k]);
+        execFileSync(OPENSSL, ["req", "-new", "-key", k, "-subj", "/CN=ajena", "-out", c]);
+        execFileSync(OPENSSL, [
+          "x509", "-req", "-in", c, "-CA", ca.certPath, "-CAkey", ca.keyPath,
+          "-CAcreateserial", "-days", "2", "-out", `${c}.crt`
+        ], { stdio: "pipe" });
+        return {
+          clientCertPem: fs.readFileSync(`${c}.crt`, "utf8"),
+          caBundlePem: ca.certPem,
+          status: "pending"
+        };
+      });
+
+      const r = await renovar(s);
+      expect(r.ok, "debió rechazarse").toBe(false);
+      expect(instalado(), "el certificado que funcionaba se conservó").toBe(previo);
+    });
+
+    it("⚠️ una hoja ya caducada no llega a instalarse", async () => {
+      identidadInstalada(false);
+      const previo = instalado();
+
+      const s = transporte((csrPem) => ({
+        clientCertPem: emitirCaducada(csrPem),
+        caBundlePem: ca.certPem,
+        status: "pending"
+      }));
+
+      const r = await renovar(s);
+      expect(r.ok, "debió rechazarse").toBe(false);
+      expect(instalado(), "el certificado que funcionaba se conservó").toBe(previo);
+    });
+
+    it("la hoja BUENA sí se instala: el guard no bloquea el camino sano", async () => {
+      identidadInstalada(false);
+      const previo = instalado();
+      const s = transporte();
+
+      const r = await renovar(s);
+      expect(r.ok, JSON.stringify(r.error || {})).toBe(true);
+      expect(instalado()).not.toBe(previo);
+      expect(instalado()).toContain("BEGIN CERTIFICATE");
     });
   });
 }

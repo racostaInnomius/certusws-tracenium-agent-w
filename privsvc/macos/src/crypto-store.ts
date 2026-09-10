@@ -117,6 +117,109 @@ function buildFullCaBundlePem(caBundlePem: string): { fullBundlePem: string; iss
   };
 }
 
+/**
+ * Comprueba que el certificado recibido sea USABLE antes de sustituir el
+ * que esta funcionando.
+ *
+ * ⚠️ ESTA COMPROBACION NO EXISTIA, y por eso un error de configuracion
+ * DEL SERVIDOR acabo dejando un equipo incomunicado. Dos veces.
+ *
+ * El backend emitio un certificado que declaraba «Tracenium Issuing CA G2»
+ * pero venia firmado con la clave RSA de la G1: al mover la renovacion a
+ * gRPC (ADR-0015) se sustituyo ISSUING_CA_CERT_PEM y no
+ * ISSUING_CA_KEY_PEM. El agente lo escribio encima del que funcionaba sin
+ * mirarlo — el unico control era que el texto contuviera
+ * «BEGIN CERTIFICATE», y lo contenia.
+ *
+ * El try/catch que rodea el swap solo rescata si falla el `rename`, que es
+ * un fallo de sistema de ficheros. Un certificado perfectamente escribible
+ * pero imposible de validar pasaba entero, y el equipo se enteraba en el
+ * siguiente handshake: cuando ya no tenia canal por el que pedir ayuda.
+ *
+ * Se verifica lo que el equipo puede verificar SIN preguntarle a nadie,
+ * que es justo lo que hace falta cuando el que se ha equivocado es el
+ * servidor:
+ *   1. la hoja parsea,
+ *   2. su clave publica es la de la privada que acabamos de generar
+ *      —si no, es el certificado de otro—,
+ *   3. su firma verifica contra alguna CA del bundle que vamos a instalar,
+ *   4. cae dentro de su ventana de validez.
+ *
+ * Lanza ANTES del swap. Un agente que RECHAZA una renovacion conserva el
+ * certificado viejo y sigue siendo alcanzable, asi que el fallo se puede
+ * arreglar por red; uno que la acepta a ciegas puede dejar de serlo para
+ * siempre.
+ */
+function assertCertUsable(
+  clientCertPem: string,
+  fullBundlePem: string,
+  privateKeyPath: string
+): void {
+  let hoja: crypto.X509Certificate;
+  try {
+    hoja = new crypto.X509Certificate(clientCertPem);
+  } catch (err: any) {
+    throw new Error(`el certificado recibido no parsea: ${err?.message || err}`);
+  }
+
+  let privada: crypto.KeyObject;
+  try {
+    privada = crypto.createPrivateKey(fs.readFileSync(privateKeyPath));
+  } catch (err: any) {
+    throw new Error(
+      `no se pudo leer la clave privada de este equipo (${privateKeyPath}): ${err?.message || err}`
+    );
+  }
+  if (!hoja.checkPrivateKey(privada)) {
+    throw new Error(
+      "el certificado recibido no corresponde a la clave privada de este equipo"
+    );
+  }
+
+  const cas = splitPemCertificates(fullBundlePem);
+  const sujetos: string[] = [];
+  let firmadoPor: string | null = null;
+  for (const caPem of cas) {
+    let ca: crypto.X509Certificate;
+    try {
+      ca = new crypto.X509Certificate(caPem);
+    } catch {
+      continue;
+    }
+    sujetos.push(ca.subject.replace(/\n/g, ", "));
+    try {
+      if (hoja.verify(ca.publicKey)) {
+        firmadoPor = ca.subject.replace(/\n/g, ", ");
+        break;
+      }
+    } catch {
+      // Una CA cuyo algoritmo no case con la firma tira aqui. No es un
+      // error: es sencillamente que no fue esa. Se sigue probando.
+      continue;
+    }
+  }
+  if (!firmadoPor) {
+    throw new Error(
+      `el certificado dice estar emitido por «${hoja.issuer.replace(/\n/g, ", ")}» ` +
+        `pero su firma no verifica contra ninguna de las ${cas.length} CA del bundle ` +
+        `[${sujetos.join(" · ") || "ninguna legible"}]`
+    );
+  }
+
+  // Holgura para el desfase entre el reloj del equipo y el del emisor: un
+  // certificado recien emitido con notBefore unos segundos en el futuro es
+  // normal, y rechazarlo por eso seria el mismo desastre por el otro lado.
+  const HOLGURA_MS = 5 * 60 * 1000;
+  const ahora = Date.now();
+  const desde = new Date(hoja.validFrom).getTime();
+  const hasta = new Date(hoja.validTo).getTime();
+  if (Number.isFinite(desde) && ahora + HOLGURA_MS < desde) {
+    throw new Error(`el certificado recibido aun no es valido (notBefore=${hoja.validFrom})`);
+  }
+  if (Number.isFinite(hasta) && ahora - HOLGURA_MS > hasta) {
+    throw new Error(`el certificado recibido ya ha caducado (notAfter=${hoja.validTo})`);
+  }
+}
 
 /**
  * Modo del pin de anclas. `observe` por defecto — ver anchor-pin.ts para
@@ -746,6 +849,13 @@ export async function handleInstallCert(req: PrivSvcRequest): Promise<PrivSvcRes
 
     const { fullBundlePem, issuingCaThumbprint } = buildFullCaBundlePem(caBundlePem);
 
+    // Antes de escribir nada encima. Ver assertCertUsable.
+    try {
+      assertCertUsable(clientCertPem, fullBundlePem, paths.clientKey);
+    } catch (err: any) {
+      return fail(req.id, "cert_unusable", err?.message || String(err));
+    }
+
     fs.writeFileSync(paths.clientCert, clientCertPem, { encoding: "utf8", mode: 0o600 });
     fs.writeFileSync(paths.caBundle, fullBundlePem, { encoding: "utf8", mode: 0o644 });
 
@@ -915,6 +1025,12 @@ export async function handleRenewCert(
     }
 
     const { fullBundlePem, issuingCaThumbprint } = buildFullCaBundlePem(caBundlePem);
+
+    // ⚠️ ANTES del swap, y contra la clave `.pending` —que es la que este
+    // certificado deberia acompañar—, no contra la instalada. Ver
+    // assertCertUsable: aqui es donde se pierde el equipo si se deja
+    // pasar un certificado invalido.
+    assertCertUsable(clientCertPem, fullBundlePem, pendingKey);
 
     fs.writeFileSync(pendingCert, clientCertPem, { encoding: "utf8", mode: 0o600 });
     fs.writeFileSync(pendingCa, fullBundlePem, { encoding: "utf8", mode: 0o644 });
