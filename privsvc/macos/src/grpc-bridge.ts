@@ -1338,6 +1338,57 @@ export async function handleFactsChunk(req: PrivSvcRequest): Promise<PrivSvcResp
   });
 }
 
+/**
+ * ADR-0015 — reemitir la identidad por el canal que YA está autenticado.
+ *
+ * ⚠️ ESTO SUSTITUYE A UN POST mTLS CONTRA REST, y el motivo no es
+ * elegancia. La renovación se autenticaba con el certificado de cliente
+ * que el ingress reenviaba en `x-forwarded-client-cert`; el 2026-09-01 se
+ * puso `clientCertificateMode: Ignore` en el Container App —para que
+ * Chrome dejara de pedir certificado a los usuarios del portal— y con eso
+ * el ingress dejó de pedirlo. La renovación respondía 401 para toda la
+ * flota, y nadie pudo notarlo durante nueve días porque no caduca ningún
+ * certificado hasta abril de 2027.
+ *
+ * Aquí la identidad es el certificado de par de ESTA conexión, que el
+ * servidor ya validó en el handshake. No hay cabecera intermedia que un
+ * ajuste de proxy pueda desactivar en silencio.
+ *
+ * Va por el canal existente: ni conexión ni handshake nuevos.
+ */
+export function renewCertOverGrpc(
+  csrPem: string,
+  timeoutMs = 60_000
+): Promise<{ clientCertPem: string; caBundlePem: string; status: string }> {
+  return new Promise((resolve, reject) => {
+    if (!state.client) {
+      // Sin canal no hay identidad que presentar. Falla claro: el job de
+      // rotación reintenta, y un equipo desconectado no debe reemitirse
+      // a ciegas.
+      reject(new Error("grpc_not_connected"));
+      return;
+    }
+    const deadline = new Date(Date.now() + timeoutMs);
+    (state.client as any).RenewCert(
+      { csrPem },
+      { deadline },
+      (err: any, resp: any) => {
+        if (err) {
+          // El código viaja en el mensaje para que el llamante —y el log
+          // del equipo— puedan distinguir «reintenta» de «no insistas».
+          reject(new Error(`${err.code ?? "?"}: ${err.details || err.message}`));
+          return;
+        }
+        resolve({
+          clientCertPem: String(resp?.clientCertPem || ""),
+          caBundlePem: String(resp?.caBundlePem || ""),
+          status: String(resp?.status || "pending")
+        });
+      }
+    );
+  });
+}
+
 export async function handleHeartbeat(req: PrivSvcRequest): Promise<PrivSvcResponse> {
   try {
     const deviceId = String(req.params?.deviceId || state.deviceId || "");

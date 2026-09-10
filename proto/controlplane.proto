@@ -4,6 +4,49 @@ package tracenium.control;
 
 service ControlPlane {
   rpc Connect(stream ControlMessage) returns (stream ControlMessage);
+
+  // ADR-0015 — reemitir la identidad mTLS del equipo.
+  //
+  // ⚠️ POR QUÉ AQUÍ Y NO EN REST, que es donde vivía.
+  //
+  // La renovación se autenticaba por el certificado de cliente reenviado
+  // por el ingress (`x-forwarded-client-cert`). El 2026-09-01 se puso
+  // `clientCertificateMode: Ignore` en el Container App —para que Chrome
+  // dejara de pedir certificado a los usuarios del portal, un arreglo
+  // correcto— y con eso el ingress dejó de pedirlo y de reenviarlo. La
+  // renovación empezó a responder 401 para TODA la flota, y nadie pudo
+  // notarlo: no caduca ningún certificado hasta abril de 2027, así que
+  // esa ruta no se ejercita sola.
+  //
+  // Aquí la identidad es el certificado de par de una conexión que YA
+  // está mutuamente autenticada y ya validada contra `GRPC_CA_PEM`. No
+  // hay cabecera que confiar ni ajuste de proxy que pueda desactivar la
+  // autenticación sin romper nada más — que es lo que la hizo invisible.
+  //
+  // El ENROLAMIENTO se queda en REST y no es descuido: al enrolar no
+  // existe todavía la identidad con la que abrir este canal. Autentica
+  // por token de bootstrap, y por eso `Ignore` no lo rompió.
+  //
+  // Viaja por el MISMO canal que el stream de control, así que no cuesta
+  // ni conexión ni handshake nuevos — que a 10.000 agentes es la
+  // diferencia entre una campaña y 10.000 handshakes.
+  rpc RenewCert(RenewCertRequest) returns (RenewCertResponse);
+}
+
+message RenewCertRequest {
+  // El PKCS#10 que el equipo acaba de construir. Puede ser híbrido
+  // (catalyst) o clásico; el emisor decide qué firma según tenga o no su
+  // propia mitad alternativa.
+  string csrPem = 1;
+}
+
+message RenewCertResponse {
+  string clientCertPem = 1;
+  // ⚠️ NO es el certificado de la CA que firma: es el BUNDLE que el
+  // equipo debe instalar, y durante una rotación lleva la emisora vieja
+  // y la nueva a la vez. Ver `loadAgentCaBundlePem` en el backend.
+  string caBundlePem = 2;
+  string status = 3;
 }
 
 // ---------------- ACK ----------------

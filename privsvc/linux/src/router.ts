@@ -43,6 +43,7 @@ import {
   handleRemoteSessionTranscript,
   handleRemoteFileTransferAudit,
   handleRemoteScreenAudit,
+  renewCertOverGrpc,
 } from "./grpc-bridge";
 import { handleSecurityPosture } from "./security-posture";
 import { handleScreenCapture } from "./screen-capture";
@@ -188,7 +189,11 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
       return handleCdpAnchorState(req);
 
     case "crypto.cert.renew":
-      return handleRenewCert(req);
+      // ADR-0015 — el transporte se INYECTA aquí y no se importa en
+      // `crypto-store`: `grpc-bridge` ya importa de ese fichero
+      // (`loadInstalledIdentity`), así que importarlo al revés cerraría
+      // el ciclo. El router es quien compone.
+      return handleRenewCert(req, renewCertOverGrpc);
 
     // ── gRPC bridge (Phase 2) ─────────────────────────────────────
     case "grpc.connect":

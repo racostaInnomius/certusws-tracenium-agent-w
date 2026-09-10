@@ -18,17 +18,21 @@
 //
 // Es «las 3 listas de un job» otra vez: dos caminos hacia el mismo
 // contrato y sólo uno migrado. Por eso el test no mira `buildCsr` —eso
-// ya está probado— sino EL CSR QUE SALE POR EL CABLE, capturado en un
-// servidor de verdad.
+// ya está probado— sino EL CSR QUE SALE POR EL CABLE.
+//
+// ⚠️ Ese cable ya no es HTTPS. La renovación se movió a `rpc RenewCert`
+// sobre el canal gRPC que el equipo ya tiene autenticado, porque la ruta
+// REST llevaba rota para toda la flota desde el 2026-09-01: el ingress
+// dejó de reenviar el certificado de cliente y respondía 401. Aquí eso
+// simplifica el arnés — el transporte se INYECTA, así que capturar el
+// CSR es una función de una línea en vez de un servidor de verdad.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { execFileSync } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
-import https from "https";
 import os from "os";
 import path from "path";
-import type { AddressInfo } from "net";
 import { loadOrCreateAltKey } from "../../privsvc/shared/alt-key";
 
 const raiz = fs.mkdtempSync(path.join(os.tmpdir(), "renew-hibrido-"));
@@ -37,9 +41,6 @@ process.env.TRACENIUM_PRIVSVC_DATA_DIR = path.join(raiz, "data");
 process.env.TRACENIUM_PRIVSVC_CONFIG_DIR = path.join(raiz, "etc");
 process.env.TRACENIUM_PRIVSVC_LOG_DIR = path.join(raiz, "log");
 process.env.TRACENIUM_PRIVSVC_SOCKET_PATH = path.join(raiz, "privsvc.sock");
-// El handler sólo confía en el bundle del agente si se le pide: sin esto
-// validaría el servidor de prueba contra las CA del sistema.
-process.env.CERT_RENEWAL_TRUST_AGENT_CA = "1";
 
 const OPENSSL = process.env.OPENSSL_BIN || "openssl";
 const TENANT = "1";
@@ -58,9 +59,8 @@ const plataformas = [
   }
 ];
 
-/** Una CA de juguete y el certificado del servidor de renovación. */
+/** Una CA de juguete: sólo se usa como bundle de respuesta. */
 let ca: { certPem: string; keyPath: string; certPath: string };
-let servidorPem: { cert: string; key: string };
 
 beforeAll(() => {
   const caKey = path.join(raiz, "ca.key");
@@ -71,35 +71,6 @@ beforeAll(() => {
     "-addext", "basicConstraints=critical,CA:TRUE", "-out", caCrt
   ]);
   ca = { certPem: fs.readFileSync(caCrt, "utf8"), keyPath: caKey, certPath: caCrt };
-
-  const srvKey = path.join(raiz, "srv.key");
-  const srvCsr = path.join(raiz, "srv.csr");
-  const srvCrt = path.join(raiz, "srv.crt");
-  execFileSync(OPENSSL, ["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", srvKey]);
-  execFileSync(OPENSSL, ["req", "-new", "-key", srvKey, "-subj", "/CN=localhost", "-out", srvCsr]);
-  // ⚠️ Las extensiones van en un FICHERO, no por `-extfile /dev/stdin`.
-  //
-  // Con `/dev/stdin` esto funciona en un terminal y muere en el CI:
-  //
-  //   BIO_new_file: No such device or address: calling fopen(/dev/stdin, r)
-  //
-  // openssl abre esa ruta como un fichero cualquiera, y en el runner el
-  // proceso no tiene un stdin que se pueda abrir así — da igual que
-  // `execFileSync` reciba `input`, porque eso llena el descriptor, no crea
-  // el nodo en /dev. Tumbó el `test` de dos versiones seguidas (runs
-  // 34376357673 y 34414787168), y de forma determinista: ningún test
-  // fallaba, se caía el fichero entero en el beforeAll.
-  //
-  // El fichero temporal es lo que ya hace `cdp-cert-install.test.ts`, y no
-  // depende del entorno. `raiz` se borra en el afterAll.
-  const srvExt = path.join(raiz, "srv.ext");
-  fs.writeFileSync(srvExt, "subjectAltName=DNS:localhost,IP:127.0.0.1\n");
-  execFileSync(OPENSSL, [
-    "x509", "-req", "-in", srvCsr, "-CA", caCrt, "-CAkey", caKey, "-CAcreateserial",
-    "-days", "2", "-out", srvCrt,
-    "-extfile", srvExt
-  ]);
-  servidorPem = { cert: fs.readFileSync(srvCrt, "utf8"), key: fs.readFileSync(srvKey, "utf8") };
 });
 
 afterAll(() => {
@@ -116,81 +87,18 @@ function hojaDeMentira(): string {
 }
 
 /**
- * Servidor de renovación que CAPTURA el CSR recibido. Es el punto entero
- * del test: lo que importa no es lo que el handler devuelva, sino lo que
- * manda.
+ * El transporte, doblado. CAPTURA el CSR que el handler manda, que es el
+ * punto entero del fichero: lo que importa no es lo que devuelva, sino
+ * lo que sale del equipo.
  */
-function servidorRenovacion(): Promise<{ port: number; visto: () => string | null; cerrar: () => void }> {
-  let csrVisto: string | null = null;
-  const srv = https.createServer(
-    { cert: servidorPem.cert, key: servidorPem.key },
-    (req, res) => {
-      const trozos: Buffer[] = [];
-      req.on("data", (d) => trozos.push(Buffer.from(d)));
-      req.on("end", () => {
-        try {
-          csrVisto = JSON.parse(Buffer.concat(trozos).toString("utf8")).csrPem;
-        } catch { csrVisto = null; }
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({
-          clientCertPem: hojaDeMentira(),
-          caBundlePem: ca.certPem,
-          status: "pending"
-        }));
-      });
-    }
-  );
-  return new Promise((r) =>
-    srv.listen(0, "127.0.0.1", () =>
-      r({
-        port: (srv.address() as AddressInfo).port,
-        visto: () => csrVisto,
-        cerrar: () => srv.close()
-      })
-    )
-  );
+function transporte() {
+  let visto: string | null = null;
+  const enviar = async (csrPem: string) => {
+    visto = csrPem;
+    return { clientCertPem: hojaDeMentira(), caBundlePem: ca.certPem, status: "pending" };
+  };
+  return { enviar, visto: () => visto };
 }
-
-// ── Windows, que tiene el mismo agujero por otra razón ───────────────
-//
-// Su renovación DELEGA en el mismo generador que el enrolamiento —la
-// arquitectura buena de las tres, sin dos caminos que migrar— pero le
-// pasaba cuatro parámetros y ninguno decía qué forma producir. El efecto
-// era idéntico: renovar degradaba a clásico.
-//
-// Se comprueba sobre la FUENTE porque el fallo es exactamente «un
-// parámetro que no se reenvía», y porque `CryptoCertRenew` toca el
-// almacén de certificados de Windows y no compila en el proyecto de
-// pruebas (que es `net8.0` a secas para poder correr en cualquier
-// máquina). Es el mismo criterio que `test/priv/ipc-timeouts.test.ts`.
-describe("handleRenewCert — Windows", () => {
-  const src = fs.readFileSync(
-    path.join(
-      __dirname, "..", "..",
-      "privsvc", "windows", "Tracenium.PrivSvc.Windows", "Ipc", "CryptoCertRenew.cs"
-    ),
-    "utf8"
-  );
-
-  it("⚠️ reenvía altKeyAlgorithm al generador, o la renovación sale clásica", () => {
-    expect(src).toContain('csrParams["altKeyAlgorithm"]');
-    // Y por defecto conserva lo que el equipo ya tiene.
-    expect(src).toContain("AltKeyStore.Exists()");
-  });
-
-  it("⚠️ reenvía también el algoritmo clásico, leído del certificado actual", () => {
-    expect(src).toContain('["keyAlgorithm"]');
-    expect(src).toContain("ClassicAlgorithmOf(currentCert)");
-  });
-
-  it("lo explícito manda sobre lo heredado", () => {
-    // `GetString(req.Params, ...) ?? <heredado>`: si alguien pide una
-    // forma concreta, gana. Sin esto no habría manera de migrar a un
-    // equipo por orden del control plane.
-    expect(src).toMatch(/GetString\(req\.Params, "keyAlgorithm"\)\s*\n?\s*\?\?/);
-    expect(src).toMatch(/GetString\(req\.Params, "altKeyAlgorithm"\)\s*\n?\s*\?\?/);
-  });
-});
 
 /** Los OIDs catalyst, leídos del DER y no de cómo los rotule un openssl. */
 function extensionesCatalyst(csrPem: string): number {
@@ -229,14 +137,17 @@ for (const plat of plataformas) {
       }
     }
 
-    async function renovar(port: number, extra: Record<string, unknown> = {}) {
-      return mod.handleRenewCert({
-        v: 1,
-        id: "r1",
-        method: "crypto.cert.renew",
-        params: { serverBaseUrl: `https://127.0.0.1:${port}`, tenantId: TENANT, deviceId: DEVICE, ...extra },
-        meta: { tenantId: TENANT, deviceId: DEVICE }
-      });
+    async function renovar(t: ReturnType<typeof transporte>, extra: Record<string, unknown> = {}) {
+      return mod.handleRenewCert(
+        {
+          v: 1,
+          id: "r1",
+          method: "crypto.cert.renew",
+          params: { tenantId: TENANT, deviceId: DEVICE, ...extra },
+          meta: { tenantId: TENANT, deviceId: DEVICE }
+        },
+        t.enviar
+      );
     }
 
     it("⚠️ un equipo con clave alternativa se renueva HÍBRIDO, sin que nadie se lo pida", async () => {
@@ -244,30 +155,26 @@ for (const plat of plataformas) {
       // equipo tiene que conservar su forma solo, o la primera renovación
       // lo degrada a clásico y nadie se entera.
       identidadInstalada(true);
-      const s = await servidorRenovacion();
-      try {
-        const r = await renovar(s.port);
+      const s = transporte();
+      {
+        const r = await renovar(s);
         expect(r.ok, JSON.stringify(r.error || {})).toBe(true);
         expect(r.result.altKeyAlgorithm).toBe("ML_DSA_65");
 
         const csr = s.visto();
         expect(csr, "el servidor no recibió ningún CSR").toBeTruthy();
         expect(extensionesCatalyst(csr!)).toBe(3);
-      } finally {
-        s.cerrar();
       }
     });
 
     it("⚠️ un equipo clásico se renueva CLÁSICO: nada cambia para la flota de hoy", async () => {
       identidadInstalada(false);
-      const s = await servidorRenovacion();
-      try {
-        const r = await renovar(s.port);
+      const s = transporte();
+      {
+        const r = await renovar(s);
         expect(r.ok, JSON.stringify(r.error || {})).toBe(true);
         expect(r.result.altKeyAlgorithm).toBeNull();
         expect(extensionesCatalyst(s.visto()!)).toBe(0);
-      } finally {
-        s.cerrar();
       }
     });
 
@@ -276,28 +183,67 @@ for (const plat of plataformas) {
       // este SAN la emisión se rechaza y la rotación no avanzaría, con el
       // CSR bien formado y todo.
       identidadInstalada(false);
-      const s = await servidorRenovacion();
-      try {
-        await renovar(s.port);
+      const s = transporte();
+      {
+        await renovar(s);
         const f = path.join(raiz, `san-${plat.nombre}.csr`);
         fs.writeFileSync(f, s.visto()!);
         const texto = execFileSync(OPENSSL, ["req", "-in", f, "-text", "-noout"], { encoding: "utf8" });
         expect(texto).toContain(`tracenium://tenant/${TENANT}/device/${DEVICE}`);
-      } finally {
-        s.cerrar();
       }
     });
 
     it("un altKeyAlgorithm desconocido falla RUIDOSAMENTE", async () => {
       identidadInstalada(false);
-      const s = await servidorRenovacion();
-      try {
-        const r = await renovar(s.port, { altKeyAlgorithm: "ML_DSA_87" });
+      const s = transporte();
+      {
+        const r = await renovar(s, { altKeyAlgorithm: "ML_DSA_87" });
         expect(r.ok).toBe(false);
         expect(s.visto(), "no debió llegar a mandar nada").toBeNull();
-      } finally {
-        s.cerrar();
       }
     });
   });
 }
+
+// ── El transporte, que dejó de ser HTTPS ─────────────────────────────
+//
+// ⚠️ Se comprueba sobre la fuente porque `grpc-bridge` abre un canal real
+// al importarse. Lo que hay que sostener es estructural —"ya no queda un
+// camino HTTPS por el que renovar"— y eso no se demuestra ejecutando un
+// camino, se demuestra mirándolos todos.
+//
+// Importa porque el POST mTLS que había NO fallaba de forma visible:
+// desde el 2026-09-01 el ingress dejó de reenviar el certificado de
+// cliente y devolvía 401 para toda la flota, sin que nadie pudiera
+// notarlo — no caduca ningún certificado hasta abril de 2027. Dejar la
+// función viva sería dejar puesto el camino que ya nos engañó una vez.
+describe("la renovación ya no habla HTTPS", () => {
+  const fs = require("fs");
+  const path = require("path");
+
+  for (const plat of ["macos", "linux"]) {
+    it(`⚠️ ${plat}: no queda ningún POST de renovación en el crypto-store`, () => {
+      const src = fs.readFileSync(
+        path.join(__dirname, "..", "..", "privsvc", plat, "src", "crypto-store.ts"),
+        "utf8"
+      );
+      expect(src).not.toContain("postJsonMtls");
+      expect(src).not.toMatch(/certificates\/renew/);
+    });
+
+    it(`⚠️ ${plat}: el transporte se INYECTA, no se importa`, () => {
+      // Si se importara, `crypto-store` → `grpc-bridge` → `crypto-store`
+      // cerraría un ciclo. Lo compone el router, que es quien puede.
+      const store = fs.readFileSync(
+        path.join(__dirname, "..", "..", "privsvc", plat, "src", "crypto-store.ts"),
+        "utf8"
+      );
+      const router = fs.readFileSync(
+        path.join(__dirname, "..", "..", "privsvc", plat, "src", "router.ts"),
+        "utf8"
+      );
+      expect(store).not.toContain('from "./grpc-bridge"');
+      expect(router).toContain("handleRenewCert(req, renewCertOverGrpc)");
+    });
+  }
+});

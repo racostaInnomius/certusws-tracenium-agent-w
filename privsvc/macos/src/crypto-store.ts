@@ -791,53 +791,6 @@ export async function handleInstallCert(req: PrivSvcRequest): Promise<PrivSvcRes
   }
 }
 
-function postJsonMtls(url: string, payload: any, identity: { clientCert: Buffer; clientKey: Buffer; caBundle: Buffer }): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const body = Buffer.from(JSON.stringify(payload), "utf8");
-    const target = new URL(url);
-    const trustAgentCa = process.env.CERT_RENEWAL_TRUST_AGENT_CA === "1";
-
-    const request = https.request({
-      protocol: target.protocol,
-      hostname: target.hostname,
-      port: target.port || 443,
-      path: `${target.pathname}${target.search}`,
-      method: "POST",
-      cert: identity.clientCert,
-      key: identity.clientKey,
-      ...(trustAgentCa ? { ca: identity.caBundle } : {}),
-      headers: {
-        "Content-Type": "application/json",
-        "Content-Length": String(body.length)
-      },
-      timeout: 30000
-    }, (response) => {
-      const chunks: Buffer[] = [];
-      response.on("data", chunk => chunks.push(Buffer.from(chunk)));
-      response.on("end", () => {
-        const text = Buffer.concat(chunks).toString("utf8");
-        if ((response.statusCode || 500) < 200 || (response.statusCode || 500) >= 300) {
-          reject(new Error(`HTTP ${response.statusCode}: ${text}`));
-          return;
-        }
-
-        try {
-          resolve(JSON.parse(text));
-        } catch (err) {
-          reject(err);
-        }
-      });
-    });
-
-    request.on("timeout", () => {
-      request.destroy(new Error("renew request timeout"));
-    });
-    request.on("error", reject);
-    request.write(body);
-    request.end();
-  });
-}
-
 function backupFile(file: string): string | null {
   if (!fs.existsSync(file)) return null;
   const backup = `${file}.bak`;
@@ -850,7 +803,22 @@ function restoreBackup(backup: string | null, file: string) {
   fs.copyFileSync(backup, file);
 }
 
-export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+/**
+ * Reemite la identidad mTLS del equipo.
+ *
+ * ⚠️ `enviarCsr` ENTRA POR PARÁMETRO, y no es ceremonia: el transporte
+ * vive en `grpc-bridge`, que a su vez importa de este fichero
+ * (`loadInstalledIdentity`). Importarlo aquí cerraría el ciclo. Lo
+ * inyecta el router, que es quien compone — y de paso el handler se
+ * puede probar sin levantar un servidor.
+ *
+ * Antes esto era un POST mTLS contra REST. Ver `renewCertOverGrpc` para
+ * por qué dejó de funcionar el 2026-09-01 sin que nadie pudiera notarlo.
+ */
+export async function handleRenewCert(
+  req: PrivSvcRequest,
+  enviarCsr: (csrPem: string) => Promise<{ clientCertPem: string; caBundlePem: string; status: string }>
+): Promise<PrivSvcResponse> {
   ensurePrivSvcDirs();
   const paths = certPaths();
 
@@ -864,13 +832,14 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
 
   try {
     const params = req.params || {};
-    const serverBaseUrl = String(params.serverBaseUrl || "").replace(/\/+$/, "");
+    // ⚠️ `serverBaseUrl` ya NO se usa aquí: la renovación va por el canal
+    // gRPC que el equipo ya tiene abierto, no por HTTPS. Sigue llegando en
+    // los parámetros porque el privsvc de Windows todavía usa REST hasta
+    // que se porte, y agent-core manda los mismos a las tres plataformas.
+    // No se valida: una comprobación que no guarda nada sólo sirve para
+    // rechazar una renovación por un campo que a nadie le importa.
     const tenantId = String(params.tenantId || req.meta?.tenantId || "");
     const deviceId = assertDeviceId(params.deviceId || req.meta?.deviceId);
-
-    if (!serverBaseUrl) {
-      return fail(req.id, "bad_request", "serverBaseUrl required");
-    }
 
     if (!tenantId) {
       return fail(req.id, "bad_request", "tenantId required");
@@ -936,12 +905,7 @@ export async function handleRenewCert(req: PrivSvcRequest): Promise<PrivSvcRespo
 
     fs.writeFileSync(pendingCsr, built.pem, { encoding: "utf8", mode: 0o600 });
     const csrPem = built.pem;
-    const identity = loadInstalledIdentity();
-    const response = await postJsonMtls(
-      `${serverBaseUrl}/api/v1/security/certificates/renew`,
-      { csrPem },
-      identity
-    );
+    const response = await enviarCsr(csrPem);
 
     const clientCertPem = normalizePem(response.clientCertPem);
     const caBundlePem = normalizePem(response.caBundlePem);
