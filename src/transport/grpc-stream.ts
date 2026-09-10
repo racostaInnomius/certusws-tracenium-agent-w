@@ -2110,7 +2110,14 @@ stream = client.Connect();
       // reconexión, así que el único efecto observable de pedir una
       // rotación era que el equipo dejaba de reportar un rato.
       const reason = String(msg.rotateCert?.reason || "control plane requested rotation");
-      ctx.logger?.warn?.("gRPC control message: rotateCert received, pausing sender loop", { reason });
+      // ADR-0015 — QUÉ FORMA pide el control plane. Vacío o ausente
+      // significa clásico, que es lo que hace compatible el campo en las
+      // dos direcciones: un backend viejo no lo manda y aquí se lee "".
+      const altKeyAlgorithm = String(msg.rotateCert?.altKeyAlgorithm || "");
+      ctx.logger?.warn?.("gRPC control message: rotateCert received, pausing sender loop", {
+        reason,
+        altKeyAlgorithm: altKeyAlgorithm || "(clásico)"
+      });
       rotationInProgress = true;
 
       if (typeof ctx.requestCertRotation === "function") {
@@ -2119,7 +2126,7 @@ stream = client.Connect();
         // espera aquí, porque este manejador atiende el stream que la
         // renovación va a reiniciar.
         try {
-          ctx.requestCertRotation(reason);
+          ctx.requestCertRotation(reason, altKeyAlgorithm);
         } catch (err: any) {
           rotationInProgress = false;
           ctx.logger?.error?.("rotateCert: no se pudo encolar la reemisión", {

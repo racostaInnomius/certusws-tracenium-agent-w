@@ -103,6 +103,18 @@ export async function maybeRenewClientCertificate(input: {
   priv: IPrivSvcClient;
   logger: any;
   /**
+   * ADR-0015 — la FORMA que el control plane pide para la identidad
+   * reemitida. Viaja en `RotateCert`; vacío o ausente = clásico.
+   *
+   * ⚠️ Se pasa TAL CUAL al privsvc en vez de interpretarlo aquí. Un
+   * valor desconocido tiene que fallar ruidosamente en el handler —que
+   * es quien sabe qué algoritmos soporta esa plataforma— y no
+   * convertirse en silencio en otra cosa por el camino: producir un
+   * algoritmo distinto del pedido sin decirlo es lo que rompió el
+   * enrolamiento de Windows en su día.
+   */
+  altKeyAlgorithm?: string;
+  /**
    * ADR-0015 — saltarse el umbral de 30 días.
    *
    * Lo usa el gatillo remoto `RotateCert`: una rotación de CA o una
@@ -117,7 +129,7 @@ export async function maybeRenewClientCertificate(input: {
    */
   force?: boolean;
 }): Promise<EnrollmentState> {
-  const { enrollment, store, priv, logger, force } = input;
+  const { enrollment, store, priv, logger, force , altKeyAlgorithm } = input;
   const notAfter = readClientCertNotAfter(enrollment);
 
   if (!force && !shouldRenew(notAfter)) {
@@ -160,7 +172,13 @@ export async function maybeRenewClientCertificate(input: {
       serverBaseUrl: config.certRenewalBaseUrl || config.serverBaseUrl,
       tenantId: enrollment.tenantId,
       deviceId: enrollment.deviceId,
-      clientCertThumbprint
+      clientCertThumbprint,
+      // ⚠️ Sólo se manda si el control plane dijo algo. AUSENTE y CADENA
+      // VACÍA no son lo mismo para el handler: ausente significa
+      // «conserva la forma que ya tienes» —lo que hace que una
+      // renovación por calendario no degrade a un equipo híbrido a
+      // clásico— y vacía significa «clásico, explícitamente».
+      ...(altKeyAlgorithm ? { altKeyAlgorithm } : {})
     },
     meta: {
       tenantId: enrollment.tenantId,

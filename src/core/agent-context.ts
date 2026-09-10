@@ -55,5 +55,13 @@ export type AgentContext = {
    * arranque antes de que el servicio esté en pie— simplemente no lo
    * tiene, y el manejador lo dice en el log en vez de fallar.
    */
-  requestCertRotation?: (reason: string) => void;
+  /**
+   * ADR-0015 — el gatillo remoto de reemisión.
+   *
+   * `altKeyAlgorithm` lo decide el BACKEND y viaja en `RotateCert`:
+   * cadena vacía = clásico. Sin este segundo argumento nada podía
+   * producir un certificado híbrido — los handlers del privsvc lo
+   * aceptaban, el emisor sabía firmarlo, y nadie lo pedía.
+   */
+  requestCertRotation?: (reason: string, altKeyAlgorithm?: string) => void;
 };

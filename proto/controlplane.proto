@@ -70,6 +70,22 @@ message RunJob {
 
 message RotateCert {
   string reason = 1;
+
+  // ADR-0015 — qué FORMA debe tener la identidad reemitida.
+  //
+  // Vacío significa CLÁSICO, que es lo que hace compatible añadir esto:
+  // un agente viejo ignora el campo desconocido y sigue reemitiendo como
+  // siempre, y un agente nuevo contra un backend viejo lee la cadena
+  // vacía y hace lo mismo. proto3 lo garantiza en las dos direcciones.
+  //
+  // ⚠️ POR QUÉ LO DECIDE EL BACKEND Y NO EL EQUIPO. Sin este campo NADA
+  // producía un certificado híbrido: los handlers del privsvc lo
+  // aceptaban en las tres plataformas, el emisor sabía firmar catalyst y
+  // el observador sabía clasificarlo, pero la línea que lo pedía no
+  // existía en el agente — `enroll.ts` mandaba `keyAlgorithm` a secas.
+  // Poner la decisión aquí es lo que convierte la migración en algo que
+  // se conduce por anillos desde el portal en vez de equipo por equipo.
+  string altKeyAlgorithm = 2;
 }
 
 message PolicyUpdate {

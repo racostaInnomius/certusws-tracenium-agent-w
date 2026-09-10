@@ -487,7 +487,45 @@ describe("rotateCert (ADR-0015)", () => {
     latestStream().emit("data", { rotateCert: { reason: "rotacion CA filtrada" } });
 
     expect(requestCertRotation).toHaveBeenCalledTimes(1);
-    expect(requestCertRotation).toHaveBeenCalledWith("rotacion CA filtrada");
+    // El segundo argumento es la FORMA (ADR-0015). Un backend viejo no
+    // manda el campo y aquí llega "" = clásico.
+    expect(requestCertRotation).toHaveBeenCalledWith("rotacion CA filtrada", "");
+  });
+
+  // ── QUÉ FORMA pide el control plane ────────────────────────────────
+  //
+  // ⚠️ ESTE ES EL ESLABÓN QUE FALTABA PARA QUE EXISTIERA UN CERTIFICADO
+  // HÍBRIDO. Los handlers del privsvc aceptaban `altKeyAlgorithm` en las
+  // tres plataformas y el emisor sabía firmar catalyst, pero el agente
+  // nunca lo pedía: `enroll.ts` manda `keyAlgorithm` a secas y este
+  // manejador ignoraba el resto del mensaje. Con la mitad del CSR
+  // ausente, `issueCertificate` sólo podía emitir clásico — en verde.
+  it("⚠️ pasa la mitad alternativa que pidió el backend, no la adivina", async () => {
+    const requestCertRotation = vi.fn();
+    (ctx as any).requestCertRotation = requestCertRotation;
+
+    await startFresh();
+    latestStream().emit("data", { connected: true });
+    latestStream().emit("data", {
+      rotateCert: { reason: "corte a la G2", altKeyAlgorithm: "ML_DSA_65" }
+    });
+
+    expect(requestCertRotation).toHaveBeenCalledWith("corte a la G2", "ML_DSA_65");
+  });
+
+  it("un backend que no manda el campo sigue produciendo una rotación CLÁSICA", async () => {
+    // La compatibilidad hacia atrás del proto, comprobada y no supuesta:
+    // un agente nuevo contra un backend viejo lee ausencia y hace lo de
+    // siempre. Sin esto, publicar el agente antes que el backend dejaría
+    // a la flota pidiendo un algoritmo que nadie pidió.
+    const requestCertRotation = vi.fn();
+    (ctx as any).requestCertRotation = requestCertRotation;
+
+    await startFresh();
+    latestStream().emit("data", { connected: true });
+    latestStream().emit("data", { rotateCert: { reason: "rotacion normal" } });
+
+    expect(requestCertRotation).toHaveBeenCalledWith("rotacion normal", "");
   });
 
   it("un mensaje sin motivo no manda una cadena vacía", async () => {

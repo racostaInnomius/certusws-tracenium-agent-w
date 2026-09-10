@@ -174,6 +174,50 @@ describe("cert-renewal — umbral de renovación", () => {
     );
   });
 
+  // ── ADR-0015: la FORMA baja hasta el privsvc ───────────────────────
+  //
+  // ⚠️ El tramo final de la cadena que hacía imposible un certificado
+  // híbrido. El backend lo decide, el stream lo lee, y aquí tiene que
+  // LLEGAR al privsvc: si se queda por el camino, el CSR sale clásico y
+  // el emisor —que sólo firma catalyst con las dos mitades— devuelve un
+  // certificado clásico. En verde, y para siempre.
+  it("⚠️ pasa altKeyAlgorithm al privsvc cuando el control plane lo pide", async () => {
+    const h = makeHarness(certFarPem);
+    h.priv.call.mockResolvedValue(okRenewResponse());
+
+    await maybeRenewClientCertificate({ ...(h as any), force: true, altKeyAlgorithm: "ML_DSA_65" });
+
+    expect(h.priv.call.mock.calls[0][0].params.altKeyAlgorithm).toBe("ML_DSA_65");
+  });
+
+  it("⚠️ sin petición del backend NO manda el campo — ausente ≠ vacío", async () => {
+    // La distinción no es cosmética. Para el handler, AUSENTE significa
+    // «conserva la forma que ya tienes» y VACÍO significa «clásico,
+    // explícitamente». Mandar "" en una renovación por calendario
+    // degradaría a clásico un equipo ya híbrido, en silencio y sin que
+    // nadie lo hubiera pedido.
+    const h = makeHarness(certFarPem);
+    h.priv.call.mockResolvedValue(okRenewResponse());
+
+    await maybeRenewClientCertificate({ ...(h as any), force: true });
+
+    const params = h.priv.call.mock.calls[0][0].params;
+    expect(Object.keys(params)).not.toContain("altKeyAlgorithm");
+  });
+
+  it("un valor desconocido viaja TAL CUAL: lo rechaza el handler, no este módulo", async () => {
+    // Traducirlo o filtrarlo aquí produciría un algoritmo distinto del
+    // pedido sin decirlo — que es exactamente lo que rompió el
+    // enrolamiento de Windows en su día. El privsvc es quien sabe qué
+    // soporta cada plataforma y quien tiene que fallar ruidosamente.
+    const h = makeHarness(certFarPem);
+    h.priv.call.mockResolvedValue(okRenewResponse());
+
+    await maybeRenewClientCertificate({ ...(h as any), force: true, altKeyAlgorithm: "ML_DSA_87" });
+
+    expect(h.priv.call.mock.calls[0][0].params.altKeyAlgorithm).toBe("ML_DSA_87");
+  });
+
   it("force NO salta las demás condiciones: sin huella no renueva", async () => {
     // Salta el umbral, no la cordura. La petición al backend se hace
     // CONTRA la huella actual, así que sin ella no hay nada que pedir.

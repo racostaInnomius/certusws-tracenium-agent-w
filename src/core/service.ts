@@ -422,7 +422,7 @@ export async function startService() {
      * previa, y la segunda respuesta llegaría obsoleta — el caso que el
      * guard de TOCTOU de abajo detecta y descarta. Mejor no provocarlo.
      */
-    const runCertRenewal = async (force: boolean): Promise<void> => {
+    const runCertRenewal = async (force: boolean, altKeyAlgorithm?: string): Promise<void> => {
       if (!currentCtx || shuttingDown) return;
       if (certRenewalRunning) {
         log.info("[cert-renewal] ya hay una renovación en curso, se ignora la petición", { force });
@@ -447,7 +447,8 @@ export async function startService() {
             store: currentCtx.store,
             priv: currentCtx.priv,
             logger: currentCtx.logger,
-            force
+            force,
+            altKeyAlgorithm
           });
 
           // Re-check that nobody else mutated enrollment while we were
@@ -487,9 +488,12 @@ export async function startService() {
     //
     // No se espera al resultado a propósito: quien llama está dentro del
     // manejador del stream que esta renovación puede reiniciar.
-    ctx.requestCertRotation = (reason: string) => {
-      log.warn("[cert-renewal] reemisión solicitada por el control plane", { reason });
-      runCertRenewal(true).catch((e: any) => {
+    ctx.requestCertRotation = (reason: string, altKeyAlgorithm?: string) => {
+      log.warn("[cert-renewal] reemisión solicitada por el control plane", {
+        reason,
+        altKeyAlgorithm: altKeyAlgorithm || "(clásico)"
+      });
+      runCertRenewal(true, altKeyAlgorithm).catch((e: any) => {
         log.error("[cert-renewal] la reemisión forzada falló", { err: e?.message || e });
       });
     };
