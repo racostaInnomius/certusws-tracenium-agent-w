@@ -1951,6 +1951,49 @@ private const int MaxPendingPushEvents = 50;
     /// mid-send we swallow (the agent's IPC-level "no active call" response
     /// already triggered its own reconnect path).
     /// </summary>
+    /// <summary>
+    /// ADR-0015 — reemitir la identidad mTLS por el canal que YA está
+    /// autenticado.
+    ///
+    /// ⚠️ SUSTITUYE A UN POST mTLS CONTRA REST, y no por elegancia. La
+    /// renovación se autenticaba con el certificado de cliente que el
+    /// ingress reenviaba en `x-forwarded-client-cert`; el 2026-09-01 se
+    /// puso `clientCertificateMode: Ignore` en el Container App —para que
+    /// Chrome dejara de pedir certificado a los usuarios del portal— y con
+    /// eso el ingress dejó de pedirlo. La renovación respondía 401 para
+    /// toda la flota, y nadie pudo notarlo durante nueve días porque no
+    /// caduca ningún certificado hasta abril de 2027.
+    ///
+    /// Aquí la identidad es el certificado de par de ESTA conexión, que el
+    /// servidor validó en el handshake. No hay cabecera intermedia que un
+    /// ajuste de proxy pueda desactivar en silencio.
+    ///
+    /// Es UNARIA sobre el canal existente: no abre conexión ni handshake
+    /// nuevos.
+    /// </summary>
+    public async Task<(string ClientCertPem, string CaBundlePem, string Status)> RenewCertAsync(
+        string csrPem,
+        TimeSpan? timeout = null,
+        CancellationToken ct = default)
+    {
+        var client = _client;
+        if (client is null)
+        {
+            // Sin canal no hay identidad que presentar. Falla claro: el job
+            // de rotación reintenta, y un equipo desconectado no debe
+            // reemitirse a ciegas.
+            throw new InvalidOperationException("grpc_not_connected");
+        }
+
+        var deadline = DateTime.UtcNow.Add(timeout ?? TimeSpan.FromSeconds(60));
+        var resp = await client.RenewCertAsync(
+            new RenewCertRequest { CsrPem = csrPem },
+            deadline: deadline,
+            cancellationToken: ct);
+
+        return (resp.ClientCertPem ?? "", resp.CaBundlePem ?? "", resp.Status ?? "pending");
+    }
+
     public async Task SendHeartbeat(
         string deviceId,
         long uptimeSeconds,

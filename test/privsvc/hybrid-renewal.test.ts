@@ -247,3 +247,38 @@ describe("la renovación ya no habla HTTPS", () => {
     });
   }
 });
+
+// ── Windows, que habla el mismo protocolo por su cuenta ──────────────
+//
+// Su privsvc es C# y genera el cliente del MISMO `controlplane.proto`,
+// así que la RPC le aparece sola al recompilar. Lo que hay que sostener
+// es que también dejó el POST: mientras siguiera ahí, la flota Windows
+// —la mayor parte del parque— seguiría sin poder renovar y el síntoma
+// sería idéntico al de los otros dos, que ya nos costó nueve días.
+describe("la renovación de Windows tampoco habla HTTPS", () => {
+  const fs = require("fs");
+  const path = require("path");
+  const src = fs.readFileSync(
+    path.join(
+      __dirname, "..", "..",
+      "privsvc", "windows", "Tracenium.PrivSvc.Windows", "Ipc", "CryptoCertRenew.cs"
+    ),
+    "utf8"
+  );
+
+  it("⚠️ no queda ningún POST de renovación", () => {
+    expect(src).not.toContain("PostAsJsonAsync");
+    expect(src).not.toMatch(/certificates\/renew/);
+  });
+
+  it("⚠️ llama a la RPC por el canal ya autenticado", () => {
+    expect(src).toContain("GrpcBridgeSingleton.Instance.RenewCertAsync");
+  });
+
+  it("⚠️ distingue los fallos de gRPC, no los funde en uno", () => {
+    // El código de estado es lo que separa «reintenta» de «no insistas».
+    // Un certificado revocado no mejora reintentando.
+    expect(src).toContain("catch (RpcException");
+    expect(src).toContain("rpc.StatusCode");
+  });
+});

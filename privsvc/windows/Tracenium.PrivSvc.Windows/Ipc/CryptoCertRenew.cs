@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+using Grpc.Core;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 
@@ -83,33 +83,50 @@ public static class CryptoCertRenew
             if (string.IsNullOrWhiteSpace(csrPem))
                 return PrivSvcResponse.Fail(req.Id, "csr_error", "CSR response missing csrPem");
 
-            using var handler = new HttpClientHandler();
-            handler.ClientCertificates.Add(currentCert);
-            handler.ClientCertificateOptions = ClientCertificateOption.Manual;
-
-            using var http = new HttpClient(handler)
+            // ── ADR-0015: la renovación va por gRPC, no por REST ──────────
+            //
+            // ⚠️ AQUÍ VIVÍA UN POST mTLS que llevaba devolviendo 401 para
+            // TODA la flota desde el 2026-09-01: se puso
+            // `clientCertificateMode: Ignore` en el Container App —para que
+            // Chrome dejara de pedir certificado a los usuarios del
+            // portal— y el ingress dejó de pedir el certificado de cliente
+            // y de reenviarlo en `x-forwarded-client-cert`. Nadie pudo
+            // notarlo durante nueve días: no caduca ningún certificado
+            // hasta abril de 2027, así que esa ruta no se ejercita sola.
+            //
+            // Ahora la identidad es el certificado de par del canal que el
+            // privsvc ya tiene abierto y que el servidor validó en el
+            // handshake. Sin cabecera intermedia, sin conexión nueva.
+            string clientCertPem;
+            string caBundlePem;
+            string renewStatus;
+            try
             {
-                Timeout = TimeSpan.FromSeconds(30)
-            };
+                var renovado = await GrpcBridgeSingleton.Instance.RenewCertAsync(csrPem);
+                clientCertPem = renovado.ClientCertPem;
+                caBundlePem = renovado.CaBundlePem;
+                renewStatus = renovado.Status;
+            }
+            catch (RpcException rpc)
+            {
+                // El código viaja en el error para que el llamante pueda
+                // distinguir «reintenta» de «no insistas»: un certificado
+                // revocado no mejora reintentando.
+                return PrivSvcResponse.Fail(
+                    req.Id,
+                    "renew_grpc_error",
+                    $"{rpc.StatusCode}: {rpc.Status.Detail}");
+            }
+            catch (InvalidOperationException ex)
+            {
+                return PrivSvcResponse.Fail(req.Id, "renew_grpc_error", ex.Message);
+            }
 
-            var renewUrl = $"{serverBaseUrl}/api/v1/security/certificates/renew";
-            using var response = await http.PostAsJsonAsync(renewUrl, new { csrPem });
-            var body = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
-                return PrivSvcResponse.Fail(req.Id, "renew_http_error", $"HTTP {(int)response.StatusCode}: {body}");
-
-            using var json = JsonDocument.Parse(body);
-            var root = json.RootElement;
-
-            if (!root.TryGetProperty("clientCertPem", out var certProp))
+            if (string.IsNullOrWhiteSpace(clientCertPem))
                 return PrivSvcResponse.Fail(req.Id, "renew_response_error", "clientCertPem missing");
 
-            if (!root.TryGetProperty("caBundlePem", out var caProp))
+            if (string.IsNullOrWhiteSpace(caBundlePem))
                 return PrivSvcResponse.Fail(req.Id, "renew_response_error", "caBundlePem missing");
-
-            var clientCertPem = certProp.GetString() ?? "";
-            var caBundlePem = caProp.GetString() ?? "";
 
             var installResponse = await CryptoCertInstall.HandleInstallCert(new PrivSvcRequest
             {
@@ -144,7 +161,7 @@ public static class CryptoCertRenew
                 clientCertThumbprint = GetStringFromObject(installResponse.Result, "clientCertThumbprint"),
                 issuingCaThumbprint = GetStringFromObject(installResponse.Result, "issuingCaThumbprint"),
                 notAfter = GetStringFromObject(installResponse.Result, "notAfter"),
-                status = root.TryGetProperty("status", out var statusProp) ? statusProp.GetString() : "pending"
+                status = string.IsNullOrWhiteSpace(renewStatus) ? "pending" : renewStatus
             };
 
             return PrivSvcResponse.Success(req.Id, result);
