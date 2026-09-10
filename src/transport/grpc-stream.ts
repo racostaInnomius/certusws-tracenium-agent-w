@@ -8,6 +8,8 @@ import type { Namespaces, DeviceFacts } from "../domain/device-facts";
 import type { PmpNamespace } from "../domain/pmp-types";
 import { updatePmpState, isRemediateInFlight } from "../plugins/pmp/state";
 import { runRemediation } from "../plugins/pmp/remediation";
+import { planPatchReboot, rebootAckSuffix } from "../plugins/pmp/reboot";
+import { armPatchReboot } from "../plugins/pmp/reboot-exec";
 // SDP no longer imported here — `software_install` is dispatched via
 // ctx.plugins.run("sdp.install", ...) so it goes through the
 // PluginManager policy gate uniformly with the other plugins.
@@ -948,6 +950,9 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       }
 
       const mode = String(payload?.mode || "install").trim().toLowerCase();
+      // Opt-in, per run. Absent means NO: nothing restarts a production server
+      // that was not explicitly enrolled in it.
+      const rebootIfRequired = payload?.rebootIfRequired === true;
       const kbArticleIds = Array.isArray(payload?.kbArticleIds)
         ? payload.kbArticleIds.map((item: unknown) => String(item || "").trim()).filter(Boolean)
         : [];
@@ -1034,16 +1039,40 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
             ctx.logger?.warn?.("Post patch-install scan enqueue failed", { err, jobId });
           }
 
+          // ── Restart, if the operator asked for it ───────────────────────
+          // A Windows patch is not applied until the machine restarts, so an
+          // automated patch window that never restarts leaves the fleet
+          // permanently "pending reboot" and never actually protected.
+          //
+          // ORDER IS LOAD-BEARING: the OS timer is armed HERE, before the ACK
+          // is returned, and the grace is what gives that ACK time to leave the
+          // machine. Waiting first and arming later would lose the restart
+          // entirely if the agent were stopped during the wait — and the agent
+          // is the process most likely to be stopped in the next minute. SDP
+          // documents the opposite failure (exit 1641): the ACK loses the race
+          // with a restart it did not schedule, the job sits in `sent`, and the
+          // orchestrator re-runs the whole patch ~32 minutes later.
+          const rebootPlan = planPatchReboot({
+            rebootIfRequired,
+            rebootRequired,
+            installedCount,
+            failedCount
+          });
+          if (rebootPlan.reboot) {
+            await armPatchReboot(rebootPlan, { logger: ctx.logger });
+          }
+          const rebootSuffix = rebootAckSuffix(rebootPlan);
+
           if (resultStatus === "success" || resultStatus === "no_updates") {
             return {
               status: 0,
-              message: `patch_install ${resultStatus}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
+              message: `patch_install ${resultStatus}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}${rebootSuffix}`
             };
           }
 
           return {
             status: 2,
-            message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}`
+            message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}${rebootSuffix}`
           };
         } catch (err: any) {
           updatePmpState({
