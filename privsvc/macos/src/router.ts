@@ -25,7 +25,7 @@ import {
   handleRemoteSessionError,
   handleRemoteSessionTranscript,
   handleRemoteFileTransferAudit,
-  handleRemoteScreenAudit
+  handleRemoteScreenAudit,
   renewCertOverGrpc,
 } from "./grpc-bridge";
 import { handlePatchInstall, handlePatchScan } from "./patch-management";
