@@ -833,6 +833,13 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               });
               connected = false;
               connectPromise = null;
+              // ⚠️ La otra mitad del ancla, y faltaba: aquí se declaraba
+              // la conexión rota por dentro y NO se le decía al usuario.
+              // El camino que LANZA sí lo hacía; éste, que es el normal
+              // cuando el puente rechaza el envío, no. Si el estado
+              // interno y el que ve el usuario pueden discrepar, acaban
+              // discrepando.
+              try { ctx.trayStatus.markGrpcDisconnected(); } catch {}
               // Surface to stream.on('error') so scheduleReconnect() runs.
               safeEmitError(new Error(`heartbeat_failed:${errorCode || errorMessage}`));
             } else {
@@ -840,6 +847,30 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               // gRPC stream without erroring → wire is alive. See
               // `lastClientSendOkMs` declaration for full rationale.
               lastClientSendOkMs = Date.now();
+
+              // ⚠️ EL ANCLA: el estado que ve el usuario se REAFIRMA con
+              // el mismo hecho que usa el backend.
+              //
+              // El latido que acaba de salir por el cable es exactamente
+              // lo que mueve el `last_seen_at` del control plane. Atar a
+              // él la verdad del agente es lo que impide que las dos
+              // partes puedan discrepar mucho tiempo: si el latido pasa,
+              // los dos dicen «en línea»; si deja de pasar, nadie
+              // reafirma nada y los dos acaban diciendo «caído».
+              //
+              // Antes el estado sólo se ponía en `true` al CONECTAR, así
+              // que cualquier detector que lo pusiera en `false` por
+              // error lo dejaba ahí para siempre: no volvía a haber
+              // conexión que lo corrigiera, porque la conexión estaba
+              // bien. Un vigilante averiado tenía derecho de veto
+              // permanente sobre lo que veía el usuario. El 2026-09-10
+              // eso dejó el icono en Offline una hora con el portal en
+              // verde.
+              //
+              // Es idempotente (ver markGrpcConnected): en el camino
+              // normal no escribe nada. Sólo actúa cuando hay algo que
+              // corregir, y entonces tarda como mucho un latido.
+              try { ctx.trayStatus.markGrpcConnected(); } catch {}
             }
           } catch (err: any) {
             // Update liveness clock even when the IPC call throws.

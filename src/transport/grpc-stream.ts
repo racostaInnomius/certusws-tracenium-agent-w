@@ -1682,6 +1682,51 @@ stream = client.Connect();
     }
     watchdogTimer = setInterval(() => {
       if (stopped) return;
+
+      // ⚠️ UN VIGILANTE HUÉRFANO NO VIGILA NADA: MIRA UN CADÁVER.
+      //
+      // `stream` se captura al crear esta generación. Si el cliente
+      // cacheado se invalida sin que esta generación llegue a pararse
+      // —un `grpc.disconnected` cuyo `emit("error")` se pierde porque ya
+      // no quedan listeners, por ejemplo— el temporizador sigue vivo
+      // leyendo los relojes de un objeto que nadie va a volver a tocar.
+      // Y unos relojes que no avanzan significan «silencio» para
+      // siempre.
+      //
+      // Visto en campo el 2026-09-10: `silentMs` creciendo EXACTAMENTE
+      // 30.000 ms por tick durante una hora —el tamaño del propio tick,
+      // que es la firma de un reloj congelado— mientras los latidos
+      // salían sin un solo fallo y el servidor los recibía. Cada
+      // disparo marcaba el icono como caído y emitía un `error` sobre
+      // ese mismo objeto muerto, cuyos listeners ya no existían: la
+      // emisión se tragaba en el `catch` y no reconectaba nada.
+      // `reconnectCount` no se movió del 8 en toda la hora. El
+      // vigilante ya no podía arreglar nada — sólo estropear el icono.
+      //
+      // Así que lo primero que comprueba es si sigue siendo el actual.
+      // Si no lo es, se para: es la única acción honesta que le queda.
+      //
+      // La comparación es contra el cliente que ESTA generación creó:
+      // `createGrpcClient` guarda ese mismo objeto en el contexto.
+      //
+      // Sólo se declara huérfano cuando hay un cliente vigente y es
+      // OTRO. Si no hay ninguno —`invalidateCachedClient` lo borra— no
+      // se puede demostrar nada, y ahí se falla abierto: un vigilante de
+      // más es un aviso ruidoso; un vigilante de menos es un equipo
+      // zombi que nadie reconecta, que es la avería que este watchdog
+      // existe para cazar.
+      const vigente = (ctx as any).__grpcClientInstance;
+      if (vigente && vigente !== client) {
+        ctx.logger?.warn?.(
+          "gRPC stream: watchdog huérfano (el cliente vigente ya no es el suyo), deteniéndolo"
+        );
+        if (watchdogTimer) {
+          clearInterval(watchdogTimer);
+          watchdogTimer = null;
+        }
+        return;
+      }
+
       const lastActivityMs = (stream as any).getLastServerActivityMs?.();
       if (typeof lastActivityMs !== "number") {
         // Stream object doesn't expose the tracker — older bridge

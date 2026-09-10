@@ -267,26 +267,51 @@ export class TrayStatusStore {
     });
   }
 
+  /**
+   * ⚠️ LAS MARCAS REGISTRAN TRANSICIONES, NO REPETICIONES.
+   *
+   * Antes cada llamada reescribía su fecha aunque el estado ya fuera ése.
+   * Eso convirtió `lastDisconnectedAtUtc` en «la última vez que ALGUIEN
+   * opinó que estábamos caídos», no en «cuándo nos caímos» — y con un
+   * vigilante disparando cada 30 s, la fecha avanzaba sola sobre una
+   * conexión perfectamente sana. Visto en campo el 2026-09-10: el portal
+   * en verde y el icono en Offline durante una hora, con
+   * `lastDisconnectedAtUtc` marcando el minuto en curso.
+   *
+   * Siendo idempotentes, llamarlas de más es inocuo: sólo la primera
+   * cambia algo. Es lo que permite que varios detectores compartan el
+   * mismo estado sin pisarse, que es justamente el diseño.
+   */
   markGrpcConnected() {
-    return this.update((current) => ({
-      ...(current || this.emptySnapshot()),
-      grpc: {
-        ...(current?.grpc || { connected: false }),
-        connected: true,
-        lastConnectedAtUtc: new Date().toISOString()
-      }
-    }));
+    return this.update((current) => {
+      const previo = current?.grpc || { connected: false };
+      if (previo.connected === true) return current || this.emptySnapshot();
+      return {
+        ...(current || this.emptySnapshot()),
+        grpc: {
+          ...previo,
+          connected: true,
+          lastConnectedAtUtc: new Date().toISOString()
+        }
+      };
+    });
   }
 
   markGrpcDisconnected() {
-    return this.update((current) => ({
-      ...(current || this.emptySnapshot()),
-      grpc: {
-        ...(current?.grpc || { connected: false }),
-        connected: false,
-        lastDisconnectedAtUtc: new Date().toISOString()
+    return this.update((current) => {
+      const previo = current?.grpc || { connected: false };
+      if (previo.connected === false && previo.lastDisconnectedAtUtc) {
+        return current || this.emptySnapshot();
       }
-    }));
+      return {
+        ...(current || this.emptySnapshot()),
+        grpc: {
+          ...previo,
+          connected: false,
+          lastDisconnectedAtUtc: new Date().toISOString()
+        }
+      };
+    });
   }
 
   markHeartbeat() {

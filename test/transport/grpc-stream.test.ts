@@ -182,6 +182,10 @@ beforeEach(() => {
       close: vi.fn()
     };
     clients.push(client);
+    // Fiel al real: `createGrpcClient` deja su instancia en el contexto
+    // como singleton. El watchdog lo usa para saber si sigue siendo el
+    // cliente vigente o si quedó huérfano.
+    (ctx as any).__grpcClientInstance = client;
     return client;
   });
   ctx = makeCtx();
@@ -320,6 +324,59 @@ describe("grpc-stream — watchdog de silencio (post-fix idle-churn 2026-06-30)"
     ).toBe(false);
     expect(reconnectSchedules()).toHaveLength(0);
     expect(ctx.trayStatus.markGrpcDisconnected).not.toHaveBeenCalled();
+  });
+
+  it("⚠️ un watchdog HUÉRFANO se detiene en vez de mentir sobre el estado", async () => {
+    // ⚠️ EL FALLO DE CAMPO DEL 2026-09-10.
+    //
+    // `stream` se captura al crear la generación. Si el cliente cacheado
+    // se sustituye sin que esta generación llegue a pararse, el
+    // temporizador sigue vivo leyendo los relojes de un objeto que nadie
+    // va a volver a tocar — y unos relojes parados significan «silencio»
+    // para siempre.
+    //
+    // En campo: `silentMs` creciendo EXACTAMENTE un tick por aviso
+    // durante una hora (la firma de un reloj congelado) mientras los
+    // latidos salían sin un solo fallo y el servidor los recibía. Cada
+    // disparo marcaba el icono como caído y emitía un `error` sobre ese
+    // objeto muerto, sin listeners, que se tragaba el `catch`: no
+    // reconectaba nada. El portal en verde y el icono en Offline.
+    const s = await connectReady();
+
+    // Otra generación toma el relevo: el cliente vigente ya no es el suyo.
+    (ctx as any).__grpcClientInstance = { Connect: () => makeFakeStream() };
+
+    // Ninguna dirección se refresca: sin el guard, esto dispararía el
+    // aviso de silencio en cada tick, indefinidamente.
+    await vi.advanceTimersByTimeAsync(SILENCE_THRESHOLD_MS + WATCHDOG_TICK_MS + 1_000);
+
+    const avisos = (patron: string) =>
+      ctx.logger.warn.mock.calls.filter((c: any[]) => String(c[0]).includes(patron)).length;
+
+    expect(avisos("watchdog huérfano")).toBe(1);
+    expect(avisos("bidirectional silence past threshold")).toBe(0);
+    // Y lo que de verdad importa: no tocó el estado que ve el usuario.
+    expect(ctx.trayStatus.markGrpcDisconnected).not.toHaveBeenCalled();
+
+    // Se detuvo de verdad: más tiempo no produce más avisos.
+    await vi.advanceTimersByTimeAsync(SILENCE_THRESHOLD_MS * 2);
+    expect(avisos("watchdog huérfano")).toBe(1);
+  });
+
+  it("el watchdog VIGENTE sigue detectando el zombie de siempre", async () => {
+    // El guard no puede desarmar la detección real: mientras el cliente
+    // siga siendo el suyo, un silencio bidireccional se caza igual.
+    const s = await connectReady();
+    expect((ctx as any).__grpcClientInstance).toBeTruthy();
+
+    await vi.advanceTimersByTimeAsync(SILENCE_THRESHOLD_MS + WATCHDOG_TICK_MS + 1_000);
+
+    expect(
+      ctx.logger.warn.mock.calls.some((c: any[]) =>
+        String(c[0]).includes("bidirectional silence past threshold")
+      )
+    ).toBe(true);
+    expect(ctx.trayStatus.markGrpcDisconnected).toHaveBeenCalled();
   });
 
   it("simétrico: tráfico entrante sin salidas recientes tampoco dispara el watchdog", async () => {

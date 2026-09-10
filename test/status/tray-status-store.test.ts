@@ -166,3 +166,113 @@ describe("TrayStatusStore — self-service Software Catalog", () => {
     expect(reloaded?.catalog?.catalogVersion).toBe("abc123");
   });
 });
+
+// ── El estado de conexión: transiciones, no opiniones ────────────────
+//
+// ⚠️ EL PORTAL Y EL ICONO NO PUEDEN DECIR COSAS DISTINTAS.
+//
+// El 2026-09-10 un equipo pasó una hora con el portal en verde y el
+// icono en Offline. La conexión estaba sana —los latidos salían sin un
+// solo fallo y el servidor los recibía—, pero un vigilante averiado
+// llamaba a `markGrpcDisconnected()` cada 30 s sobre esa conexión sana.
+//
+// Dos defectos se sumaban, y hacen falta los dos arreglados:
+//
+//   1. Las marcas reescribían su fecha aunque el estado ya fuera ése,
+//      así que `lastDisconnectedAtUtc` dejó de significar «cuándo nos
+//      caímos» para significar «la última vez que alguien lo dijo».
+//   2. `connected` sólo volvía a `true` al CONECTAR. Como la conexión
+//      no se había caído, no había reconexión que lo corrigiera: un
+//      detector equivocado tenía veto permanente sobre lo que ve el
+//      usuario.
+describe("TrayStatusStore — estado de conexión idempotente", () => {
+  it("marcar conectado dos veces no mueve la fecha: es una transición", () => {
+    const store = new TrayStatusStore();
+    const primera = store.markGrpcConnected();
+    const marca = primera.grpc?.lastConnectedAtUtc;
+    expect(marca).toBeTruthy();
+
+    const segunda = store.markGrpcConnected();
+
+    expect(segunda.grpc?.connected).toBe(true);
+    expect(segunda.grpc?.lastConnectedAtUtc).toBe(marca);
+  });
+
+  it("⚠️ marcar desconectado en bucle no mueve la fecha", () => {
+    // El síntoma exacto: `lastDisconnectedAtUtc` avanzando sola porque
+    // un vigilante repetía su opinión cada 30 s.
+    const store = new TrayStatusStore();
+    store.markGrpcConnected();
+    const primera = store.markGrpcDisconnected();
+    const marca = primera.grpc?.lastDisconnectedAtUtc;
+    expect(marca).toBeTruthy();
+
+    for (let i = 0; i < 5; i++) store.markGrpcDisconnected();
+
+    const final = store.markGrpcDisconnected();
+    expect(final.grpc?.connected).toBe(false);
+    expect(final.grpc?.lastDisconnectedAtUtc).toBe(marca);
+  });
+
+  it("una transición de verdad SÍ mueve la fecha", () => {
+    // Reloj falso: las dos transiciones caen en el mismo milisegundo si
+    // se deja al reloj real, y entonces el test no distinguiría «no
+    // reescribió» de «reescribió el mismo valor» — que es justo la
+    // diferencia que tiene que probar.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-10T10:00:00.000Z"));
+      const store = new TrayStatusStore();
+      store.markGrpcConnected();
+      const caida = store.markGrpcDisconnected();
+      expect(caida.grpc?.lastDisconnectedAtUtc).toBe("2026-09-10T10:00:00.000Z");
+
+      vi.setSystemTime(new Date("2026-09-10T10:05:00.000Z"));
+      store.markGrpcConnected();
+      const segundaCaida = store.markGrpcDisconnected();
+
+      expect(segundaCaida.grpc?.lastDisconnectedAtUtc).toBe("2026-09-10T10:05:00.000Z");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("⚠️ un falso 'desconectado' se cura con el siguiente latido", () => {
+    // La propiedad que impide que las dos verdades diverjan: el latido
+    // que mueve el `last_seen_at` del backend es el mismo hecho que
+    // reafirma el estado del agente. Si el latido pasa, los dos dicen
+    // lo mismo.
+    const store = new TrayStatusStore();
+    store.markGrpcConnected();
+    expect(store.load()?.grpc?.connected).toBe(true);
+
+    store.markGrpcDisconnected(); // el vigilante se equivoca
+    expect(store.load()?.grpc?.connected).toBe(false);
+
+    store.markGrpcConnected(); // lo que hace el latido correcto
+    expect(store.load()?.grpc?.connected).toBe(true);
+  });
+
+  it("el latido no resucita un estado caído por sí mismo", () => {
+    // `markHeartbeat` sólo mueve su propia marca: quien afirma que hay
+    // conexión es el camino que tiene la prueba, no el reloj.
+    const store = new TrayStatusStore();
+    store.markGrpcConnected();
+    store.markGrpcDisconnected();
+
+    const tras = store.markHeartbeat();
+
+    expect(tras.grpc?.connected).toBe(false);
+    expect(tras.grpc?.lastHeartbeatAtUtc).toBeTruthy();
+  });
+
+  it("sobrevive al ida y vuelta por disco", () => {
+    const store = new TrayStatusStore();
+    store.markGrpcConnected();
+    const marca = store.load()?.grpc?.lastConnectedAtUtc;
+
+    const otro = new TrayStatusStore();
+    expect(otro.load()?.grpc?.connected).toBe(true);
+    expect(otro.load()?.grpc?.lastConnectedAtUtc).toBe(marca);
+  });
+});

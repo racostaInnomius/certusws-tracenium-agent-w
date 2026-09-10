@@ -254,3 +254,95 @@ describe("grpc.connect — huellas de CA aceptables", () => {
     expect(params?.issuingCaThumbprint).toBe("ca-vieja");
   });
 });
+
+// ── El ancla: una sola verdad para el portal y para el icono ─────────
+//
+// ⚠️ EL 2026-09-10 UN EQUIPO PASÓ UNA HORA CON EL PORTAL EN VERDE Y EL
+// ICONO EN OFFLINE.
+//
+// La conexión estaba sana. Un vigilante averiado —leyendo los relojes de
+// un cliente que ya no era el vigente— llamaba a
+// `markGrpcDisconnected()` cada 30 s. Y como el estado sólo volvía a
+// `true` al CONECTAR, y la conexión nunca se había caído, no hubo
+// reconexión que lo corrigiera: el icono se quedó en rojo para siempre.
+// Un detector equivocado tenía veto permanente sobre lo que ve el
+// usuario.
+//
+// El arreglo es de forma, no de parche: el latido que sale por el cable
+// es el MISMO hecho que mueve el `last_seen_at` del control plane, así
+// que atar a él la verdad del agente hace imposible que las dos partes
+// discrepen mucho tiempo. Si el latido pasa, los dos dicen «en línea».
+// Si deja de pasar, nadie reafirma nada y los dos acaban en «caído».
+describe("grpc-client — el latido reafirma el estado (ancla contra la divergencia)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function ctxConLatidoOk() {
+    const ctx = makeCtx();
+    ctx.priv.call = vi.fn(async (req: any) => {
+      if (req.method === "grpc.connect") {
+        return { ok: true, result: { connected: true, ready: true } };
+      }
+      return { ok: true };
+    });
+    ctx.trayStatus.markGrpcConnected = vi.fn();
+    return ctx;
+  }
+
+  it("⚠️ un latido correcto reafirma 'conectado'", async () => {
+    const ctx = ctxConLatidoOk();
+    const client = createGrpcClient(ctx);
+    const stream = client.Connect();
+    stream.on("error", () => {});
+
+    // ⚠️ Hay que esperar PRIMERO a la marca que produce la conexión y
+    // limpiar después. Sin esto el test se conforma con esa marca y pasa
+    // igual aunque el ancla del latido no exista — comprobado por
+    // mutación: quitando la llamada del camino del latido, seguía verde.
+    await waitForCall(ctx.trayStatus.markGrpcConnected);
+    ctx.trayStatus.markGrpcConnected.mockClear();
+
+    stream.write({
+      heartbeat: {
+        deviceId: "device-1",
+        uptimeSeconds: 1,
+        agentVersion: "1.1.33-test",
+        policyVersion: "pv1"
+      }
+    });
+
+    await waitForCall(ctx.trayStatus.markGrpcConnected);
+    expect(ctx.trayStatus.markGrpcConnected).toHaveBeenCalled();
+  });
+
+  it("un latido RECHAZADO no reafirma nada: marca desconectado", async () => {
+    // La otra mitad de la propiedad. Si el latido no sale, el agente no
+    // tiene derecho a decir que está en línea — y el backend tampoco lo
+    // dirá, porque no le llega nada.
+    const ctx = makeCtx(); // su priv.call rechaza el heartbeat
+
+    // Se registra el ORDEN, no los conteos: conectar marca «conectado»
+    // legítimamente, y lo que hay que sostener es que tras un latido
+    // rechazado la ÚLTIMA palabra sea «desconectado».
+    const secuencia: string[] = [];
+    ctx.trayStatus.markGrpcConnected = vi.fn(() => { secuencia.push("conectado"); });
+    ctx.trayStatus.markGrpcDisconnected = vi.fn(() => { secuencia.push("desconectado"); });
+
+    const client = createGrpcClient(ctx);
+    const stream = client.Connect();
+    stream.on("error", () => {});
+
+    stream.write({
+      heartbeat: {
+        deviceId: "device-1",
+        uptimeSeconds: 1,
+        agentVersion: "1.1.33-test",
+        policyVersion: "pv1"
+      }
+    });
+
+    await waitForCall(ctx.trayStatus.markGrpcDisconnected);
+    expect(secuencia[secuencia.length - 1]).toBe("desconectado");
+  });
+});
