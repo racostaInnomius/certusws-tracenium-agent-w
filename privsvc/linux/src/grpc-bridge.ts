@@ -837,6 +837,11 @@ function handleControlMessage(msg: any) {
   if (msg.rotateCert) {
     push("grpc.control.rotateCert", {
       reason: msg.rotateCert.reason || "server_request",
+      // ⚠️ ADR-0015 — la FORMA de la identidad reemitida. Este puente
+      // sólo reenviaba `reason`: el agente recibía siempre `""` y
+      // renovaba clásico aunque la CA pudiera firmar híbrido. Censo
+      // derivado del proto en test/privsvc/rotate-cert-bridge.test.ts.
+      altKeyAlgorithm: msg.rotateCert.altKeyAlgorithm || "",
       receivedAtUtc: new Date().toISOString(),
     });
     return;

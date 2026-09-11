@@ -1361,6 +1361,11 @@ private const int MaxPendingPushEvents = 50;
                         @params = new
                         {
                             reason = msg.RotateCert.Reason ?? "server_request",
+                            // ADR-0015 — la FORMA de la identidad reemitida.
+                            // Sólo se reenviaba `reason`: el agente recibía
+                            // siempre "" y renovaba clásico. Censo derivado
+                            // del proto en test/privsvc/rotate-cert-bridge.test.ts.
+                            altKeyAlgorithm = msg.RotateCert.AltKeyAlgorithm ?? "",
                             receivedAtUtc = DateTime.UtcNow.ToString("o")
                         }
                     });

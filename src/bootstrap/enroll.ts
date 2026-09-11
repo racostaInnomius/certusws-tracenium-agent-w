@@ -442,99 +442,119 @@ export async function ensureEnrolled(): Promise<EnrollmentState> {
     }
   }
 
+  // ⚠️ EL CERTIFICADO SE PIDE UNA SOLA VEZ; LOS REINTENTOS SÓLO REINSTALAN.
+  //
+  // Este bucle envolvía a la vez el `POST /enroll` y la instalación local,
+  // así que un fallo DESPUÉS de obtener el certificado —un privsvc que no
+  // conocía `crypto.cert.stage`, el 2026-09-11— repetía el enrolamiento
+  // entero cada 30 s. Cada vuelta emitía un certificado nuevo en el
+  // backend y gastaba un uso del token de bootstrap: 37 certificados en 18
+  // minutos y un token de flota de 38 usos AGOTADO, que dejó a todos los
+  // demás equipos sin poder enrolarse.
+  //
+  // Con el certificado ya en la mano no hay nada que volver a pedir. Si
+  // falla la instalación se reintenta SÓLO la instalación, con el mismo
+  // certificado: no cuesta un uso del token ni emite nada. Si el proceso
+  // se reinicia se pierde y se pide otro — una vez, no cada 30 s.
+  let emitido: EnrollResponse | null = null;
+
   while (true) {
     try {
-      const serverBaseUrl = config.serverBaseUrl;
-      console.log("[Enroll] Sending enrollment request to backend:", `${serverBaseUrl}/api/v1/security/enroll`);
-      console.log("[Enroll] Enrollment payload:", {
-        bootstrapToken: "[redacted]",
-        deviceId,
-        csrLength: csr.csrPem.length,
-        agentVersion: config.agentVersion
-      });
+      if (!emitido) {
+        const serverBaseUrl = config.serverBaseUrl;
+        console.log("[Enroll] Sending enrollment request to backend:", `${serverBaseUrl}/api/v1/security/enroll`);
+        console.log("[Enroll] Enrollment payload:", {
+          bootstrapToken: "[redacted]",
+          deviceId,
+          csrLength: csr.csrPem.length,
+          agentVersion: config.agentVersion
+        });
 
-      const payload = {
-        bootstrapToken: enrollmentToken,
-        csrPem: csr.csrPem.trim(),
-        deviceId,
-        agentVersion: config.agentVersion
-      };
+        const payload = {
+          bootstrapToken: enrollmentToken,
+          csrPem: csr.csrPem.trim(),
+          deviceId,
+          agentVersion: config.agentVersion
+        };
 
-      const res = await retry(
-        async () => {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 15000);
+        const res = await retry(
+          async () => {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 15000);
 
-          let response;
+            let response;
+            try {
+              response = await fetch(`${serverBaseUrl}/api/v1/security/enroll`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload),
+                signal: controller.signal
+              });
+            } finally {
+              clearTimeout(timeout);
+            }
+
+          if (!response.ok) {
+            const txt = await response.text().catch(() => "");
+
+            // Terminal errors (do not retry)
+            if (
+              response.status === 401 ||
+              (response.status === 403 && txt.includes("Token expired"))
+            ) {
+              throw new Error(`ENROLL_FATAL: ${txt}`);
+            }
+
+              throw new Error(`Enroll HTTP ${response.status}: ${txt}`);
+          }
+
+          return response;
+          },
+          5,
+          2000
+        );
+
+        const responseBody = await res.text();
+
+        console.log("[Enroll] Response status:", res.status);
+        // NEVER log the raw enrollment response body. It contains the
+        // clientCertPem and caBundlePem (bearer-equivalent material on a
+        // compromised endpoint). Log only shape + sizes so we can still
+        // diagnose issues without leaking cert material into journald /
+        // launchd logs / anywhere downstream log shippers might scrape.
+        const _bodySummary = (() => {
           try {
-            response = await fetch(`${serverBaseUrl}/api/v1/security/enroll`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify(payload),
-              signal: controller.signal
-            });
-          } finally {
-            clearTimeout(timeout);
+            const parsed = JSON.parse(responseBody);
+            return {
+              tenantId: parsed?.tenantId ?? null,
+              deviceId: parsed?.deviceId ?? null,
+              hasClientCertPem:
+                typeof parsed?.mTls?.clientCertPem === "string" &&
+                parsed.mTls.clientCertPem.includes("BEGIN CERTIFICATE"),
+              hasCaBundlePem:
+                typeof parsed?.mTls?.caBundlePem === "string" &&
+                parsed.mTls.caBundlePem.includes("BEGIN CERTIFICATE"),
+              clientCertBytes: parsed?.mTls?.clientCertPem?.length ?? 0,
+              caBundleBytes: parsed?.mTls?.caBundlePem?.length ?? 0
+            };
+          } catch {
+            return { parseOk: false, bytes: responseBody.length };
           }
+        })();
+        console.log("[Enroll] Response body summary:", _bodySummary);
 
-        if (!response.ok) {
-          const txt = await response.text().catch(() => "");
+        const data = JSON.parse(responseBody) as EnrollResponse;
 
-          // Terminal errors (do not retry)
-          if (
-            response.status === 401 ||
-            (response.status === 403 && txt.includes("Token expired"))
-          ) {
-            throw new Error(`ENROLL_FATAL: ${txt}`);
-          }
-
-            throw new Error(`Enroll HTTP ${response.status}: ${txt}`);
+        if (!data.tenantId || !data.deviceId) {
+          throw new Error("[Enroll] Backend response missing tenantId/deviceId");
         }
 
-        return response;
-        },
-        5,
-        2000
-      );
-
-      const responseBody = await res.text();
-
-      console.log("[Enroll] Response status:", res.status);
-      // NEVER log the raw enrollment response body. It contains the
-      // clientCertPem and caBundlePem (bearer-equivalent material on a
-      // compromised endpoint). Log only shape + sizes so we can still
-      // diagnose issues without leaking cert material into journald /
-      // launchd logs / anywhere downstream log shippers might scrape.
-      const _bodySummary = (() => {
-        try {
-          const parsed = JSON.parse(responseBody);
-          return {
-            tenantId: parsed?.tenantId ?? null,
-            deviceId: parsed?.deviceId ?? null,
-            hasClientCertPem:
-              typeof parsed?.mTls?.clientCertPem === "string" &&
-              parsed.mTls.clientCertPem.includes("BEGIN CERTIFICATE"),
-            hasCaBundlePem:
-              typeof parsed?.mTls?.caBundlePem === "string" &&
-              parsed.mTls.caBundlePem.includes("BEGIN CERTIFICATE"),
-            clientCertBytes: parsed?.mTls?.clientCertPem?.length ?? 0,
-            caBundleBytes: parsed?.mTls?.caBundlePem?.length ?? 0
-          };
-        } catch {
-          return { parseOk: false, bytes: responseBody.length };
-        }
-      })();
-      console.log("[Enroll] Response body summary:", _bodySummary);
-
-      const data = JSON.parse(responseBody) as EnrollResponse;
-
-      if (!data.tenantId || !data.deviceId) {
-        throw new Error("[Enroll] Backend response missing tenantId/deviceId");
+        console.log("[Enroll] Enrollment successful. Tenant:", data.tenantId, "Device:", data.deviceId);
+        emitido = data;
       }
-
-      console.log("[Enroll] Enrollment successful. Tenant:", data.tenantId, "Device:", data.deviceId);
+      const data = emitido;
 
       const paths = store.getPaths();
 
@@ -608,7 +628,12 @@ export async function ensureEnrolled(): Promise<EnrollmentState> {
         throw err; // stop agent startup
       }
 
-      console.error("[Enroll] Enrollment attempt failed. Retrying in 30s.", err);
+      console.error(
+        emitido
+          ? "[Enroll] Certificate obtained but local installation failed. Retrying ONLY the installation in 30s (no new certificate, no token use)."
+          : "[Enroll] Enrollment attempt failed. Retrying in 30s.",
+        err
+      );
       await sleep(30000);
     }
   }

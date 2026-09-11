@@ -793,6 +793,14 @@ function handleControlMessage(msg: any) {
   if (msg.rotateCert) {
     push("grpc.control.rotateCert", {
       reason: msg.rotateCert.reason || "server_request",
+      // ⚠️ ADR-0015 — la FORMA de la identidad reemitida. Este puente
+      // sólo reenviaba `reason`, así que el agente recibía siempre `""`
+      // y renovaba clásico aunque la CA emisora pudiera firmar híbrido:
+      // poner ISSUING_CA_ALT_KEY_PEM no habría producido ni un
+      // certificado catalyst. «Las 3 listas» por 5ª vez (2026-09-11).
+      // Todo campo de RotateCert tiene que cruzar este puente; hay un
+      // censo derivado del proto en test/privsvc/rotate-cert-bridge.test.ts.
+      altKeyAlgorithm: msg.rotateCert.altKeyAlgorithm || "",
       receivedAtUtc: new Date().toISOString()
     });
     return;
