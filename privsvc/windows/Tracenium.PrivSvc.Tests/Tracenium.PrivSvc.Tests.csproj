@@ -98,6 +98,11 @@
          y ningún equipo nuevo podía enrolarse. Es E/S de fichero pura; el
          endurecimiento de ACL sólo corre bajo Windows. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\CryptoCertStage.cs" />
+    <!-- La comprobación de firma del guard de instalación. Pura
+         (System.Formats.Asn1 + las claves públicas del certificado): el
+         test en macOS prueba lo mismo que corre en Windows, que es justo
+         lo que NO pasaba con X509Chain. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\CertIssuedBy.cs" />
   </ItemGroup>
 
   <ItemGroup>

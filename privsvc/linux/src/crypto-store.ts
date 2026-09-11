@@ -206,7 +206,14 @@ function assertCertUsable(
     }
     sujetos.push(ca.subject.replace(/\n/g, ", "));
     try {
-      if (hoja.verify(ca.publicKey)) {
+      // ⚠️ La CA tiene que ser la que la hoja NOMBRA como emisor, no una
+      // cualquiera del bundle. Durante la rotación el bundle trae la G2 Y
+      // la Issuing vieja, y el certificado del 2026-09-10 —declaraba la G2
+      // y lo firmó la clave de la vieja— pasaba con sólo `verify`: su firma
+      // verifica contra la vieja, que está ahí. El TLS lo rechaza igual,
+      // porque busca al emisor por el NOMBRE. `checkIssued` es esa misma
+      // comprobación de nombre; `verify`, la de la firma. Hacen falta las dos.
+      if (hoja.checkIssued(ca) && hoja.verify(ca.publicKey)) {
         firmadoPor = ca.subject.replace(/\n/g, ", ");
         break;
       }
@@ -219,7 +226,7 @@ function assertCertUsable(
   if (!firmadoPor) {
     throw new Error(
       `el certificado dice estar emitido por «${hoja.issuer.replace(/\n/g, ", ")}» ` +
-        `pero su firma no verifica contra ninguna de las ${cas.length} CA del bundle ` +
+        `pero ninguna CA del bundle con ese nombre lo firmó (${cas.length} CA) ` +
         `[${sujetos.join(" · ") || "ninguna legible"}]`
     );
   }

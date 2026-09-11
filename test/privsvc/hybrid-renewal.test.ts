@@ -367,6 +367,52 @@ for (const plat of plataformas) {
       expect(instalado(), "el certificado que funcionaba se conservó").toBe(previo);
     });
 
+    it("⚠️ una hoja que NOMBRA a una CA del bundle y la firmó OTRA del bundle no se instala", async () => {
+      // El descuadre del 2026-09-10 tal como llega DE VERDAD: durante la
+      // rotación el bundle trae la G2 Y la Issuing vieja. La hoja declaraba
+      // la G2 y venía firmada con la clave de la vieja. Comprobar la firma
+      // contra CUALQUIER CA del bundle la daba por buena —la vieja está
+      // ahí— y el TLS la habría rechazado igual. El test anterior metía una
+      // sola CA en el bundle y por eso no lo veía.
+      identidadInstalada(false);
+      const previo = instalado();
+
+      const bKey = path.join(raiz, `caB-${plat.nombre}.key`);
+      const bCrt = `${bKey}.crt`;
+      execFileSync(OPENSSL, ["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", bKey]);
+      execFileSync(OPENSSL, [
+        "req", "-x509", "-new", "-key", bKey, "-days", "2", "-subj", "/CN=CA B",
+        "-addext", "basicConstraints=critical,CA:TRUE", "-out", bCrt
+      ]);
+      // Con el NOMBRE de la CA buena y la clave de B: así openssl firma con
+      // B poniendo como emisor a la buena, que es la forma exacta del fallo.
+      const disfraz = `${bKey}.disfraz.crt`;
+      execFileSync(OPENSSL, [
+        "req", "-x509", "-new", "-key", bKey, "-days", "2", "-subj", "/CN=CA de prueba",
+        "-addext", "basicConstraints=critical,CA:TRUE", "-out", disfraz
+      ]);
+      const bundleConLasDos = ca.certPem + fs.readFileSync(bCrt, "utf8");
+
+      const s = transporte((csrPem) => {
+        const base = path.join(raiz, `mezcla-${Math.random().toString(36).slice(2)}`);
+        fs.writeFileSync(`${base}.csr`, csrPem);
+        execFileSync(OPENSSL, [
+          "x509", "-req", "-in", `${base}.csr`,
+          "-CA", disfraz, "-CAkey", bKey, "-CAcreateserial",
+          "-days", "2", "-out", `${base}.crt`
+        ], { stdio: "pipe" });
+        return {
+          clientCertPem: fs.readFileSync(`${base}.crt`, "utf8"),
+          caBundlePem: bundleConLasDos,
+          status: "pending"
+        };
+      });
+
+      const r = await renovar(s);
+      expect(r.ok, "debió rechazarse").toBe(false);
+      expect(instalado(), "el certificado que funcionaba se conservó").toBe(previo);
+    });
+
     it("la hoja BUENA sí se instala: el guard no bloquea el camino sano", async () => {
       identidadInstalada(false);
       const previo = instalado();

@@ -267,25 +267,30 @@ public static class CryptoCertInstall
             // renovacion conserva su certificado viejo y sigue siendo
             // alcanzable —se arregla por red—; uno que la acepta a ciegas
             // puede dejar de serlo para siempre.
+            //
+            // ⚠️ (2026-09-11) LA PRIMERA VERSIÓN DE ESTE GUARD ROMPIÓ
+            // WINDOWS ENTERO. Construía la cadena con X509Chain en modo
+            // CustomRootTrust usando el bundle como anclas, y ese modo sólo
+            // cierra en una RAÍZ AUTOFIRMADA: el bundle que entrega el
+            // backend lleva las intermedias (G2 + la Issuing vieja) sin la
+            // Root, así que rechazaba TODO certificado, bueno o malo. Ningún
+            // Windows enrolaba y ninguna renovación se instalaba desde la
+            // 1.1.68 — de forma segura, pero sin excepción.
+            //
+            // Ahora es la MISMA comprobación que macOS y Linux: la firma de
+            // la hoja verificada directamente contra cada CA del bundle (y
+            // la Root, si la hay), más la ventana de validez con holgura.
+            // Ver CertIssuedBy.
             if (bundleCerts != null && bundleCerts.Count > 0)
             {
-                using var cadena = new X509Chain();
-                cadena.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
-                cadena.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
-                foreach (var ca in bundleCerts)
-                {
-                    cadena.ChainPolicy.ExtraStore.Add(ca);
-                    cadena.ChainPolicy.CustomTrustStore.Add(ca);
-                }
+                var candidatas = new List<X509Certificate2>(bundleCerts);
+                if (rootCert != null) candidatas.Add(rootCert);
 
-                if (!cadena.Build(certWithKey))
+                var motivo = CertIssuedBy.WhyNotUsable(certWithKey, candidatas, DateTime.UtcNow);
+                if (motivo != null)
                 {
-                    var motivos = string.Join("; ", cadena.ChainStatus
-                        .Select(s => $"{s.Status}: {s.StatusInformation?.Trim()}"));
-                    var anclas = string.Join(" | ", bundleCerts.Select(c => c.Subject));
-                    throw new Exception(
-                        $"Client certificate does not chain to the delivered CA bundle. " +
-                        $"issuer='{certWithKey.Issuer}' bundle=[{anclas}] reasons=[{motivos}]");
+                    // El MOTIVO primero: el log IPC corta a 200 caracteres.
+                    throw new Exception($"Client certificate not usable: {motivo}");
                 }
             }
 
