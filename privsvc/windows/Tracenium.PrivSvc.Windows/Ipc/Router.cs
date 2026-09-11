@@ -214,6 +214,16 @@ public sealed class Router
             "cdp.adcs.read" => CdpAdcs.Handle(req),
 
             "crypto.csr.generate" => CryptoCsr.HandleGenerateCsr(req),
+            // ADR-0015 punto 10 — el bundle de CA en su PROPIO mensaje.
+            //
+            // ⚠️ FALTABA SÓLO AQUÍ, y el mensaje se partió PRECISAMENTE
+            // por Windows: el pipe corta a 64 KB por línea. macOS y Linux
+            // lo tuvieron desde el 2026-09-06; este router caía al `_` y
+            // respondía `not_supported`, y el agente —que lo llama sin
+            // condiciones al enrolar— reintentaba cada 30 s para siempre.
+            // Ningún Windows instalado desde la 1.1.61 pudo enrolarse. Los
+            // ya enrolados no lo notaron: la renovación no pasa por aquí.
+            "crypto.cert.stage" => CryptoCertStage.HandleStage(req),
             "crypto.cert.install" => CryptoCertInstall.HandleInstallCert(req),
             "crypto.cert.renew" => CryptoCertRenew.HandleRenewCert(req),
             // ADR-0013 — la clave que abre la credencial de vCenter. Nace y

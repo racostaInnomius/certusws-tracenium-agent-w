@@ -163,3 +163,57 @@ describe("el tamaño de la línea IPC contra el tope de Windows", () => {
     expect(juntos).toBeGreaterThan(TOPE_LINEA_WINDOWS / 2);
   });
 });
+
+// ── El censo: lo que el ENROLAMIENTO envía, lo conocen los TRES routers ──
+//
+// ⚠️ SEXTA VEZ QUE UN CONTRATO IPC SE ACTUALIZA EN DOS PLATAFORMAS DE TRES.
+//
+// `crypto.cert.stage` se añadió el 2026-09-06 a los privsvc de macOS y
+// Linux y NO al de Windows — justo aquel para el que existe, porque es su
+// pipe el que corta a 64 KB. El router de Windows respondía
+// `not_supported`, el agente trataba eso como fallo del enrolamiento, y
+// reintentaba cada 30 s para siempre. Ningún Windows instalado desde la
+// 1.1.61 pudo enrolarse, y nadie lo vio porque la renovación no pasa por
+// aquí: sólo lo sufre el alta de equipos nuevos.
+//
+// Los métodos se DERIVAN del propio `enroll.ts` en vez de escribirse aquí:
+// una lista a mano es la tercera lista que alguien olvida actualizar.
+describe("censo: los métodos del enrolamiento existen en los tres privsvc", () => {
+  const raizRepo = path.join(__dirname, "..", "..");
+  const leer = (...p: string[]) => fs.readFileSync(path.join(raizRepo, ...p), "utf8");
+
+  const enroll = leer("src", "bootstrap", "enroll.ts");
+  const metodos = [...new Set(
+    [...enroll.matchAll(/method:\s*"(crypto\.[a-z.]+)"/g)].map((m) => m[1])
+  )];
+
+  const escapar = (m: string) => m.replace(/\./g, "\\.");
+  const routers: Array<{ nombre: string; fuente: string; conoce: (m: string) => boolean }> = [
+    {
+      nombre: "macOS",
+      fuente: leer("privsvc", "macos", "src", "router.ts"),
+      conoce(m) { return this.fuente.includes(`case "${m}"`); }
+    },
+    {
+      nombre: "Linux",
+      fuente: leer("privsvc", "linux", "src", "router.ts"),
+      conoce(m) { return this.fuente.includes(`case "${m}"`); }
+    },
+    {
+      nombre: "Windows",
+      fuente: leer("privsvc", "windows", "Tracenium.PrivSvc.Windows", "Ipc", "Router.cs"),
+      conoce(m) { return new RegExp(`"${escapar(m)}"\\s*=>`).test(this.fuente); }
+    }
+  ];
+
+  it("el enrolamiento envía stage e install (si no, el censo no mediría nada)", () => {
+    expect(metodos).toEqual(expect.arrayContaining(["crypto.cert.stage", "crypto.cert.install"]));
+  });
+
+  for (const r of routers) {
+    it(`⚠️ el privsvc de ${r.nombre} enruta todo lo que el enrolamiento envía`, () => {
+      const faltan = metodos.filter((m) => !r.conoce(m));
+      expect(faltan, `${r.nombre} respondería not_supported a: ${faltan.join(", ")}`).toEqual([]);
+    });
+  }
+});

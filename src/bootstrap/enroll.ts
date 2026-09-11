@@ -219,7 +219,12 @@ async function sendToPrivSvc(mensaje: unknown, que: string): Promise<any> {
       try {
         const parsed = JSON.parse(line);
         if (!parsed.ok) {
-          reject(new Error(parsed.error?.message || `${que} failed`));
+          // El CÓDIGO viaja en el error, no sólo el texto: quien llama tiene
+          // que poder distinguir «este privsvc no conoce el método» —algo
+          // permanente, que pide otro camino— de un fallo de verdad.
+          const e: any = new Error(parsed.error?.message || `${que} failed`);
+          e.code = parsed.error?.code;
+          reject(e);
           return;
         }
         resolve(parsed.result || {});
@@ -235,11 +240,17 @@ async function sendToPrivSvc(mensaje: unknown, que: string): Promise<any> {
   });
 }
 
-// Helper to install certificates via PrivSvc IPC
-async function installCertViaPrivSvc(clientCertPem: string, caBundlePem: string): Promise<{ clientCertThumbprint: string; issuingCaThumbprint?: string; issuingCaThumbprints?: string[] }> {
-  const net = await import("net");
+/** El transporte IPC, inyectable para probar la decisión sin un pipe real. */
+export type EnviarPrivSvc = (mensaje: unknown, que: string) => Promise<any>;
 
-  const deviceId = getDeviceId();
+// Helper to install certificates via PrivSvc IPC
+export async function installCertViaPrivSvc(
+  clientCertPem: string,
+  caBundlePem: string,
+  opciones: { deviceId?: string; enviar?: EnviarPrivSvc } = {}
+): Promise<{ clientCertThumbprint: string; issuingCaThumbprint?: string; issuingCaThumbprints?: string[] }> {
+  const enviar = opciones.enviar ?? sendToPrivSvc;
+  const deviceId = opciones.deviceId ?? getDeviceId();
   const tenantId = "bootstrap";
 
   // ADR-0015 punto 10 — la cadena de CA viaja en SU PROPIO mensaje.
@@ -249,100 +260,71 @@ async function installCertViaPrivSvc(clientCertPem: string, caBundlePem: string)
   // certificados catalyst la cuenta deja de sobrar —la hoja pasa de ~0,6
   // a ~6 KB, y una cadena híbrida de tres se acerca a 24 KB— así que
   // mandar cadena y hoja juntas es acercarse al tope por ahorrarse un
-  // viaje. Aquí, en macOS y Linux, el socket no tiene ese tope: se hace
-  // igual porque un contrato IPC que se comporta distinto según el
-  // sistema se prueba en uno y falla en otro, y esa cicatriz ya la tiene
-  // este producto.
+  // viaje. En macOS y Linux el socket no tiene ese tope: se hace igual
+  // porque un contrato IPC que se comporta distinto según el sistema se
+  // prueba en uno y falla en otro.
   //
   // El compromiso sigue siendo UNO: `stage` sólo deja el bundle en
   // espera. Instalar la cadena sin la hoja dejaría al equipo confiando en
   // una CA nueva sin certificado con que hablarle.
-  await sendToPrivSvc({
-    v: 1,
-    id: `cert_stage_${Date.now()}`,
-    method: "crypto.cert.stage",
-    params: { deviceId, caBundlePem },
-    meta: { tenantId, deviceId }
-  }, "PrivSvc CA bundle stage");
+  //
+  // ⚠️ Y SI EL PRIVSVC NO CONOCE `stage`, EL BUNDLE VA INLINE.
+  //
+  // Faltó exactamente eso: el PrivSvc de Windows nunca implementó
+  // `stage`, respondía `not_supported`, y este código trataba cualquier
+  // fallo del `stage` como fallo del enrolamiento. Reintentaba cada 30 s
+  // para siempre: ningún Windows instalado desde la 1.1.61 pudo
+  // enrolarse (visto en campo el 2026-09-11).
+  //
+  // `not_supported` es permanente —ese privsvc no va a aprender el método
+  // reintentando— y `install` sigue aceptando el bundle en su propio
+  // mensaje justo para esto: agent-core y privsvc pueden no coincidir
+  // durante una actualización. Hoja y cadena juntas caben en el tope
+  // (~33 KB medidos con catalyst); lo que se pierde es margen, no la
+  // posibilidad. Cualquier OTRO fallo del `stage` sí aborta: sería una
+  // avería, no un privsvc viejo.
+  let bundleInline: string | undefined;
+  try {
+    await enviar({
+      v: 1,
+      id: `cert_stage_${Date.now()}`,
+      method: "crypto.cert.stage",
+      params: { deviceId, caBundlePem },
+      meta: { tenantId, deviceId }
+    }, "PrivSvc CA bundle stage");
+  } catch (err: any) {
+    if (err?.code !== "not_supported") throw err;
+    console.warn(
+      "[Enroll] el privsvc no conoce crypto.cert.stage; el bundle viaja con la hoja",
+      { error: err?.message }
+    );
+    bundleInline = caBundlePem;
+  }
 
-  const request = JSON.stringify({
+  const result = await enviar({
     v: 1,
     id: `cert_install_${Date.now()}`,
     method: "crypto.cert.install",
     params: {
-      deviceId: deviceId,
-      clientCertPem: clientCertPem
-      // El bundle NO va aquí: lo dejó el `stage` de arriba. El privsvc
-      // sigue aceptándolo en este mensaje por si las dos mitades del
-      // paquete no coinciden durante una actualización.
+      deviceId,
+      clientCertPem,
+      // Sin `stage` que valiera, el bundle va aquí. Con él, NO: ya está en
+      // espera y mandarlo otra vez sería gastar el margen que el `stage`
+      // existe para conservar.
+      ...(bundleInline ? { caBundlePem: bundleInline } : {})
     },
-    meta: {
-      tenantId,
-      deviceId
-    }
-  });
+    meta: { tenantId, deviceId }
+  }, "PrivSvc cert install");
 
-  return new Promise((resolve, reject) => {
-    const client = net.createConnection({ path: getPrivSvcPipePath() });
-
-    let response = "";
-    const timeout = setTimeout(() => {
-      client.destroy();
-      reject(new Error("PrivSvc cert install timeout"));
-    }, 30000);
-
-    client.on("connect", () => {
-      client.write(request + "\n");
-    });
-
-    client.on("data", (data) => {
-      response += data.toString();
-
-      let idx;
-      while ((idx = response.indexOf("\n")) !== -1) {
-        const line = response.slice(0, idx).trim();
-        response = response.slice(idx + 1);
-
-        if (!line) continue;
-
-        clearTimeout(timeout);
-
-        try {
-          const parsed = JSON.parse(line);
-
-          if (!parsed.ok) {
-            reject(new Error(parsed.error?.message || "Certificate install failed"));
-            client.destroy();
-            return;
-          }
-
-          const result = parsed.result || {};
-
-          client.destroy();
-          resolve({
-            clientCertThumbprint: String(result.clientCertThumbprint || ""),
-            issuingCaThumbprint: result.issuingCaThumbprint ? String(result.issuingCaThumbprint) : undefined,
-            // Un privsvc anterior no la manda; se deja undefined y el
-            // consumidor cae al valor singular.
-            issuingCaThumbprints: Array.isArray(result.issuingCaThumbprints)
-              ? result.issuingCaThumbprints.map(String).filter(Boolean)
-              : undefined
-          });
-          return;
-
-        } catch (err) {
-          reject(err);
-          client.destroy();
-          return;
-        }
-      }
-    });
-
-    client.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-  });
+  return {
+    clientCertThumbprint: String(result.clientCertThumbprint || ""),
+    issuingCaThumbprint: result.issuingCaThumbprint ? String(result.issuingCaThumbprint) : undefined,
+    // Un privsvc anterior no la manda; se deja undefined y el consumidor
+    // cae al valor singular.
+    issuingCaThumbprints: Array.isArray(result.issuingCaThumbprints)
+      ? result.issuingCaThumbprints.map(String).filter(Boolean)
+      : undefined
+  };
 }
 
 function isLocalEnrollEnabled(): boolean {

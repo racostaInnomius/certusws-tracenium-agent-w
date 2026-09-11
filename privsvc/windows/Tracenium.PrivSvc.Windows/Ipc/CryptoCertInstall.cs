@@ -23,6 +23,16 @@ public static class CryptoCertInstall
             string? certPem = GetString(p, "clientCertPem");
             string? caBundlePem = GetString(p, "caBundlePem");
 
+            // ADR-0015 punto 10 — el bundle puede venir en ESTE mensaje o
+            // haber llegado antes por `crypto.cert.stage`. Manda el del
+            // mensaje: si el agente se tomó la molestia de mandarlo aquí,
+            // es el que quiere, y un fichero en espera de un intento
+            // anterior no debe ganarle. Mismo criterio que macOS y Linux.
+            if (string.IsNullOrWhiteSpace(caBundlePem))
+            {
+                caBundlePem = CryptoCertStage.ReadStaged();
+            }
+
             // Backend sends clientCertPem + caBundlePem (may contain issuing + root chain)
             List<X509Certificate2>? bundleCerts = null;
 
@@ -336,6 +346,10 @@ public static class CryptoCertInstall
                 subject = finalCert.Subject,
                 notAfter = finalCert.NotAfter
             };
+
+            // El bundle en espera ya se instaló: se descarta para que un
+            // enrolamiento posterior no lo herede sin saberlo.
+            CryptoCertStage.DiscardStaged();
 
             return Task.FromResult(
                 PrivSvcResponse.Success(req.Id, result));
