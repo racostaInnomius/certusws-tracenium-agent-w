@@ -1,6 +1,7 @@
 // src/core/scheduler.ts
 
 import { outbox } from "../queue/sqlite-outbox";
+import { decideFactsSend } from "./inventory-send-gate";
 import { logger } from "../bootstrap/logger";
 import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { AgentContext } from "./agent-context";
@@ -568,7 +569,35 @@ class Scheduler {
       const currentVersion = ctx.config.agentVersion || "";
       const versionChanged = lastSentVersion !== currentVersion;
 
-      if (!hasAnyChanges && !forceInitialSnapshot && !versionChanged) {
+      // Third trigger (ADR-0020 F2): «llevo demasiado tiempo callado».
+      //
+      // ⚠️ SIN ESTO EL SERVIDOR NO PUEDE DISTINGUIR «ESTABLE» DE «APAGADO». Este
+      // gate se salta el envío cuando nada cambió, así que un portátil
+      // encendido con el software quieto no manda NADA durante días. Medido
+      // en T111 (21 días): hueco máximo entre envíos por equipo p50 3,6 d. Una
+      // regla de software requerido/prohibido tiene que saber si el inventario
+      // que mira está fresco, y el silencio no dice nada.
+      //
+      // Cuando salta, el namespace de software va en su forma no-op
+      // (`hasChanges:false`, sin items ni delta): NO se rehidrata el baseline
+      // —eso sólo lo necesitan el arranque y el cambio de versión—, así que
+      // cuesta un mensaje pequeño al día. El backend ya trata el no-op
+      // (modo 3 de applySoftwareDelta) y ahí sella «recogido a tal hora».
+      //
+      // Usa `lastSentFactsAt:inventory`, que ya se estampa en cada envío. Si no
+      // existe —agente recién actualizado—, cuenta como vencido: un envío de
+      // más una vez es mejor que no saber.
+      const lastSentAtRaw = Number(outbox.getState("lastSentFactsAt:inventory"));
+      const gate = decideFactsSend({
+        hasAnyChanges,
+        forceInitialSnapshot,
+        versionChanged,
+        lastSentAtMs: lastSentAtRaw,
+        nowMs: Date.now(),
+      });
+      const silenceExceeded = gate.reasons.includes("silence");
+
+      if (!gate.send) {
         logger.info("Skipping FACTS enqueue — no changes detected (all modules)", {
           deviceId: ctx.enrollment.deviceId,
           currentVersion,
@@ -581,6 +610,13 @@ class Scheduler {
         logger.info("Forcing FACTS enqueue — agentVersion changed since last snapshot", {
           previousVersion: lastSentVersion,
           currentVersion
+        });
+      }
+
+      // La línea que se busca en campo para confirmar que el latido sale.
+      if (silenceExceeded && !hasAnyChanges && !forceInitialSnapshot && !versionChanged) {
+        logger.info("Forcing FACTS enqueue — inventory silence exceeded (no-op heartbeat)", {
+          lastSentAtMs: lastSentAtRaw
         });
       }
 
