@@ -17,12 +17,19 @@ export type HardwareStatic = {
     release?: string;
     kernel?: string;
     /**
-     * Arquitectura del PROCESO del agente (`os.arch()`), no necesariamente la
-     * de la máquina. Ver el comentario en device-facts-builder.ts: coinciden
-     * en una compilación nativa, que es el caso de toda la flota hoy, pero un
-     * proceso emulado reportaría la suya.
+     * Arquitectura de la MÁQUINA ("x64" | "arm64"). Es la que el portal pinta
+     * en Hardware Inventory y la que ADR-0016 usa para elegir el binario de un
+     * paquete, así que tiene que ser la del sistema y no la del proceso: hasta
+     * 1.1.70 era `os.arch()` y un Windows 11 ARM64 con el agente emulado se
+     * publicaba como x64. Ver domain/os-arch.ts.
      */
     arch?: string;
+    /**
+     * Arquitectura del PROCESO del agente (`os.arch()`). Viaja junto a `arch`,
+     * no en su lugar: si difieren, el agente corre emulado — y eso es un dato
+     * de diagnóstico, no una contradicción.
+     */
+    processArch?: string;
   };
 
   uuid?: string;

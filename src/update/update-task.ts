@@ -16,6 +16,7 @@ import {
 } from "./update-service";
 import { compareSemver, looksLikeSemver } from "./semver";
 import { describeError } from "./describe-error";
+import { resolveOsArch } from "../domain/os-arch";
 import { isRemediateInFlight } from "../plugins/pmp/state";
 import { isInstallInProgress as isSoftwareInstallInProgress } from "../plugins/sdp/state";
 
@@ -353,25 +354,10 @@ export async function runUpdateTask(
       return { status: "skipped", reason: result.reason || "no_update_available" };
     }
 
-    function resolveArch(): "x64" | "arm64" {
-      const envArch = process.env.TRACENIUM_ARCH;
-      if (envArch === "arm64" || envArch === "x64") {
-        return envArch;
-      }
-
-      if (process.platform === "win32") {
-        const arch = process.env.PROCESSOR_ARCHITECTURE;
-        const wow64 = process.env.PROCESSOR_ARCHITEW6432;
-
-        if (arch === "ARM64" || wow64 === "ARM64") {
-          return "arm64";
-        }
-      }
-
-      return process.arch === "arm64" ? "arm64" : "x64";
-    }
-
-    const arch = resolveArch();
+    // Era una copia literal del getArch() de update-service.ts. Las dos —y las
+    // otras dos que miraban `os.arch()` y se equivocaban— viven ahora en
+    // domain/os-arch.ts.
+    const arch = resolveOsArch();
     // Linux: pick deb (debian-family) or rpm (rhel/suse). The
     // detection happens inside update-service's downloadLinuxPkg /
     // performLinuxUpdate via detectFamily(); here we just pick the

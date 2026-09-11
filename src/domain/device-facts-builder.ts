@@ -18,6 +18,7 @@ import type { ScpNamespace } from "./scp-types";
 import type { PmpNamespace } from "./pmp-types";
 import type { CdpNamespace } from "./cdp-types";
 import { readOsRelease, isUnknown } from "./os-release";
+import { detectOsArch, reportedOsArch } from "./os-arch";
 
 import {
   normalizeCpu,
@@ -422,10 +423,10 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
       distro: isUnknown(osInfo.distro) ? osRelease.distro ?? osInfo.distro : osInfo.distro,
       release: isUnknown(osInfo.release) ? osRelease.release ?? osInfo.release : osInfo.release,
       kernel: osInfo.kernel,
-      // ⚠️ DE `os.arch()`, NO DE `osInfo.arch`, Y POR EL MISMO MOTIVO QUE
-      // distro/release de arriba: lo que si obtiene lanzando un proceso vuelve
-      // vacío en máquinas reales de la flota. `os.arch()` lo da Node sin shell,
-      // sin PATH y sin privilegios — no puede fallar de esa manera.
+      // ⚠️ NO DE `osInfo.arch`, Y POR EL MISMO MOTIVO QUE distro/release de
+      // arriba: lo que si obtiene lanzando un proceso vuelve vacío en máquinas
+      // reales de la flota. Esto se contesta sin shell, sin PATH y sin
+      // privilegios — no puede fallar de esa manera.
       //
       // Este campo faltaba, y no por descuido de recolección: el valor ya se
       // calculaba en providers/windows.ts y se descartaba sin usarlo. Igual que
@@ -434,13 +435,18 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
       // control DB, ni en la del tenant, ni en el payload crudo— y el catálogo
       // global (ADR-0016) no puede decidir qué binario le toca a cada equipo.
       //
-      // ⚠️ ES LA ARQUITECTURA DEL PROCESO, NO LA DE LA MÁQUINA. Coinciden en
-      // una compilación nativa —hay builds por arquitectura para Linux y macOS,
-      // ver `pkg:linux:arm64` / `pkg:macos:x64`— pero un agente x64 emulado
-      // sobre ARM64 diría "x64". Hoy Windows sólo se compila x64, así que
-      // Windows-on-ARM caería justo en ese hueco: quien consuma este campo para
-      // elegir un instalador tiene que saberlo.
-      arch: os.arch()
+      // ⚠️ ES LA DE LA MÁQUINA, NO LA DEL PROCESO — y hasta 1.1.70 era al
+      // revés. Aquí ponía `os.arch()`, que contesta «¿para qué arquitectura se
+      // compiló este Node?»: en W11-JPR-LAB02 (VM Windows 11 ARM64) el portal
+      // pintaba `x64`. Ver os-arch.ts para por qué las dos preguntas se separan
+      // sólo en Windows y por qué se contestan con PROCESSOR_ARCHITEW6432.
+      arch: reportedOsArch(),
+      // La del proceso viaja al lado, no en su lugar: donde discrepen, la
+      // discrepancia ES el diagnóstico —el agente corre emulado— igual que con
+      // las dos cifras de boot-time.ts. Nadie río abajo la lee todavía; vive en
+      // el `hardware_payload` crudo para que una siguiente investigación no
+      // tenga que ir al equipo a preguntárselo.
+      processArch: os.arch()
     },
     uuid: system.uuid,
     versions: {
@@ -491,15 +497,22 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
   };
 }
 
-// Canonicalize Node's `os.arch()` to the string values the backend's
-// binaries metadata API accepts ("arm64" / "x64"). We don't filter
-// unknown values — if a new arch shows up (riscv64, etc.) it flows
-// through as-is so the backend can log it and we can decide whether
-// to ship binaries for it.
+// Canonicalize to the string values the backend's binaries metadata API
+// accepts ("arm64" / "x64"). We don't filter unknown values — if a new arch
+// shows up (riscv64, etc.) it flows through as-is so the backend can log it
+// and we can decide whether to ship binaries for it.
+//
+// ⚠️ Esto es lo que el backend mira para ofrecer el .msi de un `agent_update`,
+// así que la pregunta es «¿qué binario corre aquí?» y la respuesta tiene que
+// ser la de la MÁQUINA. Con `os.arch()` a secas —como estaba hasta 1.1.70— un
+// ARM64 emulado se quedaba clavado en la rama x64 para siempre: se actualizaba,
+// seguía emulado, y volvía a pedir x64.
 function canonicalArch(): string {
+  const osArch = detectOsArch();
+  if (osArch) return osArch;
+
+  // Ni el sistema ni el proceso dieron una de las dos que publicamos.
   const raw = os.arch();
-  if (raw === "x64") return "x64";
-  if (raw === "arm64") return "arm64";
   // Legacy/edge values that modern Node can still emit.
   if (raw === "ia32") return "x64";        // 32-bit Windows agent is rare, treat as x64 for blob lookup
   return raw;

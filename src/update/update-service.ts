@@ -18,6 +18,7 @@ import type {
   DownloadedUpdateInfo
 } from "./update-types";
 import { updateUpdateState } from "./update-state";
+import { resolveOsArch } from "../domain/os-arch";
 import { runMacosPkgUpdate, runWindowsMsiUpdate } from "./updater-runner";
 import { evaluateSignatureGate, normalizeVerifyResponse } from "../plugins/sdp/signature-gate";
 import { detectFamily } from "../platform/linux/distro";
@@ -134,23 +135,13 @@ function pruneOldDownloads(dir: string, keepPath: string): void {
   }
 }
 
-function getArch(): "x64" | "arm64" {
-  const envArch = process.env.TRACENIUM_ARCH;
-  if (envArch === "arm64" || envArch === "x64") {
-    return envArch;
-  }
-
-  if (process.platform === "win32") {
-    const arch = process.env.PROCESSOR_ARCHITECTURE;
-    const wow64 = process.env.PROCESSOR_ARCHITEW6432;
-
-    if (arch === "ARM64" || wow64 === "ARM64") {
-      return "arm64";
-    }
-  }
-
-  return process.arch === "arm64" ? "arm64" : "x64";
-}
+// Esta función era una de CUATRO copias de «¿qué arquitectura es esta
+// máquina?» repartidas por el agente, y sólo dos —ésta y la gemela de
+// update-task.ts— estaban bien. Las otras dos (el envelope de facts y el
+// inventario) miraban `os.arch()` y por eso el portal pintaba x64 en una VM
+// ARM64. Ahora las cuatro salen de domain/os-arch.ts: una respuesta, un sitio
+// donde arreglarla. Ver ese módulo para el porqué de ARCHITEW6432.
+const getArch = resolveOsArch;
 
 // Map (platform, linux-family) → the key in metadata.files we should
 // look at. Up through 1.1.21 this was hard-coded to "macOS = pkg,
