@@ -752,7 +752,9 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
             domainRole = identity.DomainRole,
             role = identity.Role,
             appliedComputerGpos = gpos.Computer,
-            appliedUserGpos = gpos.User
+            appliedUserGpos = gpos.User,
+            appliedComputerGpoScope = gpos.ComputerScope,
+            appliedUserGpoScope = gpos.UserScope
         };
     }
 
@@ -766,6 +768,15 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
         // encontraba un encabezado en inglés y devolvía la lista vacía.
         public List<string>? Computer { get; init; }
         public List<string>? User { get; init; }
+
+        /// <summary>
+        /// Por qué la lista es la que es. `collected` | `no_console_user` |
+        /// `timeout` | `no_file` | `no_section` | `error` | `text_fallback`.
+        /// Viaja en la evidencia para que el portal pueda distinguir "no
+        /// tiene" de "no se pudo leer" sin adivinar.
+        /// </summary>
+        public string ComputerScope { get; init; } = "unknown";
+        public string UserScope { get; init; } = "unknown";
     }
 
     /// <summary>
@@ -777,7 +788,8 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
     /// </remarks>
     private static AppliedGpos GetAppliedGpos(string? consoleUser)
     {
-        var computer = ReadAppliedGposFromRsopXml(GpResultParsing.RsopScope.Computer, null, GPRESULT_TIMEOUT_MS);
+        var (computer, computerReason) = ReadAppliedGposFromRsopXml(
+            GpResultParsing.RsopScope.Computer, null, GPRESULT_TIMEOUT_MS);
 
         // ⚠️ El ámbito de USUARIO necesita a quién preguntar. El servicio corre
         // como LocalSystem, que no tiene perfil interactivo: un `gpresult
@@ -788,8 +800,11 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
         // Sin nadie con sesión —un servidor, un equipo recién arrancado— no se
         // gasta la llamada y la respuesta es `null`: no se sabe. Cero sería
         // una afirmación sobre ese usuario que nadie ha comprobado.
-        var user = string.IsNullOrWhiteSpace(consoleUser)
-            ? null
+        // ⚠️ Sin cuenta no se gasta la llamada, pero se DICE que ése fue el
+        // motivo. "No había a quién preguntar" y "pregunté y falló" piden
+        // acciones distintas del operador.
+        var (user, userReason) = string.IsNullOrWhiteSpace(consoleUser)
+            ? ((List<string>?)null, "no_console_user")
             : ReadAppliedGposFromRsopXml(GpResultParsing.RsopScope.User, consoleUser, GPRESULT_USER_TIMEOUT_MS);
 
         if (computer is null)
@@ -798,6 +813,7 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
             // porque la invocación del XML no se puede probar fuera de Windows
             // y un fallo mío ahí no debe quitar el dato que hoy sí llega.
             var texto = ReadAppliedGposFromText();
+            if (texto is { Count: > 0 }) computerReason = "text_fallback";
             // Si el respaldo tampoco encuentra nada, la respuesta honrada es
             // "no se sabe": los DOS lectores se quedaron callados, y uno de
             // ellos es justo el que falla por idioma. Afirmar "ninguna" ahí es
@@ -805,13 +821,29 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
             computer = texto is { Count: > 0 } ? texto : null;
         }
 
-        return new AppliedGpos { Computer = computer, User = user };
+        Log($"[GPO] equipo={computerReason}({computer?.Count.ToString() ?? "-"}) " +
+            $"usuario={userReason}({user?.Count.ToString() ?? "-"})");
+
+        return new AppliedGpos
+        {
+            Computer = computer, User = user,
+            ComputerScope = computerReason, UserScope = userReason
+        };
     }
 
     /// <summary>
     /// Corre `gpresult /X` y devuelve las GPO aplicadas de un ámbito.
     /// </summary>
-    private static List<string>? ReadAppliedGposFromRsopXml(
+    /// <summary>
+    /// ⚠️ Devuelve el MOTIVO junto al dato. Antes cinco causas distintas
+    /// —sin usuario a quien preguntar, gpresult agotado, fichero no escrito,
+    /// XML sin la sección, excepción— salían todas como el mismo `null`, y
+    /// diagnosticar por qué la flota entera reportaba `appliedUserGpos: null`
+    /// costó tres pasadas contra producción y una GPO de prueba creada a mano.
+    /// Es el mismo defecto que las impresoras de Windows: un fallo que se
+    /// disfraza de ausencia.
+    /// </summary>
+    private static (List<string>? Items, string Reason) ReadAppliedGposFromRsopXml(
         GpResultParsing.RsopScope scope,
         string? targetUser,
         int timeoutMs)
@@ -830,7 +862,7 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
                 ? $"/X \"{path}\" /F /Scope Computer"
                 : $"/X \"{path}\" /F /Scope User /USER \"{targetUser}\"";
 
-            RunProcessWithTimeout(new ProcessStartInfo("gpresult", args)
+            var resultado = RunProcessWithTimeout(new ProcessStartInfo("gpresult", args)
             {
                 CreateNoWindow = true,
                 UseShellExecute = false,
@@ -841,16 +873,35 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
             // No se mira el código de salida: gpresult devuelve distinto de
             // cero por cosas que no impiden que el informe se escriba. Lo que
             // decide es si hay fichero legible.
-            if (!File.Exists(path)) return null;
+            if (resultado.TimedOut)
+            {
+                Log($"[GPO] {scope}: gpresult agotó {timeoutMs} ms");
+                return (null, "timeout");
+            }
+            if (!File.Exists(path))
+            {
+                // Medido en campo: elevado escribe el fichero en 2 s. Si aquí
+                // no está, gpresult se negó — y su mensaje es lo único que lo
+                // explica, así que se registra en vez de perderse.
+                Log($"[GPO] {scope}: gpresult no escribió el informe. stderr={Recorta(resultado.Stderr)} stdout={Recorta(resultado.Stdout)}");
+                return (null, "no_file");
+            }
 
             // ReadAllText detecta el BOM. gpresult escribe UTF-16, y leerlo
             // como UTF-8 devuelve un documento que no parsea.
             var xml = File.ReadAllText(path);
-            return GpResultParsing.ExtractAppliedGposFromRsopXml(xml, scope);
+            var items = GpResultParsing.ExtractAppliedGposFromRsopXml(xml, scope);
+            if (items is null)
+            {
+                Log($"[GPO] {scope}: el informe no trae la sección de resultados");
+                return (null, "no_section");
+            }
+            return (items, "collected");
         }
-        catch
+        catch (Exception ex)
         {
-            return null;
+            Log($"[GPO] {scope}: {ex.GetType().Name}: {ex.Message}");
+            return (null, "error");
         }
         finally
         {
@@ -1198,6 +1249,17 @@ $items | ConvertTo-Json -Depth 4
     // salida: el latido viaja por el mismo carril serie y se pone rancio a los
     // 270 s — es la cadena que ya tumbó procesos enteros con patch_install.
     private const int DOMAIN_IDENTITY_TIMEOUT_MS = 8_000;
+    /// <summary>Traza corta y sin PII: nombres de motivo y cifras, nunca el informe.</summary>
+    private static void Log(string mensaje) => Console.WriteLine($"[PrivSvc][SCP]{mensaje}");
+
+    /// <summary>El mensaje de gpresult, acotado: es diagnóstico, no un volcado.</summary>
+    private static string Recorta(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return "(vacío)";
+        var t = s.Replace("\r", " ").Replace("\n", " ").Trim();
+        return t.Length <= 200 ? t : t.Substring(0, 200) + "…";
+    }
+
     private const int GPRESULT_TIMEOUT_MS = 15_000;
     private const int GPRESULT_USER_TIMEOUT_MS = 12_000;
 
