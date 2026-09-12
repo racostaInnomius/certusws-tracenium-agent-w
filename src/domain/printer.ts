@@ -144,6 +144,14 @@ export function isNetworkPort(port: string | null | undefined): boolean {
   if (p.startsWith("dnssd://")) return true;
 
   // Windows-style port names
+  //
+  // ⚠️ UNC primero. Una cola `\\\\servidor\\cola` es remota por definición, y sin
+  // este caso caía al valor conservador "local": medido el 2026-09-11, las 14
+  // impresoras que por fin llegaban de Windows —todas conexiones de red de
+  // usuario -- se etiquetaron LOCALES las 14. Era inocuo mientras Windows sólo
+  // mandaba colas de máquina (`IP_10.0.0.5`, `USB001`); dejó de serlo en cuanto
+  // el colector empezó a leer HKEY_USERS, donde el puerto ES el servidor.
+  if (p.startsWith("\\\\")) return true;
   if (p.startsWith("tcp/")) return true;
   if (p.startsWith("wsd-")) return true;        // Web Services for Devices
   if (/^\d{1,3}(\.\d{1,3}){3}/.test(p)) return true; // bare IPv4 portname
