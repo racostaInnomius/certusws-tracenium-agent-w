@@ -800,12 +800,48 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
         // Sin nadie con sesión —un servidor, un equipo recién arrancado— no se
         // gasta la llamada y la respuesta es `null`: no se sabe. Cero sería
         // una afirmación sobre ese usuario que nadie ha comprobado.
-        // ⚠️ Sin cuenta no se gasta la llamada, pero se DICE que ése fue el
-        // motivo. "No había a quién preguntar" y "pregunté y falló" piden
-        // acciones distintas del operador.
-        var (user, userReason) = string.IsNullOrWhiteSpace(consoleUser)
-            ? ((List<string>?)null, "no_console_user")
-            : ReadAppliedGposFromRsopXml(GpResultParsing.RsopScope.User, consoleUser, GPRESULT_USER_TIMEOUT_MS);
+        // ⚠️ A QUIÉN preguntarle. `Win32_ComputerSystem.UserName` NO ve las
+        // sesiones RDP: en un equipo con el usuario conectado por Escritorio
+        // remoto devuelve cadena vacía, y entonces esto ni siquiera llamaba a
+        // gpresult. Medido: 18 de 50 equipos de T111 en `null` por eso, y la
+        // MISMA invocación con la cuenta dada a mano corre en 2,09 s como
+        // SYSTEM y devuelve la GPO. El problema nunca fue gpresult.
+        //
+        // Las hives cargadas de HKEY_USERS sí ven RDP, sesiones desconectadas y
+        // equipos multiusuario. La de consola va primero cuando existe: es la
+        // respuesta históricamente correcta y no cuesta nada.
+        var candidatos = LoggedOnUsersShape.Candidates(consoleUser, LoggedOnUsers.InteractiveAccounts());
+
+        List<string>? user = null;
+        var userReason = LoggedOnUsersShape.ReasonNoInteractiveUser;
+
+        if (candidatos.Count > 0)
+        {
+            var porCuenta = new List<List<string>?>();
+            var motivos = new List<string>();
+            foreach (var cuenta in candidatos)
+            {
+                var (items, motivo) = ReadAppliedGposFromRsopXml(
+                    GpResultParsing.RsopScope.User, cuenta, GPRESULT_USER_TIMEOUT_MS);
+                porCuenta.Add(items);
+                motivos.Add(motivo);
+            }
+
+            // Basta con que UNA cuenta se haya leído para que la lista sea un
+            // dato y no una ausencia: las demás pueden fallar por su propio
+            // motivo sin convertir esto en "no se sabe".
+            if (motivos.Any(m => m == "collected"))
+            {
+                user = LoggedOnUsersShape.Union(porCuenta);
+                userReason = "collected";
+            }
+            else
+            {
+                // Ninguna se pudo leer: se conserva el motivo de la primera,
+                // que es el más informativo (timeout, no_file, no_section…).
+                userReason = motivos[0];
+            }
+        }
 
         if (computer is null)
         {

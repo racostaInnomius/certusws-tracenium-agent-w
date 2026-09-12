@@ -94,6 +94,11 @@
          `,,SRV,Cola` a UNC y fundir sin duplicar. Un nombre mal decodificado
          no falla, se guarda, y sale como impresora fantasma. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UserPrinterConnectionsShape.cs" />
+    <!-- A quien preguntarle por sus GPO de usuario. La enumeracion de
+         HKEY_USERS y la traduccion SID->cuenta se quedan fuera (Win32); aqui
+         entra la eleccion de candidatos y la union, que es donde vive el tope
+         de presupuesto. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\LoggedOnUsersShape.cs" />
     <!-- ADR-0015 punto 10: el bundle de CA en espera. Faltaba en Windows
          y ningún equipo nuevo podía enrolarse. Es E/S de fichero pura; el
          endurecimiento de ACL sólo corre bajo Windows. -->
