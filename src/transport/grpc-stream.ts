@@ -10,6 +10,7 @@ import { updatePmpState, isRemediateInFlight } from "../plugins/pmp/state";
 import { runRemediation } from "../plugins/pmp/remediation";
 import { planPatchReboot, rebootAckSuffix } from "../plugins/pmp/reboot";
 import { armPatchReboot } from "../plugins/pmp/reboot-exec";
+import { buildHeartbeat } from "./heartbeat-message";
 // SDP no longer imported here — `software_install` is dispatched via
 // ctx.plugins.run("sdp.install", ...) so it goes through the
 // PluginManager policy gate uniformly with the other plugins.
@@ -1640,13 +1641,14 @@ stream = client.Connect();
           return;
         }
 
+        // Con el uptime de la MÁQUINA: el backend deriva de él la hora de
+        // arranque, que es la única prueba de «volvió del reinicio».
         stream.write({
-          heartbeat: {
+          heartbeat: buildHeartbeat({
             deviceId: ctx.enrollment.deviceId,
             tenantId: ctx.enrollment.tenantId,
             agentVersion: ctx.config.agentVersion,
-            ts: Date.now()
-          }
+          })
         });
         grpcMetrics.heartbeatSent += 1;
       } catch (err: any) {
