@@ -1,0 +1,38 @@
+{
+  "//": "ADR-0022 — corpus de conformidad del lenguaje de predicados de ASP. IDÉNTICO en certusws-tracenium/modules/asp/__tests__/ y en certusws-tracenium-agent-w/test/plugins/asp/. Si cambias uno, copia el fichero al otro repo: cada suite lo ejecuta contra su propia copia de predicate.ts.",
+  "compile": [
+    { "name": "equals ok", "predicate": { "rule": "equals", "path": "value", "value": 2 }, "valid": true },
+    { "name": "unknown rule", "predicate": { "rule": "eval", "path": "x" }, "valid": false },
+    { "name": "proto path", "predicate": { "rule": "equals", "path": "__proto__.x", "value": 1 }, "valid": false },
+    { "name": "bad path chars", "predicate": { "rule": "at_most", "path": "a[0]", "max": 1 }, "valid": false },
+    { "name": "at_most needs number", "predicate": { "rule": "at_most", "path": "count", "max": "10" }, "valid": false },
+    { "name": "between min>max", "predicate": { "rule": "between", "path": "n", "min": 5, "max": 1 }, "valid": false },
+    { "name": "invalid regex", "predicate": { "rule": "regex_match", "path": "s", "pattern": "(" }, "valid": false },
+    { "name": "flags only i", "predicate": { "rule": "regex_match", "path": "s", "pattern": "a", "flags": "g" }, "valid": false },
+    { "name": "empty all_of", "predicate": { "rule": "all_of", "rules": [] }, "valid": false },
+    { "name": "negative mask", "predicate": { "rule": "bits_all", "path": "uac", "mask": -1 }, "valid": false },
+    { "name": "nested ok", "predicate": { "rule": "any_of", "rules": [{ "rule": "is_true", "path": "a" }, { "rule": "not", "predicate": { "rule": "in_set", "path": "b", "values": [1, 2] } }] }, "valid": true },
+    { "name": "too deep", "predicate": { "rule": "not", "predicate": { "rule": "not", "predicate": { "rule": "not", "predicate": { "rule": "not", "predicate": { "rule": "not", "predicate": { "rule": "not", "predicate": { "rule": "is_true", "path": "a" } } } } } } }, "valid": false }
+  ],
+  "evaluate": [
+    { "name": "count zero passes at_most 0", "predicate": { "rule": "at_most", "path": "count", "max": 0 }, "evidence": { "count": 0 }, "outcome": "true" },
+    { "name": "count 38 fails at_most 0", "predicate": { "rule": "at_most", "path": "count", "max": 0 }, "evidence": { "count": 38 }, "outcome": "false" },
+    { "name": "numeric string accepted", "predicate": { "rule": "at_least", "path": "attributes.minPwdLength", "min": 14 }, "evidence": { "attributes": { "minPwdLength": "7" } }, "outcome": "false" },
+    { "name": "empty string is not zero", "predicate": { "rule": "at_most", "path": "v", "max": 0 }, "evidence": { "v": "" }, "outcome": "false" },
+    { "name": "missing path", "predicate": { "rule": "at_most", "path": "count", "max": 0 }, "evidence": {}, "outcome": "missing", "path": "count" },
+    { "name": "null is reported, not missing", "predicate": { "rule": "equals", "path": "value", "value": null }, "evidence": { "value": null }, "outcome": "true" },
+    { "name": "dsHeuristics anonymous enabled", "predicate": { "rule": "regex_not_match", "path": "attributes.dSHeuristics", "pattern": "^.{6}2" }, "evidence": { "attributes": { "dSHeuristics": "0000002" } }, "outcome": "false" },
+    { "name": "dsHeuristics empty default", "predicate": { "rule": "regex_not_match", "path": "attributes.dSHeuristics", "pattern": "^.{6}2" }, "evidence": { "attributes": { "dSHeuristics": "" } }, "outcome": "true" },
+    { "name": "guest disabled bit", "predicate": { "rule": "bits_all", "path": "attributes.userAccountControl", "mask": 2 }, "evidence": { "attributes": { "userAccountControl": "66050" } }, "outcome": "true" },
+    { "name": "guest enabled", "predicate": { "rule": "bits_all", "path": "attributes.userAccountControl", "mask": 2 }, "evidence": { "attributes": { "userAccountControl": 512 } }, "outcome": "false" },
+    { "name": "bits_none high bit", "predicate": { "rule": "bits_none", "path": "uac", "mask": 4194304 }, "evidence": { "uac": 4260352 }, "outcome": "false" },
+    { "name": "all_of missing branch is missing even if another is false", "predicate": { "rule": "all_of", "rules": [{ "rule": "equals", "path": "a", "value": 1 }, { "rule": "equals", "path": "b", "value": 1 }] }, "evidence": { "a": 2 }, "outcome": "missing", "path": "b" },
+    { "name": "any_of true wins over missing", "predicate": { "rule": "any_of", "rules": [{ "rule": "equals", "path": "b", "value": 1 }, { "rule": "equals", "path": "a", "value": 2 }] }, "evidence": { "a": 2 }, "outcome": "true" },
+    { "name": "any_of false with missing is missing", "predicate": { "rule": "any_of", "rules": [{ "rule": "equals", "path": "b", "value": 1 }, { "rule": "equals", "path": "a", "value": 3 }] }, "evidence": { "a": 2 }, "outcome": "missing", "path": "b" },
+    { "name": "not inverts", "predicate": { "rule": "not", "predicate": { "rule": "in_set", "path": "v", "values": [0, 1] } }, "evidence": { "v": 2 }, "outcome": "true" },
+    { "name": "between inclusive", "predicate": { "rule": "between", "path": "n", "min": 1, "max": 10 }, "evidence": { "n": 10 }, "outcome": "true" },
+    { "name": "is_true strict", "predicate": { "rule": "is_true", "path": "b" }, "evidence": { "b": "true" }, "outcome": "false" },
+    { "name": "regex case-insensitive", "predicate": { "rule": "regex_match", "path": "s", "pattern": "^abc$", "flags": "i" }, "evidence": { "s": "ABC" }, "outcome": "true" },
+    { "name": "inherited key is missing", "predicate": { "rule": "equals", "path": "toString", "value": 1 }, "evidence": {}, "outcome": "missing", "path": "toString" }
+  ]
+}

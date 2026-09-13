@@ -1,0 +1,129 @@
+// test/plugins/asp/evaluate.test.ts
+//
+// ADR-0022 — la evaluación local, con el catálogo REAL (copia del backend en
+// fixtures/) y salidas del colector con la forma que devuelve el .ps1. Fija las
+// reglas de la fase 0: FGPP como SYSTEM = not_assessed por privilegios, valor de
+// registro ausente = valor por defecto del SO, sonda de registro fuera de un DC
+// = not_assessed, y el dominio del spike dice lo que dice la tabla del ADR.
+
+import { describe, it, expect } from "vitest";
+import catalog from "./fixtures/asp-ad-1.0.0.json";
+import { absentValueFor, evaluateIndicator, fileTimeAgeDays, type AgentIndicator } from "../../../src/plugins/asp/evaluate";
+
+const NOW = Date.parse("2026-09-13T12:00:00Z");
+const DC = { isDomainController: true, osBuild: 20348, host: "MSIG-TSPDC" };
+
+function indicator(id: string): AgentIndicator {
+  const i = (catalog.indicators as any[]).find((x) => x.controlId === id);
+  if (!i) throw new Error(id);
+  return {
+    controlId: i.controlId,
+    severity: i.severity,
+    requires: i.requires,
+    query: i.query,
+    derive: i.derive ?? [],
+    predicate: i.predicate,
+    onFail: i.onFail,
+    whenMissing: i.whenMissing ?? "not_assessed"
+  };
+}
+
+/** FILETIME de hace `days` días, como texto (así lo manda el colector). */
+function fileTimeDaysAgo(days: number): string {
+  return String((BigInt(NOW - days * 86_400_000) + 11644473600000n) * 10000n);
+}
+
+const opts = { evidenceLimit: 200, nowMs: NOW };
+
+describe("evaluateIndicator — reglas de la fase 0", () => {
+  it("⭐ FGPP leído como SYSTEM (0x8007200A) → not_assessed por privilegios, nunca error ni pass", () => {
+    const r = evaluateIndicator(indicator("ASP-AD-CFG-007"), { ok: false, error: { hresult: "0x8007200A", type: "DirectoryServicesCOMException", message: "The requested attribute or value does not exist" } }, DC, opts);
+    expect(r).toMatchObject({ status: "not_assessed", reason: "requires_privileged_read:0x8007200A", evidence: null });
+  });
+
+  it("un acceso denegado en un indicador que NO declaró privileged se dice tal cual", () => {
+    const r = evaluateIndicator(indicator("ASP-AD-KRB-002"), { ok: false, error: { hresult: "0x80070005" } }, DC, opts);
+    expect(r.reason).toBe("insufficient_rights:0x80070005");
+  });
+
+  it("un error genérico del colector es not_assessed con el HRESULT", () => {
+    const r = evaluateIndicator(indicator("ASP-AD-KRB-002"), { ok: false, error: { hresult: "0x8007203A", type: "COMException" } }, DC, opts);
+    expect(r).toMatchObject({ status: "not_assessed", reason: "collector_error:0x8007203A" });
+  });
+
+  it("⭐ una sonda de registro en un colector que no es DC → not_assessed", () => {
+    const r = evaluateIndicator(indicator("ASP-AD-DC-001"), { ok: true, data: { present: true, value: 2 } }, { isDomainController: false }, opts);
+    expect(r).toMatchObject({ status: "not_assessed", reason: "requires_dc_registry" });
+  });
+
+  it("⭐ LDAPServerIntegrity ausente = 1 (firma no exigida) → fail, con la ausencia en la evidencia", () => {
+    const r = evaluateIndicator(indicator("ASP-AD-DC-001"), { ok: true, data: { present: false, value: null } }, DC, opts);
+    expect(r).toMatchObject({ status: "fail", evidence: { present: false, value: 1, absent: true } });
+  });
+
+  it("⭐ SMB1 ausente depende del build: 2022 = deshabilitado (pass), 2016 = habilitado (fail)", () => {
+    const q = indicator("ASP-AD-DC-003").query;
+    expect(absentValueFor(q, 20348)).toBe(0);
+    expect(absentValueFor(q, 14393)).toBe(1);
+    expect(evaluateIndicator(indicator("ASP-AD-DC-003"), { ok: true, data: { present: false, value: null } }, DC, opts).status).toBe("pass");
+    expect(evaluateIndicator(indicator("ASP-AD-DC-003"), { ok: true, data: { present: false, value: null } }, { ...DC, osBuild: 14393 }, opts).status).toBe("fail");
+  });
+
+  it("krbtgt: el FILETIME llega como texto y se deriva a días sin perder precisión", () => {
+    expect(fileTimeAgeDays(fileTimeDaysAgo(2734), NOW)).toBe(2734);
+    expect(fileTimeAgeDays("0", NOW)).toBeNull();
+    const r = evaluateIndicator(indicator("ASP-AD-KRB-001"), { ok: true, data: { found: true, attributes: { pwdLastSet: fileTimeDaysAgo(2734) } } }, DC, opts);
+    expect(r).toMatchObject({ status: "fail", severity: "critical", evidence: { pwdLastSetAgeDays: 2734 } });
+  });
+
+  it("dsHeuristics ausente se toma como vacío (el valor seguro por defecto) → pass", () => {
+    const r = evaluateIndicator(indicator("ASP-AD-CFG-001"), { ok: true, data: { found: true, attributes: {} } }, DC, opts);
+    expect(r.status).toBe("pass");
+  });
+
+  it("Protected Users sin el grupo (PDC antiguo) → not_applicable, no fail", () => {
+    const r = evaluateIndicator(indicator("ASP-AD-PRV-003"), { ok: true, data: { found: false } }, DC, opts);
+    expect(r).toMatchObject({ status: "not_applicable", reason: "not_present:count" });
+  });
+
+  it("AdminSDHolder con escritores no por defecto → needs_review, no fail (falso positivo caro)", () => {
+    const r = evaluateIndicator(indicator("ASP-AD-PRV-005"), { ok: true, data: { count: 1, sample: [{ sid: "S-1-5-21-1-2-3-1109", name: "CORP\\Exchange Windows Permissions" }] } }, DC, opts);
+    expect(r.status).toBe("needs_review");
+  });
+
+  it("⭐ la evidencia viaja acotada al tope aunque el colector mande más", () => {
+    const sample = Array.from({ length: 500 }, (_, i) => `CN=u${i},DC=corp`);
+    const r = evaluateIndicator(indicator("ASP-AD-ACC-001"), { ok: true, data: { count: 500, sample } }, DC, { evidenceLimit: 200, nowMs: NOW });
+    expect((r.evidence as any).sample).toHaveLength(200);
+    expect((r.evidence as any).truncated).toBe(true);
+    expect(r.affectedCount).toBe(500);
+  });
+
+  it("un indicador sin resultado del colector → not_assessed, nunca pass", () => {
+    expect(evaluateIndicator(indicator("ASP-AD-KRB-003"), undefined, DC, opts)).toMatchObject({ status: "not_assessed", reason: "collector_no_result" });
+  });
+});
+
+describe("el dominio del spike (MSIG-TSPDC, ADR §Fase 0)", () => {
+  const spike: Record<string, { data: any; expect: string }> = {
+    "ASP-AD-KRB-002": { data: { count: 2, sample: ["CN=Administrator,CN=Users,DC=m", "CN=next gsys,OU=IT,DC=m"] }, expect: "fail" },
+    "ASP-AD-CFG-001": { data: { found: true, attributes: { dSHeuristics: "0000002" } }, expect: "fail" },
+    "ASP-AD-DC-002": { data: { present: false, value: null }, expect: "fail" },
+    "ASP-AD-DC-004": { data: { present: true, value: 2 }, expect: "fail" },
+    "ASP-AD-DC-005": { data: { present: false, value: null }, expect: "fail" },
+    "ASP-AD-ACC-001": { data: { count: 38, sample: [] }, expect: "fail" },
+    "ASP-AD-ACC-004": { data: { count: 26, sample: [] }, expect: "fail" },
+    "ASP-AD-CFG-003": { data: { found: true, attributes: { forestFunctionality: "4", domainFunctionality: "7" } }, expect: "fail" },
+    "ASP-AD-CFG-002": { data: { found: true, attributes: { "ms-DS-MachineAccountQuota": "10" } }, expect: "fail" },
+    "ASP-AD-KRB-003": { data: { count: 0, sample: [] }, expect: "pass" },
+    "ASP-AD-KRB-004": { data: { count: 0, sample: [] }, expect: "pass" },
+    "ASP-AD-ACC-002": { data: { count: 0, sample: [] }, expect: "pass" },
+    "ASP-AD-ACC-005": { data: { count: 0, sample: [] }, expect: "pass" },
+    "ASP-AD-CFG-008": { data: { count: 0, sample: [] }, expect: "pass" }
+  };
+  for (const [id, c] of Object.entries(spike)) {
+    it(`${id} → ${c.expect}`, () => {
+      expect(evaluateIndicator(indicator(id), { ok: true, data: c.data }, DC, opts).status).toBe(c.expect);
+    });
+  }
+});

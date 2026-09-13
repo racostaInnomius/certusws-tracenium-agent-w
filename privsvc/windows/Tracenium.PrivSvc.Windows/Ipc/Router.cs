@@ -181,6 +181,9 @@ public sealed class Router
             "cdp.anchor.distrust" => CdpAnchorDistrust.Handle(req),
             "patch.scan" => PatchManagement.HandleScan(req),
             "patch.install" => PatchManagement.HandleInstall(req),
+            // ADR-0022 — Assessment Service. Una tanda de consultas de AD con el
+            // colector .ps1 firmado. Carril lento (cliente 330 s > handler 300 s).
+            "asp.ad.collect" => AspCollector.HandleCollect(req),
 
             // Crypto
             // Infrastructure Gateway credential custody (ADR-0001). PrivSvc holds

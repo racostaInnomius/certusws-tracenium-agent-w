@@ -40,6 +40,10 @@
          RegistryProbeShape.cs precisamente para poder compilarse aqui;
          RegistryProbes.cs (Microsoft.Win32.Registry) se queda fuera. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\RegistryProbeShape.cs" />
+    <!-- ADR-0022 — validación de la tanda de Assessment Service y argumentos de
+         PowerShell. Puro (System.Text.Json); el lanzamiento y WinVerifyTrust
+         viven en AspCollector.cs y no entran aquí. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\AspCollectorShape.cs" />
     <!-- Remediacion generica (registro/secedit): el parseo y la validacion de
          las escrituras, las guardas y la plantilla .inf son puros
          (System.Text.Json); la escritura real queda en PmpRemediation.cs. -->

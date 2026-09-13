@@ -18,6 +18,13 @@ import { runUpdateTask, ackForUpdateOutcome } from "../update/update-task";
 // Imports nothing itself, so it cannot join the cycle that forces the lazy
 // `require("../update/update-task")` further down.
 import { describeError } from "../update/describe-error";
+import {
+  ASP_HEARTBEAT_MS,
+  enqueueEvaluatedRun,
+  runAspAssessment,
+  validateAssessPayload
+} from "../plugins/asp/runner";
+import { getAspRunStore } from "../plugins/asp/run-store";
 import { consumePendingCatalogInstallRequest } from "../status/catalog-install-request-watcher";
 import type { TrayCatalogItem } from "../status/tray-status-types";
 
@@ -1302,6 +1309,91 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
           status: 1,
           message: `software_dp_prefetch:failed;deploymentId=${Number(payload?.deploymentId) || 0};reason=handler_threw`,
         };
+      }
+    }
+
+    // ADR-0022 — una corrida de Assessment Service en este DC.
+    //
+    // ⚠️ Es la SEGUNDA de las tres listas de un job (backend job-types.ts →
+    // este case → router del PrivSvc). test/plugins/asp/asp-three-hops.test.ts
+    // camina las tres: las fases 2 y 3 de ADR-0011 se desplegaron muertas por
+    // saltarse ésta.
+    //
+    // Contrato de ACK (el backend lo refleja en asp_runs, no en device_jobs):
+    //   asp_run_started   en cuanto se acepta — el job queda entregado;
+    //   asp_progress      cada 60 s con done/total, como latido;
+    //   asp_run_complete  al encolar los trozos, con src=collector;
+    //   asp_run_failed    (status 2) con el motivo si no se pudo evaluar entera.
+    // Los resultados NO van en el ACK: viajan por el outbox (namespace `asp`).
+    case "asp_assess": {
+      if (process.platform !== "win32") {
+        return { status: 2, message: "asp_run_failed;reason=platform_not_supported" };
+      }
+      const parsed = validateAssessPayload(payload);
+      if (!parsed.ok) {
+        return { status: 2, message: `asp_run_failed;reason=bad_payload:${parsed.error}` };
+      }
+      const run = parsed.payload;
+      // El rol lo da la política efectiva (asp.collector), derivado de las
+      // instancias activas. Un DC que no lo tiene ignora la orden.
+      if (!ctx.policyRuntime.aspCollectorDomains().includes(run.domain)) {
+        return { status: 2, message: `asp_run_failed;run=${run.runId};reason=not_collector_for_domain` };
+      }
+
+      const store = getAspRunStore();
+      const existing = store.get(run.runId);
+      if (existing) {
+        // El mismo job entregado dos veces (reintento del despachador). Nunca se
+        // evalúa dos veces; si ya estaba evaluada se vuelve a encolar (el outbox
+        // deduplica) y se confirma.
+        if (existing.status === "evaluated" || existing.status === "enqueued") {
+          enqueueEvaluatedRun(store, (p) => outbox.enqueue({ type: "FACTS_SNAPSHOT", payload: p }), run.runId);
+          return { status: 0, message: `asp_run_complete;run=${run.runId};src=collector;replayed=1` };
+        }
+        if (existing.status === "running") {
+          return { status: 1, message: `asp_assess retry: run ${run.runId} already running` };
+        }
+        return { status: 2, message: `asp_run_failed;run=${run.runId};reason=${existing.error ?? existing.status}` };
+      }
+      const busy = store.running();
+      if (busy) {
+        return { status: 1, message: `asp_assess retry: run ${busy.runId} in progress` };
+      }
+      if ((ctx as any)._agentUpdateInProgress) {
+        return { status: 1, message: "asp_assess retry: agent_update in progress" };
+      }
+
+      await sendControlAck(ctx, jobId, 0, `asp_run_started;run=${run.runId}`);
+      let done = 0;
+      const total = run.indicators.length;
+      const latido = setInterval(() => {
+        sendControlAck(ctx, jobId, 0, `asp_progress;run=${run.runId};done=${done};total=${total}`).catch(() => {});
+      }, ASP_HEARTBEAT_MS);
+      latido.unref?.();
+      try {
+        const outcome = await runAspAssessment(
+          {
+            call: (req) => ctx.priv.call(req as any),
+            store,
+            enqueue: (p) => outbox.enqueue({ type: "FACTS_SNAPSHOT", payload: p }),
+            meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId },
+            logger: ctx.logger,
+            onProgress: (d) => {
+              done = d;
+            }
+          },
+          { jobId, payload: run }
+        );
+        if (outcome.status === "complete") {
+          return {
+            status: 0,
+            message: `asp_run_complete;run=${run.runId};indicators=${outcome.indicators};chunks=${outcome.chunks};src=collector`
+          };
+        }
+        ctx.logger?.warn?.("[asp] run failed", { runId: run.runId, reason: outcome.reason });
+        return { status: 2, message: `asp_run_failed;run=${run.runId};reason=${outcome.reason}` };
+      } finally {
+        clearInterval(latido);
       }
     }
 

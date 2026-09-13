@@ -19,6 +19,7 @@ import { describeError } from "./describe-error";
 import { resolveOsArch } from "../domain/os-arch";
 import { isRemediateInFlight } from "../plugins/pmp/state";
 import { isInstallInProgress as isSoftwareInstallInProgress } from "../plugins/sdp/state";
+import { aspRunInFlight } from "../plugins/asp/runner";
 
 /** Prefix of the `skipped` reason when the update yielded to a privileged operation. */
 export const UPDATE_DEFERRED_PREFIX = "privileged_operation_in_progress:";
@@ -30,10 +31,13 @@ export const UPDATE_DEFERRED_PREFIX = "privileged_operation_in_progress:";
  */
 export function privilegedOperationInFlight(
   ctx: Pick<AgentContext, never> & { _patchInstallInProgress?: boolean }
-): "patch_install" | "patch_remediate" | "software_install" | null {
+): "patch_install" | "patch_remediate" | "software_install" | "asp_assess" | null {
   if ((ctx as any)?._patchInstallInProgress === true) return "patch_install";
   if (isRemediateInFlight()) return "patch_remediate";
   if (isSoftwareInstallInProgress()) return "software_install";
+  // ADR-0022: la corrida vive en el PrivSvc; un MSI que lo reinicia la mata a
+  // mitad y el backend la cerraría `incomplete` sin motivo visible.
+  if (aspRunInFlight()) return "asp_assess";
   return null;
 }
 

@@ -94,6 +94,28 @@
       </Component>
 
       <!-- ============================= -->
+      <!-- Assessment Service collector (ADR-0022) -->
+      <!-- ============================= -->
+      <!--
+        El .ps1 que AspCollector ejecuta como SYSTEM en los DC colectores. Va en
+        PrivSvc\Scripts porque lo busca junto a su binario, y va FIRMADO
+        (release.yml): si el PrivSvc está firmado y el script no, se niega a
+        ejecutarlo. Vital: sin él ninguna corrida puede empezar, y preferimos
+        que falle la instalación a un plugin muerto en silencio.
+      -->
+
+      <Component Id="PrivSvcAspCollectorComponent"
+                 Directory="PRIVSVC_SCRIPTS_DIR"
+                 Guid="*">
+
+        <File Id="AspAdCollectorScript"
+              Source="binaries\PrivSvc\Scripts\asp-ad-collector.ps1"
+              KeyPath="yes"
+              Vital="yes"/>
+
+      </Component>
+
+      <!-- ============================= -->
       <!-- Root CA Asset -->
       <!-- ============================= -->
 

@@ -57,6 +57,14 @@
     <Content Include="assets\root-ca.crt">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
+    <!-- ADR-0022 — el colector de Assessment Service. Tiene que llegar a disco
+         junto al binario, FIRMADO (release.yml lo incluye en el filtro de
+         Trusted Signing): AspCollector se niega a ejecutarlo si el PrivSvc
+         está firmado y el script no. Nunca se embebe ni se codifica. -->
+    <Content Include="Scripts\asp-ad-collector.ps1">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
     <Protobuf Include="..\..\..\proto\controlplane.proto"
               ProtoRoot="../../../proto"
               GrpcServices="Client" />

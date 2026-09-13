@@ -1254,7 +1254,8 @@ $items | ConvertTo-Json -Depth 4
         }
     }
 
-    private sealed class PsResult
+    // internal: AspCollector (ADR-0022) lanza su .ps1 por este mismo camino.
+    internal sealed class PsResult
     {
         public string Stdout { get; init; } = "";
         public string Stderr { get; init; } = "";
@@ -1356,7 +1357,7 @@ $items | ConvertTo-Json -Depth 4
     /// procesos o de drenar stdout antes del kill — y eso ya costó un proceso
     /// colgado sin log en este módulo.
     /// </remarks>
-    private static PsResult RunProcessWithTimeout(ProcessStartInfo psi, int timeoutMs)
+    internal static PsResult RunProcessWithTimeout(ProcessStartInfo psi, int timeoutMs)
     {
         using var proc = Process.Start(psi);
         if (proc == null)

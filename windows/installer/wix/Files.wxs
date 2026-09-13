@@ -33,6 +33,8 @@
 
         <Directory Id="PRIVSVC_DIR" Name="PrivSvc">
           <Directory Id="PRIVSVC_ASSETS_DIR" Name="assets"/>
+          <!-- ADR-0022: colector firmado de Assessment Service. -->
+          <Directory Id="PRIVSVC_SCRIPTS_DIR" Name="Scripts"/>
         </Directory>
 
       </Directory>

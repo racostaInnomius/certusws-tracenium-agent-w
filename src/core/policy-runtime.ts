@@ -132,6 +132,18 @@ export type RuntimePolicy = {
       denyExtensions?: string[];
     };
   };
+  /**
+   * ADR-0022 — Assessment Service. El control plane inyecta `collector` en la
+   * política efectiva del DC que una instancia activa nombra colector (derivado
+   * de asp_service_instances, como el rol de gateway). Su PRESENCIA con el
+   * dominio es la autorización: un `asp_assess` para un dominio que no está
+   * aquí se rechaza. El resto de la sección es configuración de servidor.
+   */
+  asp?: {
+    collector?: {
+      domains?: Array<{ domain?: string; instanceId?: number; role?: string }>;
+    };
+  };
   /** Infrastructure Gateway. Delivered ONLY in a per-device policy override,
    *  to the single host per site that has line-of-sight to vCenter — never in
    *  the tenant-wide policy. Deliberately NOT a `plugins.enabled` entry: the
@@ -1194,6 +1206,8 @@ export class PolicyRuntime extends EventEmitter {
       // siempre `undefined`.
       remoteControl: policy.remoteControl,
       sdp: policy.sdp,
+      // ADR-0022 — tal cual, por lo mismo; aspCollectorDomains() falla CERRADO.
+      asp: policy.asp,
       plugins: mergedPlugins,
       modules: mergedModules,
       features: mergedFeatures,
@@ -1295,6 +1309,19 @@ export class PolicyRuntime extends EventEmitter {
     return raw
       .filter((u: unknown): u is string => typeof u === "string" && /^https:\/\//i.test(u))
       .slice(0, 8);
+  }
+
+  /**
+   * ADR-0022 — dominios de AD de los que este equipo es colector, en
+   * minúsculas. Vacío = no es colector de nada y todo `asp_assess` se rechaza.
+   * Falla cerrado: una forma que no se entiende es «ninguno».
+   */
+  aspCollectorDomains(): string[] {
+    const domains = (this.policy as RuntimePolicy)?.asp?.collector?.domains;
+    if (!Array.isArray(domains)) return [];
+    return domains
+      .map((d) => (d && typeof d.domain === "string" ? d.domain.trim().toLowerCase() : ""))
+      .filter((d) => d.length > 0 && d.length <= 255);
   }
 
   gatewayConfig(): GatewayConfig | null {

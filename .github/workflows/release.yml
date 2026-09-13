@@ -684,6 +684,25 @@ jobs:
           timestamp-rfc3161:            http://timestamp.acs.microsoft.com
           timestamp-digest:             SHA256
 
+      # ADR-0022 — el colector de Assessment Service es un .ps1 que el PrivSvc
+      # ejecuta como SYSTEM en los DC. Firmado aparte y SÓLO esa carpeta: un
+      # filtro ps1 sobre todo win-binaries firmaría cualquier script que
+      # arrastre AgentCore. AspCollector se niega a ejecutarlo sin firma.
+      - name: Sign Assessment Service collector (.ps1)
+        uses: azure/trusted-signing-action@v0.5.9
+        with:
+          azure-tenant-id:              ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id:              ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret:          ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint:                     https://cus.codesigning.azure.net/
+          trusted-signing-account-name: CertusWS-Signing
+          certificate-profile-name:     safecertus-cp-public
+          files-folder:                 ${{ github.workspace }}\build\win-binaries\x64\PrivSvc\Scripts
+          files-folder-filter:          ps1
+          file-digest:                  SHA256
+          timestamp-rfc3161:            http://timestamp.acs.microsoft.com
+          timestamp-digest:             SHA256
+
       - name: Restore node.exe into AgentCore tree
         # if: always() so we restore even if the signing step failed,
         # avoiding a workspace half-mutated for any post-fail debugging.
@@ -822,6 +841,25 @@ jobs:
           files-folder:                 ${{ github.workspace }}\build\win-binaries\arm64
           files-folder-filter:          exe,node
           files-folder-recurse:         true
+          file-digest:                  SHA256
+          timestamp-rfc3161:            http://timestamp.acs.microsoft.com
+          timestamp-digest:             SHA256
+
+      # ADR-0022 — el colector de Assessment Service es un .ps1 que el PrivSvc
+      # ejecuta como SYSTEM en los DC. Firmado aparte y SÓLO esa carpeta: un
+      # filtro ps1 sobre todo win-binaries firmaría cualquier script que
+      # arrastre AgentCore. AspCollector se niega a ejecutarlo sin firma.
+      - name: Sign Assessment Service collector (.ps1)
+        uses: azure/trusted-signing-action@v0.5.9
+        with:
+          azure-tenant-id:              ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id:              ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret:          ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint:                     https://cus.codesigning.azure.net/
+          trusted-signing-account-name: CertusWS-Signing
+          certificate-profile-name:     safecertus-cp-public
+          files-folder:                 ${{ github.workspace }}\build\win-binaries\arm64\PrivSvc\Scripts
+          files-folder-filter:          ps1
           file-digest:                  SHA256
           timestamp-rfc3161:            http://timestamp.acs.microsoft.com
           timestamp-digest:             SHA256

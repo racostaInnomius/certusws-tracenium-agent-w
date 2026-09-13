@@ -636,7 +636,8 @@ public static class Sdp
         _ => "untrusted:0x" + status.ToString("X8"),
     };
 
-    private static (bool trusted, string reason) WinVerifyTrustFile(string path)
+    // internal: AspCollector (ADR-0022) verifica con esto el .ps1 antes de ejecutarlo.
+    internal static (bool trusted, string reason) WinVerifyTrustFile(string path)
     {
         var fileInfo = new WINTRUST_FILE_INFO
         {

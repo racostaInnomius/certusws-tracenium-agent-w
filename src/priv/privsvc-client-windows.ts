@@ -119,6 +119,13 @@ export function getTimeoutForMethod(method: string): number {
     // privsvc ceilings these must stay above:
     //   patch.install — Windows 90min (WUA), macOS/Linux 60min
     //   patch.scan    — macOS 120s (softwareupdate --list), Windows 150s
+    // ADR-0022 — una tanda del colector de Assessment Service. El handler mata
+    // PowerShell a los 300 s (AspCollectorShape.HandlerCeilingMs); esto la
+    // sobrevive con margen y, al pasar de 60 s, va al carril LENTO: una tanda
+    // larga no deja sin latidos al stream. La corrida entera (900 s) la sostiene
+    // el runner, tanda a tanda.
+    case "asp.ad.collect":
+      return 330 * 1000;
     case "patch.install":
       return 95 * 60 * 1000; // privsvc: 90min (Windows) + 5min margin
     case "patch.scan":

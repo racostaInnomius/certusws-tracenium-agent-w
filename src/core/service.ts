@@ -130,6 +130,27 @@ export async function startService() {
       log.warn("[pmp] stale install state reconcile failed", e?.message || e);
     }
 
+    // ADR-0022 — corridas de Assessment Service que un reinicio dejó a medias:
+    // las `running` se dan por abortadas (el backend las cerrará incomplete por
+    // TTL) y las evaluadas sin encolar se encolan ahora. Windows sólo.
+    if (process.platform === "win32") {
+      try {
+        const { getAspRunStore } = await import("../plugins/asp/run-store");
+        const { enqueueEvaluatedRun } = await import("../plugins/asp/runner");
+        const { outbox } = await import("../queue/sqlite-outbox");
+        const store = getAspRunStore();
+        const aborted = store.abortRunning();
+        let requeued = 0;
+        for (const r of store.pendingEnqueue()) {
+          if (enqueueEvaluatedRun(store, (p) => outbox.enqueue({ type: "FACTS_SNAPSHOT", payload: p }), r.runId) > 0) requeued++;
+        }
+        store.cleanup(30);
+        if (aborted || requeued) log.warn("[asp] boot recovery", { aborted, requeued });
+      } catch (e: any) {
+        log.warn("[asp] boot recovery failed", e?.message || e);
+      }
+    }
+
     // Eager probe of the RCP native runtime. If `node-datachannel` is broken
     // on this host (the historical "AgentCore goes silent on first remote-
     // control click" failure mode), we want to know NOW — at boot, with an
