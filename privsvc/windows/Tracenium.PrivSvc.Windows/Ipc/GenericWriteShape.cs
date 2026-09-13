@@ -66,13 +66,25 @@ public sealed class SeceditWriteSpec
     public bool IsNumeric { get; init; }
 }
 
+/// <summary>Subcategoría de auditoría avanzada por GUID (estable entre idiomas).</summary>
+public sealed class AuditpolWriteSpec
+{
+    public required string Subcategory { get; init; }
+    public required bool Success { get; init; }
+    public required bool Failure { get; init; }
+    /// <summary>Nombre canónico como lo emite AuditpolShape.SettingName.</summary>
+    public string SettingName => AuditpolShape.SettingName((Success ? 1 : 0) | (Failure ? 2 : 0));
+    public string Describe() => $"auditpol {{{Subcategory}}} success={(Success ? "enable" : "disable")} failure={(Failure ? "enable" : "disable")}";
+}
+
 public sealed class GenericWrites
 {
     public List<RegistryWriteSpec> Registry { get; } = new();
     public List<SeceditWriteSpec> Secedit { get; } = new();
+    public List<AuditpolWriteSpec> Auditpol { get; } = new();
     /// <summary>Escrituras que no pasaron la validación o la guarda, con el motivo.</summary>
     public List<string> Rejected { get; } = new();
-    public bool IsEmpty => Registry.Count == 0 && Secedit.Count == 0;
+    public bool IsEmpty => Registry.Count == 0 && Secedit.Count == 0 && Auditpol.Count == 0;
 }
 
 public static class GenericWriteShape
@@ -147,6 +159,7 @@ public static class GenericWriteShape
             var kind = Str(w, "kind");
             if (kind == "registry") ParseRegistry(w, out_);
             else if (kind == "secedit") ParseSecedit(w, out_);
+            else if (kind == "auditpol") ParseAuditpol(w, out_);
             else out_.Rejected.Add($"unknown write kind '{kind}'");
         }
         return out_;
@@ -234,6 +247,26 @@ public static class GenericWriteShape
                 out_.Rejected.Add($"valueType '{type}' not allowed");
                 return;
         }
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex GuidRe =
+        new("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+
+    private static void ParseAuditpol(JsonElement w, GenericWrites out_)
+    {
+        var guid = (Str(w, "subcategory") ?? "").Trim().Trim('{', '}').ToLowerInvariant();
+        if (!GuidRe.IsMatch(guid))
+        {
+            out_.Rejected.Add($"auditpol subcategory '{guid}' is not a GUID");
+            return;
+        }
+        if (!w.TryGetProperty("success", out var s) || (s.ValueKind != JsonValueKind.True && s.ValueKind != JsonValueKind.False) ||
+            !w.TryGetProperty("failure", out var f) || (f.ValueKind != JsonValueKind.True && f.ValueKind != JsonValueKind.False))
+        {
+            out_.Rejected.Add($"auditpol {guid}: success/failure must be booleans");
+            return;
+        }
+        out_.Auditpol.Add(new AuditpolWriteSpec { Subcategory = guid, Success = s.GetBoolean(), Failure = f.GetBoolean() });
     }
 
     private static void ParseSecedit(JsonElement w, GenericWrites out_)

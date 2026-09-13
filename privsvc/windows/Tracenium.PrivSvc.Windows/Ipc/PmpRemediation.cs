@@ -73,6 +73,7 @@ public static class PmpRemediation
                 "windows.shares.no_everyone_full_control" => ReadSharesEveryoneFullControl(),
                 "windows.registry.set_value" => ReadGenericRegistry(req.Params),
                 "windows.secedit.set_value" => ReadGenericSecedit(req.Params),
+                "windows.auditpol.set_value" => ReadGenericAuditpol(req.Params),
                 _ => null
             };
 
@@ -116,6 +117,7 @@ public static class PmpRemediation
                 "windows.shares.no_everyone_full_control" => await ApplySharesEveryoneFullControlRevoked(),
                 "windows.registry.set_value" => ApplyGenericRegistry(req.Params),
                 "windows.secedit.set_value" => ApplyGenericSecedit(req.Params),
+                "windows.auditpol.set_value" => ApplyGenericAuditpol(req.Params),
                 _ => RemediateResult.ForUnsupported(checkId),
             };
 
@@ -985,6 +987,94 @@ public static class PmpRemediation
             {
                 try { if (File.Exists(f)) File.Delete(f); } catch { /* best effort */ }
             }
+        }
+    }
+
+    // ── Generic: auditpol subcategories ───────────────────────────
+    //
+    // Lee con `auditpol /backup` (numérico, estable entre idiomas — ver
+    // AuditpolShape) y escribe con `auditpol /set /subcategory:{guid}`.
+    // Sin guardas: auditar más no rompe nada. Después vuelve a leer para
+    // verificar: en un equipo de dominio una GPO de auditoría avanzada gana
+    // en el siguiente refresco, y el `/set` local puede no quedarse.
+
+    private static ReadResult ReadGenericAuditpol(Dictionary<string, object>? p)
+    {
+        var writes = GenericWriteShape.FromParams(p);
+        if (writes.Rejected.Count > 0 || writes.Auditpol.Count == 0)
+            throw new InvalidOperationException("invalid writes: " + string.Join("; ", writes.Rejected.DefaultIfEmpty("none")));
+        var byGuid = ReadAuditpolByGuid();
+        var entries = new List<object>();
+        var compliant = true;
+        foreach (var w in writes.Auditpol)
+        {
+            byGuid.TryGetValue(w.Subcategory, out var current);
+            var matches = current is not null && string.Equals(current, w.SettingName, StringComparison.Ordinal);
+            if (!matches) compliant = false;
+            entries.Add(new { subcategory = w.Subcategory, current, expected = w.SettingName, matches });
+        }
+        return new ReadResult { State = new { writes = entries }, IsCompliant = compliant };
+    }
+
+    private static RemediateResult ApplyGenericAuditpol(Dictionary<string, object>? p)
+    {
+        var sw = Stopwatch.StartNew();
+        var writes = GenericWriteShape.FromParams(p);
+        if (writes.Rejected.Count > 0 || writes.Auditpol.Count == 0)
+        {
+            return new RemediateResult
+            {
+                ExitCode = 2, DurationMs = sw.ElapsedMilliseconds,
+                StderrExcerpt = Truncate("rejected: " + string.Join("; ", writes.Rejected.DefaultIfEmpty("no writes")), 1024),
+                ChangesApplied = new List<string>(),
+            };
+        }
+        var changes = new List<string>();
+        foreach (var w in writes.Auditpol)
+        {
+            var run = RunProcess("auditpol.exe",
+                $"/set /subcategory:\"{{{w.Subcategory}}}\" /success:{(w.Success ? "enable" : "disable")} /failure:{(w.Failure ? "enable" : "disable")}", 30_000);
+            if (run.ExitCode != 0)
+            {
+                return new RemediateResult
+                {
+                    ExitCode = run.ExitCode, DurationMs = sw.ElapsedMilliseconds,
+                    StderrExcerpt = CombinedExcerpt(run.Stdout, run.Stderr) ?? $"auditpol exit {run.ExitCode}",
+                    ChangesApplied = changes,
+                };
+            }
+            changes.Add(w.Describe());
+        }
+        var after = ReadAuditpolByGuid();
+        var missing = writes.Auditpol.Where(w => !(after.TryGetValue(w.Subcategory, out var cur) && cur == w.SettingName)).Select(w => w.Subcategory).ToList();
+        sw.Stop();
+        return new RemediateResult
+        {
+            ExitCode = missing.Count == 0 ? 0 : 4,
+            DurationMs = sw.ElapsedMilliseconds,
+            StderrExcerpt = missing.Count == 0 ? null : "not applied (domain audit policy may override): " + string.Join(", ", missing),
+            RequiresReboot = false,
+            ChangesApplied = changes,
+        };
+    }
+
+    private static Dictionary<string, string> ReadAuditpolByGuid()
+    {
+        var csv = Path.Combine(Path.GetTempPath(), $"trc-auditpol-{Guid.NewGuid():N}.csv");
+        try
+        {
+            var run = RunProcess("auditpol.exe", $"/backup /file:\"{csv}\"", 30_000);
+            if (run.ExitCode != 0 || !File.Exists(csv))
+                throw new InvalidOperationException($"auditpol /backup failed (exit {run.ExitCode}): {CombinedExcerpt(run.Stdout, run.Stderr)}");
+            var parsed = AuditpolShape.ParseBackupCsv(File.ReadAllText(csv).Replace("\0", ""));
+            var out_ = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (parsed is not null && parsed.TryGetValue("byGuid", out var raw) && raw is Dictionary<string, string> byGuid)
+                foreach (var kv in byGuid) out_[kv.Key.Trim('{', '}')] = kv.Value;
+            return out_;
+        }
+        finally
+        {
+            try { if (File.Exists(csv)) File.Delete(csv); } catch { /* best effort */ }
         }
     }
 

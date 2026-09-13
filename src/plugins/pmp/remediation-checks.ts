@@ -89,6 +89,10 @@ const ENTRIES: AgentCheckEntry[] = [
     checkId: "windows.secedit.set_value",
     applicableTo: new Set<CheckOsApplicability>(["windows"]),
   },
+  {
+    checkId: "windows.auditpol.set_value",
+    applicableTo: new Set<CheckOsApplicability>(["windows"]),
+  },
 
   // ── Linux Phase 8 ───────────────────────────────────────────────
   // These four checkIds are implemented in

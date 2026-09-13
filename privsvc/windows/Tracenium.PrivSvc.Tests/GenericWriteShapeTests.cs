@@ -200,3 +200,38 @@ public class GenericWriteShapeTests
         Assert.False(GenericWriteShape.RegistryValueMatches(multi, new[] { "b", "a" }));
     }
 }
+
+public class GenericWriteShapeAuditpolTests
+{
+    private static Dictionary<string, object> Params(string writesJson)
+    {
+        var doc = JsonDocument.Parse("{\"params\":{\"writes\":" + writesJson + "}}");
+        return new Dictionary<string, object> { ["params"] = doc.RootElement.GetProperty("params") };
+    }
+
+    [Fact]
+    public void Parses_an_auditpol_write_by_guid_and_derives_the_canonical_name()
+    {
+        var w = GenericWriteShape.FromParams(Params(
+            "[{\"kind\":\"auditpol\",\"subcategory\":\"{0CCE9239-69AE-11D9-BED3-505054503030}\",\"success\":true,\"failure\":true}," +
+            " {\"kind\":\"auditpol\",\"subcategory\":\"0cce9249-69ae-11d9-bed3-505054503030\",\"success\":true,\"failure\":false}]"));
+        Assert.Empty(w.Rejected);
+        Assert.Equal(2, w.Auditpol.Count);
+        // GUID normalizado: minúsculas, sin llaves.
+        Assert.Equal("0cce9239-69ae-11d9-bed3-505054503030", w.Auditpol[0].Subcategory);
+        Assert.Equal("Success and Failure", w.Auditpol[0].SettingName);
+        Assert.Equal("Success", w.Auditpol[1].SettingName);
+        Assert.Contains("/success:enable", w.Auditpol[0].Describe().Replace("success=enable", "/success:enable"));
+    }
+
+    [Theory]
+    [InlineData("{\"kind\":\"auditpol\",\"subcategory\":\"not-a-guid\",\"success\":true,\"failure\":true}", "not a GUID")]
+    [InlineData("{\"kind\":\"auditpol\",\"subcategory\":\"0cce9239-69ae-11d9-bed3-505054503030\",\"success\":\"yes\",\"failure\":true}", "booleans")]
+    [InlineData("{\"kind\":\"auditpol\",\"subcategory\":\"0cce9239-69ae-11d9-bed3-505054503030\",\"success\":true}", "booleans")]
+    public void Rejects_malformed_auditpol_writes(string write, string reason)
+    {
+        var w = GenericWriteShape.FromParams(Params("[" + write + "]"));
+        Assert.Empty(w.Auditpol);
+        Assert.Contains(reason, w.Rejected[0]);
+    }
+}
