@@ -181,6 +181,11 @@ export type RuntimePolicy = {
      */
     maxUploadBytes?: number;
   };
+  /** Software Delivery. Hoy sólo lo inyecta el control plane por equipo
+   *  (modules/policies/policy-wire.ts); ver `dpBaseUrls()`. */
+  sdp?: {
+    dpBaseUrls?: string[];
+  };
   plugins?: {
     enabled?: string[];
   };
@@ -1180,6 +1185,15 @@ export class PolicyRuntime extends EventEmitter {
       // and it fails CLOSED — an absent or malformed block yields no connector
       // at all rather than a half-configured gateway.
       gateway: policy.gateway,
+      // Igual que `gateway`: tal cual, y el getter valida y falla CERRADO
+      // (`dpBaseUrls()` sólo deja https y acota; `remoteFileMaxUploadBytes()`
+      // devuelve null ante lo que no sea un entero positivo). Faltaban en
+      // este literal y el agente los tiraba al validar: el auto-update nunca
+      // prefería el DP de la LAN y el tope de subida del tenant no se
+      // aplicaba. Un getter que lee una clave que no se nombra aquí lee
+      // siempre `undefined`.
+      remoteControl: policy.remoteControl,
+      sdp: policy.sdp,
       plugins: mergedPlugins,
       modules: mergedModules,
       features: mergedFeatures,
@@ -1276,7 +1290,7 @@ export class PolicyRuntime extends EventEmitter {
    * the internet, as before) instead of handing a junk URL to the downloader.
    */
   dpBaseUrls(): string[] {
-    const raw = (this.policy as any)?.sdp?.dpBaseUrls;
+    const raw: unknown = this.policy.sdp?.dpBaseUrls;
     if (!Array.isArray(raw)) return [];
     return raw
       .filter((u: unknown): u is string => typeof u === "string" && /^https:\/\//i.test(u))
