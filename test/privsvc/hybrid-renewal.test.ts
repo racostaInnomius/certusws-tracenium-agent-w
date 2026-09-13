@@ -166,6 +166,31 @@ function transporte(
 }
 
 /** Los OIDs catalyst, leídos del DER y no de cómo los rotule un openssl. */
+/** El DER de un CSR en PEM. */
+function derDeCsr(csrPem: string): Buffer {
+  return Buffer.from(csrPem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, ""), "base64");
+}
+
+/**
+ * El CN del sujeto, leído del DER: `06 03 55 04 03` (id-at-commonName)
+ * seguido del string. Se lee a mano y no con `openssl req -subject`
+ * porque el rótulo de esa salida cambia entre OpenSSL 3.0 y 3.6 — se
+ * asserta la propiedad, no la herramienta local.
+ */
+function cnDeCsr(csrPem: string): string | null {
+  const der = derDeCsr(csrPem);
+  const i = der.indexOf(Buffer.from("0603550403", "hex"));
+  if (i < 0) return null;
+  const len = der[i + 6];
+  return der.subarray(i + 7, i + 7 + len).toString("utf8");
+}
+
+/** ¿Lleva el SAN un dNSName exactamente igual a `host`? `[2]` = 0x82. */
+function tieneDnsSan(csrPem: string, host: string): boolean {
+  const nombre = Buffer.from(host, "ascii");
+  return derDeCsr(csrPem).includes(Buffer.concat([Buffer.from([0x82, nombre.length]), nombre]));
+}
+
 function extensionesCatalyst(csrPem: string): number {
   const der = Buffer.from(
     csrPem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, ""),
@@ -241,6 +266,33 @@ for (const plat of plataformas) {
         expect(r.result.altKeyAlgorithm).toBeNull();
         expect(extensionesCatalyst(s.visto()!)).toBe(0);
       }
+    });
+
+    it("⭐ la renovación conserva el NOMBRE del equipo: CN y SAN DNS son su hostname", async () => {
+      // El fallo: la renovación ponía `tracenium-agent-<uuid>` en el CN y no
+      // pasaba `dnsName`. La primera renovación de cada Mac y cada Linux lo
+      // renombraba a un identificador — y el anillo de ADR-0015 iba a
+      // hacérselo a toda la flota. Se comprueba sobre el CSR que SALE hacia
+      // el servidor, no sobre lo que el código dice que construye.
+      identidadInstalada(true);
+      const s = transporte();
+
+      const r = await renovar(s);
+      expect(r.ok, JSON.stringify(r.error || {})).toBe(true);
+
+      const csr = s.visto()!;
+      expect(cnDeCsr(csr)).toBe(os.hostname());
+      expect(tieneDnsSan(csr, os.hostname()), "el SAN perdió la entrada DNS").toBe(true);
+    });
+
+    it("⚠️ nunca un UUID en el CN, tampoco en un equipo clásico", async () => {
+      identidadInstalada(false);
+      const s = transporte();
+
+      const r = await renovar(s);
+      expect(r.ok, JSON.stringify(r.error || {})).toBe(true);
+      expect(cnDeCsr(s.visto()!)).not.toMatch(/^tracenium-agent-/);
+      expect(cnDeCsr(s.visto()!)).not.toContain(DEVICE);
     });
 
     it("⚠️ el CSR de la renovación lleva el SAN URI del equipo autenticado", async () => {
@@ -501,5 +553,44 @@ describe("la renovación de Windows tampoco habla HTTPS", () => {
     // Un certificado revocado no mejora reintentando.
     expect(src).toContain("catch (RpcException");
     expect(src).toContain("rpc.StatusCode");
+  });
+});
+
+describe("el nombre del certificado sale de UN sitio", () => {
+  // Enrolar y renovar divergieron porque cada uno decidía el CN por su
+  // cuenta. Este censo lee el fuente de las dos plataformas y falla si
+  // alguna llamada a `buildCsr` vuelve a asignar `commonName` a mano: la
+  // única forma admitida es la que viene de `nombreDelEquipo()`.
+  for (const plat of ["macos", "linux"]) {
+    it(`${plat}: ningún buildCsr asigna commonName fuera de nombreDelEquipo`, () => {
+      // Sin comentarios: el que explica el arreglo NOMBRA el valor viejo, y
+      // un comentario no es una asignación. El primer censo se delató solo.
+      const src = fs
+        .readFileSync(path.resolve(__dirname, `../../privsvc/${plat}/src/crypto-store.ts`), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/(^|[^:])\/\/.*$/gm, "$1");
+      const llamadas = src.match(/buildCsr\(\{[\s\S]*?\}\);/g) ?? [];
+
+      // Si el regex dejara de encontrar las llamadas, los dos asserts de
+      // abajo pasarían por vacío. Hoy son dos: enrolar y renovar.
+      expect(llamadas.length).toBeGreaterThanOrEqual(2);
+
+      for (const llamada of llamadas) {
+        expect(llamada, "commonName asignado a mano").not.toMatch(/commonName\s*:/);
+        expect(llamada).not.toContain("tracenium-agent-");
+      }
+      expect(src).toContain("nombreDelEquipo()");
+    });
+  }
+
+  it("nombreDelEquipo: CN y dNSName son la misma cadena, leída al construir", async () => {
+    const { nombreDelEquipo } = await import("../../privsvc/shared/csr-subject");
+    expect(nombreDelEquipo(() => "srv-01.lab")).toEqual({ commonName: "srv-01.lab", dnsName: "srv-01.lab" });
+    // Un equipo renombrado lleva su nombre DE HOY en el siguiente certificado.
+    let actual = "viejo";
+    const leer = () => actual;
+    expect(nombreDelEquipo(leer).commonName).toBe("viejo");
+    actual = "nuevo";
+    expect(nombreDelEquipo(leer).commonName).toBe("nuevo");
   });
 });

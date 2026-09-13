@@ -22,6 +22,8 @@ import { logger } from "./logger";
 // plataforma sin poder enrolar. Ver privsvc/shared/der.ts.
 import { buildCsr, ClassicAlgorithm } from "../../shared/pkcs10";
 import { loadOrCreateAltKey, altKeyPathFor } from "../../shared/alt-key";
+// El nombre del equipo en su certificado, igual al enrolar que al renovar.
+import { nombreDelEquipo } from "../../shared/csr-subject";
 
 const execFileRaw = promisify(execFile);
 
@@ -686,7 +688,7 @@ export async function handleGenerateCsr(req: PrivSvcRequest): Promise<PrivSvcRes
     const tenantId = String(params.tenantId || req.meta?.tenantId || "bootstrap");
     const deviceId = assertDeviceId(params.deviceId || req.meta?.deviceId);
     const reuseExistingKey = params.reuseExistingKey !== false;
-    const dnsName = os.hostname();
+    const { commonName, dnsName } = nombreDelEquipo();
 
     // Cross-platform contract: agent-core passes `keyAlgorithm` to tell
     // each PrivSvc which algorithm to produce. Cualquier valor fuera de
@@ -741,7 +743,7 @@ export async function handleGenerateCsr(req: PrivSvcRequest): Promise<PrivSvcRes
     const built = buildCsr({
       classicKey: crypto.createPrivateKey(fs.readFileSync(paths.clientKey)),
       classicAlgorithm: keyAlgorithm as ClassicAlgorithm,
-      commonName: dnsName,
+      commonName,
       tenantId,
       deviceId,
       dnsName,
@@ -1013,7 +1015,11 @@ export async function handleRenewCert(
     const built = buildCsr({
       classicKey: crypto.createPrivateKey(fs.readFileSync(pendingKey)),
       classicAlgorithm: keyAlgorithm as ClassicAlgorithm,
-      commonName: `tracenium-agent-${deviceId}`,
+      // ⚠️ El MISMO nombre que al enrolar. Aquí estaba
+      // `tracenium-agent-${deviceId}` sin `dnsName`: la primera renovación
+      // renombraba el certificado a un UUID y le quitaba la entrada DNS
+      // del SAN. Ver shared/csr-subject.ts.
+      ...nombreDelEquipo(),
       tenantId,
       deviceId,
       altPrivateKeyPkcs8: altKey?.pkcs8Der ?? null,
