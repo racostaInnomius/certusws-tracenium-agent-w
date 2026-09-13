@@ -100,6 +100,53 @@ public class GenericWriteShapeTests
     }
 
     [Fact]
+    public void Parses_a_delete_without_a_value()
+    {
+        var w = GenericWriteShape.FromParams(Params(
+            "[{\"kind\":\"registry\",\"hive\":\"HKLM\",\"keyPath\":\"SOFTWARE\\\\Policies\\\\Google\\\\Chrome\",\"valueName\":\"ExtensionInstallForcelist\",\"valueType\":\"delete\"}]"));
+
+        Assert.Empty(w.Rejected);
+        var spec = Assert.Single(w.Registry);
+        Assert.Equal(GenericValueKind.Delete, spec.Kind);
+        Assert.Equal("SOFTWARE\\Policies\\Google\\Chrome", spec.SubKey);
+        Assert.Contains("(deleted)", spec.Describe());
+    }
+
+    [Fact]
+    public void A_delete_ignores_a_stray_value_instead_of_turning_into_a_write()
+    {
+        var w = GenericWriteShape.FromParams(Params(
+            "[{\"kind\":\"registry\",\"hive\":\"HKLM\",\"keyPath\":\"SOFTWARE\\\\Policies\\\\A\",\"valueName\":\"X\",\"valueType\":\"delete\",\"value\":1}]"));
+        var spec = Assert.Single(w.Registry);
+        Assert.Equal(GenericValueKind.Delete, spec.Kind);
+        Assert.Equal(0u, spec.DwordValue);
+    }
+
+    [Fact]
+    public void A_delete_goes_through_the_same_guards_as_a_write()
+    {
+        // Borrar un valor de LSA rompe los inicios de sesión igual que cambiarlo.
+        var w = GenericWriteShape.FromParams(Params(
+            "[{\"kind\":\"registry\",\"hive\":\"HKLM\",\"keyPath\":\"SYSTEM\\\\CurrentControlSet\\\\Control\\\\Lsa\",\"valueName\":\"LmCompatibilityLevel\",\"valueType\":\"delete\"}," +
+            " {\"kind\":\"registry\",\"hive\":\"HKCU\",\"keyPath\":\"Software\\\\A\",\"valueName\":\"X\",\"valueType\":\"delete\"}," +
+            " {\"kind\":\"registry\",\"hive\":\"HKLM\",\"keyPath\":\"SOFTWARE\\\\..\\\\A\",\"valueName\":\"X\",\"valueType\":\"delete\"}]"));
+        Assert.Empty(w.Registry);
+        Assert.Equal(3, w.Rejected.Count);
+        Assert.Contains(w.Rejected, r => r.Contains("guarded"));
+        Assert.Contains(w.Rejected, r => r.Contains("hive"));
+        Assert.Contains(w.Rejected, r => r.Contains("keyPath"));
+    }
+
+    [Fact]
+    public void A_delete_matches_only_when_the_value_is_absent()
+    {
+        var spec = new RegistryWriteSpec { SubKey = "SOFTWARE\\A", ValueName = "X", Kind = GenericValueKind.Delete };
+        Assert.True(GenericWriteShape.RegistryValueMatches(spec, null));
+        Assert.False(GenericWriteShape.RegistryValueMatches(spec, 1L));
+        Assert.False(GenericWriteShape.RegistryValueMatches(spec, ""));
+    }
+
+    [Fact]
     public void Missing_params_is_rejected_not_thrown()
     {
         var w = GenericWriteShape.FromParams(new Dictionary<string, object>());

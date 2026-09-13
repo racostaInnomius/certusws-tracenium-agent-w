@@ -807,7 +807,11 @@ public static class PmpRemediation
                     }
                 }
             }
-            var matches = present && GenericWriteShape.RegistryValueMatches(w, current);
+            // Un borrado cumple cuando NO está; cualquier otra escritura, cuando
+            // está y vale lo pedido.
+            var matches = w.Kind == GenericValueKind.Delete
+                ? !present
+                : present && GenericWriteShape.RegistryValueMatches(w, current);
             if (!matches) compliant = false;
             entries.Add(new { key = @"HKLM\" + w.SubKey, name = w.ValueName, present, kind, current, expected = w.Describe(), matches });
         }
@@ -831,6 +835,8 @@ public static class PmpRemediation
         // Comprobación de tipos ANTES de escribir nada.
         foreach (var w in writes.Registry)
         {
+            // Borrar no depende del tipo que tenga el valor.
+            if (w.Kind == GenericValueKind.Delete) continue;
             using var key = Registry.LocalMachine.OpenSubKey(w.SubKey);
             if (key is null || key.GetValue(w.ValueName) is null) continue;
             var existing = key.GetValueKind(w.ValueName);
@@ -851,6 +857,21 @@ public static class PmpRemediation
         var changes = new List<string>();
         foreach (var w in writes.Registry)
         {
+            if (w.Kind == GenericValueKind.Delete)
+            {
+                // ⚠️ OpenSubKey, NUNCA CreateSubKey: borrar un valor de una clave
+                // que no existe no debe dejar la clave creada como efecto
+                // secundario. Si ya no está, no es un error: es el estado pedido.
+                using var existing = Registry.LocalMachine.OpenSubKey(w.SubKey, writable: true);
+                if (existing is null || existing.GetValue(w.ValueName) is null)
+                {
+                    changes.Add(w.Describe() + " — already absent");
+                    continue;
+                }
+                existing.DeleteValue(w.ValueName, throwOnMissingValue: false);
+                changes.Add(w.Describe());
+                continue;
+            }
             using var key = Registry.LocalMachine.CreateSubKey(w.SubKey, writable: true)
                 ?? throw new InvalidOperationException($@"could not open or create HKLM\{w.SubKey}");
             object value = w.Kind switch
@@ -870,7 +891,9 @@ public static class PmpRemediation
     {
         GenericValueKind.DWord => RegistryValueKind.DWord,
         GenericValueKind.String => RegistryValueKind.String,
-        _ => RegistryValueKind.MultiString,
+        GenericValueKind.MultiString => RegistryValueKind.MultiString,
+        // Un borrado no tiene tipo: nunca se llama a SetValue con él.
+        _ => throw new InvalidOperationException("a delete has no registry value kind"),
     };
 
     // ── Generic: secedit [System Access] ──────────────────────────

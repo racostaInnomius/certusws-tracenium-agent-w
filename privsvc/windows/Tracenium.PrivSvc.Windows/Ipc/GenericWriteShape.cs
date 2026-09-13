@@ -30,6 +30,14 @@ public enum GenericValueKind
     DWord,
     String,
     MultiString,
+    /// <summary>
+    /// Quitar el valor. ⚠️ Sin esto toda escritura era una puerta de un solo
+    /// sentido: se podía fijar una política en la flota y no había forma de
+    /// retirarla, ni siquiera para deshacer un error. Pasa por las MISMAS
+    /// guardas que una escritura: borrar un valor de LSA rompe igual que
+    /// cambiarlo.
+    /// </summary>
+    Delete,
 }
 
 public sealed class RegistryWriteSpec
@@ -45,7 +53,8 @@ public sealed class RegistryWriteSpec
     {
         GenericValueKind.DWord => $"HKLM\\{SubKey}:{ValueName}={DwordValue}",
         GenericValueKind.String => $"HKLM\\{SubKey}:{ValueName}=\"{StringValue}\"",
-        _ => $"HKLM\\{SubKey}:{ValueName}=[{string.Join(",", MultiValue ?? Array.Empty<string>())}]",
+        GenericValueKind.Delete => $"HKLM\\{SubKey}:{ValueName} (deleted)",
+        _ =>$"HKLM\\{SubKey}:{ValueName}=[{string.Join(",", MultiValue ?? Array.Empty<string>())}]",
     };
 }
 
@@ -171,6 +180,14 @@ public static class GenericWriteShape
             return;
         }
         var type = Str(w, "valueType") ?? "";
+        if (type == "delete")
+        {
+            // Sin `value`: no hay nada que escribir. Si el payload lo trae, se
+            // ignora — un borrado no puede convertirse en escritura por un
+            // campo de más.
+            out_.Registry.Add(new RegistryWriteSpec { SubKey = subKey, ValueName = valueName, Kind = GenericValueKind.Delete });
+            return;
+        }
         if (!w.TryGetProperty("value", out var v))
         {
             out_.Rejected.Add($"value missing for {subKey}:{valueName}");
@@ -280,6 +297,9 @@ public static class GenericWriteShape
     /// <summary>Compara lo leído del registro con lo pedido, con la normalización de las sondas.</summary>
     public static bool RegistryValueMatches(RegistryWriteSpec spec, object? normalized)
     {
+        // Un borrado se cumple cuando el valor NO está. Tiene que ir antes del
+        // `null → false` de abajo, que para todo lo demás es lo correcto.
+        if (spec.Kind == GenericValueKind.Delete) return normalized is null;
         if (normalized is null) return false;
         switch (spec.Kind)
         {
