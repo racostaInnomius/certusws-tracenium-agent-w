@@ -20,7 +20,18 @@ public static class SoftwareInventory
             apps.AddRange(ReadUninstallRegistry(RegistryHive.LocalMachine, RegistryView.Registry32));
             apps.AddRange(ReadUninstallRegistry(RegistryHive.CurrentUser, RegistryView.Registry64));
             apps.AddRange(ReadUninstallRegistry(RegistryHive.CurrentUser, RegistryView.Registry32));
-            Console.WriteLine($"[PrivSvc][SoftwareInventory] Registry inventory collected. Items={apps.Count}");
+
+            // ⚠️ HKCU de arriba es el de LocalSystem, NO el de las personas: el
+            // PrivSvc corre como SYSTEM. Todo lo instalado por usuario —Chrome
+            // per-user, Zoom, Teams, VS Code— era invisible, y la vista de
+            // navegadores infracontaba sin decirlo. Mismo defecto y mismo
+            // arreglo que las impresoras de red: HKEY_USERS\<SID> de cada perfil
+            // con sesión. Un perfil sin sesión no está cargado y no se carga
+            // (bloquearía el NTUSER.DAT al propio usuario), así que sus apps
+            // siguen sin verse: se sabe y es la verdad.
+            var perUser = ReadLoadedUserProfiles();
+            apps.AddRange(perUser);
+            Console.WriteLine($"[PrivSvc][SoftwareInventory] Registry inventory collected. Items={apps.Count} perUser={perUser.Count}");
 
             // AppX (Store) via PowerShell (pragmatic v1)
             if (includeStoreApps)
@@ -87,9 +98,49 @@ public static class SoftwareInventory
 
     private static IEnumerable<object> ReadUninstallRegistry(RegistryHive hive, RegistryView view)
     {
-        var list = new List<object>();
         using var baseKey = RegistryKey.OpenBaseKey(hive, view);
         using var uninstall = baseKey.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall");
+        return ReadUninstallKey(uninstall, subName => UninstallIdentity.BuildKeyPath(
+            hive == RegistryHive.LocalMachine,
+            view == RegistryView.Registry32,
+            subName));
+    }
+
+    /// <summary>
+    /// Las apps instaladas por usuario, de cada perfil con sesión.
+    /// Un perfil que falla no tumba a los demás ni al inventario.
+    /// </summary>
+    private static List<object> ReadLoadedUserProfiles()
+    {
+        var list = new List<object>();
+        try
+        {
+            using var users = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Registry64);
+            foreach (var sid in users.GetSubKeyNames())
+            {
+                // Sólo personas: fuera SYSTEM/servicios, .DEFAULT y los _Classes.
+                if (!UserRegistryProbeShape.IsUserProfileHive(sid)) continue;
+                try
+                {
+                    using var uninstall = users.OpenSubKey(sid + @"\Software\Microsoft\Windows\CurrentVersion\Uninstall");
+                    list.AddRange(ReadUninstallKey(uninstall, subName => UninstallIdentity.BuildUserKeyPath(sid, subName)));
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[PrivSvc][SoftwareInventory] user hive {sid} unreadable: {ex.GetType().Name}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[PrivSvc][SoftwareInventory] HKEY_USERS unreadable: {ex.GetType().Name}");
+        }
+        return list;
+    }
+
+    private static List<object> ReadUninstallKey(RegistryKey? uninstall, Func<string, string> keyPathFor)
+    {
+        var list = new List<object>();
         if (uninstall == null) return list;
 
         foreach (var subName in uninstall.GetSubKeyNames())
@@ -179,10 +230,7 @@ public static class SoftwareInventory
                 // entrada de HKCU desde LocalSystem es otra operación (y a
                 // menudo imposible), así que quien decida tiene que poder verlo
                 // sin adivinar.
-                ["uninstallKeyPath"] = UninstallIdentity.BuildKeyPath(
-                    hive == RegistryHive.LocalMachine,
-                    view == RegistryView.Registry32,
-                    subName)
+                ["uninstallKeyPath"] = keyPathFor(subName)
             });
         }
 

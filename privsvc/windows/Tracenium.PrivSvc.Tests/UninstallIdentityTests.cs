@@ -32,6 +32,17 @@ public class UninstallIdentityTests
     }
 
     [Fact]
+    public void La_ruta_de_una_app_por_usuario_lleva_HKU_y_el_SID()
+    {
+        // El backend se niega a desinstalar lo que empieza por HKU\: el PrivSvc
+        // corre como SYSTEM y un desinstalador de usuario no sabe de quién es
+        // el perfil. Si el prefijo cambiara, esa guarda dejaría de ver la fila.
+        Assert.Equal(
+            @"HKU\S-1-5-21-1111111111-2222222222-3333333333-1001\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Google Chrome",
+            UninstallIdentity.BuildUserKeyPath("S-1-5-21-1111111111-2222222222-3333333333-1001", "Google Chrome"));
+    }
+
+    [Fact]
     public void La_ruta_de_HKLM_en_64_bits_no_lleva_WOW6432Node()
     {
         Assert.Equal(

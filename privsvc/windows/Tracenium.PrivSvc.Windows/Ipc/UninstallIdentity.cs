@@ -55,4 +55,20 @@ public static class UninstallIdentity
         var wow = wow6432 ? @"WOW6432Node\" : "";
         return $@"{root}\SOFTWARE\{wow}Microsoft\Windows\CurrentVersion\Uninstall\{subName}";
     }
+
+    /// <summary>
+    /// Ruta de una app instalada POR USUARIO: <c>HKU\&lt;SID&gt;\...</c>.
+    ///
+    /// ⚠️ El SID va en la ruta a propósito, y no como campo aparte: la lista de
+    /// campos del inventario se copia a mano en tres sitios del lado TypeScript
+    /// y un campo nuevo se pierde por el camino (le pasó a `uptimeSeconds`, a
+    /// `antivirus.products` y a la propia identidad de desinstalación). La ruta
+    /// ya viaja entera hasta el backend.
+    ///
+    /// Y es lo que permite al backend negarse a desinstalarla: el PrivSvc corre
+    /// como SYSTEM, y un desinstalador de usuario lanzado así no sabe de quién
+    /// es el perfil.
+    /// </summary>
+    public static string BuildUserKeyPath(string sid, string subName) =>
+        $@"HKU\{sid}\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{subName}";
 }
