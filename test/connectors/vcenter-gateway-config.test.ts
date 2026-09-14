@@ -194,3 +194,12 @@ describe("snapshot tuning is bounded on both ends", () => {
     expect(s.quiesce).toBe(true);
   });
 });
+
+describe("readCertificates — Crypto Discovery's use of the gateway (2026-09-14)", () => {
+  const base = { vcenter: { url: "https://10.130.130.3", tlsThumbprintSha256: "a".repeat(64) } };
+  it("is OFF unless the block says true — a snapshot-only gateway stays that way", () => {
+    expect(parseGatewayConfig(base)!.readCertificates).toBe(false);
+    expect(parseGatewayConfig({ ...base, readCertificates: "yes" })!.readCertificates).toBe(false);
+    expect(parseGatewayConfig({ ...base, readCertificates: true })!.readCertificates).toBe(true);
+  });
+});

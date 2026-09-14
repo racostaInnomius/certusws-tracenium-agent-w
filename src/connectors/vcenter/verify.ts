@@ -30,12 +30,36 @@ export type FailureClass =
   | "empty_scope"
   | "unknown";
 
-/** Exactly the privileges the connector needs — nothing more. */
+/** Exactly the privileges the SNAPSHOT use needs — nothing more. */
 export const REQUIRED_PRIVILEGES = [
   "VirtualMachine.State.CreateSnapshot",
   "VirtualMachine.State.RemoveSnapshot",
   "VirtualMachine.State.RevertToSnapshot",
 ] as const;
+
+/**
+ * What the gateway is USED for (2026-09-14). Patch Management snapshots VMs;
+ * Crypto Discovery reads the vCenter and ESXi certificates, which only needs
+ * to see the inventory. The privilege rung is judged PER USE, so a tenant that
+ * only reads certificates provisions a read-only account and is not told its
+ * gateway "failed" for snapshot privileges it never asked for.
+ */
+export type GatewayUse = "snapshots" | "certificates";
+
+export const CERTIFICATE_READ_PRIVILEGES = ["System.View"] as const;
+
+export const USE_PRIVILEGES: Record<GatewayUse, readonly string[]> = {
+  snapshots: REQUIRED_PRIVILEGES,
+  certificates: CERTIFICATE_READ_PRIVILEGES,
+};
+
+export interface UseVerdict {
+  /** Whether this gateway is expected to serve that use right now. */
+  wanted: boolean;
+  /** Every privilege the use needs is granted (unadvertised ids don't count against it). */
+  ok: boolean;
+  missing: string[];
+}
 
 export interface PrivilegeCheck {
   priv: string;
@@ -70,6 +94,8 @@ export interface VerifyReport {
   retryable: boolean;
   remediation: string | null;
   verifiedAtUtc: string;
+  /** Per-use verdict from the privilege rung; absent when the ladder broke before it. */
+  uses?: Record<GatewayUse, UseVerdict>;
 }
 
 export interface VerifyConfig {
@@ -77,6 +103,12 @@ export interface VerifyConfig {
   port: number;
   /** SHA-256 of the vCenter cert, any separator/case. Empty = no pinning. */
   tlsThumbprintSha256?: string;
+  /**
+   * Which uses this gateway must satisfy. Default: snapshots only, the
+   * behaviour every gateway had before uses existed. A wanted use with missing
+   * privileges fails the rung; an unwanted one is reported, not judged.
+   */
+  uses?: Partial<Record<GatewayUse, boolean>>;
   /** Entity the privilege check is evaluated against (root folder by default). */
   entityMoref?: string;
   entityType?: string;
@@ -138,7 +170,7 @@ const REMEDIATION: Record<FailureClass, string> = {
   account_locked:
     "The service account is locked in vSphere. Unlock it and wait out the lockout window before retrying.",
   insufficient_privileges:
-    "Grant the service account a role holding the missing snapshot privileges on the target folder or datacenter, with propagation enabled.",
+    "Grant the service account a role holding the missing privileges on the target folder or datacenter, with propagation enabled. Snapshots need the three VirtualMachine.State.*Snapshot privileges; reading certificates needs System.View only.",
   empty_scope:
     "The service account cannot see any VM in the configured scope. Check folder selection and that permissions propagate to child objects.",
   unknown: "Unexpected vCenter error. See the stage detail and the gateway log.",
@@ -160,6 +192,8 @@ function fail(
  */
 export async function runVerification(deps: VerifyDeps, cfg: VerifyConfig): Promise<VerifyReport> {
   const stages: VerifyStageResult[] = [];
+  // Filled by the privilege rung; travels in the report whatever happens after.
+  const report: { uses?: Record<GatewayUse, UseVerdict> } = {};
   const finish = (): VerifyReport => {
     const bad = stages.find((s) => !s.ok);
     const classify = (bad?.classify as FailureClass) ?? null;
@@ -171,6 +205,7 @@ export async function runVerification(deps: VerifyDeps, cfg: VerifyConfig): Prom
       retryable: isRetryable(classify),
       remediation: bad?.remediation ?? null,
       verifiedAtUtc: deps.now().toISOString(),
+      ...(report.uses ? { uses: report.uses } : {}),
     };
   };
 
@@ -225,20 +260,29 @@ export async function runVerification(deps: VerifyDeps, cfg: VerifyConfig): Prom
   }
 
   try {
-    // 4 — privileges, non-destructively.
+    // 4 — privileges, non-destructively, judged PER USE.
     //     Unknown privilege ids make vCenter throw "Authorize Exception" and
     //     poison the whole batch, which would report "no privileges" for a
     //     perfectly good credential. So ask the server what it supports first
     //     and only query ids it recognises.
     try {
+      const wanted: Record<GatewayUse, boolean> = {
+        snapshots: cfg.uses?.snapshots ?? true,
+        certificates: cfg.uses?.certificates ?? false,
+      };
+      // Nothing wanted is a caller mistake, not a free pass: judge snapshots.
+      if (!wanted.snapshots && !wanted.certificates) wanted.snapshots = true;
+
+      const wantedPrivs = (Object.keys(USE_PRIVILEGES) as GatewayUse[]).flatMap((u) => [...USE_PRIVILEGES[u]]);
+      const allPrivs = [...new Set(wantedPrivs)];
       const supported = new Set(await deps.listPrivileges());
-      const askable = REQUIRED_PRIVILEGES.filter((p) => supported.has(p));
+      const askable = allPrivs.filter((p) => supported.has(p));
       const entity = { moref: cfg.entityMoref ?? "group-d1", type: cfg.entityType ?? "Folder" };
       const granted = askable.length
         ? await deps.checkPrivileges(sessionKey, askable, entity)
         : [];
 
-      const checks: PrivilegeCheck[] = REQUIRED_PRIVILEGES.map((priv) => {
+      const checks: PrivilegeCheck[] = allPrivs.map((priv) => {
         const idx = askable.indexOf(priv);
         return {
           priv,
@@ -246,8 +290,15 @@ export async function runVerification(deps: VerifyDeps, cfg: VerifyConfig): Prom
           granted: idx >= 0 ? granted[idx] === true : false,
         };
       });
+      const byPriv = new Map(checks.map((c) => [c.priv, c]));
+      const uses = {} as Record<GatewayUse, UseVerdict>;
+      for (const use of Object.keys(USE_PRIVILEGES) as GatewayUse[]) {
+        const missing = USE_PRIVILEGES[use].filter((p) => byPriv.get(p)?.supported && !byPriv.get(p)?.granted);
+        uses[use] = { wanted: wanted[use], ok: missing.length === 0, missing };
+      }
+      report.uses = uses;
 
-      const missing = checks.filter((c) => c.supported && !c.granted).map((c) => c.priv);
+      const missing = [...new Set((Object.keys(uses) as GatewayUse[]).filter((u) => uses[u].wanted).flatMap((u) => uses[u].missing))];
       const unsupported = checks.filter((c) => !c.supported).map((c) => c.priv);
 
       if (missing.length) {
@@ -258,13 +309,14 @@ export async function runVerification(deps: VerifyDeps, cfg: VerifyConfig): Prom
         );
         return finish();
       }
+      const served = (Object.keys(uses) as GatewayUse[]).filter((u) => uses[u].wanted);
       stages.push({
         stage: "privileges",
         ok: true,
         warn: unsupported.length > 0,
         detail: unsupported.length
-          ? `granted; ${unsupported.length} privilege id(s) not advertised by this vCenter build: ${unsupported.join(", ")}`
-          : `all ${checks.length} required privileges granted`,
+          ? `granted for ${served.join(" and ")}; ${unsupported.length} privilege id(s) not advertised by this vCenter build: ${unsupported.join(", ")}`
+          : `all privileges granted for ${served.join(" and ")}`,
         privileges: checks,
       });
     } catch (e: any) {

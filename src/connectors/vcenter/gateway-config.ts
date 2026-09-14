@@ -67,6 +67,12 @@ export interface GatewayConfig {
   vcenter: VCenterEndpointConfig;
   scope: VCenterScopeConfig;
   snapshot: VCenterSnapshotConfig;
+  /**
+   * Crypto Discovery reads the vCenter machine certificate and each ESXi host
+   * certificate through this gateway (2026-09-14). Off unless the policy says
+   * so: a gateway registered from Patch Management stays a snapshot broker.
+   */
+  readCertificates: boolean;
 }
 
 export const SNAPSHOT_DEFAULTS: VCenterSnapshotConfig = {
@@ -162,7 +168,12 @@ export function parseGatewayConfig(rawGateway: unknown): GatewayConfig | null {
   if (!raw || typeof raw !== "object") return null;
   const vcenter = parseEndpoint(raw.vcenter);
   if (!vcenter) return null;
-  return { vcenter, scope: parseScope(raw.scope), snapshot: parseSnapshot(raw.snapshot) };
+  return {
+    vcenter,
+    scope: parseScope(raw.scope),
+    snapshot: parseSnapshot(raw.snapshot),
+    readCertificates: asBool(raw.readCertificates, false),
+  };
 }
 
 /** True when this device is configured to act as an Infrastructure Gateway. */

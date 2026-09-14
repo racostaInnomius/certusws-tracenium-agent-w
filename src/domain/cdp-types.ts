@@ -225,6 +225,15 @@ export type CdpNamespace = {
   adcs?: CdpAdcsReport;
 
   /**
+   * vCenter por el gateway de infraestructura (2026-09-14). Solo lo manda
+   * el agente del gateway con `gateway.readCertificates`: el certificado
+   * maquina de vCenter y el de cada ESXi, leidos de lo que cada uno sirve
+   * en 443. No estan en este equipo: el control plane los proyecta a
+   * activos con origen `vcenter`. Lista completa; viaja cuando cambia.
+   */
+  vcenter?: CdpVcenterReport;
+
+  /**
    * Claves de host SSH leidas de disco (§5.2). No son X.509: el control
    * plane las proyecta a activos con origen `ssh`. Solo viaja cuando
    * cambia (digest en cdp_meta) o en un baseline completo.
@@ -237,6 +246,33 @@ export type CdpNamespace = {
    * por si solos; el operador los promueve desde la policy.
    */
   probeCandidates?: CdpProbeCandidate[];
+};
+
+/** Un certificado leido de vCenter o de un ESXi: los campos del item de
+ *  certificado sin lo que solo tiene sentido EN un equipo (id, store, source). */
+export type CdpVcenterCert = Omit<CdpCertItem, "id" | "store" | "source" | "hasPrivateKey">;
+
+export type CdpVcenterHost = {
+  /** Como lo conoce vCenter: FQDN o IP con el que se anadio. */
+  name: string;
+  moref: string;
+  connectionState: string;
+  certificate?: CdpVcenterCert;
+  /** Por que no se pudo leer (no alcanzable en 443, sin certificado...). */
+  error?: string;
+};
+
+export type CdpVcenterReport = {
+  /** Origen de vCenter, p. ej. https://vcenter.corp.example:443. */
+  url: string;
+  host: string;
+  readAt: string;
+  /** El certificado que vCenter sirve en 443 (el fijado por huella). */
+  machine?: CdpVcenterCert;
+  hosts: CdpVcenterHost[];
+  /** false cuando algun host no se pudo leer: el control plane no retira nada por ausencia. */
+  complete: boolean;
+  errors?: string[];
 };
 
 export type CdpSshHostKeys = {

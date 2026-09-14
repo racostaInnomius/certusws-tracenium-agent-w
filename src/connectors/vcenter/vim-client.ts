@@ -29,9 +29,11 @@ import {
   parsePropertyValue,
   parseSnapshotTree,
   parseVmSummaries,
+  parseHostSummaries,
   parseDatastoreSummaries,
   parseVmDatastoreRefs,
   type DatastoreRow,
+  type HostSummary,
   type SnapshotNode,
   type VmSummary,
 } from "./vim-parse";
@@ -74,6 +76,29 @@ export interface ServiceContent {
 
 const SOAP_ACTION = '"urn:vim25/8.0.0.0"';
 
+/**
+ * The leaf certificate a TLS server presents, DER. Chain validation is off on
+ * purpose: VMCA-signed certificates never validate against system CAs, and
+ * this is exactly the observation we want — what the server serves, trusted
+ * or not. Used for the vCenter pin and for reading each ESXi host's
+ * certificate (Crypto Discovery, 2026-09-14).
+ */
+export function fetchPeerCertificateDer(host: string, port: number, timeoutMs = 15_000): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const sock = tls.connect({ host, port, rejectUnauthorized: false, servername: /^[\d.]+$|:/.test(host) ? undefined : host }, () => {
+      const cert = sock.getPeerCertificate();
+      sock.end();
+      if (!cert?.raw) return reject(new Error(`${host}:${port} presented no certificate`));
+      resolve(Buffer.from(cert.raw));
+    });
+    sock.on("error", reject);
+    sock.setTimeout(timeoutMs, () => {
+      sock.destroy();
+      reject(new Error("TLS connect timeout"));
+    });
+  });
+}
+
 export class VimClient {
   private cookie: string | null = null;
   private content: ServiceContent | null = null;
@@ -83,24 +108,15 @@ export class VimClient {
     this.timeout = opts.requestTimeoutMs ?? 60_000;
   }
 
+  /** The leaf certificate vCenter presents on its TLS port, DER. */
+  async fetchServerCertificateDer(): Promise<Buffer> {
+    return fetchPeerCertificateDer(this.opts.host, this.opts.port);
+  }
+
   /** SHA-256 of the presented leaf certificate, hex lowercase. */
   async fetchServerFingerprint(): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const sock = tls.connect(
-        { host: this.opts.host, port: this.opts.port, rejectUnauthorized: false },
-        () => {
-          const cert = sock.getPeerCertificate();
-          sock.end();
-          if (!cert?.raw) return reject(new Error("vCenter presented no certificate"));
-          resolve(crypto.createHash("sha256").update(cert.raw).digest("hex"));
-        }
-      );
-      sock.on("error", reject);
-      sock.setTimeout(15_000, () => {
-        sock.destroy();
-        reject(new Error("TLS connect timeout"));
-      });
-    });
+    const der = await this.fetchServerCertificateDer();
+    return crypto.createHash("sha256").update(der).digest("hex");
   }
 
   /** Verify the pin. Throws PinMismatchError. Call before authenticating. */
@@ -284,6 +300,32 @@ export class VimClient {
 
   async countVms(): Promise<number> {
     return (await this.listVms()).length;
+  }
+
+  /**
+   * Every ESXi host this session can see, with the name vCenter knows it by.
+   * Crypto Discovery reads each host's TLS certificate from the host itself
+   * (what it actually serves on 443), so this is the inventory that drives
+   * that read — one round trip, like listVms.
+   */
+  async listHosts(): Promise<HostSummary[]> {
+    const cv = await this.call(
+      `<urn:CreateContainerView><urn:_this type="ViewManager">${this.svc.viewManager}</urn:_this>` +
+        `<urn:container type="Folder">${this.svc.rootFolder}</urn:container>` +
+        `<urn:type>HostSystem</urn:type><urn:recursive>true</urn:recursive></urn:CreateContainerView>`
+    );
+    const view = morefOfType(cv, "ContainerView");
+    if (!view) return [];
+    const xml = await this.call(
+      `<urn:RetrieveProperties><urn:_this type="PropertyCollector">${this.svc.propertyCollector}</urn:_this><urn:specSet>` +
+        `<urn:propSet><urn:type>HostSystem</urn:type><urn:pathSet>name</urn:pathSet>` +
+        `<urn:pathSet>runtime.connectionState</urn:pathSet></urn:propSet>` +
+        `<urn:objectSet><urn:obj type="ContainerView">${view}</urn:obj><urn:skip>true</urn:skip>` +
+        `<urn:selectSet xsi:type="urn:TraversalSpec"><urn:name>hostView</urn:name>` +
+        `<urn:type>ContainerView</urn:type><urn:path>view</urn:path><urn:skip>false</urn:skip></urn:selectSet>` +
+        `</urn:objectSet></urn:specSet></urn:RetrieveProperties>`
+    );
+    return parseHostSummaries(xml);
   }
 
   /**

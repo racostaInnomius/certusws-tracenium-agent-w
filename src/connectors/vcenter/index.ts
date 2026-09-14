@@ -60,6 +60,13 @@ export interface ConnectorDeps {
   /** Delete a stored credential. Idempotent: a missing ref is success. */
   removeCredential?(ref: string): Promise<void>;
   makeClient(cfg: GatewayConfig): VimClient;
+  /**
+   * Whether a fleet plugin is enabled in this device's policy. The verify
+   * ladder judges privileges per USE: snapshots are wanted when Patch
+   * Management (pmp) is on, certificates when the gateway block says so.
+   * Optional: without it snapshots are assumed wanted, as before.
+   */
+  pluginEnabled?(name: string): boolean;
   now(): Date;
   logger?: { info?: (m: string, x?: any) => void; warn?: (m: string, x?: any) => void; error?: (m: string, x?: any) => void };
 }
@@ -78,6 +85,7 @@ export interface JobResult {
 export function makeConnectorDeps(ctx: any): ConnectorDeps {
   return {
     gatewayConfig: () => ctx.policyRuntime?.gatewayConfig?.() ?? null,
+    pluginEnabled: (name: string) => ctx.policyRuntime?.pluginEnabled?.(name) === true,
     getCredential: async (ref: string) => {
       const res = await ctx.priv.call({
         v: 1,
@@ -132,6 +140,18 @@ export function makeConnectorDeps(ctx: any): ConnectorDeps {
       }),
     now: () => new Date(),
     logger: ctx.logger,
+  };
+}
+
+/**
+ * What this gateway is used for, from the policy: snapshots when Patch
+ * Management is enabled, certificates when the gateway block asks for them.
+ * Without a plugin accessor (older wiring) snapshots are assumed, as before.
+ */
+export function gatewayUses(deps: ConnectorDeps, cfg: GatewayConfig): { snapshots: boolean; certificates: boolean } {
+  return {
+    snapshots: deps.pluginEnabled ? deps.pluginEnabled("pmp") : true,
+    certificates: cfg.readCertificates === true,
   };
 }
 
@@ -203,6 +223,7 @@ export async function runVcenterVerify(deps: ConnectorDeps): Promise<JobResult> 
         host: cfg.vcenter.host,
         port: cfg.vcenter.port,
         tlsThumbprintSha256: cfg.vcenter.tlsThumbprintSha256,
+        uses: gatewayUses(deps, cfg),
       }
     );
   } finally {

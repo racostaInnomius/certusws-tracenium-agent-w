@@ -219,3 +219,40 @@ describe("the report is safe to send to a backend that must not learn the secret
     expect(JSON.parse(Buffer.from(encoded, "base64url").toString()).ok).toBe(true);
   });
 });
+
+describe("uses — the privilege rung is judged per use (2026-09-14)", () => {
+  const readOnly = () => deps({ checkPrivileges: async (_s, ids) => ids.map((p) => p === "System.View") });
+
+  it("⭐ a certificates-only gateway passes with a read-only account, and the report says what each use gets", async () => {
+    const r = await runVerification(readOnly(), { ...CFG, uses: { snapshots: false, certificates: true } });
+    expect(r.ok).toBe(true);
+    expect(r.uses).toEqual({
+      snapshots: { wanted: false, ok: false, missing: [...REQUIRED_PRIVILEGES] },
+      certificates: { wanted: true, ok: true, missing: [] },
+    });
+    expect(r.stages.find((s) => s.stage === "privileges")!.detail).toMatch(/granted for certificates/);
+  });
+
+  it("the same account FAILS when snapshots are wanted too, naming only the snapshot privileges", async () => {
+    const r = await runVerification(readOnly(), { ...CFG, uses: { snapshots: true, certificates: true } });
+    expect(r.ok).toBe(false);
+    expect(r.classify).toBe("insufficient_privileges");
+    expect(r.stages.at(-1)!.error).not.toContain("System.View");
+    expect(r.uses!.certificates.ok).toBe(true);
+    expect(r.uses!.snapshots.ok).toBe(false);
+  });
+
+  it("without `uses` snapshots are wanted, as before; wanting nothing also judges snapshots", async () => {
+    expect((await runVerification(readOnly(), CFG)).ok).toBe(false);
+    expect((await runVerification(readOnly(), { ...CFG, uses: { snapshots: false, certificates: false } })).ok).toBe(false);
+    const full = await runVerification(deps(), { ...CFG, uses: { snapshots: true, certificates: true } });
+    expect(full.ok).toBe(true);
+    expect(full.uses!.snapshots).toEqual({ wanted: true, ok: true, missing: [] });
+  });
+
+  it("a vCenter build that does not advertise System.View does not count it as missing", async () => {
+    const r = await runVerification(deps({ listPrivileges: async () => [...REQUIRED_PRIVILEGES] }), { ...CFG, uses: { snapshots: true, certificates: true } });
+    expect(r.ok).toBe(true);
+    expect(r.uses!.certificates).toEqual({ wanted: true, ok: true, missing: [] });
+  });
+});

@@ -117,6 +117,33 @@ export interface VmSummary {
 }
 
 /** VM rows from a RetrieveProperties response over a ContainerView. */
+export interface HostSummary {
+  moref: string;
+  /** As shown in vCenter: the FQDN or IP the host was added with. */
+  name: string;
+  /** runtime.connectionState: connected | disconnected | notResponding. */
+  connectionState: string;
+}
+
+/** HostSystem rows from a RetrieveProperties over a container view. */
+export function parseHostSummaries(xml: string): HostSummary[] {
+  const out: HostSummary[] = [];
+  for (const block of matchAll(xml, /<returnval[^>]*>([\s\S]*?)<\/returnval>/g)) {
+    const b = block[1];
+    const moref = (b.match(/<obj[^>]*type="HostSystem"[^>]*>([^<]+)<\/obj>/) || [])[1];
+    if (!moref) continue;
+    const row: HostSummary = { moref, name: "", connectionState: "" };
+    for (const ps of matchAll(b, /<propSet>([\s\S]*?)<\/propSet>/g)) {
+      const name = (ps[1].match(/<name>([\s\S]*?)<\/name>/) || [])[1];
+      const val = decodeXml((ps[1].match(/<val[^>]*>([\s\S]*?)<\/val>/) || [])[1] ?? "");
+      if (name === "name") row.name = val;
+      else if (name === "runtime.connectionState") row.connectionState = val;
+    }
+    out.push(row);
+  }
+  return out;
+}
+
 export function parseVmSummaries(xml: string): VmSummary[] {
   const out: VmSummary[] = [];
   for (const block of matchAll(xml, /<returnval[^>]*>([\s\S]*?)<\/returnval>/g)) {

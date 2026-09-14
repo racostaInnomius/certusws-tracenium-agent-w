@@ -174,6 +174,9 @@ export type RuntimePolicy = {
       maxConcurrent?: number;
       perVmTimeoutSec?: number;
     };
+    /** Crypto Discovery reads vCenter and ESXi certificates through this
+     *  gateway. Derived from the registry row (read_certificates). */
+    readCertificates?: boolean;
   };
   /**
    * Ajustes numéricos de Remote Control.

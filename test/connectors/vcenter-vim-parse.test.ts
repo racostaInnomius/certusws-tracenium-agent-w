@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  parseHostSummaries,
   parseSnapshotTree,
   parseCurrentSnapshot,
   parseVmSummaries,
@@ -284,5 +285,18 @@ describe("parseDatastoreSummaries", () => {
 
   it("ignores returnvals that are not datastores", () => {
     expect(parseDatastoreSummaries(`<returnval><obj type="VirtualMachine">vm-1</obj></returnval>`)).toEqual([]);
+  });
+});
+
+describe("parseHostSummaries (Crypto Discovery reads ESXi certificates, 2026-09-14)", () => {
+  it("one row per HostSystem with its name and connection state", () => {
+    const xml = `<returnval><obj type="HostSystem">host-12</obj><propSet><name>name</name><val xsi:type="xsd:string">esx01.lab</val></propSet><propSet><name>runtime.connectionState</name><val xsi:type="HostSystemConnectionState">connected</val></propSet></returnval>` +
+      `<returnval><obj type="HostSystem">host-13</obj><propSet><name>name</name><val xsi:type="xsd:string">10.130.130.21</val></propSet><propSet><name>runtime.connectionState</name><val>notResponding</val></propSet></returnval>` +
+      `<returnval><obj type="VirtualMachine">vm-1</obj><propSet><name>name</name><val>not-a-host</val></propSet></returnval>`;
+    expect(parseHostSummaries(xml)).toEqual([
+      { moref: "host-12", name: "esx01.lab", connectionState: "connected" },
+      { moref: "host-13", name: "10.130.130.21", connectionState: "notResponding" },
+    ]);
+    expect(parseHostSummaries("<returnval></returnval>")).toEqual([]);
   });
 });

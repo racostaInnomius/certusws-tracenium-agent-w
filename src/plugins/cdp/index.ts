@@ -17,6 +17,7 @@ import crypto from "crypto";
 import type { AgentContext } from "../../core/agent-context";
 import type {
   CdpAdcsReport,
+  CdpVcenterReport,
   CdpAnchorPinReport,
   CdpCertItem,
   CdpNamespace,
@@ -344,6 +345,31 @@ async function collectOnce(
     }
   }
 
+  // vCenter por el gateway (2026-09-14): solo en el equipo que es gateway
+  // y con `readCertificates` en su bloque de policy. Lista completa que
+  // viaja cuando cambia (digest en cdp_meta) o en un baseline. Fallo blando.
+  let vcenter: CdpVcenterReport | undefined;
+  let vcenterChanged = false;
+  if (ctx.policyRuntime.gatewayConfig?.()?.readCertificates === true) {
+    try {
+      const { collectVcenter } = await import("./providers/vcenter");
+      const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
+      const read = await collectVcenter(ctx);
+      if (read) {
+        // El digest ignora `readAt`: si nada cambio, no viaja por la hora.
+        const { readAt: _t, ...stable } = read;
+        const digest = crypto.createHash("sha256").update(JSON.stringify(stable)).digest("hex");
+        if (options?.full === true || readCdpMeta("vcenter_digest") !== digest) {
+          vcenter = read;
+          vcenterChanged = true;
+          writeCdpMeta("vcenter_digest", digest);
+        }
+      }
+    } catch (err: any) {
+      ctx.logger?.warn?.("CDP/vCenter: lectura fallo (no fatal)", { error: err?.message || String(err) });
+    }
+  }
+
   // ── §5.2: claves de host SSH y candidatos a objetivo de sonda ──────
   //
   // Los dos van fuera de `certificates`: no son X.509 y no deben entrar
@@ -462,6 +488,7 @@ async function collectOnce(
     ? true
     : anchorChanged ||
       adcsChanged ||
+      vcenterChanged ||
       sideChanged ||
       delta.added.length > 0 ||
       delta.removed.length > 0 ||
@@ -494,6 +521,7 @@ async function collectOnce(
     ...(anchorPin ? { anchorPin } : {}),
     ...(partial ? { partial } : {}),
     ...(adcs ? { adcs } : {}),
+    ...(vcenter ? { vcenter } : {}),
     ...(sshHostKeys ? { sshHostKeys } : {}),
     ...(probeCandidates ? { probeCandidates } : {})
   };
