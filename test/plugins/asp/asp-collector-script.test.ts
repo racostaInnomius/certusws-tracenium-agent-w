@@ -110,3 +110,82 @@ describe.skipIf(!hasPwsh)("asp-ad-collector.ps1 — con pwsh", () => {
     }
   });
 });
+
+describe.skipIf(!hasPwsh)("asp-ad-collector.ps1 — AspAceHit (qué ACE cuenta como derecho peligroso)", () => {
+  // Máscaras de ActiveDirectoryRights.
+  const R = { GenericRead: 0x20094, ReadProperty: 0x10, WriteProperty: 0x20, Self: 0x08, ReadControl: 0x20000, ExtendedRight: 0x100, GenericAll: 0xf01ff, WriteDacl: 0x40000 };
+  const DCSYNC_ALL = "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2";
+  const PRV005 = ["GenericAll", "GenericWrite", "WriteDacl", "WriteOwner", "WriteProperty"];
+  const PRV006 = ["GenericAll"];
+
+  function run(cases: Array<{ name: string; rights: number; objectType?: string; inheritOnly?: boolean; wanted: string[]; extended?: string[] }>) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "asp-ace-"));
+    try {
+      const casesPath = path.join(dir, "cases.json");
+      fs.writeFileSync(casesPath, JSON.stringify(cases));
+      const runner = path.join(dir, "run.ps1");
+      fs.writeFileSync(
+        runner,
+        [
+          `$t = $null; $e = $null`,
+          `$ast = [System.Management.Automation.Language.Parser]::ParseFile('${SCRIPT}', [ref]$t, [ref]$e)`,
+          `$fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'AspAceHit' }, $true) | Select-Object -First 1`,
+          `. ([scriptblock]::Create($fn.Extent.Text))`,
+          `$out = [ordered]@{}`,
+          `foreach ($c in (Get-Content -Raw '${casesPath}' | ConvertFrom-Json)) {`,
+          `  $ext = @{}; foreach ($g in @($c.extended)) { if ($g) { $ext[[string]$g] = $true } }`,
+          `  $type = if ($c.objectType) { [string]$c.objectType } else { '00000000-0000-0000-0000-000000000000' }`,
+          `  $out[[string]$c.name] = AspAceHit ([int]$c.rights) $type ([bool]$c.inheritOnly) ([string[]]@($c.wanted)) $ext`,
+          `}`,
+          `$out | ConvertTo-Json -Compress`
+        ].join("\n")
+      );
+      const r = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", runner], { encoding: "utf8", timeout: 60_000 });
+      expect(r.status, r.stderr).toBe(0);
+      return JSON.parse(r.stdout) as Record<string, boolean>;
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("⭐ los ACE de lectura de MSIG-DOMAIN01 no son DCSync ni escritura en AdminSDHolder (falsos positivos del 14-sep)", () => {
+    const out = run([
+      // PRV-006, raíz del dominio: los 9 trustees que salieron con la máscara parcial.
+      { name: "everyone-read", rights: R.ReadProperty, wanted: PRV006, extended: [DCSYNC_ALL] },
+      { name: "prew2k-read", rights: R.ReadProperty | R.ReadControl, wanted: PRV006, extended: [DCSYNC_ALL] },
+      { name: "key-admins-rpwp", rights: R.ReadProperty | R.WriteProperty, objectType: "5b47d60f-6090-40b2-9f37-2a4de88f3063", wanted: PRV006, extended: [DCSYNC_ALL] },
+      { name: "self", rights: R.Self, wanted: PRV006, extended: [DCSYNC_ALL] },
+      { name: "auth-users-read", rights: R.GenericRead, wanted: PRV006, extended: [DCSYNC_ALL] },
+      { name: "cloneable-dc", rights: R.ExtendedRight, objectType: "3e0f7e18-2c7a-4c10-ba82-4d926db99a3e", wanted: PRV006, extended: [DCSYNC_ALL] },
+      { name: "forest-trust-builders", rights: R.ExtendedRight, objectType: "e2a36dc9-ae17-47c3-b58b-be34c55ba633", wanted: PRV006, extended: [DCSYNC_ALL] },
+      // PRV-005, AdminSDHolder.
+      { name: "sdholder-auth-users-read", rights: R.GenericRead, wanted: PRV005 },
+      { name: "sdholder-everyone-change-password", rights: R.ExtendedRight, objectType: "ab721a53-1e2f-11d0-9819-00aa0040529b", wanted: PRV005 },
+      { name: "sdholder-waag-read", rights: R.ReadProperty, wanted: PRV005 }
+    ]);
+    expect(Object.entries(out).filter(([, hit]) => hit)).toEqual([]);
+  });
+
+  it("⭐ y los que sí lo son, cuentan", () => {
+    const out = run([
+      { name: "dcsync-get-changes-all", rights: R.ExtendedRight, objectType: DCSYNC_ALL, wanted: PRV006, extended: [DCSYNC_ALL] },
+      { name: "all-extended-rights", rights: R.ExtendedRight, wanted: PRV006, extended: [DCSYNC_ALL] },
+      { name: "generic-all", rights: R.GenericAll, wanted: PRV006, extended: [DCSYNC_ALL] },
+      { name: "sdholder-write-dacl", rights: R.WriteDacl | R.ReadControl, wanted: PRV005 },
+      { name: "sdholder-write-property", rights: R.ReadProperty | R.WriteProperty, wanted: PRV005 },
+      { name: "sdholder-generic-all", rights: R.GenericAll, wanted: PRV005 }
+    ]);
+    expect(out).toEqual({
+      "dcsync-get-changes-all": true,
+      "all-extended-rights": true,
+      "generic-all": true,
+      "sdholder-write-dacl": true,
+      "sdholder-write-property": true,
+      "sdholder-generic-all": true
+    });
+  });
+
+  it("un ACE InheritOnly no aplica al objeto, aunque sea GenericAll", () => {
+    expect(run([{ name: "inherit-only", rights: R.GenericAll, inheritOnly: true, wanted: PRV006 }])).toEqual({ "inherit-only": false });
+  });
+});

@@ -226,6 +226,33 @@ function AspGroupMembers($query, $ctx, [int]$limit) {
   return [ordered]@{ found = $true; count = $all.Count; sample = @($all | Select-Object -First $limit); truncated = ($all.Count -gt $limit) }
 }
 
+# ¿Concede este ACE alguno de los derechos pedidos sobre ESTE objeto?
+# Smoke en MSIG-DOMAIN01 (14-sep): con `($rights -band $wanted) -ne 0` salían
+# GenericRead, ReadProperty y Self como trustees de DCSync. GenericAll (0xF01FF)
+# y GenericWrite (0x20028) son MÁSCARAS que incluyen bits de lectura: el ACE
+# tiene que llevar la máscara ENTERA. Un ACE InheritOnly no aplica al objeto.
+# Enteros y no el enum: se prueba con pwsh fuera de Windows.
+function AspAceHit([int]$rights, [string]$objectType, [bool]$inheritOnly, [string[]]$wanted, $extended) {
+  if ($inheritOnly) { return $false }
+  foreach ($name in $wanted) {
+    $mask = switch ($name) {
+      'GenericAll' { 0xF01FF }
+      'GenericWrite' { 0x20028 }
+      'WriteDacl' { 0x40000 }
+      'WriteOwner' { 0x80000 }
+      'WriteProperty' { 0x20 }
+      'ExtendedRight' { 0x100 }
+      default { throw "unknown right: $name" }
+    }
+    if (($rights -band $mask) -eq $mask) { return $true }
+  }
+  if ($extended.Count -gt 0 -and ($rights -band 0x100) -ne 0) {
+    # Un ExtendedRight sin ObjectType concede TODOS los derechos extendidos.
+    $type = $objectType.ToLowerInvariant()
+    return ($type -eq '00000000-0000-0000-0000-000000000000') -or $extended.ContainsKey($type)
+  }
+  return $false
+}
 function AspAcl($query, $ctx, [int]$limit) {
   # Primera corrida real (14-sep, MSIG-DOMAIN01): leer el DACL con
   # $entry.Options / $entry.ObjectSecurity falló con 0x80131501. PowerShell
@@ -249,30 +276,22 @@ function AspAcl($query, $ctx, [int]$limit) {
 
   $exclude = @{}
   foreach ($s in @(AspProp $query 'excludeSids')) { if ($s) { $exclude[(AspExpand ([string]$s) $ctx)] = $true } }
-  $wanted = 0
-  foreach ($right in @($query.rights)) { $wanted = $wanted -bor [int][System.DirectoryServices.ActiveDirectoryRights]([string]$right) }
-  $extendedRight = [int][System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight
+  $wanted = @($query.rights | ForEach-Object { [string]$_ })
   $extended = @{}
   foreach ($guid in @(AspProp $query 'extendedRights')) { if ($guid) { $extended[([string]$guid).ToLowerInvariant()] = $true } }
-  $anyGuid = [string][guid]::Empty
+  $inheritOnly = [int][System.Security.AccessControl.PropagationFlags]::InheritOnly
 
   $trustees = @{}
   foreach ($ace in $sd.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
     if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
     $sid = [string]$ace.IdentityReference.Value
     if ($exclude.ContainsKey($sid)) { continue }
-    $rights = [int]$ace.ActiveDirectoryRights
-    $hit = (($rights -band $wanted) -ne 0)
-    if (-not $hit -and $extended.Count -gt 0 -and (($rights -band $extendedRight) -ne 0)) {
-      # Un ExtendedRight sin ObjectType concede TODOS los derechos extendidos.
-      $objectType = ([string]$ace.ObjectType).ToLowerInvariant()
-      $hit = ($objectType -eq $anyGuid) -or $extended.ContainsKey($objectType)
-    }
+    $hit = AspAceHit ([int]$ace.ActiveDirectoryRights) ([string]$ace.ObjectType) ((([int]$ace.PropagationFlags) -band $inheritOnly) -ne 0) $wanted $extended
     if (-not $hit) { continue }
     if (-not $trustees.ContainsKey($sid)) {
       $name = $null
       try { $name = $ace.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value } catch { $name = $null }
-      $trustees[$sid] = [ordered]@{ sid = $sid; name = $name; rights = [string]$ace.ActiveDirectoryRights }
+      $trustees[$sid] = [ordered]@{ sid = $sid; name = $name; rights = [string]$ace.ActiveDirectoryRights; objectType = [string]$ace.ObjectType }
     }
   }
   $all = @($trustees.Values)
