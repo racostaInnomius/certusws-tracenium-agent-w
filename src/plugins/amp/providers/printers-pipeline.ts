@@ -98,7 +98,9 @@ export function buildPrinterInventoryWithBaseline(
     count: deltaResult.currentCount,
     items: undefined,
     delta: deltaResult.delta,
-    hasChanges: true
+    hasChanges: true,
+    // ⚠️ Los tres caminos llevan los alcances; éste los perdía.
+    ...scopes
   };
 }
 

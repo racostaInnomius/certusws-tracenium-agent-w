@@ -102,3 +102,37 @@ describe("medir y no encontrar nada SÍ se graba", () => {
     expect(r.machineScope).toBeUndefined();
   });
 });
+
+describe("los alcances viajan en los TRES caminos de salida", () => {
+  // El camino "hubo cambios" devolvía el literal sin `...scopes`: el ciclo en
+  // que una cola aparece o desaparece —justo el que el scheduler SÍ envía—
+  // llegaba al backend sin decir si la lectura de usuario fue completa.
+  it("ciclo con delta (baseline previa + cambio) conserva machineScope/userScope", () => {
+    loadPrinterBaseline.mockReturnValue([impresora("HP")]);
+    const r = buildPrinterInventoryWithBaseline([impresora("HP"), impresora("\\\\SRV\\Cola")], {
+      machineScope: "timeout",
+      userScope: "collected"
+    });
+    expect(r.hasChanges).toBe(true);
+    expect(r.delta).toBeTruthy();
+    expect(r.machineScope).toBe("timeout");
+    expect(r.userScope).toBe("collected");
+  });
+
+  it("ciclo sin cambios conserva machineScope/userScope", () => {
+    loadPrinterBaseline.mockReturnValue([impresora("HP")]);
+    const r = buildPrinterInventoryWithBaseline([impresora("HP")], {
+      machineScope: "collected",
+      userScope: "no_user_hive"
+    });
+    expect(r.hasChanges).toBe(false);
+    expect(r.userScope).toBe("no_user_hive");
+  });
+
+  it("ciclo con delta sin alcances (macOS/Linux) no los inventa", () => {
+    loadPrinterBaseline.mockReturnValue([impresora("HP")]);
+    const r = buildPrinterInventoryWithBaseline([impresora("HP"), impresora("Cups")]);
+    expect(r.hasChanges).toBe(true);
+    expect("machineScope" in r).toBe(false);
+  });
+});
