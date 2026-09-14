@@ -644,7 +644,8 @@ export async function buildDeviceFacts(
           hasChanges: ampIn.browserExtensions.hasChanges ?? false,
           scope: ampIn.browserExtensions.scope,
           profiles: ampIn.browserExtensions.profiles ?? 0,
-          profileErrors: ampIn.browserExtensions.profileErrors ?? 0
+          profileErrors: ampIn.browserExtensions.profileErrors ?? 0,
+          ...(Array.isArray(ampIn.browserExtensions.policy) ? { policy: ampIn.browserExtensions.policy } : {})
         }
       : undefined;
 

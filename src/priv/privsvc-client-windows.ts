@@ -78,6 +78,11 @@ export function getTimeoutForMethod(method: string): number {
     // viene a quitar, por otra puerta.
     case "printer.inventory":
       return 25000;
+    // Una lectura o escritura de una clave de registro: milisegundos. 10s
+    // cubre un disco lento; el reconciliador los llama en serie.
+    case "browser.policy_list.read":
+    case "browser.policy_list.write":
+      return 10000;
     case "security.compliance":
       // 270s. History: 30s → 90s after DESKTOP-9G467VM's slow WU
       // history query (~30% of scans gave up mid-handler and the

@@ -88,3 +88,21 @@ describe("PolicyRuntime keeps the blocks its getters read", () => {
     expect(rt.remoteFileMaxUploadBytes()).toBeNull();
   });
 });
+
+describe("PolicyRuntime — browserExtensions", () => {
+  const ID = "cjpalhdlnbpafiamejdnhcphjbkeiagm";
+  it("sobrevive a la validación entrando por el store, y el getter descarta lo que no es un id", async () => {
+    const s = storeWith({ version: "1" });
+    const rt = new PolicyRuntime(s.store, null);
+    await rt.init();
+    expect(rt.browserExtensionPolicy().chrome.blocklist).toEqual([]);
+
+    s.set({ version: "2", browserExtensions: { chrome: { blocklist: [ID, "*", "calc.exe"], allowlist: ["*", ID] }, edge: { allowlist: [ID] } } });
+    await rt.applyUpdate();
+    const p = rt.browserExtensionPolicy();
+    expect(p.chrome.blocklist).toEqual([ID, "*"]);
+    // `*` no vale en la allowlist, y un id bloqueado no puede estar permitido.
+    expect(p.chrome.allowlist).toEqual([]);
+    expect(p.edge).toEqual({ blocklist: [], allowlist: [ID] });
+  });
+});

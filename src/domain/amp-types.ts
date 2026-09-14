@@ -6,6 +6,7 @@ import type { Printer } from "./printer";
 import type { PrinterDelta } from "./printer-inventory-delta";
 import type { BrowserExtension } from "./browser-extension";
 import type { BrowserExtensionDelta } from "./browser-extension-inventory-delta";
+import type { PolicyListResult } from "../plugins/amp/providers/extension-policy-enforcer";
 
 export type HardwareStatic = {
   system?: any;
@@ -241,6 +242,12 @@ export type BrowserExtensionInventory = {
   scope: "collected" | "unsupported" | "unavailable";
   profiles: number;
   profileErrors: number;
+  /**
+   * Resultado de aplicar las listas de Chrome/Edge que pide la política, en
+   * este mismo ciclo. Ausente si la política no pide nada ni hay nada nuestro
+   * que retirar, o fuera de Windows.
+   */
+  policy?: PolicyListResult[];
 };
 
 export type AmpNamespace = {

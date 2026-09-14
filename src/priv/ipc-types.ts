@@ -14,6 +14,9 @@ export type PrivSvcMethod =
   // 1.1.18 y el agente lo llama, pero el tipo nunca lo supo — y sin entrada
   // en el mapa de presupuestos heredaba el default de 8s.
   | "printer.inventory"
+  // Listas de extensiones de Chrome/Edge en HKLM (ver BrowserPolicyList.cs).
+  | "browser.policy_list.read"
+  | "browser.policy_list.write"
   | "security.compliance"
   | "patch.scan"
   | "patch.install"

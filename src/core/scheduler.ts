@@ -1,7 +1,7 @@
 // src/core/scheduler.ts
 
 import { outbox } from "../queue/sqlite-outbox";
-import { decideFactsSend } from "./inventory-send-gate";
+import { decideFactsSend, namespacesHaveChanges } from "./inventory-send-gate";
 import { logger } from "../bootstrap/logger";
 import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { AgentContext } from "./agent-context";
@@ -533,14 +533,7 @@ class Scheduler {
       }
 
       // Determine if ANY module has changes
-      const hasAnyChanges = Object.values(namespaces).some((ns: any) => {
-        if (!ns) return false;
-        return (
-          ns?.software?.hasChanges === true ||
-          ns?.printers?.hasChanges === true ||
-          ns?.hasChanges === true
-        );
-      });
+      const hasAnyChanges = namespacesHaveChanges(namespaces as Record<string, any>);
 
       // Always ship the first snapshot after a daemon (re)start. The
       // persisted software baseline survives pkg re-installs, so the

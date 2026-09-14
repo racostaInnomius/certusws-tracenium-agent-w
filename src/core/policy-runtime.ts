@@ -1,4 +1,5 @@
 // src/core/policy-runtime.ts
+import { parseExtensionPolicy, type ExtensionPolicy } from "../domain/extension-policy";
 import { sanitizeHostList } from "./host-match";
 import { parseProbeTarget, probeTargetKey, type ProbeTarget } from "../domain/probe-target";
 import { EventEmitter } from "events";
@@ -139,6 +140,13 @@ export type RuntimePolicy = {
    * dominio es la autorización: un `asp_assess` para un dominio que no está
    * aquí se rechaza. El resto de la sección es configuración de servidor.
    */
+  /**
+   * Gobierno de extensiones de Chrome/Edge: ids a bloquear o permitir por
+   * directiva de máquina. Lo deriva el control plane de sus reglas del tenant.
+   * Tal cual en el literal de validatePolicy; `browserExtensionPolicy()` es el
+   * único validador y descarta lo que no sea un id.
+   */
+  browserExtensions?: unknown;
   asp?: {
     collector?: {
       domains?: Array<{ domain?: string; instanceId?: number; role?: string }>;
@@ -1211,6 +1219,8 @@ export class PolicyRuntime extends EventEmitter {
       sdp: policy.sdp,
       // ADR-0022 — tal cual, por lo mismo; aspCollectorDomains() falla CERRADO.
       asp: policy.asp,
+      // Tal cual; browserExtensionPolicy() valida y descarta lo inválido.
+      browserExtensions: policy.browserExtensions,
       plugins: mergedPlugins,
       modules: mergedModules,
       features: mergedFeatures,
@@ -1319,6 +1329,11 @@ export class PolicyRuntime extends EventEmitter {
    * minúsculas. Vacío = no es colector de nada y todo `asp_assess` se rechaza.
    * Falla cerrado: una forma que no se entiende es «ninguno».
    */
+  /** Listas de extensiones pedidas para Chrome y Edge, ya validadas. */
+  browserExtensionPolicy(): ExtensionPolicy {
+    return parseExtensionPolicy((this.policy as RuntimePolicy)?.browserExtensions);
+  }
+
   aspCollectorDomains(): string[] {
     const domains = (this.policy as RuntimePolicy)?.asp?.collector?.domains;
     if (!Array.isArray(domains)) return [];

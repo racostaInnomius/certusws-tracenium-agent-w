@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideFactsSend, MAX_INVENTORY_SILENCE_MS } from "../../src/core/inventory-send-gate";
+import { decideFactsSend, MAX_INVENTORY_SILENCE_MS, namespacesHaveChanges } from "../../src/core/inventory-send-gate";
 
 // ADR-0020 F2 — el tercer disparador del envío de inventario.
 //
@@ -63,5 +63,22 @@ describe("los disparadores de siempre siguen igual", () => {
   it("arranque y cambio de versión mandan igual que antes", () => {
     expect(decideFactsSend({ ...quiet, forceInitialSnapshot: true, lastSentAtMs: NOW, nowMs: NOW }).reasons).toEqual(["initial"]);
     expect(decideFactsSend({ ...quiet, versionChanged: true, lastSentAtMs: NOW, nowMs: NOW }).reasons).toEqual(["version"]);
+  });
+});
+
+describe("namespacesHaveChanges — qué inventario obliga a enviar", () => {
+  const quietAmp = { software: { hasChanges: false }, printers: { hasChanges: false }, browserExtensions: { hasChanges: false } };
+  it("⚠️ un cambio SOLO de extensiones envía (su baseline ya se grabó al recogerlo)", () => {
+    expect(namespacesHaveChanges({ amp: quietAmp })).toBe(false);
+    expect(namespacesHaveChanges({ amp: { ...quietAmp, browserExtensions: { hasChanges: true } } })).toBe(true);
+  });
+  it("una directiva de extensiones escrita, en conflicto o fallida también; sin cambios, no", () => {
+    const withPolicy = (status: string) => ({ amp: { ...quietAmp, browserExtensions: { hasChanges: false, policy: [{ status }] } } });
+    expect(namespacesHaveChanges(withPolicy("unchanged"))).toBe(false);
+    for (const st of ["written", "conflict", "error"]) expect(namespacesHaveChanges(withPolicy(st)), st).toBe(true);
+  });
+  it("software e impresoras siguen disparando", () => {
+    expect(namespacesHaveChanges({ amp: { ...quietAmp, software: { hasChanges: true } } })).toBe(true);
+    expect(namespacesHaveChanges({ amp: { ...quietAmp, printers: { hasChanges: true } } })).toBe(true);
   });
 });

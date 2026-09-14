@@ -163,6 +163,10 @@ describe("buildDeviceFacts — amp namespace passthrough", () => {
     } as any;
     const facts = await buildDeviceFacts(makeCtx(), namespaces);
     expect(facts.namespaces.amp?.browserExtensions).toEqual({ count: 1, delta: null, items: [{ installId: "chrome|u|Default|x" }], hasChanges: true, scope: "collected", profiles: 3, profileErrors: 1 });
+    const withPolicy = await buildDeviceFacts(makeCtx(), {
+      amp: { ...(namespaces as any).amp, browserExtensions: { ...(namespaces as any).amp.browserExtensions, policy: [{ browser: "chrome", list: "blocklist", status: "written", present: ["x"], foreign: 0 }] } }
+    } as any);
+    expect(withPolicy.namespaces.amp?.browserExtensions?.policy).toEqual([{ browser: "chrome", list: "blocklist", status: "written", present: ["x"], foreign: 0 }]);
   });
 
   it("omits printers when the provider collected none", async () => {

@@ -14,6 +14,8 @@ import {
   emptyPrinterInventory
 } from "./printers-pipeline";
 import { collectBrowserExtensionInventory } from "./browser-extensions-pipeline";
+import { enforceExtensionPolicy, type PolicyListResult } from "./extension-policy-enforcer";
+import { loadOwnedEntries, saveOwnedEntries } from "../../../domain/extension-policy-owned-repo";
 
 // Verbose inventory diagnostics (raw counts, delta summaries, payload
 // size estimates) — useful during development, noisy in production.
@@ -248,8 +250,24 @@ export const windowsProvider = {
       printers = { ...printers, machineScope: "unavailable", userScope: "unavailable" };
     }
 
+    // Gobierno de extensiones ANTES de leerlas: el mismo FACTS lleva lo que se
+    // aplicó. Nunca lanza; un fallo por lista queda en su resultado.
+    let extensionPolicy: PolicyListResult[] = [];
+    try {
+      extensionPolicy = await enforceExtensionPolicy({
+        priv: ctx.priv,
+        policy: ctx.policyRuntime.browserExtensionPolicy(),
+        owned: { load: loadOwnedEntries, save: saveOwnedEntries },
+      });
+    } catch (err: any) {
+      ctx.logger?.warn?.("[extensionPolicy] enforcement failed", { error: err?.message || String(err) });
+    }
+
     // Extensiones de navegador: mismo lugar que las impresoras, y por lo mismo.
-    const browserExtensions = collectBrowserExtensionInventory("win32", (m, meta) => ctx.logger?.warn?.(m, meta));
+    const browserExtensions = {
+      ...collectBrowserExtensionInventory("win32", (m, meta) => ctx.logger?.warn?.(m, meta)),
+      ...(extensionPolicy.length > 0 ? { policy: extensionPolicy } : {}),
+    };
 
     try {
       const result = await collectWindowsSoftwareInventory(ctx);

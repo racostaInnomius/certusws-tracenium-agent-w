@@ -165,6 +165,10 @@ public sealed class Router
             // Inventory / compliance
             "software.inventory" => SoftwareInventory.Handle(req),
             "printer.inventory" => PrinterInventory.Handle(req),
+            // Listas de extensiones de Chrome/Edge (ExtensionInstallBlocklist /
+            // Allowlist). Cuatro claves fijas; ver BrowserPolicyListShape.cs.
+            "browser.policy_list.read" => BrowserPolicyList.HandleRead(req),
+            "browser.policy_list.write" => BrowserPolicyList.HandleWrite(req),
             "security.compliance" => SecurityCompliance.Handle(req),
             // CDP — read-only LocalMachine cert store enumeration
             // (metadata + public DER only; never key material).

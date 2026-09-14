@@ -49,3 +49,28 @@ export function decideFactsSend(input: {
 
   return { send: reasons.length > 0, reasons };
 }
+
+/**
+ * ¿Trae el ciclo algo que el backend tenga que recibir?
+ *
+ * ⚠️ Cada inventario con delta PERSISTE su baseline local al recogerse: si su
+ * cambio no dispara el envío, el delta se pierde y la pasada siguiente ya no
+ * ve diferencia. Pasó con `browserExtensions` (0c9f5f5): una extensión nueva en
+ * un equipo sin cambios de software nunca llegaba. Todo inventario nuevo con
+ * baseline tiene que estar en esta lista.
+ *
+ * Y un cambio de directiva de extensiones aplicado (o fallido) también se
+ * envía: es el acuse que el portal espera, aunque el inventario no se moviera.
+ */
+export function namespacesHaveChanges(namespaces: Record<string, any>): boolean {
+  return Object.values(namespaces).some((ns: any) => {
+    if (!ns) return false;
+    return (
+      ns?.software?.hasChanges === true ||
+      ns?.printers?.hasChanges === true ||
+      ns?.browserExtensions?.hasChanges === true ||
+      (Array.isArray(ns?.browserExtensions?.policy) && ns.browserExtensions.policy.some((r: any) => r?.status !== "unchanged")) ||
+      ns?.hasChanges === true
+    );
+  });
+}
