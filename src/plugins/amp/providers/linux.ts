@@ -38,6 +38,7 @@ import {
   buildPrinterInventoryWithBaseline,
   emptyPrinterInventory
 } from "./printers-pipeline";
+import { collectBrowserExtensionInventory } from "./browser-extensions-pipeline";
 
 // execFile takes an argv array — no shell interpolation, so package
 // names returned by dpkg/rpm/snap/flatpak that happen to contain shell
@@ -689,6 +690,10 @@ export const linuxProvider = {
       console.warn("[LINUX] printer collection failed, shipping empty", err?.message || err);
     }
 
+    // No se leen en Linux (ver browser-extensions.ts): se DECLARA, para que el
+    // portal no confunda "no miramos" con "no tiene".
+    const browserExtensions = collectBrowserExtensionInventory("linux", (m, meta) => console.warn(m, meta));
+
     let software: AmpNamespace["software"] = {
       count: 0,
       items: undefined,
@@ -769,7 +774,7 @@ export const linuxProvider = {
             hasChanges: false
           };
 
-          return { hardware, security, software, printers };
+          return { hardware, security, software, printers, browserExtensions };
         }
       }
 
@@ -777,6 +782,6 @@ export const linuxProvider = {
       console.error("[LINUX] collection failed", err);
     }
 
-    return { hardware, security, software, printers };
+    return { hardware, security, software, printers, browserExtensions };
   }
 };

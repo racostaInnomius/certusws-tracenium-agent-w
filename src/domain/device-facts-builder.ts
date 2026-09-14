@@ -630,6 +630,20 @@ export async function buildDeviceFacts(
         }
       : undefined;
 
+    // Extensiones de navegador: se copian enteras, con `scope`/`profiles`,
+    // que son lo que distingue "no tiene" de "no se pudo mirar".
+    const browserExtensions = ampIn.browserExtensions
+      ? {
+          count: ampIn.browserExtensions.count ?? 0,
+          delta: ampIn.browserExtensions.delta ?? null,
+          items: Array.isArray(ampIn.browserExtensions.items) ? [...ampIn.browserExtensions.items] : undefined,
+          hasChanges: ampIn.browserExtensions.hasChanges ?? false,
+          scope: ampIn.browserExtensions.scope,
+          profiles: ampIn.browserExtensions.profiles ?? 0,
+          profileErrors: ampIn.browserExtensions.profileErrors ?? 0
+        }
+      : undefined;
+
     // ⚠️ This literal is an ALLOWLIST, not a merge: anything the AMP collector
     // produced that is not named here is silently dropped on the way to the
     // wire. That already cost the printers pipeline a full release (see the
@@ -647,6 +661,7 @@ export async function buildDeviceFacts(
       security,
       software,
       ...(printers ? { printers } : {}),
+      ...(browserExtensions ? { browserExtensions } : {}),
       // Position, when the OS gave one. Absent on most ticks by design.
       ...(ampIn.geo ? { geo: ampIn.geo } : {}),
       // WHY there is or is not a position. Sent on every tick — its whole

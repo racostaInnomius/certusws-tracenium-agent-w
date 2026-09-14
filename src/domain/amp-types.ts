@@ -4,6 +4,8 @@ import type { SoftwareDelta } from "./software-inventory-delta";
 import type { SoftwareApplication } from "./normalize-app";
 import type { Printer } from "./printer";
 import type { PrinterDelta } from "./printer-inventory-delta";
+import type { BrowserExtension } from "./browser-extension";
+import type { BrowserExtensionDelta } from "./browser-extension-inventory-delta";
 
 export type HardwareStatic = {
   system?: any;
@@ -225,6 +227,22 @@ export type AmpGeo = {
   collectedAtUtc: string;
 };
 
+/**
+ * Extensiones de Chrome, Edge y Firefox de todos los perfiles del equipo.
+ * Misma forma que PrinterInventory. `scope` dice por qué la lista está como
+ * está (collected | unsupported | unavailable) — ver
+ * providers/browser-extensions.ts.
+ */
+export type BrowserExtensionInventory = {
+  count: number;
+  items?: BrowserExtension[];
+  delta?: BrowserExtensionDelta | null;
+  hasChanges: boolean;
+  scope: "collected" | "unsupported" | "unavailable";
+  profiles: number;
+  profileErrors: number;
+};
+
 export type AmpNamespace = {
   hardware: {
     static: HardwareStatic;
@@ -233,6 +251,7 @@ export type AmpNamespace = {
   security: SecurityInfo;
   software: SoftwareInventory;
   printers?: PrinterInventory;
+  browserExtensions?: BrowserExtensionInventory;
   geo?: AmpGeo;
   /** Why `geo` is present or absent. See GeoStatus in providers/geo.ts. */
   geoStatus?: string;

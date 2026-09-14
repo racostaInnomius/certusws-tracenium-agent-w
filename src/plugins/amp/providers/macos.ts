@@ -19,6 +19,7 @@ import {
   buildPrinterInventoryWithBaseline,
   emptyPrinterInventory
 } from "./printers-pipeline";
+import { collectBrowserExtensionInventory } from "./browser-extensions-pipeline";
 import {
   loadSoftwareBaseline,
   upsertSoftwareBaseline,
@@ -843,6 +844,8 @@ export const macProvider = {
       console.warn("[MACOS] printer collection failed, shipping empty", err?.message || err);
     }
 
+    const browserExtensions = collectBrowserExtensionInventory("darwin", (m, meta) => console.warn(m, meta));
+
     let software: AmpNamespace["software"] = {
       count: 0,
       items: undefined,
@@ -926,7 +929,8 @@ export const macProvider = {
             hardware,
             security,
             software,
-            printers
+            printers,
+            browserExtensions
           };
         }
       }
@@ -938,7 +942,8 @@ export const macProvider = {
       hardware,
       security,
       software,
-      printers
+      printers,
+      browserExtensions
     };
   }
 };

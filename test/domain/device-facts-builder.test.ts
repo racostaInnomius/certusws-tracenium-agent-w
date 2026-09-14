@@ -116,6 +116,19 @@ describe("buildDeviceFacts — amp namespace passthrough", () => {
     expect(facts.namespaces.amp?.printers?.hasChanges).toBe(true);
   });
 
+  it("pasa amp.browserExtensions con scope y profiles (lista blanca del builder)", async () => {
+    const namespaces: Namespaces = {
+      amp: {
+        hardware: { static: {} as any, runtime: {} as any },
+        security: { status: "unknown" } as any,
+        software: { count: 0, delta: null, items: [], hasChanges: false },
+        browserExtensions: { count: 1, delta: null, items: [{ installId: "chrome|u|Default|x" } as any], hasChanges: true, scope: "collected", profiles: 3, profileErrors: 1 }
+      }
+    } as any;
+    const facts = await buildDeviceFacts(makeCtx(), namespaces);
+    expect(facts.namespaces.amp?.browserExtensions).toEqual({ count: 1, delta: null, items: [{ installId: "chrome|u|Default|x" }], hasChanges: true, scope: "collected", profiles: 3, profileErrors: 1 });
+  });
+
   it("omits printers when the provider collected none", async () => {
     const namespaces: Namespaces = {
       amp: {

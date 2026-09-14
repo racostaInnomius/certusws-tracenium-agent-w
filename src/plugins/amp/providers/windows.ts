@@ -13,6 +13,7 @@ import {
   buildPrinterInventoryWithBaseline,
   emptyPrinterInventory
 } from "./printers-pipeline";
+import { collectBrowserExtensionInventory } from "./browser-extensions-pipeline";
 
 // Verbose inventory diagnostics (raw counts, delta summaries, payload
 // size estimates) — useful during development, noisy in production.
@@ -247,6 +248,9 @@ export const windowsProvider = {
       printers = { ...printers, machineScope: "unavailable", userScope: "unavailable" };
     }
 
+    // Extensiones de navegador: mismo lugar que las impresoras, y por lo mismo.
+    const browserExtensions = collectBrowserExtensionInventory("win32", (m, meta) => ctx.logger?.warn?.(m, meta));
+
     try {
       const result = await collectWindowsSoftwareInventory(ctx);
       // ensure typing
@@ -265,6 +269,7 @@ export const windowsProvider = {
           hardware: base.hardware,
           security,
           printers,
+          browserExtensions,
           software: {
             count: 0,
             items: [],
@@ -370,7 +375,8 @@ export const windowsProvider = {
             hardware: base.hardware,
             security,
             software,
-            printers
+            printers,
+            browserExtensions
           };
         }
       }
@@ -394,7 +400,8 @@ export const windowsProvider = {
       hardware: base.hardware,
       security,
       software,
-      printers
+      printers,
+      browserExtensions
     };
   }
 };

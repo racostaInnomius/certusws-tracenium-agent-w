@@ -1427,9 +1427,11 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       try {
         const { clearSoftwareBaseline } = await import("../domain/software-baseline-repo");
         const { clearPrinterBaseline } = await import("../domain/printer-baseline-repo");
+        const { clearBrowserExtensionBaseline } = await import("../domain/browser-extension-baseline-repo");
         clearSoftwareBaseline();
         clearPrinterBaseline();
-        ctx.logger?.warn?.("[reset_baseline] cleared AMP software + printer baselines; next collection tick will re-send a full snapshot", {
+        clearBrowserExtensionBaseline();
+        ctx.logger?.warn?.("[reset_baseline] cleared AMP software + printer + browser extension baselines; next collection tick will re-send a full snapshot", {
           namespace,
         });
         return {
