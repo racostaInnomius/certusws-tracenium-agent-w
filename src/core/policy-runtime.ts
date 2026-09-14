@@ -1329,8 +1329,8 @@ export class PolicyRuntime extends EventEmitter {
    * minúsculas. Vacío = no es colector de nada y todo `asp_assess` se rechaza.
    * Falla cerrado: una forma que no se entiende es «ninguno».
    */
-  /** Listas de extensiones pedidas para Chrome y Edge, ya validadas. */
-  browserExtensionPolicy(): ExtensionPolicy {
+  /** Listas de extensiones pedidas para Chrome y Edge, ya validadas; null = la política no dice nada (no tocar). */
+  browserExtensionPolicy(): ExtensionPolicy | null {
     return parseExtensionPolicy((this.policy as RuntimePolicy)?.browserExtensions);
   }
 

@@ -48,10 +48,16 @@ export function emptyExtensionPolicy(): ExtensionPolicy {
  * entiende: una entrada inválida se descarta, nunca se escribe. `*` sólo
  * vale en la blocklist (en la allowlist permitiría todo, que es no tener
  * directiva).
+ *
+ * ⚠️ null cuando el bloque NO viene (o no es un objeto): "no toques nada".
+ * Es distinto de un bloque con listas vacías, que significa "retira lo que
+ * añadiste". El control plane manda siempre el bloque y lo omite sólo si no
+ * pudo leer las reglas; tratar esa ausencia como "sin reglas" quitaría los
+ * bloqueos de toda la flota durante una caída de su base de datos.
  */
-export function parseExtensionPolicy(raw: unknown): ExtensionPolicy {
+export function parseExtensionPolicy(raw: unknown): ExtensionPolicy | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const out = emptyExtensionPolicy();
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
   for (const browser of CHROMIUM_BROWSERS) {
     const b = (raw as any)[browser];
     if (!b || typeof b !== "object" || Array.isArray(b)) continue;

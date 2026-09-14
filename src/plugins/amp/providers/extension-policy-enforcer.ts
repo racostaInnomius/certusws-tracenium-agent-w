@@ -47,16 +47,19 @@ async function call(priv: IPrivSvcClient, method: string, params: Record<string,
 
 export async function enforceExtensionPolicy(opts: {
   priv: IPrivSvcClient;
-  policy: ExtensionPolicy;
+  /** null = la política no trae el bloque: no se toca nada (ver parseExtensionPolicy). */
+  policy: ExtensionPolicy | null;
   owned: OwnedStore;
   now?: () => string;
 }): Promise<PolicyListResult[]> {
   const now = opts.now ?? (() => new Date().toISOString());
   const results: PolicyListResult[] = [];
+  const policy = opts.policy;
+  if (!policy) return results;
 
   for (const browser of CHROMIUM_BROWSERS) {
     for (const list of POLICY_LISTS) {
-      const desired = opts.policy[browser][list];
+      const desired = policy[browser][list];
       const owned = opts.owned.load(browser, list);
       // Nada que pedir y nada nuestro que retirar: ni se lee el registro.
       if (desired.length === 0 && owned.length === 0) continue;

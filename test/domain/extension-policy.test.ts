@@ -39,10 +39,14 @@ describe("planPolicyList", () => {
 
 describe("parseExtensionPolicy", () => {
   it("falla cerrado: sólo ids válidos, `*` sólo en la blocklist, bloqueo gana a permiso", () => {
-    const p = parseExtensionPolicy({ chrome: { blocklist: [A, "*", "../../evil", 7, A], allowlist: [A, B, "*"] }, edge: "junk", firefox: { blocklist: [A] } });
+    const p = parseExtensionPolicy({ chrome: { blocklist: [A, "*", "../../evil", 7, A], allowlist: [A, B, "*"] }, edge: "junk", firefox: { blocklist: [A] } })!;
     expect(p.chrome).toEqual({ blocklist: [A, "*"], allowlist: [B] });
     expect(p.edge).toEqual({ blocklist: [], allowlist: [] });
     expect(Object.keys(p)).toEqual(["chrome", "edge"]);
-    expect(parseExtensionPolicy(null)).toEqual({ chrome: { blocklist: [], allowlist: [] }, edge: { blocklist: [], allowlist: [] } });
+    // Bloque ausente = "no toques nada"; bloque vacío = "retira lo tuyo". No son lo mismo.
+    expect(parseExtensionPolicy(undefined)).toBeNull();
+    expect(parseExtensionPolicy(null)).toBeNull();
+    expect(parseExtensionPolicy([A])).toBeNull();
+    expect(parseExtensionPolicy({})).toEqual({ chrome: { blocklist: [], allowlist: [] }, edge: { blocklist: [], allowlist: [] } });
   });
 });

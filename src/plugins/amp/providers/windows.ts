@@ -254,6 +254,7 @@ export const windowsProvider = {
     // aplicó. Nunca lanza; un fallo por lista queda en su resultado.
     let extensionPolicy: PolicyListResult[] = [];
     try {
+      // Sin bloque en la política no se toca el registro (ni para retirar).
       extensionPolicy = await enforceExtensionPolicy({
         priv: ctx.priv,
         policy: ctx.policyRuntime.browserExtensionPolicy(),

@@ -95,11 +95,11 @@ describe("PolicyRuntime — browserExtensions", () => {
     const s = storeWith({ version: "1" });
     const rt = new PolicyRuntime(s.store, null);
     await rt.init();
-    expect(rt.browserExtensionPolicy().chrome.blocklist).toEqual([]);
+    expect(rt.browserExtensionPolicy()).toBeNull();
 
     s.set({ version: "2", browserExtensions: { chrome: { blocklist: [ID, "*", "calc.exe"], allowlist: ["*", ID] }, edge: { allowlist: [ID] } } });
     await rt.applyUpdate();
-    const p = rt.browserExtensionPolicy();
+    const p = rt.browserExtensionPolicy()!;
     expect(p.chrome.blocklist).toEqual([ID, "*"]);
     // `*` no vale en la allowlist, y un id bloqueado no puede estar permitido.
     expect(p.chrome.allowlist).toEqual([]);
