@@ -136,3 +136,97 @@ describe("los alcances viajan en los TRES caminos de salida", () => {
     expect("machineScope" in r).toBe(false);
   });
 });
+
+// ⚠️ EL BORRADO POR TIMEOUT. `measured` sólo trataba `machineScope:
+// "unavailable"` como ciego: un `timeout` del Spooler (o `empty_output`, o
+// `unknown` de un privsvc viejo) contaba como lectura buena. Con nadie
+// conectado eso es una lista vacía MEDIDA → delta con todo en `removed` → el
+// backend borra las filas del equipo. Y en el primer ciclo grababa una
+// baseline vacía que el backend aplica como "no tiene impresoras" (modo 1b).
+describe("⚠️ una lectura fallida no borra impresoras", () => {
+  const cola = (name: string) => impresora(name);
+
+  it.each(["timeout", "empty_output", "unknown"])(
+    "máquina '%s' sin usuario leído = ciega: no borra y mantiene el último count",
+    (machineScope) => {
+      loadPrinterBaseline.mockReturnValue([cola("HP"), cola("\\\\SRV\\Cola")]);
+      const r = buildPrinterInventoryWithBaseline([], { machineScope, userScope: "no_user_hive" });
+
+      expect(deletePrintersByIds).not.toHaveBeenCalled();
+      expect(upsertPrinterBaseline).not.toHaveBeenCalled();
+      expect(r.hasChanges).toBe(false);
+      expect(r.delta).toBeNull();
+      // El count:0 viajaba a host_current_status.total_printers como un hecho.
+      expect(r.count).toBe(2);
+      expect(r.machineScope).toBe(machineScope);
+    }
+  );
+
+  it("primer ciclo ciego por timeout: NO graba baseline vacía ni la anuncia", () => {
+    const r = buildPrinterInventoryWithBaseline([], { machineScope: "timeout", userScope: "no_user_hive" });
+    expect(upsertPrinterBaseline).not.toHaveBeenCalled();
+    expect(r.hasChanges).toBe(false);
+    expect(r.items).toBeUndefined();
+  });
+
+  it("máquina en timeout con usuario leído: añade lo nuevo pero NO quita lo de máquina", () => {
+    loadPrinterBaseline.mockReturnValue([cola("HP"), cola("\\\\SRV\\Cola")]);
+    const r = buildPrinterInventoryWithBaseline([cola("\\\\SRV\\Cola"), cola("\\\\SRV\\Nueva")], {
+      machineScope: "timeout",
+      userScope: "collected"
+    });
+
+    expect(deletePrintersByIds).not.toHaveBeenCalled();
+    expect(r.delta?.removed).toEqual([]);
+    expect(r.delta?.added.map((p) => p.name)).toEqual(["\\\\SRV\\Nueva"]);
+    expect(upsertPrinterBaseline).toHaveBeenCalledWith([expect.objectContaining({ name: "\\\\SRV\\Nueva" })]);
+    // HP sigue contando: no se sabe que se haya ido.
+    expect(r.count).toBe(3);
+    expect(r.hasChanges).toBe(true);
+  });
+
+  it("máquina leída con usuario 'unavailable': no quita las conexiones de red", () => {
+    loadPrinterBaseline.mockReturnValue([cola("HP"), cola("\\\\SRV\\Cola")]);
+    const r = buildPrinterInventoryWithBaseline([cola("HP")], {
+      machineScope: "collected",
+      userScope: "unavailable"
+    });
+
+    expect(deletePrintersByIds).not.toHaveBeenCalled();
+    expect(r.hasChanges).toBe(false);
+    expect(r.count).toBe(2);
+  });
+
+  it("primer ciclo parcial con filas: las manda como altas, sin sustituir lo del backend", () => {
+    // Por delta y no por items[]: el backend aplica items[] como SUSTITUCIÓN
+    // (DELETE + INSERT), y una lectura a medias no puede sustituir nada.
+    const r = buildPrinterInventoryWithBaseline([cola("\\\\SRV\\Cola")], {
+      machineScope: "timeout",
+      userScope: "collected"
+    });
+    expect(r.items).toBeUndefined();
+    expect(r.delta?.added).toHaveLength(1);
+    expect(r.delta?.removed).toEqual([]);
+    expect(r.hasChanges).toBe(true);
+  });
+
+  it("una lectura COMPLETA sigue quitando lo que desapareció", () => {
+    loadPrinterBaseline.mockReturnValue([cola("HP"), cola("\\\\SRV\\Cola")]);
+    const r = buildPrinterInventoryWithBaseline([cola("HP")], {
+      machineScope: "collected",
+      userScope: "collected"
+    });
+    expect(deletePrintersByIds).toHaveBeenCalledWith(["windows-spooler:\\\\SRV\\Cola"]);
+    expect(r.delta?.removed).toHaveLength(1);
+    expect(r.count).toBe(1);
+  });
+
+  it("máquina leída sin nadie conectado (no_user_hive) cuenta como completa, como hasta ahora", () => {
+    loadPrinterBaseline.mockReturnValue([cola("HP"), cola("USB-Local")]);
+    const r = buildPrinterInventoryWithBaseline([cola("HP")], {
+      machineScope: "collected",
+      userScope: "no_user_hive"
+    });
+    expect(deletePrintersByIds).toHaveBeenCalledWith(["windows-spooler:USB-Local"]);
+  });
+});
