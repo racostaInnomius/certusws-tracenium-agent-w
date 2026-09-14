@@ -626,7 +626,11 @@ export async function buildDeviceFacts(
           count: ampIn.printers.count ?? 0,
           delta: ampIn.printers.delta ?? null,
           items: Array.isArray(ampIn.printers.items) ? [...ampIn.printers.items] : undefined,
-          hasChanges: ampIn.printers.hasChanges ?? false
+          hasChanges: ampIn.printers.hasChanges ?? false,
+          // Alcances de la lectura (Windows): sin ellos una lectura ciega llega
+          // como "no tiene impresoras". Ausentes en macOS/Linux — no se inventan.
+          ...(ampIn.printers.machineScope !== undefined ? { machineScope: ampIn.printers.machineScope } : {}),
+          ...(ampIn.printers.userScope !== undefined ? { userScope: ampIn.printers.userScope } : {})
         }
       : undefined;
 

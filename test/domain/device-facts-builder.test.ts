@@ -116,6 +116,42 @@ describe("buildDeviceFacts — amp namespace passthrough", () => {
     expect(facts.namespaces.amp?.printers?.hasChanges).toBe(true);
   });
 
+  // machineScope/userScope (2026-09-10) son lo que separa "no se pudo leer" de
+  // "no tiene impresoras". El literal del builder los tiraba: el backend veía
+  // un inventario vacío y lo pintaba como cero.
+  it("pasa amp.printers.machineScope/userScope (la lectura ciega no es un cero)", async () => {
+    const namespaces: Namespaces = {
+      amp: {
+        hardware: { static: {} as any, runtime: {} as any },
+        security: { status: "unknown" } as any,
+        software: { count: 0, delta: null, items: [], hasChanges: false },
+        printers: { count: 0, delta: null, items: [], hasChanges: true, machineScope: "timeout", userScope: "no_user_hive" }
+      }
+    } as any;
+
+    const facts = await buildDeviceFacts(makeCtx(), namespaces);
+
+    expect(facts.namespaces.amp?.printers).toEqual({
+      count: 0, delta: null, items: [], hasChanges: true, machineScope: "timeout", userScope: "no_user_hive"
+    });
+  });
+
+  it("no inventa machineScope/userScope donde sólo hay una lectura (macOS/Linux)", async () => {
+    const namespaces: Namespaces = {
+      amp: {
+        hardware: { static: {} as any, runtime: {} as any },
+        security: { status: "unknown" } as any,
+        software: { count: 0, delta: null, items: [], hasChanges: false },
+        printers: { count: 1, delta: null, items: [{ printerId: "p1" } as any], hasChanges: true }
+      }
+    } as any;
+
+    const facts = await buildDeviceFacts(makeCtx(), namespaces);
+
+    expect("machineScope" in (facts.namespaces.amp?.printers as any)).toBe(false);
+    expect("userScope" in (facts.namespaces.amp?.printers as any)).toBe(false);
+  });
+
   it("pasa amp.browserExtensions con scope y profiles (lista blanca del builder)", async () => {
     const namespaces: Namespaces = {
       amp: {
