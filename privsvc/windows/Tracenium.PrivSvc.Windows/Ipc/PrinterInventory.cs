@@ -31,6 +31,10 @@ namespace Tracenium.PrivSvc.Windows.Ipc;
 //     ]
 //   }
 //
+// ⚠️ Y OTRA VEZ (2026-09-14): el catch del script y un JSON ilegible ya no
+// producen `collected` con cero filas, sino `unavailable`. Ver
+// PrinterInventoryShape.cs.
+//
 // ⚠️ EL CONTRATO DE DEGRADACIÓN CAMBIÓ (2026-09-10).
 //
 // Antes cualquier fallo se colapsaba en `{ count: 0, items: [] }`, con el
@@ -55,46 +59,8 @@ public static class PrinterInventory
         {
             Console.WriteLine("[PrivSvc][PrinterInventory] Starting collection");
 
-            // -Depth 4 keeps the JSON small enough — Get-Printer's
-            // raw object has dozens of nested CIM properties (job
-            // counters, capabilities arrays) that we don't ship. The
-            // explicit Select-Object below trims to just our wire
-            // schema. JsonOutput=$true on ConvertTo-Json is implicit;
-            // Compress reduces line-noise in /var/log style scrapes.
-            //
-            // We DON'T use -PrinterStatus filtering — we want offline
-            // printers in the snapshot so the backend can flag them
-            // as "configured but not currently reachable" in the UI.
-            //
-            // [CmdletBinding()]-style script body (rather than a
-            // one-liner) so future maintenance is easier; the cost is
-            // the same single PowerShell process invocation.
-            string script = @"
-$ErrorActionPreference = 'Stop'
-try {
-  $default = (Get-CimInstance -ClassName Win32_Printer -ErrorAction SilentlyContinue |
-              Where-Object Default -EQ $true |
-              Select-Object -ExpandProperty Name) -join ''
-
-  Get-Printer -ErrorAction Stop |
-    Select-Object `
-      @{Name='name';          Expression={$_.Name}}, `
-      @{Name='driverName';    Expression={$_.DriverName}}, `
-      @{Name='portName';      Expression={$_.PortName}}, `
-      @{Name='isDefault';     Expression={($_.Name -eq $default)}}, `
-      @{Name='shared';        Expression={[bool]$_.Shared}}, `
-      @{Name='location';      Expression={$_.Location}}, `
-      @{Name='comment';       Expression={$_.Comment}}, `
-      @{Name='printerStatus'; Expression={[string]$_.PrinterStatus}} |
-    ConvertTo-Json -Depth 4 -Compress
-} catch {
-  # Anything fatal in Get-Printer (e.g., Spooler service disabled,
-  # cmdlet missing in some SKUs) — emit an empty array so the
-  # downstream JSON parser doesn't crash.
-  '[]'
-}
-";
-
+            // El script y la lectura de su salida viven en
+            // PrinterInventoryShape.cs, donde se prueban.
             var psi = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
@@ -113,74 +79,62 @@ try {
             using var proc = Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to start powershell.exe");
 
-            proc.StandardInput.Write(script);
+            // ⚠️ Las lecturas arrancan ANTES de esperar. Antes era
+            // WaitForExit(15s) y DESPUÉS ReadToEnd: si el JSON pasaba del búfer
+            // de la tubería, PowerShell se quedaba bloqueado escribiendo, nunca
+            // salía, y la lectura acababa en `timeout` — el deadlock documentado
+            // de Process que PatchManagement.RunPs y SecurityCompliance ya
+            // sufrieron. En un servidor de impresión con muchas colas era un
+            // timeout en CADA ciclo.
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+
+            proc.StandardInput.Write(PrinterInventoryShape.Script);
             proc.StandardInput.Close();
 
-            // 15s ceiling — a healthy host responds in ~1-2s. If we
-            // hit this, Spooler is hung or the system is heavily
-            // loaded; bail with empty result rather than wedging the
-            // AMP cycle.
+            // 15s ceiling — a healthy host responds in ~1-2s. If we hit this,
+            // Spooler is hung or the system is heavily loaded.
             if (!proc.WaitForExit(15_000))
             {
-                try { proc.Kill(); } catch { }
-                Console.WriteLine("[PrivSvc][PrinterInventory] timeout, machine scope unavailable");
-                return Merge(req, new List<object>(), "timeout");
+                try { proc.Kill(entireProcessTree: true); } catch { }
+                Console.WriteLine("[PrivSvc][PrinterInventory] timeout, machine scope timeout");
+                return Merge(req, new MachinePrinterRead(new List<JsonElement>(),
+                                                         PrinterInventoryShape.ScopeTimeout, null));
             }
 
-            string stdout = proc.StandardOutput.ReadToEnd().Trim();
-            string stderr = proc.StandardError.ReadToEnd().Trim();
+            // El proceso salió: las tuberías se cierran y las lecturas terminan.
+            // El tope sólo cubre un nieto que heredara el handle.
+            if (!Task.WaitAll(new Task[] { stdoutTask, stderrTask }, 5_000))
+            {
+                Console.WriteLine("[PrivSvc][PrinterInventory] output never closed, machine scope timeout");
+                return Merge(req, new MachinePrinterRead(new List<JsonElement>(),
+                                                         PrinterInventoryShape.ScopeTimeout, null));
+            }
 
+            string stderr = stderrTask.Result.Trim();
             if (!string.IsNullOrEmpty(stderr))
             {
                 Console.WriteLine($"[PrivSvc][PrinterInventory] PowerShell stderr: {stderr}");
             }
 
-            if (string.IsNullOrEmpty(stdout))
+            var machine = PrinterInventoryShape.ParseMachineOutput(stdoutTask.Result);
+            if (machine.Error is not null)
             {
-                // Salida vacía del PowerShell: no se puede afirmar que la
-                // máquina no tenga impresoras, sólo que no dijo nada.
-                return Merge(req, new List<object>(), "empty_output");
+                Console.WriteLine($"[PrivSvc][PrinterInventory] machine scope {machine.Scope}: {machine.Error}");
             }
-
-            // ConvertTo-Json emits either a JSON object (1 printer) OR
-            // a JSON array (2+ printers) — PowerShell-ism we have to
-            // normalize. Try array first; if that fails, wrap a single
-            // object into a 1-element array.
-            List<JsonElement> items;
-            try
+            else
             {
-                using var doc = JsonDocument.Parse(stdout);
-                if (doc.RootElement.ValueKind == JsonValueKind.Array)
-                {
-                    items = doc.RootElement.EnumerateArray()
-                                            .Select(e => e.Clone())
-                                            .ToList();
-                }
-                else if (doc.RootElement.ValueKind == JsonValueKind.Object)
-                {
-                    items = new List<JsonElement> { doc.RootElement.Clone() };
-                }
-                else
-                {
-                    items = new List<JsonElement>();
-                }
+                Console.WriteLine($"[PrivSvc][PrinterInventory] machine scope {machine.Scope}: {machine.Items.Count} printer(s)");
             }
-            catch (JsonException ex)
-            {
-                Console.WriteLine($"[PrivSvc][PrinterInventory] JSON parse failed: {ex.Message}");
-                items = new List<JsonElement>();
-            }
-
-            Console.WriteLine($"[PrivSvc][PrinterInventory] machine scope: {items.Count} printer(s)");
-            return Merge(req, items.Cast<object>().ToList(), "collected",
-                         items.Select(e => e.TryGetProperty("name", out var n) ? n.GetString() ?? "" : ""));
+            return Merge(req, machine);
         }
         catch (Exception ex)
         {
-            // Any unexpected exception → empty result instead of
-            // failure response. Keeps the agent-side AMP cycle whole.
+            // Any unexpected exception → declared, not an empty list. Keeps
+            // the agent-side AMP cycle whole.
             Console.WriteLine($"[PrivSvc][PrinterInventory] ERROR: {ex.Message}");
-            return Merge(req, new List<object>(), "unavailable");
+            return Merge(req, new MachinePrinterRead(new List<JsonElement>(),
+                                                     PrinterInventoryShape.ScopeUnavailable, ex.Message));
         }
     }
 
@@ -192,15 +146,12 @@ try {
     /// cero por eso volvería a esconder justo las impresoras que motivaron
     /// este cambio.
     /// </summary>
-    private static Task<PrivSvcResponse> Merge(
-        PrivSvcRequest req,
-        List<object> machineItems,
-        string machineScope,
-        IEnumerable<string>? machineNames = null)
+    private static Task<PrivSvcResponse> Merge(PrivSvcRequest req, MachinePrinterRead machine)
     {
+        var machineItems = machine.Items.Cast<object>().ToList();
+        var machineScope = machine.Scope;
         var (userScope, userItems) = UserPrinterConnections.Collect();
-        var extra = UserPrinterConnectionsShape.MergeByName(
-            machineNames ?? Enumerable.Empty<string>(), userItems);
+        var extra = UserPrinterConnectionsShape.MergeByName(machine.Names, userItems);
 
         var todos = new List<object>(machineItems);
         todos.AddRange(extra);
