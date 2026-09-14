@@ -191,11 +191,15 @@ export function evaluateIndicator(
       const reason = indicator.requires === "privileged" ? `requires_privileged_read:${hr}` : `insufficient_rights:${hr}`;
       return { ...base, status: "not_assessed", affectedCount: null, evidence: null, reason };
     }
+    // 0x80131501 es el código de cualquier error de PowerShell: sin el texto
+    // no se puede saber qué falló (primera corrida real, 14-sep).
+    const message = typeof raw.error?.message === "string" ? raw.error.message.slice(0, 300) : null;
+    const type = typeof raw.error?.type === "string" ? raw.error.type.slice(0, 100) : null;
     return {
       ...base,
       status: "not_assessed",
       affectedCount: null,
-      evidence: null,
+      evidence: message || type ? { collectorError: { hresult: hr || null, type, message } } : null,
       reason: `collector_error:${hr || raw.error?.type || "unknown"}`
     };
   }

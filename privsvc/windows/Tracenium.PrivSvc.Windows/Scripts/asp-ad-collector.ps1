@@ -227,37 +227,57 @@ function AspGroupMembers($query, $ctx, [int]$limit) {
 }
 
 function AspAcl($query, $ctx, [int]$limit) {
-  $entry = AspEntry (AspExpand ([string]$query.dn) $ctx)
-  $entry.Options.SecurityMasks = [System.DirectoryServices.SecurityMasks]::Dacl
+  # Primera corrida real (14-sep, MSIG-DOMAIN01): leer el DACL con
+  # $entry.Options / $entry.ObjectSecurity falló con 0x80131501. PowerShell
+  # adapta DirectoryEntry y sus propiedades .NET compiten con los atributos
+  # LDAP. Se lee nTSecurityDescriptor con DirectorySearcher, igual que
+  # AspObject, y se construye el descriptor a partir de los bytes.
+  $dn = AspExpand ([string]$query.dn) $ctx
+  $searcher = New-Object System.DirectoryServices.DirectorySearcher
+  $searcher.SearchRoot = AspEntry $dn
+  $searcher.Filter = '(objectClass=*)'
+  $searcher.SearchScope = [System.DirectoryServices.SearchScope]::Base
+  $searcher.SecurityMasks = [System.DirectoryServices.SecurityMasks]::Dacl
+  [void]$searcher.PropertiesToLoad.Add('ntsecuritydescriptor')
+  $r = $searcher.FindOne()
+  if ($null -eq $r) { throw "object not found: $dn" }
+  if (-not $r.Properties.Contains('ntsecuritydescriptor') -or $r.Properties['ntsecuritydescriptor'].Count -eq 0) {
+    throw "nTSecurityDescriptor not returned for $dn"
+  }
+  $sd = New-Object System.DirectoryServices.ActiveDirectorySecurity
+  $sd.SetSecurityDescriptorBinaryForm([byte[]]$r.Properties['ntsecuritydescriptor'][0])
+
   $exclude = @{}
   foreach ($s in @(AspProp $query 'excludeSids')) { if ($s) { $exclude[(AspExpand ([string]$s) $ctx)] = $true } }
-  $wanted = [System.DirectoryServices.ActiveDirectoryRights]0
-  foreach ($right in @($query.rights)) { $wanted = $wanted -bor [System.DirectoryServices.ActiveDirectoryRights]([string]$right) }
+  $wanted = 0
+  foreach ($right in @($query.rights)) { $wanted = $wanted -bor [int][System.DirectoryServices.ActiveDirectoryRights]([string]$right) }
+  $extendedRight = [int][System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight
   $extended = @{}
   foreach ($guid in @(AspProp $query 'extendedRights')) { if ($guid) { $extended[([string]$guid).ToLowerInvariant()] = $true } }
+  $anyGuid = [string][guid]::Empty
 
-  $rules = $entry.ObjectSecurity.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
   $trustees = @{}
-  foreach ($ace in $rules) {
+  foreach ($ace in $sd.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
     if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
     $sid = [string]$ace.IdentityReference.Value
     if ($exclude.ContainsKey($sid)) { continue }
-    $rights = $ace.ActiveDirectoryRights
+    $rights = [int]$ace.ActiveDirectoryRights
     $hit = (($rights -band $wanted) -ne 0)
-    if (-not $hit -and $extended.Count -gt 0 -and (($rights -band [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight) -ne 0)) {
-      $hit = $extended.ContainsKey(([string]$ace.ObjectType).ToLowerInvariant())
+    if (-not $hit -and $extended.Count -gt 0 -and (($rights -band $extendedRight) -ne 0)) {
+      # Un ExtendedRight sin ObjectType concede TODOS los derechos extendidos.
+      $objectType = ([string]$ace.ObjectType).ToLowerInvariant()
+      $hit = ($objectType -eq $anyGuid) -or $extended.ContainsKey($objectType)
     }
     if (-not $hit) { continue }
     if (-not $trustees.ContainsKey($sid)) {
       $name = $null
       try { $name = $ace.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value } catch { $name = $null }
-      $trustees[$sid] = [ordered]@{ sid = $sid; name = $name; rights = [string]$rights }
+      $trustees[$sid] = [ordered]@{ sid = $sid; name = $name; rights = [string]$ace.ActiveDirectoryRights }
     }
   }
   $all = @($trustees.Values)
   return [ordered]@{ count = $all.Count; sample = @($all | Select-Object -First $limit); truncated = ($all.Count -gt $limit) }
 }
-
 function AspSysvolFiles($query, $ctx, [int]$limit) {
   $policies = "\\$($ctx.dnsHostName)\SYSVOL\$($ctx.dnsDomain)\Policies"
   # -Path y no -LiteralPath: -Include se ignora con -LiteralPath en 5.1. Las

@@ -48,7 +48,15 @@ describe("evaluateIndicator — reglas de la fase 0", () => {
 
   it("un error genérico del colector es not_assessed con el HRESULT", () => {
     const r = evaluateIndicator(indicator("ASP-AD-KRB-002"), { ok: false, error: { hresult: "0x8007203A", type: "COMException" } }, DC, opts);
-    expect(r).toMatchObject({ status: "not_assessed", reason: "collector_error:0x8007203A" });
+    expect(r).toMatchObject({ status: "not_assessed", reason: "collector_error:0x8007203A", evidence: { collectorError: { hresult: "0x8007203A", type: "COMException", message: null } } });
+  });
+
+  it("⭐ el texto del error viaja en la evidencia: 0x80131501 solo no dice nada", () => {
+    const message = "You cannot call a method on a null-valued expression.".padEnd(400, ".");
+    const r = evaluateIndicator(indicator("ASP-AD-PRV-006"), { ok: false, error: { hresult: "0x80131501", type: "RuntimeException", message } }, DC, opts);
+    expect(r.reason).toBe("collector_error:0x80131501");
+    expect((r.evidence as any).collectorError.type).toBe("RuntimeException");
+    expect((r.evidence as any).collectorError.message).toHaveLength(300);
   });
 
   it("⭐ una sonda de registro en un colector que no es DC → not_assessed", () => {
