@@ -151,7 +151,7 @@ public sealed class Router
             "ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 service = "TraceniumPrivSvc",
-                version = "1.1.72",
+                version = "1.1.73",
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
@@ -188,6 +188,8 @@ public sealed class Router
             // ADR-0022 — Assessment Service. Una tanda de consultas de AD con el
             // colector .ps1 firmado. Carril lento (cliente 330 s > handler 300 s).
             "asp.ad.collect" => AspCollector.HandleCollect(req),
+            // ADR-0023 — impresoras publicadas en AD (AMP), script firmado por -File.
+            "amp.ad.printers" => AdPrinters.Handle(req),
 
             // Crypto
             // Infrastructure Gateway credential custody (ADR-0001). PrivSvc holds

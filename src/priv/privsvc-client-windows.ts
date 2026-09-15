@@ -131,6 +131,11 @@ export function getTimeoutForMethod(method: string): number {
     // el runner, tanda a tanda.
     case "asp.ad.collect":
       return 330 * 1000;
+    // ADR-0023 — impresoras publicadas en AD. El handler mata PowerShell a los
+    // 120 s (AdPrintersShape.HandlerCeilingMs); esto lo sobrevive y, al pasar de
+    // 60 s, va al carril lento.
+    case "amp.ad.printers":
+      return 150 * 1000;
     case "patch.install":
       return 95 * 60 * 1000; // privsvc: 90min (Windows) + 5min margin
     case "patch.scan":

@@ -23,10 +23,6 @@ namespace Tracenium.PrivSvc.Windows.Ipc;
 
 public static class AspCollector
 {
-    private static readonly object TrustLock = new();
-    private static (string Key, bool Trusted, string Reason)? _scriptTrust;
-    private static bool? _selfSigned;
-
     public static Task<PrivSvcResponse> HandleCollect(PrivSvcRequest req) => Task.Run(() => Collect(req));
 
     private static PrivSvcResponse Collect(PrivSvcRequest req)
@@ -41,7 +37,7 @@ public static class AspCollector
             return PrivSvcResponse.Fail(req.Id, "collector_script_missing", scriptPath);
         }
 
-        var (trusted, reason) = VerifyScript(scriptPath);
+        var (trusted, reason) = SignedScripts.Verify(scriptPath, "asp.ad.collect");
         if (!trusted)
         {
             IpcLog.Write($"[asp.ad.collect] script signature rejected reason={reason}");
@@ -109,34 +105,6 @@ public static class AspCollector
             TryDelete(outputPath);
             try { if (Directory.Exists(workDir) && !Directory.EnumerateFileSystemEntries(workDir).Any()) Directory.Delete(workDir); } catch { }
         }
-    }
-
-    private static (bool Trusted, string Reason) VerifyScript(string scriptPath)
-    {
-        var info = new FileInfo(scriptPath);
-        var key = $"{info.FullName}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
-        lock (TrustLock)
-        {
-            _selfSigned ??= SelfIsSigned();
-            if (_selfSigned == false)
-            {
-                // Build de desarrollo: el binario tampoco está firmado, exigir la
-                // firma del script sólo impediría probar. Queda en el log.
-                IpcLog.Write("[asp.ad.collect] privsvc is unsigned (dev build) — script signature not enforced");
-                return (true, "dev_build_unsigned");
-            }
-            if (_scriptTrust is { } cached && cached.Key == key) return (cached.Trusted, cached.Reason);
-            var (trusted, reason) = Sdp.WinVerifyTrustFile(scriptPath);
-            _scriptTrust = (key, trusted, reason);
-            return (trusted, reason);
-        }
-    }
-
-    private static bool SelfIsSigned()
-    {
-        var self = Environment.ProcessPath;
-        if (string.IsNullOrEmpty(self) || !File.Exists(self)) return false;
-        return Sdp.WinVerifyTrustFile(self).trusted;
     }
 
     private static void TryDelete(string path)

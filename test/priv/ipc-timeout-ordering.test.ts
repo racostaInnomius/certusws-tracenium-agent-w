@@ -66,6 +66,8 @@ const PRIVSVC_CEILING_MS: Record<string, { windows?: number; macos?: number; lin
   // ADR-0022 — una tanda del colector de Assessment Service. Windows-only: el
   // handler mata PowerShell a los 300 s (AspCollectorShape.HandlerCeilingMs).
   "asp.ad.collect": { windows: 300_000 },
+  // ADR-0023 — lector de impresoras publicadas en AD (AdPrintersShape.HandlerCeilingMs).
+  "amp.ad.printers": { windows: 120_000 },
   // 7ª aparición (2026-09-03, campaña apply en el laboratorio): los dos métodos
   // de pmp caían en el default de 8s. Techos: Windows lee shares/firewall por
   // PowerShell a 30s y deshabilita SMBv1 con 120s; macOS/Linux ejecutan

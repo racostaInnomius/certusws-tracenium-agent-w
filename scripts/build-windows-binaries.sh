@@ -290,21 +290,25 @@ distribute_exe() {
   fi
 }
 
-# ADR-0022 — el colector de Assessment Service viaja como FICHERO junto al
-# PrivSvc (Scripts\), no embebido: AspCollector lo busca en
-# AppContext.BaseDirectory\Scripts y release.yml lo firma con Authenticode antes
-# del MSI. Fuente única: el .ps1 del proyecto.
-stage_asp_collector() {
+# Los .ps1 que el PrivSvc ejecuta como SYSTEM con -File viajan como FICHEROS
+# junto a su binario (Scripts\), no embebidos: el handler los busca en
+# AppContext.BaseDirectory\Scripts y release.yml firma esa carpeta con
+# Authenticode antes del MSI. Fuente única: los .ps1 del proyecto.
+#   asp-ad-collector.ps1 — ADR-0022, Assessment Suite
+#   ad-printers.ps1      — ADR-0023, impresoras publicadas en AD (AMP)
+stage_privsvc_scripts() {
   arch="$1"
-  src="$AGENT_REPO_DIR/privsvc/windows/Tracenium.PrivSvc.Windows/Scripts/asp-ad-collector.ps1"
-  if [ ! -f "$src" ]; then
-    echo "ERROR: ASP collector script not found at: $src" >&2
-    exit 1
-  fi
   target="$STAGE_BASE/$arch/PrivSvc/Scripts"
   mkdir -p "$target"
-  cp -f "$src" "$target/asp-ad-collector.ps1"
-  echo "  -> $target/asp-ad-collector.ps1"
+  for name in asp-ad-collector.ps1 ad-printers.ps1; do
+    src="$AGENT_REPO_DIR/privsvc/windows/Tracenium.PrivSvc.Windows/Scripts/$name"
+    if [ ! -f "$src" ]; then
+      echo "ERROR: PrivSvc script not found at: $src" >&2
+      exit 1
+    fi
+    cp -f "$src" "$target/$name"
+    echo "  -> $target/$name"
+  done
 }
 
 # -----------------------------------------------------------------------------
@@ -435,7 +439,7 @@ if [ "$DO_X64" = "1" ]; then
   echo ""
   echo "[x64 3/4] Staging PrivSvc EXE → build/win-binaries/x64/..."
   distribute_exe "$X64_PRIVSVC_STAGE/Tracenium.PrivSvc.Windows.exe" "x64" "PrivSvc"
-  stage_asp_collector "x64"
+  stage_privsvc_scripts "x64"
 
   echo ""
   echo "[x64 4/4] Staging AgentTray EXE → build/win-binaries/x64/..."
@@ -489,7 +493,7 @@ if [ "$DO_ARM64" = "1" ]; then
   echo ""
   echo "[arm64 3/4] Staging PrivSvc EXE → build/win-binaries/arm64/..."
   distribute_exe "$ARM64_PRIVSVC_STAGE/Tracenium.PrivSvc.Windows.exe" "arm64" "PrivSvc"
-  stage_asp_collector "arm64"
+  stage_privsvc_scripts "arm64"
 
   echo ""
   echo "[arm64 4/4] Staging AgentTray EXE → build/win-binaries/arm64/..."

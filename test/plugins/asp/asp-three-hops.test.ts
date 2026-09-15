@@ -63,8 +63,13 @@ describe("asp_assess — los tres saltos", () => {
     const script = "privsvc/windows/Tracenium.PrivSvc.Windows/Scripts/asp-ad-collector.ps1";
     expect(fs.existsSync(path.join(ROOT, script))).toBe(true);
     expect(read("privsvc/windows/Tracenium.PrivSvc.Windows/Tracenium.PrivSvc.Windows.csproj")).toContain('Include="Scripts\\asp-ad-collector.ps1"');
-    expect(read("scripts/build-windows-binaries.sh")).toContain("stage_asp_collector \"x64\"");
-    expect(read("scripts/build-windows-binaries.sh")).toContain("stage_asp_collector \"arm64\"");
+    // Desde ADR-0023 la función copia TODOS los scripts del PrivSvc (antes era
+    // stage_asp_collector): lo que importa es que el colector esté en la lista
+    // y que se llame para las dos arquitecturas.
+    const build = read("scripts/build-windows-binaries.sh");
+    expect(build).toMatch(/for name in [^\n]*asp-ad-collector\.ps1/);
+    expect(build).toContain("stage_privsvc_scripts \"x64\"");
+    expect(build).toContain("stage_privsvc_scripts \"arm64\"");
     expect(read("windows/installer/wix/PrivSvc.wxs")).toContain("binaries\\PrivSvc\\Scripts\\asp-ad-collector.ps1");
     const release = read(".github/workflows/release.yml");
     expect(release).toContain("build\\win-binaries\\x64\\PrivSvc\\Scripts");

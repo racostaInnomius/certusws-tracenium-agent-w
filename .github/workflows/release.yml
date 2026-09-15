@@ -684,10 +684,10 @@ jobs:
           timestamp-rfc3161:            http://timestamp.acs.microsoft.com
           timestamp-digest:             SHA256
 
-      # ADR-0022 — el colector de Assessment Service es un .ps1 que el PrivSvc
-      # ejecuta como SYSTEM en los DC. Firmado aparte y SÓLO esa carpeta: un
-      # filtro ps1 sobre todo win-binaries firmaría cualquier script que
-      # arrastre AgentCore. AspCollector se niega a ejecutarlo sin firma.
+      # Los .ps1 que el PrivSvc ejecuta como SYSTEM (ADR-0022 colector de ASP en
+      # los DC, ADR-0023 lector de impresoras de AD). Firmados aparte y SÓLO esa
+      # carpeta: un filtro ps1 sobre todo win-binaries firmaría cualquier script
+      # que arrastre AgentCore. Ambos handlers se niegan a ejecutarlos sin firma.
       - name: Sign Assessment Service collector (.ps1)
         uses: azure/trusted-signing-action@v0.5.9
         with:
@@ -845,10 +845,10 @@ jobs:
           timestamp-rfc3161:            http://timestamp.acs.microsoft.com
           timestamp-digest:             SHA256
 
-      # ADR-0022 — el colector de Assessment Service es un .ps1 que el PrivSvc
-      # ejecuta como SYSTEM en los DC. Firmado aparte y SÓLO esa carpeta: un
-      # filtro ps1 sobre todo win-binaries firmaría cualquier script que
-      # arrastre AgentCore. AspCollector se niega a ejecutarlo sin firma.
+      # Los .ps1 que el PrivSvc ejecuta como SYSTEM (ADR-0022 colector de ASP en
+      # los DC, ADR-0023 lector de impresoras de AD). Firmados aparte y SÓLO esa
+      # carpeta: un filtro ps1 sobre todo win-binaries firmaría cualquier script
+      # que arrastre AgentCore. Ambos handlers se niegan a ejecutarlos sin firma.
       - name: Sign Assessment Service collector (.ps1)
         uses: azure/trusted-signing-action@v0.5.9
         with:

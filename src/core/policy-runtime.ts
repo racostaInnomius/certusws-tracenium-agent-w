@@ -152,6 +152,12 @@ export type RuntimePolicy = {
       domains?: Array<{ domain?: string; instanceId?: number; role?: string }>;
     };
   };
+  /**
+   * ADR-0023 — este equipo lee las impresoras publicadas en Active Directory.
+   * Lo deriva el control plane de `ad_printer_collectors` en cada lectura; su
+   * PRESENCIA es la autorización del job `ad_printers`.
+   */
+  adPrinterCollector?: { role?: string };
   /** Infrastructure Gateway. Delivered ONLY in a per-device policy override,
    *  to the single host per site that has line-of-sight to vCenter — never in
    *  the tenant-wide policy. Deliberately NOT a `plugins.enabled` entry: the
@@ -1219,6 +1225,8 @@ export class PolicyRuntime extends EventEmitter {
       sdp: policy.sdp,
       // ADR-0022 — tal cual, por lo mismo; aspCollectorDomains() falla CERRADO.
       asp: policy.asp,
+      // ADR-0023 — tal cual; isAdPrinterCollector() falla CERRADO.
+      adPrinterCollector: policy.adPrinterCollector,
       // Tal cual; browserExtensionPolicy() valida y descarta lo inválido.
       browserExtensions: policy.browserExtensions,
       plugins: mergedPlugins,
@@ -1332,6 +1340,12 @@ export class PolicyRuntime extends EventEmitter {
   /** Listas de extensiones pedidas para Chrome y Edge, ya validadas; null = la política no dice nada (no tocar). */
   browserExtensionPolicy(): ExtensionPolicy | null {
     return parseExtensionPolicy((this.policy as RuntimePolicy)?.browserExtensions);
+  }
+
+  /** ADR-0023: ¿este equipo es el colector (principal o respaldo) de impresoras de AD? Falla cerrado. */
+  isAdPrinterCollector(): boolean {
+    const role = (this.policy as RuntimePolicy)?.adPrinterCollector?.role;
+    return role === "primary" || role === "secondary";
   }
 
   aspCollectorDomains(): string[] {

@@ -106,3 +106,22 @@ describe("PolicyRuntime — browserExtensions", () => {
     expect(p.edge).toEqual({ blocklist: [], allowlist: [ID] });
   });
 });
+
+describe("ADR-0023 — adPrinterCollector sobrevive al validador", () => {
+  it("el rol llega por init() y por applyUpdate(), y se retira cuando deja de venir", async () => {
+    const s = storeWith({ version: "1", adPrinterCollector: { role: "secondary" } });
+    const rt = new PolicyRuntime(s.store, null);
+    await rt.init();
+    expect(rt.isAdPrinterCollector()).toBe(true);
+
+    s.set({ version: "2" });
+    await rt.applyUpdate();
+    expect(rt.isAdPrinterCollector()).toBe(false);
+  });
+
+  it("falla cerrado ante un rol que no entiende", async () => {
+    const rt = new PolicyRuntime(storeWith({ adPrinterCollector: { role: "admin" } }).store, null);
+    await rt.init();
+    expect(rt.isAdPrinterCollector()).toBe(false);
+  });
+});

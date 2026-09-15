@@ -116,6 +116,26 @@
       </Component>
 
       <!-- ============================= -->
+      <!-- AD printers reader (ADR-0023) -->
+      <!-- ============================= -->
+      <!--
+        El .ps1 que AdPrinters ejecuta como SYSTEM en el equipo que el admin
+        eligió para leer las impresoras publicadas en AD. Mismas reglas que el
+        colector de ASP: junto al binario, firmado por release.yml (misma
+        carpeta, mismo filtro), y Vital.
+      -->
+      <Component Id="PrivSvcAdPrintersComponent"
+                 Directory="PRIVSVC_SCRIPTS_DIR"
+                 Guid="*">
+
+        <File Id="AdPrintersScript"
+              Source="binaries\PrivSvc\Scripts\ad-printers.ps1"
+              KeyPath="yes"
+              Vital="yes"/>
+
+      </Component>
+
+      <!-- ============================= -->
       <!-- Root CA Asset -->
       <!-- ============================= -->
 

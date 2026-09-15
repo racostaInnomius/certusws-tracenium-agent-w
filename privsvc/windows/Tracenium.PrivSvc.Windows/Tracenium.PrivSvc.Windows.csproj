@@ -65,6 +65,12 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
     </Content>
+    <!-- ADR-0023 — lectura de impresoras publicadas en AD (AMP). Mismas reglas:
+         en disco junto al binario, firmado, nunca embebido ni codificado. -->
+    <Content Include="Scripts\ad-printers.ps1">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
     <Protobuf Include="..\..\..\proto\controlplane.proto"
               ProtoRoot="../../../proto"
               GrpcServices="Client" />
