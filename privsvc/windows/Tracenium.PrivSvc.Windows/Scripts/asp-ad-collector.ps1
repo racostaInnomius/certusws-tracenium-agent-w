@@ -69,10 +69,39 @@ function AspValue($value) {
   return [string]$value
 }
 
+# El DN de un objeto por su SID, escapado para ir DENTRO de un filtro LDAP
+# (RFC 4515: ( ) * \ y NUL). Catálogo 1.1.0: la pertenencia real a los grupos
+# protegidos (memberOf:1.2.840.113556.1.4.1941:=<DN>) no se puede escribir con
+# DN fijos — un grupo movido o renombrado haría pasar por huérfano a un
+# administrador —, y adminCount=1 no sirve: en el dominio de la sonda 35 de 58
+# eran huérfanos. Un SID que no existe es un error, nunca un filtro vacío.
+$AspSidDnCache = @{}
+function AspSidDn([string]$sid) {
+  if ($AspSidDnCache.ContainsKey($sid)) { return $AspSidDnCache[$sid] }
+  $searcher = New-Object System.DirectoryServices.DirectorySearcher
+  $searcher.SearchRoot = AspEntry "<SID=$sid>"
+  $searcher.Filter = '(objectClass=*)'
+  $searcher.SearchScope = [System.DirectoryServices.SearchScope]::Base
+  [void]$searcher.PropertiesToLoad.Add('distinguishedname')
+  $r = $searcher.FindOne()
+  if ($null -eq $r) { throw "sidDn: no object for $sid" }
+  $dn = [string]$r.Properties['distinguishedname'][0]
+  $AspSidDnCache[$sid] = $dn
+  return $dn
+}
+
+function AspLdapEscape([string]$value) {
+  return $value.Replace('\', '\5c').Replace('*', '\2a').Replace('(', '\28').Replace(')', '\29').Replace([string][char]0, '\00')
+}
+
 function AspExpand([string]$text, $ctx) {
   if ($null -eq $text) { return $null }
   $out = $text.Replace('{domainDn}', $ctx.domainDn).Replace('{configDn}', $ctx.configDn).Replace('{schemaDn}', $ctx.schemaDn)
   $out = $out.Replace('{domainSid}', $ctx.domainSid).Replace('{rootDomainSid}', $ctx.rootDomainSid)
+  $out = [regex]::Replace($out, '\{sidDn:(S-1-\d+(?:-\d+)*)\}', {
+      param($m)
+      return (AspLdapEscape (AspSidDn $m.Groups[1].Value))
+    })
   $out = [regex]::Replace($out, '\{fileTimeDaysAgo:(\d{1,4})\}', {
       param($m)
       return [string]([DateTime]::UtcNow.AddDays(-[int]$m.Groups[1].Value).ToFileTimeUtc())

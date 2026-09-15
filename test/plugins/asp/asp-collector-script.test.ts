@@ -218,3 +218,47 @@ describe.skipIf(!hasPwsh)("asp-ad-collector.ps1 — AspAceHit (qué ACE cuenta c
     expect(run([{ name: "inherit-only", rights: R.GenericAll, inheritOnly: true, wanted: PRV006 }])).toEqual({ "inherit-only": false });
   });
 });
+
+describe.skipIf(!hasPwsh)("asp-ad-collector.ps1 — marcador {sidDn:<SID>}", () => {
+  function expand(text: string, dnBySid: Record<string, string>): { ok: boolean; out: string } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "asp-siddn-"));
+    try {
+      const runner = path.join(dir, "run.ps1");
+      const fake = Object.entries(dnBySid).map(([k, v]) => `'${k}' = '${v.replace(/'/g, "''")}'`).join("; ");
+      fs.writeFileSync(
+        runner,
+        [
+          `$t = $null; $e = $null`,
+          `$ast = [System.Management.Automation.Language.Parser]::ParseFile('${SCRIPT}', [ref]$t, [ref]$e)`,
+          `foreach ($n in 'AspLdapEscape', 'AspExpand') { $fn = $ast.FindAll({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq $n }, $true) | Select-Object -First 1; . ([scriptblock]::Create($fn.Extent.Text)) }`,
+          `$fake = @{ ${fake} }`,
+          `function AspSidDn([string]$sid) { if (-not $fake.ContainsKey($sid)) { throw "sidDn: no object for $sid" }; return $fake[$sid] }`,
+          `$ctx = [ordered]@{ domainDn = 'DC=corp,DC=example'; configDn = 'CN=Configuration,DC=corp,DC=example'; schemaDn = 'CN=Schema,CN=Configuration,DC=corp,DC=example'; domainSid = 'S-1-5-21-1-2-3'; rootDomainSid = 'S-1-5-21-1-2-3' }`,
+          `try { [Console]::Out.Write('OK:' + (AspExpand ${JSON.stringify(text).replace(/\$/g, "`$")} $ctx)) } catch { [Console]::Out.Write('ERR:' + $_.Exception.Message) }`
+        ].join("\n")
+      );
+      const r = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", runner], { encoding: "utf8", timeout: 60_000 });
+      expect(r.status, r.stderr).toBe(0);
+      return r.stdout.startsWith("OK:") ? { ok: true, out: r.stdout.slice(3) } : { ok: false, out: r.stdout.slice(4) };
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("⭐ resuelve el DN por SID, también con {domainSid} dentro, y lo escapa para el filtro", () => {
+    const r = expand("(&(adminCount=1)(!(memberOf:1.2.840.113556.1.4.1941:={sidDn:{domainSid}-512}))(!(memberOf:1.2.840.113556.1.4.1941:={sidDn:S-1-5-32-544})))", {
+      "S-1-5-21-1-2-3-512": "CN=Domain Admins (legacy),OU=Tier 0\\, Admins,DC=corp,DC=example",
+      "S-1-5-32-544": "CN=Administrators,CN=Builtin,DC=corp,DC=example"
+    });
+    expect(r).toEqual({
+      ok: true,
+      out: "(&(adminCount=1)(!(memberOf:1.2.840.113556.1.4.1941:=CN=Domain Admins \\28legacy\\29,OU=Tier 0\\5c, Admins,DC=corp,DC=example))(!(memberOf:1.2.840.113556.1.4.1941:=CN=Administrators,CN=Builtin,DC=corp,DC=example)))"
+    });
+  });
+
+  it("un SID que no existe es un error de la consulta, nunca un filtro vacío", () => {
+    const r = expand("(memberOf:1.2.840.113556.1.4.1941:={sidDn:{rootDomainSid}-519})", {});
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain("sidDn: no object for S-1-5-21-1-2-3-519");
+  });
+});
