@@ -28,6 +28,7 @@ import { EventEmitter } from "events";
 
 const mocks = vi.hoisted(() => ({
   createGrpcClient: vi.fn(),
+  runUpdateTask: vi.fn(async () => ({ status: "started", version: "9.9.9" })),
   outbox: {
     enqueue: vi.fn(() => 1),
     leaseReady: vi.fn(() => [] as any[]),
@@ -59,7 +60,10 @@ vi.mock("../../src/plugins/pmp/state", () => ({
   isRemediateInFlight: vi.fn(() => false)
 }));
 vi.mock("../../src/plugins/pmp/remediation", () => ({ runRemediation: vi.fn() }));
-vi.mock("../../src/update/update-task", () => ({ runUpdateTask: vi.fn() }));
+vi.mock("../../src/update/update-task", () => ({
+  runUpdateTask: mocks.runUpdateTask,
+  ackForUpdateOutcome: () => ({ status: 0, message: "update_started;src=origin" })
+}));
 
 // ── Constantes espejo del módulo bajo test ──────────────────────────────
 const SILENCE_THRESHOLD_MS = 270_000;
@@ -519,6 +523,33 @@ describe("grpc-stream — sender loop (drain del outbox)", () => {
     await vi.advanceTimersByTimeAsync(1_500);
 
     expect(mocks.outbox.markFailed).toHaveBeenCalledWith(9, "Unsupported event type: LOG_BUNDLE");
+  });
+});
+
+// ── Self-update apagado NO bloquea un agent_update manual ────────────
+//
+// `features.selfUpdate` congela el sondeo periódico (policy-runtime
+// isUpdateEnabled). Un job que empuja un operador es la forma deliberada de
+// mover un equipo congelado —hot-fix, rescate, downgrade— y debe seguir
+// instalando. Decidido con el owner el 2026-09-15.
+describe("grpc-stream — agent_update manual con Self-update apagado", () => {
+  it("el runJob agent_update instala aunque isUpdateEnabled() sea false", async () => {
+    ctx.policyRuntime.isUpdateEnabled = () => false;
+
+    await startFresh();
+    latestStream().emit("data", {
+      runJob: { jobId: "job-upd-1", jobType: "agent_update", payload: { version: "9.9.9" } }
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(mocks.runUpdateTask).toHaveBeenCalledTimes(1);
+    expect((mocks.runUpdateTask.mock.calls[0] as any[])[1]).toMatchObject({ targetVersion: "9.9.9" });
+    expect(ctx.priv.call).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "grpc.ack",
+        params: expect.objectContaining({ eventId: "job-upd-1", status: 0 })
+      })
+    );
   });
 });
 

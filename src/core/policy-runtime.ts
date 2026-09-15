@@ -690,8 +690,8 @@ const DEFAULT_POLICY: RuntimePolicy = {
   update: {
     // Was hardcoded to 6h (21600s) in scheduler.ts:343 before Sprint 1
     // of Policy v2. Pulled into policy so operators can tune how often
-    // the agent's self-update probe runs (the actual install is still
-    // gated by `modules.update` / `features.selfUpdate`).
+    // the agent's self-update probe runs (whether it runs at all is
+    // `features.selfUpdate` — see isUpdateEnabled()).
     intervalSeconds: 21600 // 6h
   },
   cdp: {
@@ -1003,8 +1003,25 @@ export class PolicyRuntime extends EventEmitter {
     return this.isModuleEnabled("inventory");
   }
 
+  /**
+   * ¿Corre el sondeo periódico de auto-update (y por tanto la instalación)?
+   *
+   * `features.selfUpdate` es el interruptor: es lo que escribe el portal, lo
+   * que el backend valida y lo que mira el warmer de DPs. `modules.update`
+   * sólo puede APAGAR — ninguna policy lo escribe hoy, pero un `false` legado
+   * no debe volver a encender nada.
+   *
+   * ⚠️ Era `modules.update || features.selfUpdate`. `modules.update` sale
+   * `true` de DEFAULT_POLICY en el validador, así que el OR ganaba siempre y
+   * apagar Self-update no congelaba ningún equipo: el sondeo de 6 h seguía
+   * instalando la última versión.
+   *
+   * No gatea los `agent_update` que empuja un operador (runJob y el push de
+   * control en grpc-stream.ts): congelar la flota no debe impedir moverla a
+   * propósito (hot-fix, rescate, downgrade controlado).
+   */
   isUpdateEnabled(): boolean {
-    return this.isModuleEnabled("update") || this.isFeatureEnabled("selfUpdate");
+    return this.policy.modules?.update !== false && this.isFeatureEnabled("selfUpdate");
   }
 
   isComplianceEnabled(): boolean {
@@ -1263,7 +1280,7 @@ export class PolicyRuntime extends EventEmitter {
     // validate update — same shape as inventory: [60s, 24h]. Below 60s
     // would beat up the update-probe REST endpoint; above 24h defeats
     // the purpose of having an auto-update channel at all (operators
-    // who want indefinite hold should flip `modules.update` off, not
+    // who want indefinite hold should flip `features.selfUpdate` off, not
     // crank the interval to a year).
     if (
       validated.update?.intervalSeconds &&
