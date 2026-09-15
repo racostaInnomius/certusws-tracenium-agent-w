@@ -207,3 +207,45 @@ export function hostFromPrinterUri(uri: string | null | undefined): string | nul
   const host = m[2].replace(/^\[|\]$/g, "").toLowerCase();
   return host || null;
 }
+
+/**
+ * Colas que NO son impresoras del equipo y no deben salir de él.
+ *
+ *   session — impresora redirigida por Escritorio remoto: la del CLIENTE RDP,
+ *             vista desde la sesión. Aparece y desaparece con cada conexión,
+ *             y cada aparición es un alta y una baja más en el delta.
+ *   virtual — no imprime en papel: PDF, XPS, OneNote, fax, controles remotos.
+ *
+ * ⚠️ Medido en T111 (2026-09-15): de 199 filas en `device_printers`, 90 eran
+ * virtuales y 12 de sesión — la mitad del inventario, sin una sola impresora.
+ *
+ * ⚠️ Lo que se tira aquí no llega NUNCA al backend, así que la regla es
+ * deliberadamente más estrecha que la de la pestaña
+ * (`certusws-tracenium/modules/printer-inventory/printer-fleet.ts`):
+ *
+ *   - Una virtual se reconoce SÓLO por el puerto. Las 90 de T111 caen todas por
+ *     puerto (`PORTPROMPT:`, `nul:`, `SHRFAX:`, `C:\…\print.pdf`, `AD_Port`…).
+ *     El nombre o el driver no bastan: «Fax» o «PDF» en el nombre de una cola
+ *     con puerto TCP/IP no demuestra que no haya un aparato detrás.
+ *   - Una cola con dirección de red o conexión UNC nunca es virtual.
+ *   - Las WSD (`WSD-…`, `IP4_<guid>_<ip>`) SÍ viajan. No cuentan como impresoras
+ *     en la pestaña, pero son la única huella de un aparato en equipos sin cola
+ *     TCP/IP, y la `IP4_` trae su dirección: tirarlas aquí sería irreversible.
+ *
+ * El backend conserva su filtro para los agentes anteriores a éste.
+ */
+export function printerNoiseKind(
+  p: Pick<Printer, "name" | "driver" | "port" | "hostAddress">
+): "session" | "virtual" | null {
+  const port = (p.port || "").trim();
+  if (/remote desktop easy print/i.test(p.driver || "")) return "session";
+  if (/\(redirected \d+\)\s*$/i.test(p.name || "")) return "session";
+  if (/^ts\d{3}$/i.test(port)) return "session";
+
+  if (p.hostAddress || port.startsWith("\\\\")) return null;
+  if (VIRTUAL_PORT.test(port)) return "virtual";
+  return null;
+}
+
+const VIRTUAL_PORT =
+  /^(portprompt:|nul:?$|shrfax:|file:|xpsport:|onenote|microsoft\.office\.onenote|pdf[a-z]*:|cups-pdf:|ad_port$|tsprintport:|nitro pdf.*port:?$|[a-z]:\\|documents\\|.*fax_port$)/i;

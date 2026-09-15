@@ -230,3 +230,35 @@ describe("⚠️ una lectura fallida no borra impresoras", () => {
     expect(deletePrintersByIds).toHaveBeenCalledWith(["windows-spooler:USB-Local"]);
   });
 });
+
+describe("⚠️ las colas de sesión y las virtuales no salen del equipo", () => {
+  const conPuerto = (name: string, port: string, driver: string | null = null) => ({ ...impresora(name), port, driver });
+
+  it("primera ejecución: ni en la baseline ni en items[]", () => {
+    const r = buildPrinterInventoryWithBaseline(
+      [
+        conPuerto("Microsoft Print to PDF", "PORTPROMPT:"),
+        conPuerto("HP (redirected 2)", "TS003", "Remote Desktop Easy Print"),
+        conPuerto("Oficina", "IP_10.0.0.5"),
+      ],
+      { machineScope: "collected", userScope: "collected" }
+    );
+    expect(r.count).toBe(1);
+    expect(r.items?.map((p: any) => p.name)).toEqual(["Oficina"]);
+    expect(upsertPrinterBaseline.mock.calls[0][0].map((p: any) => p.name)).toEqual(["Oficina"]);
+  });
+
+  it("una baseline anterior que las tenía las da de baja en la lectura completa", () => {
+    const pdf = conPuerto("Microsoft Print to PDF", "PORTPROMPT:");
+    const oficina = conPuerto("Oficina", "IP_10.0.0.5");
+    loadPrinterBaseline.mockReturnValue([pdf, oficina]);
+
+    const r = buildPrinterInventoryWithBaseline([pdf, oficina], { machineScope: "collected", userScope: "collected" });
+
+    expect(r.hasChanges).toBe(true);
+    expect(r.delta?.removed.map((p: any) => p.name)).toEqual(["Microsoft Print to PDF"]);
+    expect(deletePrintersByIds).toHaveBeenCalledWith(["windows-spooler:Microsoft Print to PDF"]);
+    expect(r.count).toBe(1);
+  });
+});
+

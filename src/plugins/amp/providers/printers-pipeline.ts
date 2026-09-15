@@ -19,6 +19,7 @@
 
 import type { PrinterInventory } from "../../../domain/amp-types";
 import type { Printer } from "../../../domain/printer";
+import { printerNoiseKind } from "../../../domain/printer";
 import {
   computePrinterDelta,
   toPrinterBaselineOps
@@ -30,7 +31,7 @@ import {
 } from "../../../domain/printer-baseline-repo";
 
 export function buildPrinterInventoryWithBaseline(
-  current: Printer[],
+  collected: Printer[],
   /**
    * Alcances de la lectura (Windows). Ver PrinterInventory.machineScope.
    *
@@ -43,6 +44,11 @@ export function buildPrinterInventoryWithBaseline(
    */
   scopes?: { machineScope: string; userScope: string }
 ): PrinterInventory {
+  // Las colas de sesión RDP y las virtuales se quedan en el equipo (ver
+  // printerNoiseKind). Se filtran ANTES del delta: una baseline que ya las
+  // tenía las da de baja en la próxima lectura completa, y el backend borra
+  // sus filas sin migración.
+  const current = collected.filter((p) => printerNoiseKind(p) === null);
   const read = classifyPrinterRead(scopes);
 
   if (read === "blind") {
