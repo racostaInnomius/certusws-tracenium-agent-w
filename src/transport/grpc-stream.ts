@@ -1413,30 +1413,34 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       // items[]. The previous implementation cleared a `namespaceHash:amp`
       // key that AMP never reads — a silent no-op that left the projection
       // permanently empty.
-      const namespace = String(payload?.namespace || "").trim().toLowerCase();
-      if (namespace !== "amp") {
-        // Only "amp" is wired today (it's the only namespace with a
-        // delta protocol). Others reject cleanly so a future backend that
-        // dispatches a different namespace gets a recognizable error in
-        // audit instead of silent acceptance.
-        return {
-          status: 2,
-          message: `reset_baseline rejected: unsupported namespace "${namespace}"`,
-        };
+      //
+      // ⚠️ Sólo las líneas base que pide `payload.scopes` (ver
+      // core/reset-baseline.ts). Sin `scopes`, las tres, como antes.
+      const { planResetBaseline } = await import("../core/reset-baseline");
+      const plan = planResetBaseline(payload);
+      if (!plan.ok) {
+        // Namespace o alcance desconocido: error reconocible en el job, no un
+        // éxito que no hizo lo que se pidió.
+        return { status: 2, message: plan.message };
       }
+      const namespace = plan.namespace;
       try {
         const { clearSoftwareBaseline } = await import("../domain/software-baseline-repo");
         const { clearPrinterBaseline } = await import("../domain/printer-baseline-repo");
         const { clearBrowserExtensionBaseline } = await import("../domain/browser-extension-baseline-repo");
-        clearSoftwareBaseline();
-        clearPrinterBaseline();
-        clearBrowserExtensionBaseline();
-        ctx.logger?.warn?.("[reset_baseline] cleared AMP software + printer + browser extension baselines; next collection tick will re-send a full snapshot", {
+        const clearers = {
+          software: clearSoftwareBaseline,
+          printers: clearPrinterBaseline,
+          browserExtensions: clearBrowserExtensionBaseline,
+        } satisfies Record<(typeof plan.scopes)[number], () => void>;
+        for (const scope of plan.scopes) clearers[scope]();
+        ctx.logger?.warn?.("[reset_baseline] cleared AMP baselines; next collection tick will re-send them in full", {
           namespace,
+          scopes: plan.scopes,
         });
         return {
           status: 0,
-          message: `reset_baseline:cleared:${namespace}`,
+          message: `reset_baseline:cleared:${namespace}:${plan.scopes.join(",")}`,
         };
       } catch (err: any) {
         ctx.logger?.error?.("[reset_baseline] failed to clear baseline", {
