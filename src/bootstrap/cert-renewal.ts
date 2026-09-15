@@ -51,20 +51,42 @@ function atomicWriteFileSync(targetPath: string, data: string, mode = 0o600) {
 }
 
 /**
- * Las CA emisoras que el equipo acepta TRAS una renovación: la UNIÓN de las
- * que aceptaba antes y las que trae la renovación. Nunca menos.
+ * Las CA emisoras que el equipo acepta TRAS una renovación.
+ *
+ * ── La regla ─────────────────────────────────────────────────────────
+ *
+ *   · Si la renovación TRAE LISTA, esa lista MANDA (más la singular renovada).
+ *   · Si NO la trae, se UNE con lo que el equipo ya aceptaba. Nunca menos.
  *
  * 🔴 EL INCIDENTE (14-sep, MSIG-VEEAM-PC): el privsvc de Windows no reenviaba
  * la lista al renovar, y este módulo conservaba la del enrolamiento — que en un
  * equipo enrolado en agosto NO EXISTÍA. `grpc-client.ts` caía entonces a la
  * huella singular, que tras rotar era la de la G2. El certificado del servidor
  * gRPC sigue emitido por la Issuing vieja, así que el agente rechazó al
- * servidor y se quedó a oscuras sin forma remota de arreglarlo.
+ * servidor y se quedó a oscuras sin forma remota de arreglarlo. De ahí la
+ * rama de UNIÓN: una respuesta a la que le falta el campo no puede reducir.
  *
- * Por qué UNIÓN y no «la lista nueva»: aceptar menos CAs después de renovar
- * sólo puede desconectar. Quién firma al SERVIDOR no depende de a qué CA rotó
- * este equipo, y durante una transición conviven las dos. Dejar de confiar en
- * una CA es una operación deliberada (re-enrolar), no un efecto lateral.
+ * ── Por qué una lista presente MANDA y no se une siempre ─────────────
+ *
+ * La primera versión de este arreglo (a846787) unía SIEMPRE. Cerraba el
+ * apagón, pero hacía imposible dejar de confiar en una CA por renovación, y la
+ * CA que hay que retirar es la Issuing VIEJA — la de la clave filtrada. Con
+ * unión incondicional, cada Windows seguiría aceptando para siempre un
+ * certificado de servidor firmado con esa clave: justo el agujero que la
+ * rotación de ADR-0015 existe para cerrar (fase 5). «Re-enrolar» como forma de
+ * retirar no escala a una flota.
+ *
+ * La lista que llega es la AUTORITATIVA: son las intermedias del bundle que el
+ * control plane entrega (AGENT_CA_BUNDLE_PEM), calculadas por la instalación.
+ *
+ * ⚠️ INVARIANTE OPERATIVO, sin arreglo remoto si se rompe: la CA que firma el
+ * certificado del SERVIDOR gRPC tiene que estar en AGENT_CA_BUNDLE_PEM. Retirar
+ * la vieja es, en este orden: reemitir el cert del servidor con la G2, y SÓLO
+ * DESPUÉS quitar la vieja del bundle. Al revés, cada renovación dejaría a su
+ * equipo rechazando al servidor — el apagón del 14-sep, a escala.
+ *
+ * macOS y Linux no devuelven lista al renovar (validan al servidor con el
+ * ca-bundle, no con estas huellas): caen siempre en la rama de unión.
  *
  * Se deduplica sin distinguir mayúsculas ni separadores (Windows usa SHA-1 en
  * mayúsculas; macOS/Linux SHA-256 en minúsculas) pero se conserva el texto
@@ -74,29 +96,40 @@ export function mergeIssuingCaThumbprints(
   previous: { issuingCaThumbprint?: string; issuingCaThumbprints?: string[] },
   renewed: { issuingCaThumbprint?: unknown; issuingCaThumbprints?: unknown }
 ): { issuingCaThumbprint?: string; issuingCaThumbprints: string[] } {
-  const renewedList = Array.isArray(renewed.issuingCaThumbprints) ? renewed.issuingCaThumbprints : [];
-  const candidates = [
-    ...renewedList,
-    renewed.issuingCaThumbprint,
-    ...(previous.issuingCaThumbprints ?? []),
-    previous.issuingCaThumbprint,
-  ];
-  const seen = new Set<string>();
-  const merged: string[] = [];
-  for (const c of candidates) {
-    const text = typeof c === "string" ? c.trim() : "";
-    const key = text.replace(/[^0-9a-z]/gi, "").toUpperCase();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    merged.push(text);
+  const texto = (c: unknown) => (typeof c === "string" ? c.trim() : "");
+  const unicos = (candidates: unknown[]): string[] => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const c of candidates) {
+      const text = texto(c);
+      const key = text.replace(/[^0-9a-z]/gi, "").toUpperCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(text);
+    }
+    return out;
+  };
+
+  const renewedSingular = texto(renewed.issuingCaThumbprint) || undefined;
+  // «Trae lista» = al menos una huella legible. Una lista vacía o de basura es
+  // un campo perdido, no una orden de retirar todo.
+  const renewedList = unicos(Array.isArray(renewed.issuingCaThumbprints) ? renewed.issuingCaThumbprints : []);
+
+  if (renewedList.length > 0) {
+    const autoritativa = unicos([...renewedList, renewedSingular]);
+    return {
+      issuingCaThumbprint: renewedSingular ?? autoritativa[0],
+      issuingCaThumbprints: autoritativa
+    };
   }
-  const renewedSingular =
-    typeof renewed.issuingCaThumbprint === "string" && renewed.issuingCaThumbprint.trim()
-      ? renewed.issuingCaThumbprint.trim()
-      : undefined;
+
   return {
     issuingCaThumbprint: renewedSingular ?? previous.issuingCaThumbprint,
-    issuingCaThumbprints: merged,
+    issuingCaThumbprints: unicos([
+      renewedSingular,
+      ...(previous.issuingCaThumbprints ?? []),
+      previous.issuingCaThumbprint
+    ])
   };
 }
 

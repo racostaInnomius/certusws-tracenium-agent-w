@@ -13,6 +13,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync } from "child_process";
+import crypto from "crypto";
 import fs from "fs";
 import https from "https";
 import os from "os";
@@ -52,6 +53,26 @@ beforeAll(() => {
   root("evilRoot", "/C=US/O=Tracenium/OU=RootCA/CN=Tracenium Root CA");
   signed("evilG2", "/C=US/O=Tracenium/CN=Tracenium Issuing CA G2", "evilRoot", "ca", rsa);
   signed("peerEvil", "/CN=tracenium-agent-evil", "evilG2", "leaf", rsa);
+
+  // ⚠️ La falsificación que de verdad aísla la FIRMA. La jerarquía ajena de
+  // arriba no la aísla: su G2 lleva un authorityKeyIdentifier que NO es el de
+  // la raíz real, así que `checkIssued` ya la rechaza por AKI y la verificación
+  // de firma nunca llega a probarse (una mutación que la quitaba pasaba los
+  // tests, 15-sep). Aquí la raíz ajena copia el NOMBRE y el SKI de la real, y
+  // su CA hereda ese AKI: nombre y AKI casan, sólo la firma delata el engaño.
+  const ski = String(ossl("x509", "-in", "root.crt", "-noout", "-ext", "subjectKeyIdentifier"))
+    .match(/[0-9A-F]{2}(?::[0-9A-F]{2}){5,}/i)?.[0];
+  if (!ski) throw new Error("no se pudo leer el SKI de la raíz real");
+  ossl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "cloneRoot.key", "-out", "cloneRoot.crt",
+    "-subj", "/C=US/O=Tracenium/OU=RootCA/CN=Tracenium Root CA", "-days", "30",
+    "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+    "-addext", `subjectKeyIdentifier=${ski}`);
+  fs.appendFileSync(f("ext.cnf"),
+    "[caAki]\nbasicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\nauthorityKeyIdentifier=keyid:always\n");
+  ossl("req", "-new", "-nodes", "-newkey", "rsa:2048", "-keyout", "forgedG2.key", "-out", "forgedG2.csr",
+    "-subj", "/C=US/O=Tracenium/CN=Tracenium Issuing CA G2");
+  ossl("x509", "-req", "-in", "forgedG2.csr", "-CA", "cloneRoot.crt", "-CAkey", "cloneRoot.key", "-set_serial", "77",
+    "-out", "forgedG2.crt", "-days", "30", "-extfile", "ext.cnf", "-extensions", "caAki");
 }, 60_000);
 
 afterAll(() => {
@@ -110,6 +131,18 @@ describe.each([["linux", linux], ["macos", macos]])("dp-peer-cas (%s)", (_plat, 
     const { ca, acceptedIssuingCas } = mod.dpServerCa(caBundleViejo(), read("root.crt"), read("evilG2.crt"));
     expect(acceptedIssuingCas).toBe(1);
     expect(await handshake(ca, "peerEvil")).not.toBe(200);
+  });
+
+  it("⭐ una CA con el NOMBRE y el AKI de la raíz real pero firmada con otra clave NO entra", () => {
+    const forged = new crypto.X509Certificate(read("forgedG2.crt"));
+    const realRoot = new crypto.X509Certificate(read("root.crt"));
+    // Precondición: si esto dejara de ser cierto, el test ya no probaría la
+    // firma y pasaría por la razón equivocada — que es lo que ocurría antes.
+    expect(forged.checkIssued(realRoot), "la falsificación debe casar en nombre y AKI").toBe(true);
+    expect(forged.verify(realRoot.publicKey), "…y sólo la firma debe delatarla").toBe(false);
+
+    expect(mod.trustedDeliveredCaPems(read("forgedG2.crt"), [read("root.crt")])).toEqual([]);
+    expect(mod.dpServerCa(caBundleViejo(), read("root.crt"), read("forgedG2.crt")).acceptedIssuingCas).toBe(1);
   });
 
   it("no acepta como CA emisora una hoja ni una raíz entregadas", () => {

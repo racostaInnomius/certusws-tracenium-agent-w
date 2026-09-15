@@ -206,8 +206,10 @@ public static class CryptoCertRenew
                 // pero aquí sólo salía la singular. Un equipo enrolado antes de
                 // que existiera la lista se quedaba aceptando sólo la G2 y
                 // rechazaba al servidor, cuyo certificado sigue en la vieja:
-                // MSIG-VEEAM-PC, 14-sep, a oscuras. El agente además une con lo
-                // que ya aceptaba (cert-renewal.ts), así que nunca se reduce.
+                // MSIG-VEEAM-PC, 14-sep, a oscuras. Esta lista es la AUTORITATIVA:
+                // cuando llega, el agente la adopta tal cual (cert-renewal.ts) y
+                // así puede retirar la Issuing filtrada; sólo si falta, une con
+                // lo que ya aceptaba. Lo vigila cert-renew-forwards-install.test.ts.
                 issuingCaThumbprints = IpcResultRead.StringArray(installResponse.Result, "issuingCaThumbprints"),
                 notAfter = GetStringFromObject(installResponse.Result, "notAfter"),
                 status = string.IsNullOrWhiteSpace(renewStatus) ? "pending" : renewStatus

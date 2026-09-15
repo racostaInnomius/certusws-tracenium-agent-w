@@ -472,7 +472,7 @@ describe("cert-renewal — carrera con otro proceso (thumbprint mutado durante e
   });
 });
 
-describe("cert-renewal — las CA emisoras aceptadas NUNCA se reducen al renovar", () => {
+describe("cert-renewal — las CA emisoras aceptadas al renovar", () => {
   // 🔴 MSIG-VEEAM-PC, 14-sep: enrolado en agosto (sin lista), rotó a la G2 con
   // un privsvc que no reenviaba la lista. El estado quedó con SÓLO la G2 y el
   // agente rechazó al servidor, cuyo certificado sigue en la Issuing vieja.
@@ -490,7 +490,8 @@ describe("cert-renewal — las CA emisoras aceptadas NUNCA se reducen al renovar
     expect(h.store.save).toHaveBeenCalledWith(result);
   });
 
-  it("la lista de la renovación se suma a la anterior, sin repetidos", async () => {
+  it("una lista presente MANDA: durante la rotación trae las dos y quedan las dos", async () => {
+    // Lo que manda hoy el control plane: AGENT_CA_BUNDLE_PEM = G2 + vieja.
     const h = makeHarness(certNearPem, { issuingCaThumbprint: G1, issuingCaThumbprints: [G1] });
     h.priv.call.mockResolvedValue(okRenewResponse({ issuingCaThumbprint: G2, issuingCaThumbprints: [G2, G1] }));
 
@@ -499,13 +500,28 @@ describe("cert-renewal — las CA emisoras aceptadas NUNCA se reducen al renovar
     expect(result.mtls.issuingCaThumbprints).toEqual([G2, G1]);
   });
 
-  it("⚠️ una renovación que trae una lista MÁS CORTA no quita las que ya se aceptaban", async () => {
+  it("⭐ una lista presente SÍ retira una CA — es como se deja de confiar en la Issuing filtrada", async () => {
+    // Fase 5 de ADR-0015. Con la primera versión de este arreglo (unión
+    // SIEMPRE), la vieja no salía nunca de la lista y cada Windows seguía
+    // aceptando un cert de servidor firmado con la clave filtrada.
     const h = makeHarness(certNearPem, { issuingCaThumbprint: G1, issuingCaThumbprints: [G1, G2] });
     h.priv.call.mockResolvedValue(okRenewResponse({ issuingCaThumbprint: G2, issuingCaThumbprints: [G2] }));
 
     const result = await maybeRenewClientCertificate(h as any);
 
-    expect(new Set(result.mtls.issuingCaThumbprints)).toEqual(new Set([G1, G2]));
+    expect(result.mtls.issuingCaThumbprints).toEqual([G2]);
+    expect(result.mtls.issuingCaThumbprint).toBe(G2);
+  });
+
+  it("⚠️ una lista VACÍA es un campo perdido, no una orden de retirar todo: une", async () => {
+    // Es lo que devuelve `IpcResultRead.StringArray` cuando la instalación no
+    // trae el campo. Tratarla como autoritativa dejaría al equipo sin CAs.
+    const h = makeHarness(certNearPem, { issuingCaThumbprint: G1, issuingCaThumbprints: [G1] });
+    h.priv.call.mockResolvedValue(okRenewResponse({ issuingCaThumbprint: G2, issuingCaThumbprints: [] }));
+
+    const result = await maybeRenewClientCertificate(h as any);
+
+    expect(result.mtls.issuingCaThumbprints).toEqual([G2, G1]);
   });
 });
 
@@ -518,11 +534,35 @@ describe("mergeIssuingCaThumbprints", () => {
     expect(merged.issuingCaThumbprints).toEqual(["ABCDEF", "112233"]);
   });
 
-  it("sin singular nueva conserva la anterior; basura en la respuesta se ignora", () => {
+  it("una lista sólo de basura cuenta como AUSENTE: conserva lo anterior", () => {
+    const merged = mergeIssuingCaThumbprints(
+      { issuingCaThumbprint: "AAAA" },
+      { issuingCaThumbprint: "", issuingCaThumbprints: [null, 42, ""] as any }
+    );
+    expect(merged).toEqual({ issuingCaThumbprint: "AAAA", issuingCaThumbprints: ["AAAA"] });
+  });
+
+  it("con una huella legible la lista manda; la basura se ignora y la singular sale de la lista", () => {
     const merged = mergeIssuingCaThumbprints(
       { issuingCaThumbprint: "AAAA" },
       { issuingCaThumbprint: "", issuingCaThumbprints: [null, 42, "", "BBBB"] as any }
     );
-    expect(merged).toEqual({ issuingCaThumbprint: "AAAA", issuingCaThumbprints: ["BBBB", "AAAA"] });
+    expect(merged).toEqual({ issuingCaThumbprint: "BBBB", issuingCaThumbprints: ["BBBB"] });
+  });
+
+  it("la singular renovada entra aunque la lista no la traiga", () => {
+    const merged = mergeIssuingCaThumbprints(
+      { issuingCaThumbprints: ["AAAA"] },
+      { issuingCaThumbprint: "CCCC", issuingCaThumbprints: ["BBBB"] }
+    );
+    expect(merged.issuingCaThumbprints).toEqual(["BBBB", "CCCC"]);
+  });
+
+  it("⚠️ la rama de unión NO se toca: sin lista, nunca se quita nada de lo anterior", () => {
+    const merged = mergeIssuingCaThumbprints(
+      { issuingCaThumbprint: "AAAA", issuingCaThumbprints: ["AAAA", "BBBB"] },
+      { issuingCaThumbprint: "CCCC" }
+    );
+    expect(new Set(merged.issuingCaThumbprints)).toEqual(new Set(["AAAA", "BBBB", "CCCC"]));
   });
 });
