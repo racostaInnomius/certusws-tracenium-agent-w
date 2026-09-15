@@ -796,11 +796,24 @@ private const int MaxPendingPushEvents = 50;
                 // recreate per session to avoid using a Completed/old queue
                 _sendQueue = new BlockingCollection<ControlMessage>(1024);
 
+                // Keepalive del CLIENTE: un PING cada 20 s de silencio y 20 s
+                // de espera por el pong. Antes eran 10 s, y ese plazo es lo que
+                // se veía en campo como `HTTP/2 error code 'PROTOCOL_ERROR'
+                // (0x1) "server sent invalid data"`: .NET lanza ese mismo
+                // ThrowProtocolError() cuando SU keepalive vence sin pong
+                // (dotnet/runtime#102623), o sea que el mensaje culpa al
+                // servidor por un pong que tardó más de 10 s en una red con
+                // cola (medido 2026-09-14 en el sitio T111: caídas aleatorias y
+                // reconexión en 4-8 s, el servidor al 1,4 % de CPU). 20 s es
+                // el mismo margen que concede el servidor a nuestro pong
+                // (`grpc.keepalive_timeout_ms` en modules/grpc/server.ts) y
+                // sigue por debajo del latido de 60 s, así que un cable roto de
+                // verdad se detecta igual antes del siguiente heartbeat.
                 var handler = new SocketsHttpHandler
                 {
                     PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
                     KeepAlivePingDelay = TimeSpan.FromSeconds(20),
-                    KeepAlivePingTimeout = TimeSpan.FromSeconds(10),
+                    KeepAlivePingTimeout = TimeSpan.FromSeconds(20),
                     EnableMultipleHttp2Connections = true
                 };
 

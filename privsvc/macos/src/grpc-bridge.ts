@@ -53,7 +53,7 @@ const PROTO_PATH = path.resolve(__dirname, "../proto/controlplane.proto");
 // use them: GrpcBridge.cs:720 sets
 //
 //   KeepAlivePingDelay   = TimeSpan.FromSeconds(20)
-//   KeepAlivePingTimeout = TimeSpan.FromSeconds(10)
+//   KeepAlivePingTimeout = TimeSpan.FromSeconds(20)   // 10 s hasta 2026-09-14
 //
 // so Windows pings every 20 s on an active stream — MORE often than
 // the 30 s cadence that got macOS strikes. Whatever protects Windows,

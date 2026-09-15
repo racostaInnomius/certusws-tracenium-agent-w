@@ -1058,8 +1058,9 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
     //   The half-open-TCP case the old receive-only gate guarded against
     //   is already caught FASTER and more reliably one layer down. The
     //   PrivSvc bridge runs HTTP/2 keepalive (KeepAlivePingDelay=20s,
-    //   KeepAlivePingTimeout=10s — see GrpcBridge.cs) and pushes
-    //   `grpc.disconnected` within ~30s of a dead socket → the
+    //   KeepAlivePingTimeout=20s since 2026-09-14, 10s before — see
+    //   GrpcBridge.cs) and pushes
+    //   `grpc.disconnected` within ~40s of a dead socket → the
     //   remote_disconnect path here. And a heartbeat the bridge cannot
     //   write throws → `stream.emit("error", …)` → reconnect (see the
     //   heartbeat IPC handler below). So a successful heartbeat write is
