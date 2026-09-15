@@ -658,10 +658,19 @@ export async function buildDeviceFacts(
     // printers} and concluded the agent was too old to report a position.
     //
     // If you add a field to AmpNamespace, add it here too, or it will not ship.
+    // ⚠️ El arranque lo lee el PROVEEDOR (readBootTime en windows/macos/linux),
+    // no buildHardwareNamespace: sustituir su runtime por el nuestro lo tiraba.
+    // Medido en T111 el 2026-09-15: 0 de 55 equipos con last_boot_utc diez días
+    // después de publicarlo, con la columna migrada y el portal pintándola.
+    const providerRuntime: any = ampIn.hardware?.runtime ?? {};
     outNamespaces.amp = {
       hardware: {
         static: hardware.static,
-        runtime: hardware.runtime
+        runtime: {
+          ...hardware.runtime,
+          ...(providerRuntime.bootTimeUtc !== undefined ? { bootTimeUtc: providerRuntime.bootTimeUtc } : {}),
+          ...(providerRuntime.uptimeSeconds !== undefined ? { uptimeSeconds: providerRuntime.uptimeSeconds } : {})
+        }
       },
       security,
       software,

@@ -225,6 +225,36 @@ describe("buildDeviceFacts — amp.geo / amp.geoStatus passthrough", () => {
     } as any;
   }
 
+  it("⚠️ conserva el arranque que lee el proveedor (bootTimeUtc + uptimeSeconds)", async () => {
+    // La regresión: el runtime del proveedor se sustituía por el de
+    // buildHardwareNamespace, que no lo lleva. T111: 0 de 55 con Last boot.
+    const out: any = await buildDeviceFacts(makeCtx(), {
+      amp: {
+        hardware: {
+          static: {} as any,
+          runtime: { bootTimeUtc: "2026-09-15T06:12:00.000Z", uptimeSeconds: 33120 } as any
+        },
+        security: { status: "unknown" } as any,
+        software: { count: 0, delta: null, items: [], hasChanges: false }
+      } as any
+    });
+    expect(out.namespaces.amp.hardware.runtime).toMatchObject({
+      bootTimeUtc: "2026-09-15T06:12:00.000Z",
+      uptimeSeconds: 33120,
+      memoryBytes: 34_359_738_368
+    });
+  });
+
+  it("no inventa el arranque si el proveedor no lo leyó, pero pasa un null explícito", async () => {
+    const base = { security: { status: "unknown" } as any, software: { count: 0, delta: null, items: [], hasChanges: false } };
+    const sinDato: any = await buildDeviceFacts(makeCtx(), { amp: { hardware: { static: {} as any, runtime: {} as any }, ...base } as any });
+    expect(sinDato.namespaces.amp.hardware.runtime).not.toHaveProperty("bootTimeUtc");
+    const nulo: any = await buildDeviceFacts(makeCtx(), {
+      amp: { hardware: { static: {} as any, runtime: { bootTimeUtc: null, uptimeSeconds: 12 } as any }, ...base } as any
+    });
+    expect(nulo.namespaces.amp.hardware.runtime).toMatchObject({ bootTimeUtc: null, uptimeSeconds: 12 });
+  });
+
   it("preserves a position reported by the OS", async () => {
     const geo = { lat: 19.432608, lon: -99.133209, accuracyM: 38, collectedAtUtc: "2026-08-11T18:00:00.000Z" };
     const facts = await buildDeviceFacts(makeCtx(), ampWith({ geo }));
