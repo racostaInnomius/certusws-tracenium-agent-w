@@ -33,6 +33,23 @@ describe("runDpPrefetch", () => {
     expect(call.params.sha256).toBe(SHA);
   });
 
+  it("⚠️ pasa al privsvc el bundle de CAs emisoras que adjunta el control plane", async () => {
+    // Los params se construyen campo a campo: sin reenviarlo, el DP nunca
+    // aprendía la G2 y rechazaba a MSIG-VEEAM-PC (15-sep).
+    const pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+    const ctx = makeCtx({ ok: true, result: { ready: true, cached: true, acceptedPeerCas: 2 } });
+    const ack = await runDpPrefetch(ctx, "j5", { deploymentId: 0, sha256: SHA, sources: SOURCES, peerCaBundlePem: pem });
+    expect(ctx.priv.call.mock.calls[0][0].params.peerCaBundlePem).toBe(pem);
+    expect(ack.ackMessage).toContain("peerCas=2");
+  });
+
+  it("sin bundle (backend anterior) no manda el campo ni lo anota en el acuse", async () => {
+    const ctx = makeCtx({ ok: true, result: { ready: true, cached: true } });
+    const ack = await runDpPrefetch(ctx, "j6", { deploymentId: 0, sha256: SHA, sources: SOURCES });
+    expect("peerCaBundlePem" in ctx.priv.call.mock.calls[0][0].params).toBe(false);
+    expect(ack.ackMessage).not.toContain("peerCas");
+  });
+
   it("rejects an invalid payload without touching privsvc", async () => {
     const ctx = makeCtx({ ok: true, result: { ready: true } });
     const bad = await runDpPrefetch(ctx, "j2", { deploymentId: 7, sha256: "nope", sources: SOURCES });

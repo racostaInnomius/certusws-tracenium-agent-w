@@ -495,6 +495,17 @@ private const int MaxPendingPushEvents = 50;
     /// </summary>
     public string? IssuingCaThumbprint => _lastConnectOptions?.IssuingCaThumbprint;
 
+    /// <summary>
+    /// TODAS las CAs emisoras que este agente acepta (singular + lista), el
+    /// mismo conjunto que valida al servidor. El DP lo usa como base de a qué
+    /// peers sirve: quedarse con la singular dejó fuera a MSIG-VEEAM-PC (G2)
+    /// frente a un DP de la Issuing vieja. Vacío hasta el primer grpc.connect.
+    /// </summary>
+    public System.Collections.Generic.IReadOnlyCollection<string> AcceptedIssuingCaThumbprints =>
+        _lastConnectOptions is null
+            ? Array.Empty<string>()
+            : AcceptableCaThumbprints(_lastConnectOptions);
+
     public async Task<bool> WaitForReadyAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
     {
         if (IsReady)

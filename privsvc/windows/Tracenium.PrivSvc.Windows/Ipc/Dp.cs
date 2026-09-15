@@ -24,8 +24,10 @@
 //     cache. A compromised DP can withhold or corrupt bytes (the peer then
 //     falls through to cdn/origin) but can never cause an install.
 //   * CONFIDENTIALITY is this server's job: mutual TLS. We present the
-//     enrollment certificate and REQUIRE a client certificate that chains to
-//     the same tenant CA, so only enrolled agents can pull packages.
+//     enrollment certificate and REQUIRE a client certificate issued by ANY
+//     of the tenant's issuing CAs (see DpPeerTrust.cs — a single CA locked
+//     out every peer on the other side of a CA rotation), so only enrolled
+//     agents can pull packages.
 //   * The served path is validated to a bare 64-hex sha256 and resolved
 //     strictly inside the cache directory — no traversal, no directory
 //     listing, no writes.
@@ -54,6 +56,13 @@ public static class Dp
     private static readonly string CacheDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "Tracenium", "PrivSvc", "dp-cache");
+
+    // C:\ProgramData\Tracenium\PrivSvc\dp-peer-cas.pem — las CAs emisoras que
+    // el control plane entrega con cada prefetch. Fuera de dp-cache: ahí sólo
+    // viven blobs de 64 hex y la evicción LRU no debe tocarlo.
+    private static readonly string PeerCasFile = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "Tracenium", "PrivSvc", "dp-peer-cas.pem");
 
     private const int DefaultPort = 47821;
     private const long DefaultCacheMaxBytes = 20L * 1024 * 1024 * 1024; // 20 GB
@@ -210,8 +219,15 @@ public static class Dp
     }
 
     /// <summary>
-    /// Accept a peer only when its certificate chains to this tenant's issuing
-    /// CA. Without a known CA we refuse rather than serving to anyone.
+    /// Accept a peer only when its certificate was issued by one of this
+    /// tenant's issuing CAs. Without any known CA we refuse rather than serving
+    /// to anyone.
+    ///
+    /// 🔴 Antes: la cadena tenía que contener la huella SINGULAR del propio DP.
+    /// MSIG-VEEAM-PC rotó a la G2, los DP de T111 siguen en la Issuing vieja, y
+    /// el handshake moría aquí sin dejar rastro — el equipo acabó con
+    /// `update_failed: connect ETIMEDOUT` hacia Azure. Ahora el rechazo se
+    /// registra (ver LogPeerRejection).
     /// </summary>
     private static bool ValidatePeerCertificate(
         object sender, X509Certificate? certificate, X509Chain? chain, SslPolicyErrors errors)
@@ -219,32 +235,114 @@ public static class Dp
         if (certificate == null) return false;
         try
         {
-            var caThumbprint = GrpcBridgeSingleton.Instance.IssuingCaThumbprint;
-            if (string.IsNullOrWhiteSpace(caThumbprint)) return false;
-
-            // Same lookup order the gRPC bridge uses: the issuing CA normally
-            // lands in the Intermediate store, with Root as the fallback.
-            var expectedCa = LoadCertByThumbprint(StoreName.CertificateAuthority, caThumbprint!)
-                             ?? LoadCertByThumbprint(StoreName.Root, caThumbprint!);
-            if (expectedCa == null) return false;
-
             var peerCert = certificate as X509Certificate2 ?? new X509Certificate2(certificate);
-            using var customChain = new X509Chain();
-            customChain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
-            customChain.ChainPolicy.VerificationFlags = X509VerificationFlags.AllowUnknownCertificateAuthority;
-            customChain.ChainPolicy.ExtraStore.Add(expectedCa);
+            var motivo = DpPeerTrust.WhyPeerRejected(peerCert, AcceptedIssuingCas(), DateTime.UtcNow);
+            if (motivo == null) return true;
+            LogPeerRejection(peerCert, motivo);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            IpcLog.Write($"[sdp.dp] peer validation error {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
 
-            if (!customChain.Build(peerCert)) return false;
+    /// <summary>
+    /// Las CAs emisoras a cuyos certificados sirve este DP: las que el agente
+    /// acepta para hablar con el servidor, instaladas en su almacén, más las
+    /// entregadas por el control plane que firmó la misma raíz.
+    /// </summary>
+    internal static List<X509Certificate2> AcceptedIssuingCas()
+    {
+        var local = GrpcBridgeSingleton.Instance.AcceptedIssuingCaThumbprints
+            .Select(tp => LoadCertByThumbprint(StoreName.CertificateAuthority, tp)
+                          ?? LoadCertByThumbprint(StoreName.Root, tp))
+            .Where(c => c != null)
+            .Cast<X509Certificate2>()
+            .ToList();
+        // Sin CA local no hay raíz contra la que comprobar lo entregado: se
+        // rechaza a todos, igual que antes sin identidad.
+        if (local.Count == 0) return local;
 
-            var expected = Normalize(caThumbprint!);
-            return customChain.ChainElements
-                .Cast<X509ChainElement>()
-                .Any(e => Normalize(e.Certificate.Thumbprint ?? "") == expected);
+        List<X509Certificate2> delivered;
+        try
+        {
+            delivered = File.Exists(PeerCasFile)
+                ? DpPeerTrust.ParsePemBundle(File.ReadAllText(PeerCasFile))
+                : new List<X509Certificate2>();
         }
         catch
         {
-            return false;
+            delivered = new List<X509Certificate2>();
         }
+        if (delivered.Count == 0) return local;
+
+        return DpPeerTrust.Union(
+            local,
+            DpPeerTrust.TrustedDeliveredCas(delivered, AnchorsFor(local), DateTime.UtcNow));
+    }
+
+    /// <summary>
+    /// Las raíces autofirmadas que firmaron a alguna CA local: las del almacén
+    /// Root y, de respaldo, la que trae el paquete (assets\root-ca.crt, la
+    /// misma que instala el enrolamiento).
+    /// </summary>
+    private static List<X509Certificate2> AnchorsFor(IEnumerable<X509Certificate2> localCas)
+    {
+        var candidates = new List<X509Certificate2>();
+        using (var store = new X509Store(StoreName.Root, StoreLocation.LocalMachine))
+        {
+            store.Open(OpenFlags.ReadOnly);
+            foreach (var ca in localCas)
+                candidates.AddRange(store.Certificates.Find(
+                    X509FindType.FindBySubjectDistinguishedName, ca.Issuer, validOnly: false).Cast<X509Certificate2>());
+        }
+        try
+        {
+            var bundled = Path.Combine(AppContext.BaseDirectory, "assets", "root-ca.crt");
+            if (File.Exists(bundled)) candidates.AddRange(DpPeerTrust.ParsePemBundle(File.ReadAllText(bundled)));
+        }
+        catch
+        {
+            // Sin raíz del paquete quedan las del almacén.
+        }
+
+        var anchors = candidates
+            .Where(root => DpPeerTrust.IsSelfSigned(root) && localCas.Any(ca => CertIssuedBy.SignedBy(ca, root)));
+        return DpPeerTrust.Union(anchors);
+    }
+
+    /// <summary>
+    /// Guarda el bundle entregado con el prefetch. Devuelve cuántas CAs acepta
+    /// ahora el DP, o null si no llegó bundle (control plane anterior): en ese
+    /// caso se conserva el que hubiera.
+    /// </summary>
+    private static int? PersistDeliveredPeerCas(string? pem)
+    {
+        if (string.IsNullOrWhiteSpace(pem)) return null;
+        if (DpPeerTrust.ParsePemBundle(pem).Count == 0) return null;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(PeerCasFile)!);
+        var tmp = PeerCasFile + ".tmp-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant();
+        File.WriteAllText(tmp, pem);
+        File.Move(tmp, PeerCasFile, overwrite: true);
+        return AcceptedIssuingCas().Count;
+    }
+
+    // Un peer que reintenta no debe llenar el log: una línea por certificado
+    // cada 10 minutos basta para diagnosticar.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> LastRejectionLog = new();
+
+    private static void LogPeerRejection(X509Certificate2 peer, string motivo)
+    {
+        var now = DateTime.UtcNow;
+        var key = peer.Thumbprint ?? "";
+        if (LastRejectionLog.TryGetValue(key, out var last) && now - last < TimeSpan.FromMinutes(10)) return;
+        if (LastRejectionLog.Count > 1000) LastRejectionLog.Clear();
+        LastRejectionLog[key] = now;
+        // El motivo primero: el log IPC corta a 200 caracteres.
+        IpcLog.Write($"[sdp.dp] peer rejected: {motivo} subject='{peer.Subject}'");
     }
 
     // ── Minimal HTTP/1.1 ─────────────────────────────────────────────────
@@ -413,6 +511,19 @@ public static class Dp
                 return PrivSvcResponse.Fail(req.Id, "bad_request", "sha256 must be a 64-char hex string");
             }
 
+            // Las CAs emisoras del tenant, entregadas por el control plane en
+            // cada prefetch. Antes que la caché: un blob ya cacheado no debe
+            // impedir que el DP aprenda una CA nueva. Nunca fatal.
+            int? acceptedPeerCas = null;
+            try
+            {
+                acceptedPeerCas = PersistDeliveredPeerCas(Sdp.GetString(p, "peerCaBundlePem"));
+            }
+            catch (Exception ex)
+            {
+                IpcLog.Write($"[sdp.dp] could not store delivered peer CAs: {ex.Message}");
+            }
+
             var timeoutSeconds = Math.Max(60, Sdp.GetInt(p, "timeoutSeconds") ?? DefaultPrefetchTimeoutSeconds);
             var rateLimitKbps = Math.Max(0, Sdp.GetInt(p, "rateLimitKbps") ?? 0);
             var cacheMaxBytes = Sdp.GetLong(p, "cacheMaxBytes") is long cm && cm > 0
@@ -432,6 +543,7 @@ public static class Dp
                     cached = true,
                     port = Port,
                     serverReason = warmReason,
+                    acceptedPeerCas,
                 });
             }
 
@@ -479,6 +591,7 @@ public static class Dp
                     evicted,
                     port = Port,
                     serverReason = reason,
+                    acceptedPeerCas,
                 });
             }
 

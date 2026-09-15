@@ -16,7 +16,10 @@
 //     code, only fail (and the peer falls back to cdn/origin).
 //   * AUTH (confidentiality) reuses the enrollment mTLS material: the server
 //     presents the agent's enrollment cert and REQUIRES a client cert chained
-//     to the same tenant CA bundle. Only enrolled agents can fetch blobs.
+//     to the tenant CA bundle PLUS the issuing CAs the control plane delivers
+//     with each prefetch (see dp-peer-cas.ts — a DP that only knew its own CA
+//     locked out every peer across a CA rotation). Only enrolled agents can
+//     fetch blobs.
 //   * The peer connects by LAN IP while the DP cert's CN is its deviceId, so
 //     peers skip hostname verification for the dp tier (bytes are hash-gated;
 //     the server-side client-cert check is the real gate — see sdp.ts).
@@ -35,10 +38,14 @@ import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
 import { DATA_DIR, certPaths } from "./paths";
+import { dpServerCa, splitPemCertificates } from "./dp-peer-cas";
 
 const execFileAsync = promisify(execFile);
 
 const DP_CACHE_DIR = path.join(DATA_DIR, "dp-cache");
+// Las CAs emisoras que el control plane entrega con cada prefetch. Fuera de
+// dp-cache: ahí la evicción LRU borra cualquier fichero.
+const DP_PEER_CAS_FILE = path.join(DATA_DIR, "dp-peer-cas.pem");
 const DEFAULT_DP_PORT = 47821;
 const DEFAULT_CACHE_MAX_BYTES = 20 * 1024 * 1024 * 1024; // 20 GB
 const DEFAULT_DOWNLOAD_TIMEOUT_S = 900;
@@ -185,30 +192,78 @@ function handleBlobRequest(req: http.IncomingMessage, res: http.ServerResponse):
   stream.pipe(res);
 }
 
+function readOptional(file: string): string | null {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Identidad + `ca` del servidor: ca-bundle ∪ CAs entregadas que firmó nuestra raíz. */
+function dpTlsMaterial(): { key: Buffer; cert: Buffer; ca: string[]; acceptedIssuingCas: number } {
+  const paths = certPaths();
+  const key = fs.readFileSync(paths.clientKey);
+  const cert = fs.readFileSync(paths.clientCert);
+  const { ca, acceptedIssuingCas } = dpServerCa(
+    fs.readFileSync(paths.caBundle, "utf8"),
+    readOptional(paths.bundledRootCa),
+    readOptional(DP_PEER_CAS_FILE)
+  );
+  return { key, cert, ca, acceptedIssuingCas };
+}
+
+// Un peer rechazado reintenta: una línea por dirección cada 10 min basta.
+const lastRejectionLog = new Map<string, number>();
+
+function logPeerRejection(err: any, socket: any): void {
+  const remote = String(socket?.remoteAddress || "?");
+  const now = Date.now();
+  if (now - (lastRejectionLog.get(remote) ?? 0) < 10 * 60 * 1000) return;
+  if (lastRejectionLog.size > 1000) lastRejectionLog.clear();
+  lastRejectionLog.set(remote, now);
+  logger.warn("dp_peer_rejected", { remote, error: String(err?.code || err?.message || err).slice(0, 200) });
+}
+
+/**
+ * Guarda el bundle entregado con el prefetch y, si el servidor ya escucha,
+ * lo aplica sin reiniciarlo. null si no llegó bundle (control plane anterior):
+ * se conserva el que hubiera.
+ */
+function persistDeliveredPeerCas(pem: unknown): number | null {
+  if (typeof pem !== "string" || splitPemCertificates(pem).length === 0) return null;
+  const tmp = `${DP_PEER_CAS_FILE}.tmp-${crypto.randomBytes(4).toString("hex")}`;
+  fs.writeFileSync(tmp, pem, { encoding: "utf8", mode: 0o644 });
+  fs.renameSync(tmp, DP_PEER_CAS_FILE);
+  const material = dpTlsMaterial();
+  server?.setSecureContext({ key: material.key, cert: material.cert, ca: material.ca });
+  return material.acceptedIssuingCas;
+}
+
 function ensureDpServer(): { running: boolean; port: number; reason?: string } {
   const port = dpPort();
   if (server) return { running: true, port };
-  const paths = certPaths();
-  let key: Buffer, cert: Buffer, ca: Buffer;
+  let material: ReturnType<typeof dpTlsMaterial>;
   try {
-    key = fs.readFileSync(paths.clientKey);
-    cert = fs.readFileSync(paths.clientCert);
-    ca = fs.readFileSync(paths.caBundle);
+    material = dpTlsMaterial();
   } catch (err: any) {
     return { running: false, port, reason: `identity_unavailable:${err?.code || "read_failed"}` };
   }
   try {
     server = https.createServer(
       {
-        key,
-        cert,
-        ca,
-        // mTLS: only clients presenting a cert chained to the tenant CA get in.
+        key: material.key,
+        cert: material.cert,
+        ca: material.ca,
+        // mTLS: only clients presenting a cert issued by a tenant CA get in.
         requestCert: true,
         rejectUnauthorized: true,
       },
       handleBlobRequest
     );
+    // Antes el rechazo no dejaba rastro y el peer acababa con un error de red
+    // hacia internet que no era la causa.
+    server.on("tlsClientError", logPeerRejection);
     server.on("error", (err: any) => {
       logger.error("dp_server_error", { error: err?.message || String(err) });
       try {
@@ -240,6 +295,15 @@ export async function handleDpPrefetch(req: PrivSvcRequest): Promise<PrivSvcResp
   if (!/^[0-9a-f]{64}$/.test(sha256)) {
     return fail(req.id, "bad_request", "sha256 must be a 64-char hex string");
   }
+
+  // Las CAs emisoras del tenant, antes que la caché: un blob ya cacheado no
+  // debe impedir que el DP aprenda una CA nueva. Nunca fatal.
+  let acceptedPeerCas: number | null = null;
+  try {
+    acceptedPeerCas = persistDeliveredPeerCas(params.peerCaBundlePem);
+  } catch (err: any) {
+    logger.warn("dp_peer_cas_store_failed", { error: err?.message || String(err) });
+  }
   const rawSources = Array.isArray(params.sources) ? params.sources : [];
   const candidates = rawSources
     .filter((s: any) => s && typeof s.url === "string" && /^https:\/\//i.test(s.url))
@@ -254,7 +318,7 @@ export async function handleDpPrefetch(req: PrivSvcRequest): Promise<PrivSvcResp
       const actual = await sha256OfFileStream(cacheFile);
       if (actual === sha256) {
         const srv = ensureDpServer();
-        return success(req.id, { ready: srv.running, cached: true, port: srv.port, serverReason: srv.reason });
+        return success(req.id, { ready: srv.running, cached: true, port: srv.port, serverReason: srv.reason, acceptedPeerCas });
       }
       fs.unlinkSync(cacheFile);
     } catch {
@@ -318,6 +382,7 @@ export async function handleDpPrefetch(req: PrivSvcRequest): Promise<PrivSvcResp
       servedFrom: candidate.tier,
       port: srv.port,
       serverReason: srv.reason,
+      acceptedPeerCas,
     });
   }
 

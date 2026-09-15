@@ -50,6 +50,56 @@ function atomicWriteFileSync(targetPath: string, data: string, mode = 0o600) {
   try { fs.chmodSync(targetPath, mode); } catch {}
 }
 
+/**
+ * Las CA emisoras que el equipo acepta TRAS una renovación: la UNIÓN de las
+ * que aceptaba antes y las que trae la renovación. Nunca menos.
+ *
+ * 🔴 EL INCIDENTE (14-sep, MSIG-VEEAM-PC): el privsvc de Windows no reenviaba
+ * la lista al renovar, y este módulo conservaba la del enrolamiento — que en un
+ * equipo enrolado en agosto NO EXISTÍA. `grpc-client.ts` caía entonces a la
+ * huella singular, que tras rotar era la de la G2. El certificado del servidor
+ * gRPC sigue emitido por la Issuing vieja, así que el agente rechazó al
+ * servidor y se quedó a oscuras sin forma remota de arreglarlo.
+ *
+ * Por qué UNIÓN y no «la lista nueva»: aceptar menos CAs después de renovar
+ * sólo puede desconectar. Quién firma al SERVIDOR no depende de a qué CA rotó
+ * este equipo, y durante una transición conviven las dos. Dejar de confiar en
+ * una CA es una operación deliberada (re-enrolar), no un efecto lateral.
+ *
+ * Se deduplica sin distinguir mayúsculas ni separadores (Windows usa SHA-1 en
+ * mayúsculas; macOS/Linux SHA-256 en minúsculas) pero se conserva el texto
+ * original: cada privsvc compara con su propio formato.
+ */
+export function mergeIssuingCaThumbprints(
+  previous: { issuingCaThumbprint?: string; issuingCaThumbprints?: string[] },
+  renewed: { issuingCaThumbprint?: unknown; issuingCaThumbprints?: unknown }
+): { issuingCaThumbprint?: string; issuingCaThumbprints: string[] } {
+  const renewedList = Array.isArray(renewed.issuingCaThumbprints) ? renewed.issuingCaThumbprints : [];
+  const candidates = [
+    ...renewedList,
+    renewed.issuingCaThumbprint,
+    ...(previous.issuingCaThumbprints ?? []),
+    previous.issuingCaThumbprint,
+  ];
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const c of candidates) {
+    const text = typeof c === "string" ? c.trim() : "";
+    const key = text.replace(/[^0-9a-z]/gi, "").toUpperCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(text);
+  }
+  const renewedSingular =
+    typeof renewed.issuingCaThumbprint === "string" && renewed.issuingCaThumbprint.trim()
+      ? renewed.issuingCaThumbprint.trim()
+      : undefined;
+  return {
+    issuingCaThumbprint: renewedSingular ?? previous.issuingCaThumbprint,
+    issuingCaThumbprints: merged,
+  };
+}
+
 const DEFAULT_RENEWAL_THRESHOLD_DAYS = 30;
 
 function getRenewalThresholdDays(): number {
@@ -203,15 +253,10 @@ export async function maybeRenewClientCertificate(input: {
     mtls: {
       ...enrollment.mtls,
       clientCertThumbprint: nextThumbprint,
-      issuingCaThumbprint: result.issuingCaThumbprint
-        ? String(result.issuingCaThumbprint)
-        : enrollment.mtls.issuingCaThumbprint,
-      // Si la respuesta no trae la lista (privsvc anterior), se conserva la
-      // que ya había: perderla dejaría al equipo con un solo pin justo
-      // durante una rotación, que es cuando más falta hacen los dos.
-      issuingCaThumbprints: Array.isArray((result as any).issuingCaThumbprints)
-        ? (result as any).issuingCaThumbprints.map(String).filter(Boolean)
-        : enrollment.mtls.issuingCaThumbprints,
+      // ⚠️ UNIÓN de lo que se aceptaba y lo que trae la renovación — ver
+      // mergeIssuingCaThumbprints. Quedarse sólo con la nueva dejó a oscuras
+      // a MSIG-VEEAM-PC el 14-sep.
+      ...mergeIssuingCaThumbprints(enrollment.mtls, result as any),
       clientCertNotAfter: result.notAfter ? String(result.notAfter) : undefined
     }
   };

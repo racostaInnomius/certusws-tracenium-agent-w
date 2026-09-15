@@ -35,7 +35,7 @@ vi.mock("../../src/bootstrap/config", () => ({
   }
 }));
 
-import { maybeRenewClientCertificate } from "../../src/bootstrap/cert-renewal";
+import { maybeRenewClientCertificate, mergeIssuingCaThumbprints } from "../../src/bootstrap/cert-renewal";
 import type { EnrollmentState } from "../../src/bootstrap/enrollment-state";
 
 let baseDir: string;
@@ -469,5 +469,60 @@ describe("cert-renewal — carrera con otro proceso (thumbprint mutado durante e
       "[cert-renewal] client cert on disk changed during renewal, aborting to avoid clobbering newer cert",
       expect.objectContaining({ deviceId: "device-1" })
     );
+  });
+});
+
+describe("cert-renewal — las CA emisoras aceptadas NUNCA se reducen al renovar", () => {
+  // 🔴 MSIG-VEEAM-PC, 14-sep: enrolado en agosto (sin lista), rotó a la G2 con
+  // un privsvc que no reenviaba la lista. El estado quedó con SÓLO la G2 y el
+  // agente rechazó al servidor, cuyo certificado sigue en la Issuing vieja.
+  const G1 = "1B340C41AAAA";
+  const G2 = "D0A308F5BBBB";
+
+  it("⭐ enrolado sin lista + renovación que sólo trae la singular nueva → acepta LAS DOS", async () => {
+    const h = makeHarness(certNearPem, { issuingCaThumbprint: G1, issuingCaThumbprints: undefined });
+    h.priv.call.mockResolvedValue(okRenewResponse({ issuingCaThumbprint: G2 }));
+
+    const result = await maybeRenewClientCertificate(h as any);
+
+    expect(result.mtls.issuingCaThumbprint).toBe(G2);
+    expect(result.mtls.issuingCaThumbprints).toEqual([G2, G1]);
+    expect(h.store.save).toHaveBeenCalledWith(result);
+  });
+
+  it("la lista de la renovación se suma a la anterior, sin repetidos", async () => {
+    const h = makeHarness(certNearPem, { issuingCaThumbprint: G1, issuingCaThumbprints: [G1] });
+    h.priv.call.mockResolvedValue(okRenewResponse({ issuingCaThumbprint: G2, issuingCaThumbprints: [G2, G1] }));
+
+    const result = await maybeRenewClientCertificate(h as any);
+
+    expect(result.mtls.issuingCaThumbprints).toEqual([G2, G1]);
+  });
+
+  it("⚠️ una renovación que trae una lista MÁS CORTA no quita las que ya se aceptaban", async () => {
+    const h = makeHarness(certNearPem, { issuingCaThumbprint: G1, issuingCaThumbprints: [G1, G2] });
+    h.priv.call.mockResolvedValue(okRenewResponse({ issuingCaThumbprint: G2, issuingCaThumbprints: [G2] }));
+
+    const result = await maybeRenewClientCertificate(h as any);
+
+    expect(new Set(result.mtls.issuingCaThumbprints)).toEqual(new Set([G1, G2]));
+  });
+});
+
+describe("mergeIssuingCaThumbprints", () => {
+  it("deduplica sin mirar mayúsculas ni separadores y conserva el texto original", () => {
+    const merged = mergeIssuingCaThumbprints(
+      { issuingCaThumbprint: "ab:cd:ef", issuingCaThumbprints: ["abcdef"] },
+      { issuingCaThumbprints: ["ABCDEF", "  112233  "] }
+    );
+    expect(merged.issuingCaThumbprints).toEqual(["ABCDEF", "112233"]);
+  });
+
+  it("sin singular nueva conserva la anterior; basura en la respuesta se ignora", () => {
+    const merged = mergeIssuingCaThumbprints(
+      { issuingCaThumbprint: "AAAA" },
+      { issuingCaThumbprint: "", issuingCaThumbprints: [null, 42, "", "BBBB"] as any }
+    );
+    expect(merged).toEqual({ issuingCaThumbprint: "AAAA", issuingCaThumbprints: ["BBBB", "AAAA"] });
   });
 });

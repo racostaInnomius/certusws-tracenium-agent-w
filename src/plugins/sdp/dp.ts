@@ -61,6 +61,13 @@ export async function runDpPrefetch(
         ...(Number(payload?.bandwidthLimitKbps) > 0
           ? { rateLimitKbps: Number(payload.bandwidthLimitKbps) }
           : {}),
+        // ⚠️ Las CAs emisoras del tenant, que el control plane adjunta al
+        // despachar. Estos params se construyen CAMPO A CAMPO: sin esta línea
+        // el bundle moría aquí y el DP seguía rechazando a los peers de la G2
+        // (MSIG-VEEAM-PC, 15-sep). Ausente con un backend anterior.
+        ...(typeof payload?.peerCaBundlePem === "string" && payload.peerCaBundlePem
+          ? { peerCaBundlePem: payload.peerCaBundlePem }
+          : {}),
       },
       meta: {
         tenantId: ctx.enrollment.tenantId,
@@ -74,6 +81,9 @@ export async function runDpPrefetch(
         ackMessage: msg("success", deploymentId, {
           cached: resp.result?.cached ? 1 : 0,
           src: typeof resp.result?.servedFrom === "string" ? resp.result.servedFrom : undefined,
+          // Cuántas CAs emisoras acepta el DP tras este prefetch: se ve en Jobs
+          // si la G2 llegó. Ausente con un privsvc anterior.
+          peerCas: Number.isInteger(resp.result?.acceptedPeerCas) ? resp.result.acceptedPeerCas : undefined,
         }),
       };
     }

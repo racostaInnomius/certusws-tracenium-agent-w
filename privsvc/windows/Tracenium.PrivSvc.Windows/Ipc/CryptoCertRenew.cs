@@ -201,6 +201,14 @@ public static class CryptoCertRenew
                 previousClientCertThumbprint = currentCert.Thumbprint,
                 clientCertThumbprint = GetStringFromObject(installResponse.Result, "clientCertThumbprint"),
                 issuingCaThumbprint = GetStringFromObject(installResponse.Result, "issuingCaThumbprint"),
+                // 🔴 ESTO NO SE REENVIABA. La instalación calcula TODAS las
+                // intermedias del bundle (G2 + la vieja durante la rotación),
+                // pero aquí sólo salía la singular. Un equipo enrolado antes de
+                // que existiera la lista se quedaba aceptando sólo la G2 y
+                // rechazaba al servidor, cuyo certificado sigue en la vieja:
+                // MSIG-VEEAM-PC, 14-sep, a oscuras. El agente además une con lo
+                // que ya aceptaba (cert-renewal.ts), así que nunca se reduce.
+                issuingCaThumbprints = IpcResultRead.StringArray(installResponse.Result, "issuingCaThumbprints"),
                 notAfter = GetStringFromObject(installResponse.Result, "notAfter"),
                 status = string.IsNullOrWhiteSpace(renewStatus) ? "pending" : renewStatus
             };
