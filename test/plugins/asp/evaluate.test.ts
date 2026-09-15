@@ -46,6 +46,12 @@ describe("evaluateIndicator — reglas de la fase 0", () => {
     expect(r.reason).toBe("insufficient_rights:0x80070005");
   });
 
+  it("acl_search: los trustees cuentan como afectados y la evidencia dice cuántos objetos se miraron", () => {
+    const ind = { ...indicator("ASP-AD-PRV-006"), query: { kind: "acl_search", base: "{domainDn}", filter: "(adminCount=1)", rights: ["GenericAll"] } } as any;
+    const r = evaluateIndicator(ind, { ok: true, data: { count: 1, sample: [{ sid: "S-1-5-21-1-1105", name: "D\\helpdesk", rights: "ExtendedRight", objects: 43 }], truncated: false, objectsScanned: 43 } }, DC, opts);
+    expect(r).toMatchObject({ status: "fail", affectedCount: 1, evidence: { count: 1, objectsScanned: 43 } });
+  });
+
   it("un error genérico del colector es not_assessed con el HRESULT", () => {
     const r = evaluateIndicator(indicator("ASP-AD-KRB-002"), { ok: false, error: { hresult: "0x8007203A", type: "COMException" } }, DC, opts);
     expect(r).toMatchObject({ status: "not_assessed", reason: "collector_error:0x8007203A", evidence: { collectorError: { hresult: "0x8007203A", type: "COMException", message: null } } });

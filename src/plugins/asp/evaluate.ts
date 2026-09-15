@@ -142,7 +142,7 @@ export function buildEvidence(
       break;
     }
     default: {
-      // ldap_search / group_members / acl / sysvol_files: recuento + muestra.
+      // ldap_search / group_members / acl / acl_search / sysvol_files: recuento + muestra.
       if (data?.found === false) {
         ev.found = false;
         break;
@@ -152,6 +152,7 @@ export function buildEvidence(
       ev.sample = list;
       if (truncated || data?.truncated === true) ev.truncated = true;
       if (typeof data?.filesScanned === "number") ev.filesScanned = data.filesScanned;
+      if (typeof data?.objectsScanned === "number") ev.objectsScanned = data.objectsScanned;
     }
   }
 

@@ -232,7 +232,11 @@ function AspGroupMembers($query, $ctx, [int]$limit) {
 # y GenericWrite (0x20028) son MÁSCARAS que incluyen bits de lectura: el ACE
 # tiene que llevar la máscara ENTERA. Un ACE InheritOnly no aplica al objeto.
 # Enteros y no el enum: se prueba con pwsh fuera de Windows.
-function AspAceHit([int]$rights, [string]$objectType, [bool]$inheritOnly, [string[]]$wanted, $extended) {
+# `$writeProps`: GUID de atributos (o conjuntos de propiedades) cuya escritura
+# es peligrosa por sí sola (member, msDS-KeyCredentialLink, …). Cuenta un
+# WriteProperty o un Self (escritura validada) sobre ese GUID, o sin ObjectType
+# (que es sobre todos).
+function AspAceHit([int]$rights, [string]$objectType, [bool]$inheritOnly, [string[]]$wanted, $extended, $writeProps) {
   if ($inheritOnly) { return $false }
   foreach ($name in $wanted) {
     $mask = switch ($name) {
@@ -246,7 +250,11 @@ function AspAceHit([int]$rights, [string]$objectType, [bool]$inheritOnly, [strin
     }
     if (($rights -band $mask) -eq $mask) { return $true }
   }
-  if ($extended.Count -gt 0 -and ($rights -band 0x100) -ne 0) {
+  if ($null -ne $writeProps -and $writeProps.Count -gt 0 -and ($rights -band 0x28) -ne 0) {
+    $wtype = $objectType.ToLowerInvariant()
+    if (($wtype -eq '00000000-0000-0000-0000-000000000000') -or $writeProps.ContainsKey($wtype)) { return $true }
+  }
+  if ($null -ne $extended -and $extended.Count -gt 0 -and ($rights -band 0x100) -ne 0) {
     # Un ExtendedRight sin ObjectType concede TODOS los derechos extendidos.
     $type = $objectType.ToLowerInvariant()
     return ($type -eq '00000000-0000-0000-0000-000000000000') -or $extended.ContainsKey($type)
@@ -276,9 +284,11 @@ function AspAcl($query, $ctx, [int]$limit) {
 
   $exclude = @{}
   foreach ($s in @(AspProp $query 'excludeSids')) { if ($s) { $exclude[(AspExpand ([string]$s) $ctx)] = $true } }
-  $wanted = @($query.rights | ForEach-Object { [string]$_ })
+  $wanted = @(AspProp $query 'rights' | Where-Object { $_ } | ForEach-Object { [string]$_ })
   $extended = @{}
   foreach ($guid in @(AspProp $query 'extendedRights')) { if ($guid) { $extended[([string]$guid).ToLowerInvariant()] = $true } }
+  $writeProps = @{}
+  foreach ($guid in @(AspProp $query 'writeProperties')) { if ($guid) { $writeProps[([string]$guid).ToLowerInvariant()] = $true } }
   $inheritOnly = [int][System.Security.AccessControl.PropagationFlags]::InheritOnly
 
   $trustees = @{}
@@ -286,7 +296,7 @@ function AspAcl($query, $ctx, [int]$limit) {
     if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
     $sid = [string]$ace.IdentityReference.Value
     if ($exclude.ContainsKey($sid)) { continue }
-    $hit = AspAceHit ([int]$ace.ActiveDirectoryRights) ([string]$ace.ObjectType) ((([int]$ace.PropagationFlags) -band $inheritOnly) -ne 0) $wanted $extended
+    $hit = AspAceHit ([int]$ace.ActiveDirectoryRights) ([string]$ace.ObjectType) ((([int]$ace.PropagationFlags) -band $inheritOnly) -ne 0) $wanted $extended $writeProps
     if (-not $hit) { continue }
     if (-not $trustees.ContainsKey($sid)) {
       $name = $null
@@ -296,6 +306,69 @@ function AspAcl($query, $ctx, [int]$limit) {
   }
   $all = @($trustees.Values)
   return [ordered]@{ count = $all.Count; sample = @($all | Select-Object -First $limit); truncated = ($all.Count -gt $limit) }
+}
+# ACL sobre un CONJUNTO de objetos (ADR-0022, catálogo 1.1.0): quién puede
+# resetear contraseñas de cuentas privilegiadas, cambiar miembros de grupos
+# privilegiados, o controlar objetos de DC y GPO. Una sola búsqueda paginada con
+# SecurityMasks = Dacl; el recuento es de TRUSTEES, cada uno con cuántos objetos
+# alcanza y un DN de ejemplo.
+#
+# ⚠️ Nunca un pass con datos a medias: si un objeto llega sin descriptor, o hay
+# más objetos que `maxObjects`, la consulta FALLA (not_assessed con el motivo)
+# en vez de devolver un recuento que omite lo que no miró.
+function AspAclSearch($query, $ctx, [int]$limit) {
+  $searcher = New-Object System.DirectoryServices.DirectorySearcher
+  $searcher.SearchRoot = AspEntry (AspExpand ([string]$query.base) $ctx)
+  $searcher.Filter = AspExpand ([string]$query.filter) $ctx
+  $searcher.SearchScope = AspScope ([string](AspProp $query 'scope'))
+  $searcher.PageSize = 500
+  $searcher.SecurityMasks = [System.DirectoryServices.SecurityMasks]::Dacl
+  [void]$searcher.PropertiesToLoad.Add('distinguishedname')
+  [void]$searcher.PropertiesToLoad.Add('ntsecuritydescriptor')
+  $maxObjects = 2000
+  $requestedMax = AspProp $query 'maxObjects'
+  if ($null -ne $requestedMax) { $maxObjects = [int]$requestedMax }
+
+  $exclude = @{}
+  foreach ($s in @(AspProp $query 'excludeSids')) { if ($s) { $exclude[(AspExpand ([string]$s) $ctx)] = $true } }
+  $wanted = @(AspProp $query 'rights' | Where-Object { $_ } | ForEach-Object { [string]$_ })
+  $extended = @{}
+  foreach ($guid in @(AspProp $query 'extendedRights')) { if ($guid) { $extended[([string]$guid).ToLowerInvariant()] = $true } }
+  $writeProps = @{}
+  foreach ($guid in @(AspProp $query 'writeProperties')) { if ($guid) { $writeProps[([string]$guid).ToLowerInvariant()] = $true } }
+  $inheritOnly = [int][System.Security.AccessControl.PropagationFlags]::InheritOnly
+
+  $trustees = @{}
+  $scanned = 0
+  foreach ($r in $searcher.FindAll()) {
+    $scanned++
+    if ($scanned -gt $maxObjects) { throw "acl_search_object_limit: more than $maxObjects objects match" }
+    $dn = [string]$r.Properties['distinguishedname'][0]
+    if (-not $r.Properties.Contains('ntsecuritydescriptor') -or $r.Properties['ntsecuritydescriptor'].Count -eq 0) {
+      throw "nTSecurityDescriptor not returned for $dn"
+    }
+    $sd = New-Object System.DirectoryServices.ActiveDirectorySecurity
+    $sd.SetSecurityDescriptorBinaryForm([byte[]]$r.Properties['ntsecuritydescriptor'][0])
+    $seenHere = @{}
+    foreach ($ace in $sd.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+      if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+      $sid = [string]$ace.IdentityReference.Value
+      if ($exclude.ContainsKey($sid)) { continue }
+      $hit = AspAceHit ([int]$ace.ActiveDirectoryRights) ([string]$ace.ObjectType) ((([int]$ace.PropagationFlags) -band $inheritOnly) -ne 0) $wanted $extended $writeProps
+      if (-not $hit) { continue }
+      if (-not $trustees.ContainsKey($sid)) {
+        $name = $null
+        try { $name = $ace.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value } catch { $name = $null }
+        $trustees[$sid] = [ordered]@{ sid = $sid; name = $name; rights = [string]$ace.ActiveDirectoryRights; objectType = [string]$ace.ObjectType; objects = 0; exampleDn = $dn }
+      }
+      if (-not $seenHere.ContainsKey($sid)) {
+        $seenHere[$sid] = $true
+        $trustees[$sid].objects++
+      }
+    }
+  }
+  $all = @($trustees.Values | Sort-Object -Property @{ Expression = { $_.objects }; Descending = $true })
+  return [ordered]@{ count = $all.Count; sample = @($all | Select-Object -First $limit); truncated = ($all.Count -gt $limit); objectsScanned = $scanned }
 }
 function AspSysvolFiles($query, $ctx, [int]$limit) {
   $policies = "\\$($ctx.dnsHostName)\SYSVOL\$($ctx.dnsDomain)\Policies"
@@ -378,6 +451,7 @@ foreach ($item in $request.queries) {
       'ldap_object' { AspObject $q $ctx }
       'group_members' { AspGroupMembers $q $ctx $limit }
       'acl' { AspAcl $q $ctx $limit }
+      'acl_search' { AspAclSearch $q $ctx $limit }
       'rootdse' { AspRootDse $q }
       'sysvol_files' { AspSysvolFiles $q $ctx $limit }
       'registry' { AspRegistry $q }

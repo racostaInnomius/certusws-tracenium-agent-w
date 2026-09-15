@@ -42,7 +42,7 @@ public static class AspCollectorShape
 
     public static readonly IReadOnlySet<string> QueryKinds = new HashSet<string>(StringComparer.Ordinal)
     {
-        "ldap_search", "ldap_object", "group_members", "acl", "rootdse", "sysvol_files", "registry"
+        "ldap_search", "ldap_object", "group_members", "acl", "acl_search", "rootdse", "sysvol_files", "registry"
     };
 
     private static readonly Regex RunIdRe = new("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", RegexOptions.Compiled);

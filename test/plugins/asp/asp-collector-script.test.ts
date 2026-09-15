@@ -64,7 +64,7 @@ describe("asp-ad-collector.ps1 — reglas estáticas", () => {
 
   it("los tipos de consulta del script son exactamente los del catálogo", () => {
     const kinds = [...code.matchAll(/^\s*'([a-z_]+)'\s*\{\s*Asp/gm)].map((m) => m[1]).sort();
-    expect(kinds).toEqual(["acl", "group_members", "ldap_object", "ldap_search", "registry", "rootdse", "sysvol_files"]);
+    expect(kinds).toEqual(["acl", "acl_search", "group_members", "ldap_object", "ldap_search", "registry", "rootdse", "sysvol_files"]);
   });
 });
 
@@ -118,7 +118,7 @@ describe.skipIf(!hasPwsh)("asp-ad-collector.ps1 — AspAceHit (qué ACE cuenta c
   const PRV005 = ["GenericAll", "GenericWrite", "WriteDacl", "WriteOwner", "WriteProperty"];
   const PRV006 = ["GenericAll"];
 
-  function run(cases: Array<{ name: string; rights: number; objectType?: string; inheritOnly?: boolean; wanted: string[]; extended?: string[] }>) {
+  function run(cases: Array<{ name: string; rights: number; objectType?: string; inheritOnly?: boolean; wanted: string[]; extended?: string[]; writeProps?: string[] }>) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "asp-ace-"));
     try {
       const casesPath = path.join(dir, "cases.json");
@@ -134,8 +134,9 @@ describe.skipIf(!hasPwsh)("asp-ad-collector.ps1 — AspAceHit (qué ACE cuenta c
           `$out = [ordered]@{}`,
           `foreach ($c in (Get-Content -Raw '${casesPath}' | ConvertFrom-Json)) {`,
           `  $ext = @{}; foreach ($g in @($c.extended)) { if ($g) { $ext[[string]$g] = $true } }`,
+          `  $wp = @{}; foreach ($g in @($c.writeProps)) { if ($g) { $wp[[string]$g] = $true } }`,
           `  $type = if ($c.objectType) { [string]$c.objectType } else { '00000000-0000-0000-0000-000000000000' }`,
-          `  $out[[string]$c.name] = AspAceHit ([int]$c.rights) $type ([bool]$c.inheritOnly) ([string[]]@($c.wanted)) $ext`,
+          `  $out[[string]$c.name] = AspAceHit ([int]$c.rights) $type ([bool]$c.inheritOnly) ([string[]]@($c.wanted | Where-Object { $_ })) $ext $wp`,
           `}`,
           `$out | ConvertTo-Json -Compress`
         ].join("\n")
@@ -182,6 +183,34 @@ describe.skipIf(!hasPwsh)("asp-ad-collector.ps1 — AspAceHit (qué ACE cuenta c
       "sdholder-write-dacl": true,
       "sdholder-write-property": true,
       "sdholder-generic-all": true
+    });
+  });
+
+  it("⭐ acl_search: escribir member o msDS-KeyCredentialLink cuenta; escribir la información personal no", () => {
+    const MEMBER = "bf9679c0-0de6-11d0-a285-00aa003049e2";
+    const KEYCRED = "5b47d60f-6090-40b2-9f37-2a4de88f3063";
+    const PERSONAL = "77b5b886-944a-11d1-aebd-0000f80367c1";
+    const RESET = "00299570-246d-11d0-a768-00aa006e0529";
+    const wp = [MEMBER, KEYCRED];
+    const out = run([
+      { name: "write-member", rights: R.WriteProperty, objectType: MEMBER, wanted: [], writeProps: wp },
+      { name: "self-membership", rights: R.Self, objectType: MEMBER, wanted: [], writeProps: wp },
+      { name: "write-keycred", rights: R.ReadProperty | R.WriteProperty, objectType: KEYCRED, wanted: [], writeProps: wp },
+      { name: "write-all-properties", rights: R.WriteProperty, wanted: [], writeProps: wp },
+      { name: "write-personal-info", rights: R.ReadProperty | R.WriteProperty, objectType: PERSONAL, wanted: [], writeProps: wp },
+      { name: "reset-password", rights: R.ExtendedRight, objectType: RESET, wanted: [], extended: [RESET], writeProps: wp },
+      { name: "change-password-not-reset", rights: R.ExtendedRight, objectType: "ab721a53-1e2f-11d0-9819-00aa0040529b", wanted: [], extended: [RESET], writeProps: wp },
+      { name: "sin-writeProps-no-cuenta", rights: R.WriteProperty, objectType: MEMBER, wanted: [] }
+    ]);
+    expect(out).toEqual({
+      "write-member": true,
+      "self-membership": true,
+      "write-keycred": true,
+      "write-all-properties": true,
+      "write-personal-info": false,
+      "reset-password": true,
+      "change-password-not-reset": false,
+      "sin-writeProps-no-cuenta": false
     });
   });
 

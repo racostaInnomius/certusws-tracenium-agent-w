@@ -32,6 +32,15 @@ public class AspCollectorShapeTests
         Assert.Equal("(adminCount=1)", doc.RootElement.GetProperty("queries")[0].GetProperty("query").GetProperty("filter").GetString());
     }
 
+    [Fact]
+    public void Validate_AcceptsAclSearch_TheKindTheScriptGainedInCatalog110()
+    {
+        const string q = "[{\"id\":\"ASP-AD-PRV-007\",\"query\":{\"kind\":\"acl_search\",\"base\":\"{domainDn}\",\"filter\":\"(adminCount=1)\",\"rights\":[\"GenericAll\"]}}]";
+        var (req, err) = AspCollectorShape.Validate(Params(Batch(q)));
+        Assert.Null(err);
+        Assert.Equal(1, req!.QueryCount);
+    }
+
     [Theory]
     [InlineData("[{\"id\":\"ASP-AD-KRB-002\",\"query\":{\"kind\":\"powershell\",\"script\":\"Remove-Item C:\\\\\"}}]", "bad_request:query_kind")]
     [InlineData("[{\"id\":\"rm -rf\",\"query\":{\"kind\":\"ldap_search\"}}]", "bad_request:query_id")]
