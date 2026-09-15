@@ -118,6 +118,38 @@ describe("evaluateIndicator — reglas de la fase 0", () => {
   });
 });
 
+describe("catálogo 1.1.0 — los tipos nuevos evalúan", () => {
+  const cat110 = require("./fixtures/asp-ad-1.1.0.json");
+  function ind110(id: string): AgentIndicator {
+    const i = (cat110.indicators as any[]).find((x) => x.controlId === id);
+    if (!i) throw new Error(id);
+    return { controlId: i.controlId, severity: i.severity, requires: i.requires, query: i.query, derive: i.derive ?? [], predicate: i.predicate, onFail: i.onFail, whenMissing: i.whenMissing ?? "not_assessed" };
+  }
+
+  it("acl_search sin trustees no por defecto → pass (MSIG-DOMAIN01: 0 en PRV-007/008/009/010)", () => {
+    for (const id of ["ASP-AD-PRV-007", "ASP-AD-PRV-008", "ASP-AD-PRV-009", "ASP-AD-PRV-010"]) {
+      const r = evaluateIndicator(ind110(id), { ok: true, data: { count: 0, sample: [], objectsScanned: 5 } }, DC, opts);
+      expect(r.status, id).toBe("pass");
+    }
+  });
+
+  it("acl_search con un trustee no por defecto → needs_review, con los afectados", () => {
+    const r = evaluateIndicator(ind110("ASP-AD-PRV-007"), { ok: true, data: { count: 1, sample: [{ sid: "S-1-5-21-1-1105", name: "D\\helpdesk", rights: "ExtendedRight", objects: 44 }], objectsScanned: 44 } }, DC, opts);
+    expect(r).toMatchObject({ status: "needs_review", affectedCount: 1, evidence: { count: 1, objectsScanned: 44 } });
+  });
+
+  it("orphan de adminCount habilitado → fail; forest level 2008R2 < 2012 → fail; NoLMHash presente → pass", () => {
+    expect(evaluateIndicator(ind110("ASP-AD-PRV-012"), { ok: true, data: { count: 13, sample: [] } }, DC, opts).status).toBe("fail");
+    expect(evaluateIndicator(ind110("ASP-AD-CFG-010"), { ok: true, data: { found: true, attributes: { forestFunctionality: "4", domainFunctionality: "7" } } }, DC, opts).status).toBe("fail");
+    expect(evaluateIndicator(ind110("ASP-AD-DC-007"), { ok: true, data: { present: true, value: 1 } }, DC, opts).status).toBe("pass");
+  });
+
+  it("lockout threshold 5 → pass (between 1..10); 0 (sin bloqueo) → fail", () => {
+    expect(evaluateIndicator(ind110("ASP-AD-CFG-009"), { ok: true, data: { found: true, attributes: { lockoutThreshold: "5" } } }, DC, opts).status).toBe("pass");
+    expect(evaluateIndicator(ind110("ASP-AD-CFG-009"), { ok: true, data: { found: true, attributes: { lockoutThreshold: "0" } } }, DC, opts).status).toBe("fail");
+  });
+});
+
 describe("el dominio del spike (MSIG-TSPDC, ADR §Fase 0)", () => {
   const spike: Record<string, { data: any; expect: string }> = {
     "ASP-AD-KRB-002": { data: { count: 2, sample: ["CN=Administrator,CN=Users,DC=m", "CN=next gsys,OU=IT,DC=m"] }, expect: "fail" },

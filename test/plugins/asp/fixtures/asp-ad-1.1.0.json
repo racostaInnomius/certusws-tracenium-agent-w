@@ -1,0 +1,1934 @@
+{
+  "family": "asp-ad",
+  "version": "1.1.0",
+  "shortName": "Active Directory Assessment 1.1",
+  "publishedAt": "2026-09-14",
+  "sources": [
+    "DISA STIG — Active Directory Domain and Active Directory Forest",
+    "Microsoft — Best Practices for Securing Active Directory",
+    "MITRE ATT&CK — Enterprise, Credential Access / Privilege Escalation / Persistence",
+    "ManageEngine ADManager Plus — Identity Security Risk Assessment (contraste, no copia)"
+  ],
+  "indicators": [
+    {
+      "controlId": "ASP-AD-ACC-001",
+      "title": "Enabled user accounts have a password that never expires",
+      "section": "Accounts",
+      "severity": "medium",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{domainDn}",
+        "filter": "(&(objectCategory=person)(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=65536)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Remove 'Password never expires' from interactive accounts and move service accounts to gMSAs.",
+        "steps": [
+          "Separate the list into people and service accounts.",
+          "For people, clear 'Password never expires' so the domain password policy applies.",
+          "For services, migrate to group Managed Service Accounts; document any remaining exception with an owner and expiry."
+        ],
+        "risk": "A service account whose password starts expiring stops its service when the password ages out."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1078.002",
+          "title": "Valid Accounts: Domain Accounts",
+          "url": "https://attack.mitre.org/techniques/T1078/002/"
+        },
+        {
+          "source": "DISA STIG",
+          "title": "Active Directory Domain STIG — password expiration"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-ACC-002",
+      "title": "User accounts store their password with reversible encryption",
+      "section": "Accounts",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{domainDn}",
+        "filter": "(&(objectCategory=person)(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=128))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Clear 'Store password using reversible encryption' and force a password change on every listed account.",
+        "steps": [
+          "Uncheck the option on each account (or Set-ADUser -AllowReversiblePasswordEncryption $false).",
+          "Require the user to change the password at next logon — the reversible copy stays until the password changes.",
+          "Verify the Default Domain Policy does not enable reversible encryption."
+        ],
+        "risk": "Applications using CHAP or digest authentication that depend on reversible passwords stop working."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1003",
+          "title": "OS Credential Dumping",
+          "url": "https://attack.mitre.org/techniques/T1003/"
+        },
+        {
+          "source": "DISA STIG",
+          "title": "Active Directory Domain STIG — reversible password encryption"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-ACC-003",
+      "title": "Enabled user accounts are allowed to have an empty password",
+      "section": "Accounts",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{domainDn}",
+        "filter": "(&(objectCategory=person)(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=32)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Clear the PASSWD_NOTREQD flag on every listed account and set a compliant password.",
+        "steps": [
+          "Run Set-ADAccountControl -PasswordNotRequired $false for each account.",
+          "Set a password that meets the domain policy if the account currently has none."
+        ],
+        "risk": "An account that really had no password stops authenticating until one is set."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1078.002",
+          "title": "Valid Accounts: Domain Accounts",
+          "url": "https://attack.mitre.org/techniques/T1078/002/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-ACC-004",
+      "title": "Enabled user accounts have not signed in for more than 180 days",
+      "section": "Accounts",
+      "severity": "medium",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{domainDn}",
+        "filter": "(&(objectCategory=person)(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2))(|(lastLogonTimestamp<={fileTimeDaysAgo:180})(&(!(lastLogonTimestamp=*))(whenCreated<={generalizedTimeDaysAgo:180}))))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Disable accounts that are no longer used and remove them after a holding period.",
+        "steps": [
+          "Confirm with each account's owner or HR that the account is no longer needed.",
+          "Disable the account and move it to a quarantine OU.",
+          "Delete it after the organization's retention period."
+        ],
+        "risk": "lastLogonTimestamp replicates with up to 14 days of lag; an account used only against a single DC may look stale when it is not."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1078.002",
+          "title": "Valid Accounts: Domain Accounts",
+          "url": "https://attack.mitre.org/techniques/T1078/002/"
+        },
+        {
+          "source": "DISA STIG",
+          "title": "Active Directory Domain STIG — inactive accounts"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-ACC-005",
+      "title": "Objects carry SID history",
+      "section": "Accounts",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{domainDn}",
+        "filter": "(sIDHistory=*)"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Finish the migration that created the SID history, re-permission resources with current SIDs and clear sIDHistory.",
+        "steps": [
+          "Find resources still granting access to the old SIDs.",
+          "Replace those ACEs with the object's current SID or group.",
+          "Clear the sIDHistory attribute on each listed object."
+        ],
+        "risk": "Clearing SID history before re-permissioning removes access that users still depend on."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1134.005",
+          "title": "Access Token Manipulation: SID-History Injection",
+          "url": "https://attack.mitre.org/techniques/T1134/005/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-ACC-006",
+      "title": "The built-in Administrator password is older than 365 days",
+      "section": "Accounts",
+      "severity": "medium",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_object",
+        "dn": "<SID={domainSid}-500>",
+        "attributes": [
+          "pwdLastSet"
+        ]
+      },
+      "derive": [
+        {
+          "as": "pwdLastSetAgeDays",
+          "op": "fileTimeAgeDays",
+          "from": "attributes.pwdLastSet"
+        }
+      ],
+      "predicate": {
+        "rule": "at_most",
+        "path": "pwdLastSetAgeDays",
+        "max": 365
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Rotate the built-in Administrator password, keep it in a vault and use named admin accounts day to day.",
+        "steps": [
+          "Set a long random password on the built-in Administrator (RID 500).",
+          "Store it in the organization's privileged access vault with break-glass procedure.",
+          "Use individual administrative accounts for daily work."
+        ],
+        "risk": "Scheduled tasks or services still running as Administrator stop working after the change."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1078.001",
+          "title": "Valid Accounts: Default Accounts",
+          "url": "https://attack.mitre.org/techniques/T1078/001/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-ACC-007",
+      "title": "The built-in Guest account is enabled",
+      "section": "Accounts",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_object",
+        "dn": "<SID={domainSid}-501>",
+        "attributes": [
+          "userAccountControl"
+        ]
+      },
+      "predicate": {
+        "rule": "bits_all",
+        "path": "attributes.userAccountControl",
+        "mask": 2
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Disable the built-in Guest account.",
+        "steps": [
+          "Run Disable-ADAccount -Identity Guest, or disable it in 'Active Directory Users and Computers'."
+        ],
+        "risk": "None expected; nothing supported should depend on the domain Guest account."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1078.001",
+          "title": "Valid Accounts: Default Accounts",
+          "url": "https://attack.mitre.org/techniques/T1078/001/"
+        },
+        {
+          "source": "DISA STIG",
+          "title": "Active Directory Domain STIG — Guest account"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-ACC-008",
+      "title": "Privileged accounts have a password older than 365 days",
+      "section": "Accounts",
+      "severity": "medium",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{domainDn}",
+        "scope": "subtree",
+        "filter": "(&(objectCategory=person)(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2))(pwdLastSet<={fileTimeDaysAgo:365})(|(memberOf:1.2.840.113556.1.4.1941:={sidDn:{domainSid}-512})(memberOf:1.2.840.113556.1.4.1941:={sidDn:{rootDomainSid}-519})(memberOf:1.2.840.113556.1.4.1941:={sidDn:{rootDomainSid}-518})(memberOf:1.2.840.113556.1.4.1941:={sidDn:S-1-5-32-544})(memberOf:1.2.840.113556.1.4.1941:={sidDn:S-1-5-32-548})(memberOf:1.2.840.113556.1.4.1941:={sidDn:S-1-5-32-549})(memberOf:1.2.840.113556.1.4.1941:={sidDn:S-1-5-32-550})(memberOf:1.2.840.113556.1.4.1941:={sidDn:S-1-5-32-551})))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Reset the password of every privileged account that has not changed it in over a year, and put those accounts on a rotation.",
+        "steps": [
+          "Confirm each account is a real privileged account and not a decommissioned one.",
+          "Reset its password and, for service accounts, prefer a group Managed Service Account so rotation is automatic."
+        ],
+        "risk": "A privileged password that never changes is a long-lived target for offline cracking; rotating a service account's password without updating the service breaks it."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1078.002",
+          "title": "Valid Accounts: Domain Accounts",
+          "url": "https://attack.mitre.org/techniques/T1078/002/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-CFG-001",
+      "title": "Anonymous LDAP operations are enabled (dSHeuristics)",
+      "section": "Domain configuration",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_object",
+        "dn": "CN=Directory Service,CN=Windows NT,CN=Services,{configDn}",
+        "attributes": [
+          "dSHeuristics"
+        ],
+        "defaults": {
+          "dSHeuristics": ""
+        }
+      },
+      "predicate": {
+        "rule": "regex_not_match",
+        "path": "attributes.dSHeuristics",
+        "pattern": "^.{6}2"
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Set the seventh character of dSHeuristics back to 0 (or clear the attribute if nothing else is set).",
+        "steps": [
+          "Open ADSI Edit on the Configuration partition › CN=Services › CN=Windows NT › CN=Directory Service.",
+          "Change the seventh character of dSHeuristics from 2 to 0, keeping the other characters.",
+          "Confirm no application depends on anonymous binds before the change."
+        ],
+        "risk": "Applications that read the directory anonymously stop working."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1087.002",
+          "title": "Account Discovery: Domain Account",
+          "url": "https://attack.mitre.org/techniques/T1087/002/"
+        },
+        {
+          "source": "Microsoft",
+          "title": "dSHeuristics attribute",
+          "url": "https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/e5899be4-862e-496f-9a38-33950617d2c5"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-CFG-002",
+      "title": "Any authenticated user can join computers to the domain (ms-DS-MachineAccountQuota > 0)",
+      "section": "Domain configuration",
+      "severity": "low",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_object",
+        "dn": "{domainDn}",
+        "attributes": [
+          "ms-DS-MachineAccountQuota"
+        ]
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "attributes.ms-DS-MachineAccountQuota",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Set ms-DS-MachineAccountQuota to 0 and delegate computer joins to a dedicated group.",
+        "steps": [
+          "Delegate 'Create Computer objects' on the target OUs to the team that joins machines.",
+          "Set ms-DS-MachineAccountQuota to 0 on the domain object."
+        ],
+        "risk": "Users who join their own machines today can no longer do it without the delegated group."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "Default limit to number of workstations a user can join to the domain",
+          "url": "https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/default-workstation-numbers-join-domain"
+        },
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1136.002",
+          "title": "Create Account: Domain Account",
+          "url": "https://attack.mitre.org/techniques/T1136/002/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-CFG-003",
+      "title": "The forest functional level is below Windows Server 2016",
+      "section": "Domain configuration",
+      "severity": "low",
+      "requires": "member",
+      "query": {
+        "kind": "rootdse",
+        "attributes": [
+          "forestFunctionality",
+          "domainFunctionality"
+        ]
+      },
+      "predicate": {
+        "rule": "at_least",
+        "path": "attributes.forestFunctionality",
+        "min": 7
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Raise the domain and forest functional levels once every DC runs Windows Server 2016 or later.",
+        "steps": [
+          "Confirm every domain controller in the forest runs Windows Server 2016 or newer.",
+          "Raise each domain functional level, then the forest functional level (Set-ADForestMode)."
+        ],
+        "risk": "Raising the functional level is not reversible below the new level; older DCs can no longer be added."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "Active Directory Domain Services functional levels",
+          "url": "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/active-directory-functional-levels"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-CFG-004",
+      "title": "The domain password policy allows passwords shorter than 14 characters",
+      "section": "Domain configuration",
+      "severity": "medium",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_object",
+        "dn": "{domainDn}",
+        "attributes": [
+          "minPwdLength"
+        ]
+      },
+      "predicate": {
+        "rule": "at_least",
+        "path": "attributes.minPwdLength",
+        "min": 14
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Raise 'Minimum password length' in the Default Domain Policy to 14.",
+        "steps": [
+          "Edit the Default Domain Policy › Computer Configuration › Policies › Windows Settings › Security Settings › Account Policies › Password Policy.",
+          "Set 'Minimum password length' to 14 characters.",
+          "Communicate the change: existing passwords keep working until their next change."
+        ],
+        "risk": "Users are forced into longer passwords at their next change; help-desk volume rises briefly."
+      },
+      "references": [
+        {
+          "source": "DISA STIG",
+          "title": "Active Directory Domain STIG — minimum password length"
+        },
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1110",
+          "title": "Brute Force",
+          "url": "https://attack.mitre.org/techniques/T1110/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-CFG-005",
+      "title": "LAPS is not deployed (no LAPS attribute in the schema)",
+      "section": "Domain configuration",
+      "severity": "medium",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{schemaDn}",
+        "scope": "onelevel",
+        "filter": "(|(lDAPDisplayName=ms-Mcs-AdmPwd)(lDAPDisplayName=msLAPS-Password))"
+      },
+      "predicate": {
+        "rule": "at_least",
+        "path": "count",
+        "min": 1
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Deploy Windows LAPS so every local administrator password is unique and rotated.",
+        "steps": [
+          "Extend the schema with Update-LapsADSchema.",
+          "Grant computers permission to update their password (Set-LapsADComputerSelfPermission) on the target OUs.",
+          "Enable the LAPS policy through Group Policy or Intune."
+        ],
+        "risk": "Local administrator passwords change; scripts that use a shared local password stop working."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "Windows LAPS overview",
+          "url": "https://learn.microsoft.com/en-us/windows-server/identity/laps/laps-overview"
+        },
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1550.002",
+          "title": "Use Alternate Authentication Material: Pass the Hash",
+          "url": "https://attack.mitre.org/techniques/T1550/002/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-CFG-006",
+      "title": "Group Policy Preferences in SYSVOL contain stored passwords (cpassword)",
+      "section": "Domain configuration",
+      "severity": "critical",
+      "requires": "member",
+      "query": {
+        "kind": "sysvol_files",
+        "patterns": [
+          "Groups.xml",
+          "Services.xml",
+          "ScheduledTasks.xml",
+          "DataSources.xml",
+          "Printers.xml",
+          "Drives.xml"
+        ],
+        "contains": "cpassword=\"[^\"]+"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Delete the preference items that store passwords and change every password they contained.",
+        "steps": [
+          "Open each reported GPO and remove the preference item that sets a password.",
+          "Change the password of every account those items configured — the key that encrypts cpassword is public.",
+          "Replace local account management with Windows LAPS."
+        ],
+        "risk": "Machines stop receiving the account or mapping the preference item configured."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "MS14-025: Vulnerability in Group Policy Preferences",
+          "url": "https://learn.microsoft.com/en-us/security-updates/securitybulletins/2014/ms14-025"
+        },
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1552.006",
+          "title": "Unsecured Credentials: Group Policy Preferences",
+          "url": "https://attack.mitre.org/techniques/T1552/006/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-CFG-007",
+      "title": "Fine-grained password policies allow passwords shorter than 14 characters",
+      "section": "Domain configuration",
+      "severity": "medium",
+      "requires": "privileged",
+      "query": {
+        "kind": "ldap_search",
+        "base": "CN=Password Settings Container,CN=System,{domainDn}",
+        "scope": "onelevel",
+        "filter": "(&(objectClass=msDS-PasswordSettings)(msDS-MinimumPasswordLength<=13))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Raise msDS-MinimumPasswordLength to 14 on every password settings object.",
+        "steps": [
+          "Open 'Active Directory Administrative Center' › System › Password Settings Container.",
+          "Set 'Minimum password length' to at least 14 on each listed object."
+        ],
+        "risk": "Members of the affected policy must choose longer passwords at their next change."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "Fine-grained password policies",
+          "url": "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/get-started/adac/fine-grained-password-policies"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-CFG-008",
+      "title": "Outbound trusts to external domains do not filter SID history",
+      "section": "Domain configuration",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "CN=System,{domainDn}",
+        "scope": "onelevel",
+        "filter": "(&(objectClass=trustedDomain)(|(trustDirection=2)(trustDirection=3))(!(trustAttributes:1.2.840.113556.1.4.803:=4))(!(trustAttributes:1.2.840.113556.1.4.803:=8))(!(trustAttributes:1.2.840.113556.1.4.803:=32)))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "needs_review",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Enable SID filtering (quarantine) on external trusts unless a documented migration still needs SID history.",
+        "steps": [
+          "Confirm no migration in progress relies on SID history across the trust.",
+          "Enable quarantine: netdom trust <TrustingDomain> /domain:<TrustedDomain> /quarantine:Yes."
+        ],
+        "risk": "Users that rely on SID history from the trusted domain lose access to resources in this domain."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1134.005",
+          "title": "Access Token Manipulation: SID-History Injection",
+          "url": "https://attack.mitre.org/techniques/T1134/005/"
+        },
+        {
+          "source": "DISA STIG",
+          "title": "Active Directory Forest STIG — SID filtering on external trusts"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-CFG-009",
+      "title": "The domain does not lock out accounts after repeated failed sign-ins",
+      "section": "Domain configuration",
+      "severity": "medium",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_object",
+        "dn": "{domainDn}",
+        "attributes": [
+          "lockoutThreshold"
+        ]
+      },
+      "predicate": {
+        "rule": "between",
+        "path": "attributes.lockoutThreshold",
+        "min": 1,
+        "max": 10
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Set an account lockout threshold between 1 and 10 failed attempts in the Default Domain Policy.",
+        "steps": [
+          "Open the Default Domain Policy: Computer Configuration > Policies > Windows Settings > Security Settings > Account Policies > Account Lockout Policy.",
+          "Set 'Account lockout threshold' to a value between 1 and 10 (for example 5), with a lockout duration and observation window."
+        ],
+        "risk": "No lockout allows unlimited password guessing; too low a threshold makes it easy for an attacker to lock out users on purpose (denial of service)."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "Account lockout threshold",
+          "url": "https://learn.microsoft.com/en-us/windows/security/threat-protection/security-policy-settings/account-lockout-threshold"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-CFG-010",
+      "title": "The forest functional level is below Windows Server 2012",
+      "section": "Domain configuration",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "rootdse",
+        "attributes": [
+          "forestFunctionality",
+          "domainFunctionality"
+        ]
+      },
+      "predicate": {
+        "rule": "at_least",
+        "path": "attributes.forestFunctionality",
+        "min": 5
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Raise the forest functional level to at least Windows Server 2012 to enable modern protections (for example the Protected Users group and Authentication Policies need 2012 R2).",
+        "steps": [
+          "Confirm every domain controller runs Windows Server 2012 or later.",
+          "Raise each domain functional level, then the forest functional level (Set-ADForestMode)."
+        ],
+        "risk": "Raising the functional level is not reversible below the new level and blocks adding older domain controllers."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "Active Directory Domain Services functional levels",
+          "url": "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/active-directory-functional-levels"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-DC-001",
+      "title": "The domain controller does not require LDAP signing",
+      "section": "Domain controller hardening",
+      "severity": "high",
+      "requires": "dc_registry",
+      "query": {
+        "kind": "registry",
+        "path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters",
+        "name": "LDAPServerIntegrity",
+        "absentValue": 1
+      },
+      "predicate": {
+        "rule": "equals",
+        "path": "value",
+        "value": 2
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "dc_registry",
+        "summary": "Require LDAP signing on every domain controller.",
+        "steps": [
+          "Enable LDAP Interface Events (diagnostics level 2) and review event 2889 to find clients that bind without signing.",
+          "Fix or reconfigure those clients.",
+          "Set 'Domain controller: LDAP server signing requirements' to 'Require signing' in the Default Domain Controllers Policy."
+        ],
+        "gpoPath": "Computer Configuration › Policies › Windows Settings › Security Settings › Local Policies › Security Options › Domain controller: LDAP server signing requirements",
+        "registry": {
+          "path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters",
+          "name": "LDAPServerIntegrity",
+          "type": "dword",
+          "value": 2
+        },
+        "risk": "Clients that bind with simple or unsigned SASL binds fail until they are reconfigured."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "How to enable LDAP signing in Windows Server",
+          "url": "https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/enable-ldap-signing-in-windows-server"
+        },
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1557",
+          "title": "Adversary-in-the-Middle",
+          "url": "https://attack.mitre.org/techniques/T1557/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-DC-002",
+      "title": "The domain controller does not enforce LDAP channel binding",
+      "section": "Domain controller hardening",
+      "severity": "medium",
+      "requires": "dc_registry",
+      "query": {
+        "kind": "registry",
+        "path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters",
+        "name": "LdapEnforceChannelBinding",
+        "absentValue": 0
+      },
+      "predicate": {
+        "rule": "equals",
+        "path": "value",
+        "value": 2
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "dc_registry",
+        "summary": "Enforce LDAP channel binding tokens on every domain controller.",
+        "steps": [
+          "Set LdapEnforceChannelBinding to 1 and review event 3039 for clients that fail.",
+          "Update or reconfigure those clients.",
+          "Set LdapEnforceChannelBinding to 2 ('Always')."
+        ],
+        "registry": {
+          "path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters",
+          "name": "LdapEnforceChannelBinding",
+          "type": "dword",
+          "value": 2
+        },
+        "risk": "LDAPS clients that do not support channel binding tokens fail to bind."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "ADV190023: LDAP channel binding and LDAP signing",
+          "url": "https://msrc.microsoft.com/update-guide/vulnerability/ADV190023"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-DC-003",
+      "title": "SMBv1 is enabled on the domain controller",
+      "section": "Domain controller hardening",
+      "severity": "high",
+      "requires": "dc_registry",
+      "query": {
+        "kind": "registry",
+        "path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Parameters",
+        "name": "SMB1",
+        "absentValueByOsBuild": [
+          {
+            "minBuild": 17763,
+            "value": 0
+          },
+          {
+            "minBuild": 0,
+            "value": 1
+          }
+        ]
+      },
+      "predicate": {
+        "rule": "equals",
+        "path": "value",
+        "value": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "dc_registry",
+        "summary": "Disable SMBv1 on the domain controller.",
+        "steps": [
+          "Check the SMB1 access audit (Set-SmbServerConfiguration -AuditSmb1Access $true, event 3000) for clients still using SMBv1.",
+          "Run Set-SmbServerConfiguration -EnableSMB1Protocol $false, or remove the SMB1Protocol feature."
+        ],
+        "registry": {
+          "path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Parameters",
+          "name": "SMB1",
+          "type": "dword",
+          "value": 0
+        },
+        "risk": "Legacy devices that only speak SMBv1 lose access to SYSVOL and NETLOGON."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "How to detect, enable and disable SMBv1, SMBv2, and SMBv3",
+          "url": "https://learn.microsoft.com/en-us/windows-server/storage/file-server/troubleshoot/detect-enable-and-disable-smbv1-v2-v3"
+        },
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1210",
+          "title": "Exploitation of Remote Services",
+          "url": "https://attack.mitre.org/techniques/T1210/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-DC-004",
+      "title": "The Print Spooler service is not disabled on the domain controller",
+      "section": "Domain controller hardening",
+      "severity": "medium",
+      "requires": "dc_registry",
+      "query": {
+        "kind": "registry",
+        "path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\Spooler",
+        "name": "Start",
+        "absentValue": 4
+      },
+      "predicate": {
+        "rule": "equals",
+        "path": "value",
+        "value": 4
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "dc_registry",
+        "summary": "Stop and disable the Print Spooler service on domain controllers.",
+        "steps": [
+          "Confirm the DC is not used as a print server.",
+          "Run Stop-Service Spooler; Set-Service Spooler -StartupType Disabled."
+        ],
+        "registry": {
+          "path": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\Spooler",
+          "name": "Start",
+          "type": "dword",
+          "value": 4
+        },
+        "risk": "Printers shared from the domain controller stop working."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "CVE-2021-34527 Windows Print Spooler Remote Code Execution",
+          "url": "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2021-34527"
+        },
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1187",
+          "title": "Forced Authentication",
+          "url": "https://attack.mitre.org/techniques/T1187/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-DC-005",
+      "title": "The domain controller accepts LM and NTLMv1 responses (LmCompatibilityLevel below 5)",
+      "section": "Domain controller hardening",
+      "severity": "medium",
+      "requires": "dc_registry",
+      "query": {
+        "kind": "registry",
+        "path": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa",
+        "name": "LmCompatibilityLevel",
+        "absentValue": 3
+      },
+      "predicate": {
+        "rule": "at_least",
+        "path": "value",
+        "min": 5
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "dc_registry",
+        "summary": "Set 'Network security: LAN Manager authentication level' to 'Send NTLMv2 response only. Refuse LM & NTLM'.",
+        "steps": [
+          "Audit NTLMv1 use (event 4624 with 'Package Name (NTLM only): NTLM V1').",
+          "Fix the clients still using NTLMv1.",
+          "Set the policy in the Default Domain Controllers Policy."
+        ],
+        "gpoPath": "Computer Configuration › Policies › Windows Settings › Security Settings › Local Policies › Security Options › Network security: LAN Manager authentication level",
+        "registry": {
+          "path": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa",
+          "name": "LmCompatibilityLevel",
+          "type": "dword",
+          "value": 5
+        },
+        "risk": "Clients limited to LM or NTLMv1 can no longer authenticate against this DC."
+      },
+      "references": [
+        {
+          "source": "DISA STIG",
+          "title": "Windows Server STIG — LAN Manager authentication level"
+        },
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1557",
+          "title": "Adversary-in-the-Middle",
+          "url": "https://attack.mitre.org/techniques/T1557/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-DC-006",
+      "title": "UAC admin approval mode is disabled for the built-in Administrator on the domain controller",
+      "section": "Domain controller hardening",
+      "severity": "medium",
+      "requires": "dc_registry",
+      "query": {
+        "kind": "registry",
+        "path": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+        "name": "FilterAdministratorToken",
+        "absentValue": 0
+      },
+      "predicate": {
+        "rule": "equals",
+        "path": "value",
+        "value": 1
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "dc_registry",
+        "summary": "Enable 'User Account Control: Admin Approval Mode for the Built-in Administrator account' on domain controllers.",
+        "steps": [
+          "Set the policy in Computer Configuration > Policies > Windows Settings > Security Settings > Local Policies > Security Options.",
+          "This sets FilterAdministratorToken to 1 under the Policies\\\\System key."
+        ],
+        "registry": {
+          "path": "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+          "name": "FilterAdministratorToken",
+          "type": "dword",
+          "value": 1
+        },
+        "risk": "With Admin Approval Mode off, code run by the built-in Administrator gets a full token with no elevation prompt; a script that relied on silent elevation may now prompt."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "UAC: Admin Approval Mode for the Built-in Administrator account",
+          "url": "https://learn.microsoft.com/en-us/windows/security/threat-protection/security-policy-settings/user-account-control-admin-approval-mode-for-the-built-in-administrator-account"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-DC-007",
+      "title": "The domain controller stores the LAN Manager hash of passwords",
+      "section": "Domain controller hardening",
+      "severity": "high",
+      "requires": "dc_registry",
+      "query": {
+        "kind": "registry",
+        "path": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa",
+        "name": "NoLMHash",
+        "absentValue": 1
+      },
+      "predicate": {
+        "rule": "equals",
+        "path": "value",
+        "value": 1
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "dc_registry",
+        "summary": "Prevent domain controllers from storing the LAN Manager hash of passwords.",
+        "steps": [
+          "Set 'Network security: Do not store LAN Manager hash value on next password change' to Enabled in the Default Domain Controllers Policy.",
+          "Every account's LM hash is removed at its next password change."
+        ],
+        "registry": {
+          "path": "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa",
+          "name": "NoLMHash",
+          "type": "dword",
+          "value": 1
+        },
+        "risk": "The LM hash is trivially crackable; disabling it can break very old clients that only speak LM authentication."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "Do not store LAN Manager hash value on next password change",
+          "url": "https://learn.microsoft.com/en-us/windows/security/threat-protection/security-policy-settings/network-security-do-not-store-lan-manager-hash-value-on-next-password-change"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-KRB-001",
+      "title": "The krbtgt account password has not been reset in the last 180 days",
+      "section": "Kerberos",
+      "severity": "critical",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_object",
+        "dn": "<SID={domainSid}-502>",
+        "attributes": [
+          "pwdLastSet"
+        ]
+      },
+      "derive": [
+        {
+          "as": "pwdLastSetAgeDays",
+          "op": "fileTimeAgeDays",
+          "from": "attributes.pwdLastSet"
+        }
+      ],
+      "predicate": {
+        "rule": "at_most",
+        "path": "pwdLastSetAgeDays",
+        "max": 180
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Reset the krbtgt password twice, waiting for replication (at least the maximum ticket lifetime, 10 hours by default) between resets.",
+        "steps": [
+          "Confirm AD replication is healthy on every DC (repadmin /replsummary).",
+          "Reset the krbtgt password once with the Microsoft New-KrbtgtKeys.ps1 script or 'Active Directory Users and Computers'.",
+          "Wait at least the maximum Kerberos ticket lifetime plus replication latency.",
+          "Reset it a second time so tickets forged with the old key stop being accepted."
+        ],
+        "risk": "Resetting twice without waiting invalidates every issued Kerberos ticket at once and causes authentication failures until clients re-authenticate."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1558.001",
+          "title": "Steal or Forge Kerberos Tickets: Golden Ticket",
+          "url": "https://attack.mitre.org/techniques/T1558/001/"
+        },
+        {
+          "source": "Microsoft",
+          "title": "AD Forest Recovery — Resetting the krbtgt password",
+          "url": "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/ad-forest-recovery-resetting-the-krbtgt-password"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-KRB-002",
+      "title": "Privileged accounts have a service principal name (Kerberoastable)",
+      "section": "Kerberos",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{domainDn}",
+        "filter": "(&(objectCategory=person)(objectClass=user)(adminCount=1)(servicePrincipalName=*)(!(sAMAccountName=krbtgt))(!(userAccountControl:1.2.840.113556.1.4.803:=2)))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Remove SPNs from privileged user accounts; run services under group Managed Service Accounts instead.",
+        "steps": [
+          "For each listed account, identify the service that registered the SPN (setspn -L <account>).",
+          "Move the service to a gMSA or a non-privileged service account with a long random password.",
+          "Remove the SPN from the privileged account (setspn -D <spn> <account>)."
+        ],
+        "risk": "Removing an SPN that is still in use breaks Kerberos authentication to that service."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1558.003",
+          "title": "Steal or Forge Kerberos Tickets: Kerberoasting",
+          "url": "https://attack.mitre.org/techniques/T1558/003/"
+        },
+        {
+          "source": "DISA STIG",
+          "title": "Active Directory Domain STIG — privileged account usage"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-KRB-003",
+      "title": "Enabled accounts do not require Kerberos pre-authentication (AS-REP roastable)",
+      "section": "Kerberos",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{domainDn}",
+        "filter": "(&(objectCategory=person)(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=4194304)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Clear 'Do not require Kerberos preauthentication' on every listed account.",
+        "steps": [
+          "Open each account in 'Active Directory Users and Computers' › Account.",
+          "Uncheck 'Do not require Kerberos preauthentication', or run Set-ADAccountControl -DoesNotRequirePreAuth $false.",
+          "If a legacy application needs it, document an exception with an expiry date."
+        ],
+        "risk": "Very old Kerberos clients that cannot do pre-authentication stop authenticating."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1558.004",
+          "title": "Steal or Forge Kerberos Tickets: AS-REP Roasting",
+          "url": "https://attack.mitre.org/techniques/T1558/004/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-KRB-004",
+      "title": "Accounts other than domain controllers are trusted for unconstrained delegation",
+      "section": "Kerberos",
+      "severity": "critical",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{domainDn}",
+        "filter": "(&(userAccountControl:1.2.840.113556.1.4.803:=524288)(!(primaryGroupID=516))(!(primaryGroupID=521))(!(userAccountControl:1.2.840.113556.1.4.803:=2)))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Replace unconstrained delegation with constrained or resource-based constrained delegation.",
+        "steps": [
+          "For each listed object, identify which service needs to delegate and to which back-end service.",
+          "Configure constrained delegation to only those services (Delegation tab › 'Trust this computer for delegation to specified services only').",
+          "Clear 'Trust this computer for delegation to any service'."
+        ],
+        "risk": "Applications that rely on delegation to unlisted back-ends fail with double-hop authentication errors."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1558",
+          "title": "Steal or Forge Kerberos Tickets",
+          "url": "https://attack.mitre.org/techniques/T1558/"
+        },
+        {
+          "source": "Microsoft",
+          "title": "Kerberos constrained delegation overview",
+          "url": "https://learn.microsoft.com/en-us/windows-server/security/kerberos/kerberos-constrained-delegation-overview"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-KRB-005",
+      "title": "Accounts are trusted for constrained delegation with protocol transition",
+      "section": "Kerberos",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{domainDn}",
+        "scope": "subtree",
+        "filter": "(&(userAccountControl:1.2.840.113556.1.4.803:=16777216)(!(userAccountControl:1.2.840.113556.1.4.803:=2))(!(primaryGroupID=516))(!(primaryGroupID=521)))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Remove protocol transition (TRUSTED_TO_AUTH_FOR_DELEGATION) from accounts that do not require it, or move to resource-based constrained delegation.",
+        "steps": [
+          "Review each account and the services it delegates to (msDS-AllowedToDelegateTo).",
+          "Where possible replace 'Use any authentication protocol' with 'Use Kerberos only', or migrate to resource-based constrained delegation configured on the target.",
+          "Never grant protocol transition to a Tier 0 service account."
+        ],
+        "risk": "Protocol transition lets the account request tickets for any user to the configured services; removing it breaks front-ends that rely on it (for example some Kerberos-constrained-delegation web apps)."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1558.003",
+          "title": "Steal or Forge Kerberos Tickets: Kerberoasting",
+          "url": "https://attack.mitre.org/techniques/T1558/003/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-KRB-006",
+      "title": "Accounts with a service principal name allow RC4 or weaker Kerberos encryption",
+      "section": "Kerberos",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{domainDn}",
+        "scope": "subtree",
+        "filter": "(&(objectCategory=person)(objectClass=user)(servicePrincipalName=*)(!(sAMAccountName=krbtgt))(!(userAccountControl:1.2.840.113556.1.4.803:=2))(!(msDS-SupportedEncryptionTypes:1.2.840.113556.1.4.804:=24)))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Configure every service account with a service principal name to support AES Kerberos encryption.",
+        "steps": [
+          "For each account, set msDS-SupportedEncryptionTypes to AES128+AES256 (value 24) once the target services support AES.",
+          "Reset the account password so AES keys are generated.",
+          "Prefer group Managed Service Accounts, which use AES by default and rotate their own password."
+        ],
+        "risk": "An RC4-only service ticket is offline-crackable (Kerberoasting); forcing AES before a legacy service supports it breaks that service."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1558.003",
+          "title": "Steal or Forge Kerberos Tickets: Kerberoasting",
+          "url": "https://attack.mitre.org/techniques/T1558/003/"
+        },
+        {
+          "source": "Microsoft",
+          "title": "Decrypting the Selection of Supported Kerberos Encryption Types",
+          "url": "https://techcommunity.microsoft.com/t5/core-infrastructure-and-security/decrypting-the-selection-of-supported-kerberos-encryption-types/ba-p/1628797"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-KRB-007",
+      "title": "Accounts are enabled for DES-only Kerberos encryption",
+      "section": "Kerberos",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{domainDn}",
+        "scope": "subtree",
+        "filter": "(&(userAccountControl:1.2.840.113556.1.4.803:=2097152)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Clear the 'Use Kerberos DES encryption types for this account' flag on every account.",
+        "steps": [
+          "Review each account reported here.",
+          "In the account's properties, clear 'Use Kerberos DES encryption types for this account', then reset its password."
+        ],
+        "risk": "DES is broken and its tickets are trivially crackable; a rare legacy device that only speaks DES loses Kerberos when the flag is cleared."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1558",
+          "title": "Steal or Forge Kerberos Tickets",
+          "url": "https://attack.mitre.org/techniques/T1558/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-PRV-001",
+      "title": "Domain Admins has more than 10 members",
+      "section": "Privileged access",
+      "severity": "medium",
+      "requires": "member",
+      "query": {
+        "kind": "group_members",
+        "groups": [
+          "<SID={domainSid}-512>"
+        ],
+        "recursive": true
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 10
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Reduce Domain Admins to the few accounts that administer domain controllers; delegate everything else.",
+        "steps": [
+          "Review each member (direct and nested) with its owner.",
+          "Delegate specific tasks through OU permissions or Just-Enough-Administration groups.",
+          "Remove members that do not administer domain controllers."
+        ],
+        "risk": "Removing a member that performs a task nobody delegated yet interrupts that task."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "Best Practices for Securing Active Directory — reducing the attack surface",
+          "url": "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/plan/security-best-practices/reducing-the-active-directory-attack-surface"
+        },
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1078.002",
+          "title": "Valid Accounts: Domain Accounts",
+          "url": "https://attack.mitre.org/techniques/T1078/002/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-PRV-002",
+      "title": "Schema Admins or Enterprise Admins have permanent members",
+      "section": "Privileged access",
+      "severity": "medium",
+      "requires": "member",
+      "query": {
+        "kind": "group_members",
+        "groups": [
+          "<SID={rootDomainSid}-518>",
+          "<SID={rootDomainSid}-519>"
+        ],
+        "recursive": true,
+        "excludeSids": [
+          "{rootDomainSid}-500"
+        ]
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "whenMissing": "not_applicable",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Keep Schema Admins and Enterprise Admins empty and add members only for the duration of a change.",
+        "steps": [
+          "Remove every member except the forest root built-in Administrator.",
+          "Add an account temporarily when a schema or forest-wide change is planned, and remove it afterwards."
+        ],
+        "risk": "Forest-wide changes planned for the same window need a member added first."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "Appendix E: Securing Enterprise Admins Groups",
+          "url": "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/plan/security-best-practices/appendix-e--securing-enterprise-admins-groups-in-active-directory"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-PRV-003",
+      "title": "The Protected Users group is empty",
+      "section": "Privileged access",
+      "severity": "low",
+      "requires": "member",
+      "query": {
+        "kind": "group_members",
+        "groups": [
+          "<SID={domainSid}-525>"
+        ],
+        "recursive": false
+      },
+      "predicate": {
+        "rule": "at_least",
+        "path": "count",
+        "min": 1
+      },
+      "onFail": "fail",
+      "whenMissing": "not_applicable",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Add privileged user accounts to Protected Users after testing.",
+        "steps": [
+          "Test with one administrative account: Protected Users blocks NTLM, DES/RC4 and delegation for its members.",
+          "Add the remaining privileged user accounts (never service or computer accounts)."
+        ],
+        "risk": "Members cannot use NTLM or cached credentials; an admin that relies on them loses access."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "Protected Users security group",
+          "url": "https://learn.microsoft.com/en-us/windows-server/security/credentials-protection-and-management/protected-users-security-group"
+        },
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1550.003",
+          "title": "Use Alternate Authentication Material: Pass the Ticket",
+          "url": "https://attack.mitre.org/techniques/T1550/003/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-PRV-004",
+      "title": "Built-in operator groups (Account, Server, Print, Backup Operators) have members",
+      "section": "Privileged access",
+      "severity": "medium",
+      "requires": "member",
+      "query": {
+        "kind": "group_members",
+        "groups": [
+          "<SID=S-1-5-32-548>",
+          "<SID=S-1-5-32-549>",
+          "<SID=S-1-5-32-550>",
+          "<SID=S-1-5-32-551>"
+        ],
+        "recursive": true
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Empty the built-in operator groups and delegate the needed rights explicitly.",
+        "steps": [
+          "Identify why each member was added (backups, printer management, account management).",
+          "Grant those specific rights through delegation or dedicated groups.",
+          "Remove the members from the built-in operator groups."
+        ],
+        "risk": "Backup software running as a Backup Operators member fails until it is granted the equivalent rights."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "Appendix B: Privileged Accounts and Groups in Active Directory",
+          "url": "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/plan/security-best-practices/appendix-b--privileged-accounts-and-groups-in-active-directory"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-PRV-005",
+      "title": "AdminSDHolder grants write access to non-default principals",
+      "section": "Privileged access",
+      "severity": "critical",
+      "requires": "member",
+      "query": {
+        "kind": "acl",
+        "dn": "CN=AdminSDHolder,CN=System,{domainDn}",
+        "rights": [
+          "GenericAll",
+          "GenericWrite",
+          "WriteDacl",
+          "WriteOwner",
+          "WriteProperty"
+        ],
+        "excludeSids": [
+          "S-1-5-18",
+          "S-1-5-10",
+          "S-1-5-32-544",
+          "S-1-5-32-561",
+          "{domainSid}-512",
+          "{domainSid}-517",
+          "{rootDomainSid}-519"
+        ]
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "needs_review",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Review every non-default write ACE on AdminSDHolder and remove the ones nobody can justify.",
+        "steps": [
+          "List the ACEs reported here (trustee and right).",
+          "Confirm with the owning team whether each one is a product requirement (for example Exchange).",
+          "Remove unjustified ACEs with 'dsacls' or ADSI Edit; SDProp re-applies the template to protected accounts within 60 minutes."
+        ],
+        "risk": "Removing an ACE a product depends on breaks that product's management of privileged accounts."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "Appendix C: Protected Accounts and Groups in Active Directory",
+          "url": "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/plan/security-best-practices/appendix-c--protected-accounts-and-groups-in-active-directory"
+        },
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1098",
+          "title": "Account Manipulation",
+          "url": "https://attack.mitre.org/techniques/T1098/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-PRV-006",
+      "title": "Non-default principals hold replication rights on the domain (DCSync)",
+      "section": "Privileged access",
+      "severity": "critical",
+      "requires": "member",
+      "query": {
+        "kind": "acl",
+        "dn": "{domainDn}",
+        "rights": [
+          "GenericAll"
+        ],
+        "extendedRights": [
+          "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
+        ],
+        "excludeSids": [
+          "S-1-5-18",
+          "S-1-5-9",
+          "S-1-5-32-544",
+          "{domainSid}-512",
+          "{domainSid}-516",
+          "{rootDomainSid}-498",
+          "{rootDomainSid}-519"
+        ]
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Remove 'Replicating Directory Changes All' (and GenericAll) from every principal that is not a domain controller.",
+        "steps": [
+          "Identify each trustee reported here.",
+          "If the trustee is the Microsoft Entra Connect sync account, keep it, restrict who can log on to the sync server and record an exception.",
+          "Remove the ACE for any other trustee from the domain root (dsacls <domainDN> /R <trustee>)."
+        ],
+        "risk": "Directory synchronization tools that legitimately read password hashes stop syncing if their right is removed."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1003.006",
+          "title": "OS Credential Dumping: DCSync",
+          "url": "https://attack.mitre.org/techniques/T1003/006/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-PRV-007",
+      "title": "Non-default principals can reset passwords or take over privileged accounts",
+      "section": "Privileged access",
+      "severity": "critical",
+      "requires": "member",
+      "query": {
+        "kind": "acl_search",
+        "base": "{domainDn}",
+        "scope": "subtree",
+        "filter": "(&(objectCategory=person)(objectClass=user)(adminCount=1))",
+        "rights": [
+          "GenericAll",
+          "GenericWrite",
+          "WriteDacl",
+          "WriteOwner"
+        ],
+        "extendedRights": [
+          "00299570-246d-11d0-a768-00aa006e0529"
+        ],
+        "writeProperties": [
+          "5b47d60f-6090-40b2-9f37-2a4de88f3063"
+        ],
+        "excludeSids": [
+          "S-1-5-18",
+          "S-1-5-32-544",
+          "S-1-5-10",
+          "S-1-3-0",
+          "{domainSid}-512",
+          "{rootDomainSid}-519"
+        ],
+        "maxObjects": 2000
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "needs_review",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Review every non-default principal that can reset the password of, or take ownership of, a protected account, and remove the rights nobody can justify.",
+        "steps": [
+          "List the principals reported here and, for each, the right and an example account.",
+          "Confirm with the owning team whether each one is a product requirement (for example a PAM or password-reset tool).",
+          "Remove the ACE from AdminSDHolder (CN=AdminSDHolder,CN=System) so SDProp re-stamps every protected account within 60 minutes, or from the specific account for a one-off."
+        ],
+        "risk": "Removing a right a delegated help-desk or PAM tool depends on breaks that workflow."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1098",
+          "title": "Account Manipulation",
+          "url": "https://attack.mitre.org/techniques/T1098/"
+        },
+        {
+          "source": "Microsoft",
+          "title": "Protecting Tier 0 the modern way",
+          "url": "https://learn.microsoft.com/en-us/security/privileged-access-workstations/privileged-access-access-model"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-PRV-008",
+      "title": "Non-default principals can change the membership of privileged groups",
+      "section": "Privileged access",
+      "severity": "critical",
+      "requires": "member",
+      "query": {
+        "kind": "acl_search",
+        "base": "{domainDn}",
+        "scope": "subtree",
+        "filter": "(&(objectCategory=group)(adminCount=1))",
+        "rights": [
+          "GenericAll",
+          "GenericWrite",
+          "WriteDacl",
+          "WriteOwner"
+        ],
+        "writeProperties": [
+          "bf9679c0-0de6-11d0-a285-00aa003049e2"
+        ],
+        "excludeSids": [
+          "S-1-5-18",
+          "S-1-5-32-544",
+          "S-1-5-10",
+          "S-1-3-0",
+          "{domainSid}-512",
+          "{rootDomainSid}-519"
+        ],
+        "maxObjects": 2000
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "needs_review",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Remove the ability to write the membership of privileged groups from every principal that is not a default administrator.",
+        "steps": [
+          "List the principals reported here and the groups they can modify.",
+          "Confirm whether each is a product requirement.",
+          "Remove 'Write Members' (or the broader right) from AdminSDHolder or the specific group."
+        ],
+        "risk": "A group-management tool that legitimately writes membership stops working if its right is removed."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1098",
+          "title": "Account Manipulation",
+          "url": "https://attack.mitre.org/techniques/T1098/"
+        },
+        {
+          "source": "Microsoft",
+          "title": "AdminSDHolder, Protected Groups and SDPROP",
+          "url": "https://learn.microsoft.com/en-us/previous-versions/technet-magazine/ee361593(v=msdn.10)"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-PRV-009",
+      "title": "Non-default principals have dangerous control over domain controller objects",
+      "section": "Privileged access",
+      "severity": "critical",
+      "requires": "member",
+      "query": {
+        "kind": "acl_search",
+        "base": "{domainDn}",
+        "scope": "subtree",
+        "filter": "(&(objectCategory=computer)(|(primaryGroupID=516)(primaryGroupID=521)))",
+        "rights": [
+          "GenericAll",
+          "GenericWrite",
+          "WriteDacl",
+          "WriteOwner"
+        ],
+        "writeProperties": [
+          "5b47d60f-6090-40b2-9f37-2a4de88f3063"
+        ],
+        "excludeSids": [
+          "S-1-5-18",
+          "S-1-5-32-544",
+          "S-1-5-10",
+          "S-1-3-0",
+          "{domainSid}-512",
+          "{rootDomainSid}-519",
+          "{domainSid}-516",
+          "{domainSid}-526",
+          "{domainSid}-527",
+          "{rootDomainSid}-526",
+          "{rootDomainSid}-527"
+        ],
+        "maxObjects": 100
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "needs_review",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Remove write control over domain controller computer objects from every non-default principal.",
+        "steps": [
+          "List the principals reported here.",
+          "Confirm none is required (writing msDS-KeyCredentialLink on a DC allows a full takeover).",
+          "Remove the ACE from the affected domain controller objects."
+        ],
+        "risk": "Write access to a DC computer object, especially its key credential link, is a path to Domain Admin; removing a legitimate management right can break that tool."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1210",
+          "title": "Exploitation of Remote Services",
+          "url": "https://attack.mitre.org/techniques/T1210/"
+        },
+        {
+          "source": "Microsoft",
+          "title": "msDS-KeyCredentialLink / Shadow Credentials",
+          "url": "https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/component-updates/key-trust-authentication"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-PRV-010",
+      "title": "Non-default principals can modify Group Policy Objects",
+      "section": "Privileged access",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "acl_search",
+        "base": "CN=Policies,CN=System,{domainDn}",
+        "scope": "onelevel",
+        "filter": "(objectClass=groupPolicyContainer)",
+        "rights": [
+          "GenericAll",
+          "GenericWrite",
+          "WriteDacl",
+          "WriteOwner"
+        ],
+        "excludeSids": [
+          "S-1-5-18",
+          "S-1-5-32-544",
+          "{domainSid}-512",
+          "{rootDomainSid}-519",
+          "S-1-3-0"
+        ],
+        "maxObjects": 2000
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "needs_review",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Remove edit rights on Group Policy Objects from every principal that is not a default administrator.",
+        "steps": [
+          "List the principals and the GPOs they can edit.",
+          "Confirm whether the delegation is intended (a GPO admin team is legitimate).",
+          "Remove the delegation in the Group Policy Management Console if it is not."
+        ],
+        "risk": "Edit rights on a GPO linked to domain controllers or Tier 0 is a path to full compromise; removing a legitimate GPO-admin delegation breaks that team."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1484.001",
+          "title": "Domain Policy Modification: Group Policy Modification",
+          "url": "https://attack.mitre.org/techniques/T1484/001/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-PRV-011",
+      "title": "Non-default principals hold partial directory replication rights",
+      "section": "Privileged access",
+      "severity": "high",
+      "requires": "member",
+      "query": {
+        "kind": "acl",
+        "dn": "{domainDn}",
+        "extendedRights": [
+          "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2",
+          "89e95b76-444d-4c62-991a-0facbeda640c"
+        ],
+        "excludeSids": [
+          "S-1-5-18",
+          "S-1-5-9",
+          "S-1-5-32-544",
+          "{domainSid}-512",
+          "{domainSid}-516",
+          "{rootDomainSid}-498",
+          "{rootDomainSid}-519",
+          "{rootDomainSid}-521"
+        ]
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "needs_review",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Review who holds 'Replicating Directory Changes' (or 'In Filtered Set') without also holding the 'All' right, and remove it where it is not needed.",
+        "steps": [
+          "Identify each principal reported here.",
+          "A directory-sync tool (for example Microsoft Entra Connect) legitimately needs these rights: keep it, restrict logon to its server and record an exception.",
+          "Remove the right from any other principal on the domain root."
+        ],
+        "risk": "Partial replication rights combined with other access can still be abused; removing a right a sync tool depends on stops synchronization."
+      },
+      "references": [
+        {
+          "source": "MITRE ATT&CK",
+          "id": "T1003.006",
+          "title": "OS Credential Dumping: DCSync",
+          "url": "https://attack.mitre.org/techniques/T1003/006/"
+        }
+      ]
+    },
+    {
+      "controlId": "ASP-AD-PRV-012",
+      "title": "Enabled accounts keep adminCount=1 but are no longer in a protected group",
+      "section": "Privileged access",
+      "severity": "medium",
+      "requires": "member",
+      "query": {
+        "kind": "ldap_search",
+        "base": "{domainDn}",
+        "scope": "subtree",
+        "filter": "(&(objectCategory=person)(objectClass=user)(adminCount=1)(!(userAccountControl:1.2.840.113556.1.4.803:=2))(!(|(memberOf:1.2.840.113556.1.4.1941:={sidDn:{domainSid}-512})(memberOf:1.2.840.113556.1.4.1941:={sidDn:{rootDomainSid}-519})(memberOf:1.2.840.113556.1.4.1941:={sidDn:{rootDomainSid}-518})(memberOf:1.2.840.113556.1.4.1941:={sidDn:S-1-5-32-544})(memberOf:1.2.840.113556.1.4.1941:={sidDn:S-1-5-32-548})(memberOf:1.2.840.113556.1.4.1941:={sidDn:S-1-5-32-549})(memberOf:1.2.840.113556.1.4.1941:={sidDn:S-1-5-32-550})(memberOf:1.2.840.113556.1.4.1941:={sidDn:S-1-5-32-551}))))"
+      },
+      "predicate": {
+        "rule": "at_most",
+        "path": "count",
+        "max": 0
+      },
+      "onFail": "fail",
+      "remediation": {
+        "kind": "guided",
+        "summary": "Restore inheritance and clear adminCount on accounts that are no longer privileged, so they stop carrying the restrictive AdminSDHolder ACL.",
+        "steps": [
+          "Confirm each account is genuinely no longer privileged (it left every protected group).",
+          "Clear adminCount and re-enable ACL inheritance on the object (Enable-ADAccountInheritance or the object's Security tab).",
+          "If the account should still be privileged, add it back to the correct group instead."
+        ],
+        "risk": "An orphaned adminCount object keeps a hardened ACL that blocks normal delegation; clearing it on a still-privileged account would remove that protection."
+      },
+      "references": [
+        {
+          "source": "Microsoft",
+          "title": "AdminSDHolder, Protected Groups and SDPROP",
+          "url": "https://learn.microsoft.com/en-us/previous-versions/technet-magazine/ee361593(v=msdn.10)"
+        }
+      ]
+    }
+  ]
+}
