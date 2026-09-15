@@ -135,6 +135,10 @@ function isPrinterUpdated(prev: Printer, curr: Printer): boolean {
   const currShared  = Boolean(curr.isShared);
   const prevNetwork = Boolean(prev.isNetwork);
   const currNetwork = Boolean(curr.isNetwork);
+  const prevShare   = normalize(prev.shareName);
+  const currShare   = normalize(curr.shareName);
+  const prevHost    = normalize(prev.hostAddress);
+  const currHost    = normalize(curr.hostAddress);
 
   if (
     prevDriver  === currDriver  &&
@@ -143,7 +147,9 @@ function isPrinterUpdated(prev: Printer, curr: Printer): boolean {
     prevComm    === currComm    &&
     prevDefault === currDefault &&
     prevShared  === currShared  &&
-    prevNetwork === currNetwork
+    prevNetwork === currNetwork &&
+    prevShare   === currShare   &&
+    prevHost    === currHost
   ) {
     return false;
   }

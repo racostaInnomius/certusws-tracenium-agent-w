@@ -25,7 +25,9 @@ namespace Tracenium.PrivSvc.Windows.Ipc;
 //         shared:          bool,
 //         location:        string | null,
 //         comment:         string | null,
-//         printerStatus:   string | null   // "Normal", "Offline", ...
+//         printerStatus:   string | null,  // "Normal", "Offline", ...
+//         shareName:       string | null,  // nombre con el que se comparte (\\servidor\shareName)
+//         hostAddress:     string | null   // dirección del puerto TCP/IP (Get-PrinterPort)
 //       },
 //       ...
 //     ]
@@ -68,8 +70,10 @@ public static class PrinterInventory
                 // start by ~250ms on most hosts. ExecutionPolicy Bypass
                 // is required because the inline script isn't signed;
                 // confined to this single process invocation.
-                Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -",
-                RedirectStandardInput = true,
+                // ⚠️ Por -EncodedCommand, no por stdin: con `-Command -` el
+                // bloque try{} no llegaba a ejecutarse y la salida era vacía en
+                // TODOS los equipos. Ver PrinterInventoryShape.cs.
+                Arguments = PrinterInventoryShape.PowerShellArguments(),
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -89,8 +93,6 @@ public static class PrinterInventory
             var stdoutTask = proc.StandardOutput.ReadToEndAsync();
             var stderrTask = proc.StandardError.ReadToEndAsync();
 
-            proc.StandardInput.Write(PrinterInventoryShape.Script);
-            proc.StandardInput.Close();
 
             // 15s ceiling — a healthy host responds in ~1-2s. If we hit this,
             // Spooler is hung or the system is heavily loaded.

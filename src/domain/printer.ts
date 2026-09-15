@@ -90,6 +90,24 @@ export interface Printer {
   isShared?: boolean;
 
   /**
+   * Nombre con el que la cola se COMPARTE (Windows `ShareName`). Puede no
+   * coincidir con `name`, y es lo que aparece en la conexión del usuario
+   * `\\servidor\shareName`: sin él no se une la cola del servidor de impresión
+   * con los equipos que la usan. null en CUPS y en colas no compartidas.
+   */
+  shareName?: string | null;
+
+  /**
+   * Dirección real del dispositivo: `PrinterHostAddress` del puerto TCP/IP en
+   * Windows (el NOMBRE del puerto es libre — `IP_10.20.11.39`, `HP-Finanzas`) o
+   * el host del URI en CUPS (`socket://10.0.0.5:9100` → `10.0.0.5`). Es la clave
+   * para contar impresoras FÍSICAS —varias colas pueden apuntar a la misma— y a
+   * quién preguntar por SNMP/IPP. null si la cola no tiene dirección (USB, WSD,
+   * PDF, una conexión de usuario cuyo destino sólo conoce el servidor).
+   */
+  hostAddress?: string | null;
+
+  /**
    * Free-form location string. Often empty. Operators sometimes set
    * "Floor 3, North Wing" or similar.
    */
@@ -153,6 +171,10 @@ export function isNetworkPort(port: string | null | undefined): boolean {
   // el colector empezó a leer HKEY_USERS, donde el puerto ES el servidor.
   if (p.startsWith("\\\\")) return true;
   if (p.startsWith("tcp/")) return true;
+  // `IP_10.20.11.39` es el nombre por defecto que Windows da al puerto TCP/IP
+  // estándar. Invisible mientras la lectura de máquina no corría (2026-09-15);
+  // en cuanto corra, es el caso MÁS común en un servidor de impresión.
+  if (p.startsWith("ip_")) return true;
   if (p.startsWith("wsd-")) return true;        // Web Services for Devices
   if (/^\d{1,3}(\.\d{1,3}){3}/.test(p)) return true; // bare IPv4 portname
 
@@ -170,4 +192,18 @@ export function isNetworkPort(port: string | null | undefined): boolean {
   // positive that would put a local USB printer in "Network" (more
   // confusing for the operator).
   return false;
+}
+
+/**
+ * Host del URI de una cola CUPS: `socket://10.0.0.5:9100` → `10.0.0.5`,
+ * `ipp://printer.local/ipp/print` → `printer.local`. null para lo que no
+ * apunta a un host de red (`usb://`, `dnssd://` —el nombre de servicio no es
+ * una dirección—, `file:`) o no se deja parsear.
+ */
+export function hostFromPrinterUri(uri: string | null | undefined): string | null {
+  if (!uri) return null;
+  const m = uri.trim().match(/^(socket|ipps?|https?|lpd|smb):\/\/(?:[^@/]*@)?(\[[^\]]+\]|[^:/?#]+)/i);
+  if (!m) return null;
+  const host = m[2].replace(/^\[|\]$/g, "").toLowerCase();
+  return host || null;
 }

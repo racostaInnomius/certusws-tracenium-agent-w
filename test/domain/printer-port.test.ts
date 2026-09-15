@@ -12,7 +12,7 @@
 // OTRA cosa.
 
 import { describe, it, expect } from "vitest";
-import { isNetworkPort } from "../../src/domain/printer";
+import { hostFromPrinterUri, isNetworkPort } from "../../src/domain/printer";
 
 describe("isNetworkPort — UNC", () => {
   it("⚠️ una cola UNC es de red", () => {
@@ -56,5 +56,32 @@ describe("isNetworkPort — lo que ya funcionaba sigue igual", () => {
     expect(isNetworkPort(undefined)).toBe(false);
     expect(isNetworkPort("")).toBe(false);
     expect(isNetworkPort("   ")).toBe(false);
+  });
+});
+
+describe("isNetworkPort — puerto TCP/IP estándar de Windows", () => {
+  it("⚠️ `IP_x.x.x.x` es de red", () => {
+    // El nombre por defecto del puerto TCP/IP de Windows. No aparecía nunca
+    // porque la lectura de máquina no corría (2026-09-15); en un servidor de
+    // impresión es el caso más común.
+    expect(isNetworkPort("IP_10.20.11.39")).toBe(true);
+    expect(isNetworkPort("ip_192.168.1.50_1")).toBe(true);
+  });
+});
+
+describe("hostFromPrinterUri", () => {
+  it("saca el host de los URI de red de CUPS", () => {
+    expect(hostFromPrinterUri("socket://10.0.0.5:9100")).toBe("10.0.0.5");
+    expect(hostFromPrinterUri("ipp://Printer.local/ipp/print")).toBe("printer.local");
+    expect(hostFromPrinterUri("ipps://user@hp.corp:631/ipp")).toBe("hp.corp");
+    expect(hostFromPrinterUri("lpd://[fe80::1]/queue")).toBe("fe80::1");
+  });
+
+  it("null para lo que no apunta a un host", () => {
+    expect(hostFromPrinterUri("usb://HP/DeskJet?serial=1")).toBeNull();
+    // Un nombre de servicio DNS-SD no es una dirección.
+    expect(hostFromPrinterUri("dnssd://HP%20DeskJet._ipp._tcp.local./?uuid=1")).toBeNull();
+    expect(hostFromPrinterUri(null)).toBeNull();
+    expect(hostFromPrinterUri("")).toBeNull();
   });
 });

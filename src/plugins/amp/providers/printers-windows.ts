@@ -42,6 +42,9 @@ interface RawPrinter {
   // Output, ManualFeed, PaperOut, etc. — we normalize down to our
   // 4-state PrinterStatus.
   printerStatus?: string | null;
+  // privsvc ≥ 2026-09-15. Un privsvc anterior no los manda: quedan null.
+  shareName?: string | null;
+  hostAddress?: string | null;
 }
 
 /**
@@ -121,6 +124,7 @@ export async function collectWindowsPrinters(ctx: AgentContext): Promise<Windows
     if (!name) continue; // can't form a stable installId without a name
 
     const port = raw.portName ?? null;
+    const hostAddress = typeof raw.hostAddress === "string" && raw.hostAddress.trim() ? raw.hostAddress.trim() : null;
 
     printers.push({
       installId: `windows-spooler:${name}`,
@@ -129,8 +133,12 @@ export async function collectWindowsPrinters(ctx: AgentContext): Promise<Windows
       driver: raw.driverName ?? null,
       port,
       isDefault: Boolean(raw.isDefault),
-      isNetwork: isNetworkPort(port),
+      // Un puerto con dirección TCP/IP es de red aunque se llame
+      // "HP-Finanzas": el nombre del puerto es libre, la dirección no.
+      isNetwork: isNetworkPort(port) || hostAddress !== null,
       isShared: Boolean(raw.shared),
+      shareName: typeof raw.shareName === "string" && raw.shareName.trim() ? raw.shareName.trim() : null,
+      hostAddress,
       location: raw.location ?? null,
       comments: raw.comment ?? null,
       status: normalizeStatus(raw.printerStatus),

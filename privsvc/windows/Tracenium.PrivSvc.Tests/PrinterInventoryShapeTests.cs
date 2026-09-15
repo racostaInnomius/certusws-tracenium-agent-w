@@ -16,6 +16,34 @@ using Xunit;
 public class PrinterInventoryShapeTests
 {
     [Fact]
+    public void ElScriptViajaCodificadoYNuncaPorStdin()
+    {
+        // Con `-Command -` el try{} multilínea no se ejecutaba: stdout vacío
+        // en los 39 Windows de T111 (medido 2026-09-15).
+        var args = PrinterInventoryShape.PowerShellArguments();
+        Assert.DoesNotContain("-Command", args);
+        var prefijo = "-EncodedCommand ";
+        var i = args.IndexOf(prefijo, StringComparison.Ordinal);
+        Assert.True(i >= 0);
+        var decodificado = System.Text.Encoding.Unicode.GetString(
+            Convert.FromBase64String(args.Substring(i + prefijo.Length)));
+        Assert.Equal(PrinterInventoryShape.Script, decodificado);
+    }
+
+    [Fact]
+    public void ElScriptPideElNombreCompartidoYLaDireccionDelPuerto()
+    {
+        // Sin shareName no se une `\\servidor\cola` del usuario con la cola del
+        // servidor; sin la dirección no se cuentan impresoras físicas.
+        Assert.Contains("'shareName'", PrinterInventoryShape.Script);
+        Assert.Contains("'hostAddress'", PrinterInventoryShape.Script);
+        Assert.Contains("Get-PrinterPort", PrinterInventoryShape.Script);
+        // Indexar el hashtable con un PortName nulo lanza, y con
+        // ErrorActionPreference=Stop tiraría la lectura entera a `unavailable`.
+        Assert.Contains("$ports.ContainsKey($_.PortName)", PrinterInventoryShape.Script);
+    }
+
+    [Fact]
     public void UnaListaVaciaDeVerdadEsCollected()
     {
         // `'[]'` sólo lo emite ahora la rama de éxito con cero impresoras.

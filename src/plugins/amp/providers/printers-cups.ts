@@ -22,7 +22,7 @@
 
 import { exec } from "child_process";
 import { promisify } from "util";
-import { Printer, PrinterStatus, isNetworkPort } from "../../../domain/printer";
+import { Printer, PrinterStatus, hostFromPrinterUri, isNetworkPort } from "../../../domain/printer";
 
 const execAsync = promisify(exec);
 
@@ -158,6 +158,8 @@ export async function collectCupsPrinters(): Promise<Printer[]> {
       isNetwork: isNetworkPort(info.port),
       isShared: false,         // shared-from-here is a cupsd.conf
                                // setting we don't parse in v1.
+      shareName: null,
+      hostAddress: hostFromPrinterUri(info.port),
       location: null,
       comments: null,
       status: info.status,

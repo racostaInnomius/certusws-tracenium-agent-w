@@ -74,6 +74,15 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_printer_baseline_source
       ON printer_baseline(source);
   `);
+
+  // ⚠️ Columnas añadidas el 2026-09-15 a un fichero que YA existe en cada
+  // equipo. Sin ellas la baseline cargaría `shareName`/`hostAddress` vacíos y
+  // el delta vería "actualizada" cada cola de servidor en CADA ciclo.
+  const cols = new Set(
+    (db.prepare(`PRAGMA table_info(printer_baseline)`).all() as Array<{ name: string }>).map(c => c.name)
+  );
+  if (!cols.has("share_name")) db.exec(`ALTER TABLE printer_baseline ADD COLUMN share_name TEXT`);
+  if (!cols.has("host_address")) db.exec(`ALTER TABLE printer_baseline ADD COLUMN host_address TEXT`);
 }
 
 /**
@@ -98,6 +107,8 @@ export function loadPrinterBaseline(): Printer[] {
         is_shared       as isShared,
         location,
         comments,
+        share_name      as shareName,
+        host_address    as hostAddress,
         status,
         detected_at_utc as detectedAtUtc
       FROM printer_baseline
@@ -117,6 +128,8 @@ export function loadPrinterBaseline(): Printer[] {
     isShared: Boolean(r.isShared),
     location: r.location ?? undefined,
     comments: r.comments ?? undefined,
+    shareName: r.shareName ?? null,
+    hostAddress: r.hostAddress ?? null,
     status: r.status ?? undefined,
     detectedAtUtc: r.detectedAtUtc
   })) as Printer[];
@@ -160,6 +173,8 @@ export function upsertPrinterBaseline(printers: Printer[]) {
       is_shared,
       location,
       comments,
+      share_name,
+      host_address,
       status,
       detected_at_utc
     ) VALUES (
@@ -173,6 +188,8 @@ export function upsertPrinterBaseline(printers: Printer[]) {
       @isShared,
       @location,
       @comments,
+      @shareName,
+      @hostAddress,
       @status,
       @detectedAtUtc
     )
@@ -186,6 +203,8 @@ export function upsertPrinterBaseline(printers: Printer[]) {
       is_shared       = excluded.is_shared,
       location        = excluded.location,
       comments        = excluded.comments,
+      share_name      = excluded.share_name,
+      host_address    = excluded.host_address,
       status          = excluded.status,
       detected_at_utc = COALESCE(printer_baseline.detected_at_utc, excluded.detected_at_utc)
   `);
@@ -208,6 +227,8 @@ export function upsertPrinterBaseline(printers: Printer[]) {
         isShared: p.isShared ? 1 : 0,
         location: p.location ?? null,
         comments: p.comments ?? null,
+        shareName: p.shareName ?? null,
+        hostAddress: p.hostAddress ?? null,
         status: p.status ?? null,
         detectedAtUtc: p.detectedAtUtc
       });

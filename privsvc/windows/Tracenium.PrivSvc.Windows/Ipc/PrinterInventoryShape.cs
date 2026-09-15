@@ -18,7 +18,18 @@
 //
 // Ahora sólo hay una forma de obtener `collected` con cero filas: que
 // `Get-Printer` TERMINE BIEN y no devuelva nada.
+//
+// ── LA LECTURA QUE NUNCA CORRIÓ (2026-09-15) ────────────────────────
+//
+// El script se pasaba por stdin con `-Command -`. En ese modo PowerShell lee
+// como una consola: un bloque multilínea (`try { … }`) no se ejecuta hasta ver
+// una línea en blanco, y una línea en blanco DENTRO del bloque lo corta con un
+// error de sintaxis. Resultado: stdout vacío y exit 0 — `empty_output` en los
+// 39 Windows de T111, incluidos los dos servidores de impresión. Ninguna cola
+// de máquina llegó nunca. Ahora va por `-EncodedCommand`, como
+// SecurityCompliance y PatchManagement en esos mismos equipos.
 
+using System.Text;
 using System.Text.Json;
 
 namespace Tracenium.PrivSvc.Windows.Ipc;
@@ -65,6 +76,15 @@ try {
               Where-Object Default -EQ $true |
               Select-Object -ExpandProperty Name) -join ''
 
+  # La DIRECCIÓN real de cada puerto TCP/IP: el nombre del puerto es libre
+  # (`IP_10.20.11.39`, `HP-Finanzas`…) y no sirve para contar impresoras
+  # físicas ni para preguntarles por SNMP/IPP. Un puerto sin dirección (USB,
+  # WSD, PORTPROMPT) simplemente no entra en el mapa.
+  $ports = @{}
+  Get-PrinterPort -ErrorAction SilentlyContinue | ForEach-Object {
+    if ($_.PrinterHostAddress) { $ports[$_.Name] = [string]$_.PrinterHostAddress }
+  }
+
   $printers = @(Get-Printer -ErrorAction Stop |
     Select-Object `
       @{Name='name';          Expression={$_.Name}}, `
@@ -74,7 +94,9 @@ try {
       @{Name='shared';        Expression={[bool]$_.Shared}}, `
       @{Name='location';      Expression={$_.Location}}, `
       @{Name='comment';       Expression={$_.Comment}}, `
-      @{Name='printerStatus'; Expression={[string]$_.PrinterStatus}})
+      @{Name='printerStatus'; Expression={[string]$_.PrinterStatus}}, `
+      @{Name='shareName';     Expression={$_.ShareName}}, `
+      @{Name='hostAddress';   Expression={ if ($_.PortName -and $ports.ContainsKey($_.PortName)) { $ports[$_.PortName] } else { $null } }})
 
   if ($printers.Count -eq 0) { '[]' } else { $printers | ConvertTo-Json -Depth 4 -Compress }
 } catch {
@@ -83,6 +105,14 @@ try {
   'TRACENIUM_PRINTER_ERROR: ' + $_.Exception.Message
 }
 ";
+
+    /// <summary>
+    /// Argumentos de powershell.exe. `-EncodedCommand` (UTF-16LE en base64) y
+    /// NUNCA `-Command -` por stdin: ver la cabecera del fichero.
+    /// </summary>
+    public static string PowerShellArguments() =>
+        "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " +
+        Convert.ToBase64String(Encoding.Unicode.GetBytes(Script));
 
     /// <summary>
     /// Interpreta la salida estándar del script. Sólo un array o un objeto
