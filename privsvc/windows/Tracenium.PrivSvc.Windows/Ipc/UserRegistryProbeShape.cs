@@ -17,9 +17,18 @@
 // CIS pide la directiva PARA CADA usuario. Con N hives cargados:
 //   · presente en los N con el mismo valor  → ese valor
 //   · presente en los N con valores distintos → "<mixed>" (falla equals)
-//   · ausente en alguno                       → OMITIDA (el catálogo dice
+//   · presente en ALGUNO pero no en todos    → "<partial>" (falla equals:
+//                                               "no hay política" para
+//                                               alguien; pero EXISTE, y una
+//                                               señal de instalación
+//                                               `when.exists` —Chrome por
+//                                               usuario en un equipo con
+//                                               dos sesiones— la ve).
+//                                               Hasta el 16-sep se omitía,
+//                                               y omitida = "no instalado".
+//   · ausente en todos                        → OMITIDA (el catálogo dice
 //                                               onMissing: fail — "no hay
-//                                               política" para alguien)
+//                                               política" para nadie)
 //   · cero hives cargados                     → NO se emite el bloque:
 //                                               sin nadie con sesión no se
 //                                               puede afirmar nada, y el
@@ -36,6 +45,7 @@ namespace Tracenium.PrivSvc.Windows.Ipc;
 public static class UserRegistryProbeShape
 {
     public const string MixedMarker = "<mixed>";
+    public const string PartialMarker = "<partial>";
 
     /// <summary>`Software\Ruta:Valor` → (subclave, nombre). null si no se entiende.</summary>
     public static (string SubKey, string ValueName)? Parse(string? probe)
@@ -101,8 +111,8 @@ public static class UserRegistryProbeShape
                 if (first is null) { first = key; firstValue = v; }
                 else if (!string.Equals(first, key, StringComparison.Ordinal)) mixed = true;
             }
-            if (present < hives) continue; // ausente en alguno → omitida
-            values[probe] = mixed ? MixedMarker : firstValue;
+            if (present == 0) continue; // ausente en todos → omitida
+            values[probe] = present < hives ? PartialMarker : mixed ? MixedMarker : firstValue;
         }
         var result = new Dictionary<string, object?>(StringComparer.Ordinal) { ["hives"] = hives };
         foreach (var (k, v) in values) result[k] = v;

@@ -51,9 +51,32 @@ public class UserRegistryProbeShapeTests
         Assert.Equal("x", ev["Software\\A:Same"]);
         // Presente en los dos con valores distintos: <mixed>, para que equals falle.
         Assert.Equal(UserRegistryProbeShape.MixedMarker, ev["Software\\A:Diff"]);
-        // Falta en un usuario: omitida (el catálogo dice onMissing: fail).
-        Assert.False(ev.ContainsKey(P));
+        // Falta en un usuario: <partial>. equals falla igual que antes (no
+        // hay política para alguien), pero la sonda EXISTE: una señal de
+        // instalación por usuario (`when.exists`) la ve aunque el otro
+        // usuario no tenga ese programa.
+        Assert.Equal(UserRegistryProbeShape.PartialMarker, ev[P]);
+        // Falta en todos: omitida.
         Assert.False(ev.ContainsKey("Software\\A:Nowhere"));
+    }
+
+    [Fact]
+    public void PartialBeatsMixed_AndASingleHiveIsNeverPartial()
+    {
+        var perHive = new Dictionary<string, Dictionary<string, object?>>
+        {
+            ["S-1-5-21-1-1-1-1001"] = new() { ["Software\\A:V"] = 1L },
+            ["S-1-5-21-1-1-1-1002"] = new() { ["Software\\A:V"] = 2L },
+            ["S-1-5-21-1-1-1-1003"] = new(),
+        };
+        var ev = UserRegistryProbeShape.Aggregate(perHive, new[] { "Software\\A:V" })!;
+        // Valores distintos Y ausente en uno: lo que manda es que falta para alguien.
+        Assert.Equal(UserRegistryProbeShape.PartialMarker, ev["Software\\A:V"]);
+
+        var single = UserRegistryProbeShape.Aggregate(
+            new Dictionary<string, Dictionary<string, object?>> { ["S-1-5-21-1-1-1-1001"] = new() { ["Software\\A:V"] = 1L } },
+            new[] { "Software\\A:V" })!;
+        Assert.Equal(1L, single["Software\\A:V"]);
     }
 
     [Fact]
