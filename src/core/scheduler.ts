@@ -15,6 +15,14 @@ import { runUpdateTask } from "../update/update-task";
 // Change-detection hash helpers live in namespace-hash.ts so they can
 // be unit-tested without this file's outbox/update-task import graph.
 import { hashNamespace, buildScpStateForHash, buildPmpStateForHash } from "./namespace-hash";
+import {
+  PIPELINE_KEYS,
+  capabilitySignature,
+  diffPipelinePlan,
+  readPipelinePlan,
+  type PipelineKey,
+  type PipelinePlan,
+} from "./pipeline-plan";
 
 // Force-clear threshold for the *Running guard flags. If a worker has
 // been "running" for longer than this, we assume it's hung on some
@@ -166,6 +174,12 @@ class Scheduler {
   // an upgrade / reinstall / reboot, even if the AMP delta baseline on
   // disk says "no changes" (e.g. no apps added/removed between runs).
   private initialInventorySent: boolean = false;
+  /**
+   * Lo que está armado ahora mismo, y la firma de plugins+módulos que se
+   * reportó. Contra esto se compara cada evento de policy: ver pipeline-plan.ts.
+   */
+  private plan: PipelinePlan | null = null;
+  private capabilitySig: string | null = null;
   private policyListeners: Array<{
     event: string;
     handler: (...args: any[]) => void;
@@ -184,75 +198,65 @@ class Scheduler {
     this.startPipelines(ctx);
 
     // --- dynamic policy bindings ---
-    this.addPolicyListener(ctx, "inventoryIntervalChanged", (interval: number) => {
-      logger.info("[scheduler] inventory interval updated", { interval });
+    //
+    // ⚠️ `applyUpdate()` emite TODOS estos eventos en cada aplicación, y el
+    // backend reenvía la policy aunque no haya cambiado. Antes cada uno
+    // relanzaba los pipelines con escaneo inmediato: un reenvío ponía a la flota
+    // entera a escanear a la vez. Ahora todos pasan por la misma reconciliación,
+    // que sólo actúa sobre lo que cambió — el primero que llega aplica el diff
+    // completo y los demás no encuentran nada. Ver pipeline-plan.ts.
+    for (const event of [
+      "inventoryIntervalChanged",
+      "updateIntervalChanged",
+      "complianceIntervalChanged",
+      "cdpIntervalChanged",
+      "patchIntervalChanged",
+      "pluginsChanged",
+      "modulesChanged",
+      "featuresChanged",
+    ]) {
+      this.addPolicyListener(ctx, event, () => this.reconcilePipelines(ctx, event));
+    }
+  }
 
-      const existing = this.timers.get("inventory");
-      if (existing) {
-        clearInterval(existing);
-        this.timers.delete("inventory");
-      }
+  /**
+   * Aplica a los pipelines SÓLO lo que la policy cambió de verdad.
+   *
+   *   nada cambió            → nada
+   *   armado / intervalo     → re-armar ese pipeline, sin correrlo
+   *   pasa a hacer trabajo   → re-armar y correr ya
+   *   plugins/módulos        → tick de inventario inmediato, para que el portal
+   *                            vea las capabilities nuevas sin esperar al ciclo
+   *                            (el motivo del tick forzado que había aquí)
+   */
+  private reconcilePipelines(ctx: AgentContext, reason: string) {
+    const next = readPipelinePlan(ctx.policyRuntime);
+    const { rearm, runNow } = diffPipelinePlan(this.plan, next);
+    const sig = capabilitySignature(
+      ctx.policyRuntime.getEnabledPlugins(),
+      ctx.policyRuntime.listEnabledModules()
+    );
+    const capabilitiesChanged = sig !== this.capabilitySig;
+    this.plan = next;
+    this.capabilitySig = sig;
 
-      if (ctx.policyRuntime.isInventoryEnabled()) {
-        const jitter = Math.floor(Math.random() * 30000);
+    if (rearm.length === 0 && runNow.length === 0 && !capabilitiesChanged) {
+      logger.debug?.("[scheduler] policy re-applied, pipelines unchanged", { reason });
+      return;
+    }
 
-        const timer = setInterval(() => {
-          logger.info("[scheduler] inventory tick");
-          this.runInventory(ctx).catch(err =>
-            logger.error("Inventory error", { err })
-          );
-        }, interval * 1000 + jitter);
+    logger.info("[scheduler] policy changed the pipelines", { reason, rearm, runNow, capabilitiesChanged });
 
-        this.timers.set("inventory", timer);
-      }
-    });
-
-    this.addPolicyListener(ctx, "pluginsChanged", (plugins: string[]) => {
-      logger.info("[scheduler] plugins updated", { plugins });
-      this.startPipelines(ctx);
-
-      // Forzar un inventory tick INMEDIATO para que las nuevas
-      // capabilities (que incluyen los plugins habilitados) lleguen
-      // al backend sin esperar el próximo ciclo de inventory (default
-      // 8h). Sin esto, el operador habilita PMP en tenant policy →
-      // agente recibe + aplica → pero el dashboard plugin-coverage
-      // sigue mostrando 0 PMP hasta el próximo inventory cycle, lo
-      // cual confunde al operador y hace que parezca un bug.
-      //
-      // El runInventory enqueua via factsPipeline; si hay otro
-      // inventory en flight, el pipeline lo serializa naturalmente.
-      this.runInventory(ctx).catch(err =>
-        logger.warn("[scheduler] post-policy inventory tick failed", { err: err?.message || err })
-      );
-    });
-
-    this.addPolicyListener(ctx, "modulesChanged", (modules: string[]) => {
-      logger.info("[scheduler] modules updated", { modules });
-      this.startPipelines(ctx);
-
-      // Mismo motivo que pluginsChanged: las modules habilitadas
-      // (compliance, patch, etc.) impactan el agent_payload reportado
-      // y los métricos de dashboard. Forzamos un inventory tick para
-      // refresh inmediato.
-      this.runInventory(ctx).catch(err =>
-        logger.warn("[scheduler] post-policy inventory tick failed (modules)", { err: err?.message || err })
-      );
-    });
-
-    this.addPolicyListener(ctx, "patchIntervalChanged", (interval: number) => {
-      logger.info("[scheduler] patch interval updated", { interval });
-      this.startPipelines(ctx);
-    });
-
-    this.addPolicyListener(ctx, "cdpIntervalChanged", (interval: number) => {
-      logger.info("[scheduler] cdp interval updated", { interval });
-      this.startPipelines(ctx);
-    });
-
-    this.addPolicyListener(ctx, "featuresChanged", (features: any) => {
-      logger.info("[scheduler] features updated", { features });
-      this.startPipelines(ctx);
-    });
+    for (const key of rearm) {
+      this.stopPipeline(key);
+      if (next[key].armed) this.armPipeline(ctx, key, next[key].intervalSeconds, false);
+    }
+    for (const key of runNow) {
+      if (key !== "inventory") this.runPipelineNow(ctx, key);
+    }
+    if (runNow.includes("inventory") || capabilitiesChanged) {
+      this.runPipelineNow(ctx, "inventory");
+    }
   }
 
   async stop(_ctx?: AgentContext) {
@@ -339,118 +343,80 @@ class Scheduler {
     this.timers.set(key, timer);
   }
 
+  /**
+   * Arranque completo: al iniciar el scheduler y en un reload() explícito. Los
+   * eventos de policy NO pasan por aquí — ver reconcilePipelines.
+   */
   private startPipelines(ctx: AgentContext) {
 
     this.stopAll();
 
-    // inventory pipeline
-    if (ctx.policyRuntime.isInventoryEnabled()) {
+    const plan = readPipelinePlan(ctx.policyRuntime);
+    this.plan = plan;
+    this.capabilitySig = capabilitySignature(
+      ctx.policyRuntime.getEnabledPlugins(),
+      ctx.policyRuntime.listEnabledModules()
+    );
 
-      const intervalSeconds = ctx.policyRuntime.getInventoryInterval();
-
-      logger.info("Inventory pipeline configured", {
-        intervalSeconds,
-        jitterRangeMs: 30000
-      });
-
-      this.pipelineActive.add("inventory");
-      this.armJitteredPipeline("inventory", intervalSeconds * 1000, 30000, () => {
-        logger.info("[scheduler] inventory tick");
-        this.runInventory(ctx).catch(err =>
-          logger.error("Inventory error", { err })
-        );
-      // ⚠️ Sólo el inventario adelanta su primer tick. Es el único cuya
-      // demora es visible para el operador: la versión del agente, el
-      // software y el hardware que muestra el portal salen de aquí. El resto
-      // de pipelines pueden esperar su turno.
-      }, INITIAL_INVENTORY_DELAY_MS);
+    for (const key of PIPELINE_KEYS) {
+      if (!plan[key].armed) continue;
+      logger.info(`${key} pipeline enabled`, { intervalSeconds: plan[key].intervalSeconds });
+      // ⚠️ Sólo el inventario adelanta su primer tick en vez de correr ya: el
+      // arranque del servicio ya hizo un inventario inmediato (start()).
+      if (key !== "inventory") this.runPipelineNow(ctx, key);
+      this.armPipeline(ctx, key, plan[key].intervalSeconds, true);
     }
+  }
 
-    // update pipeline
-    if (ctx.policyRuntime.isUpdateEnabled()) {
-      // Sprint 1 of Policy v2 moved this from hardcoded `6 * 60 * 60`
-      // to a policy-driven value. Default stays 21600s (6h) for
-      // backward compat — operators see no behavior change unless
-      // they explicitly tune `update.intervalSeconds` (or its v2
-      // equivalent `agent.schedules.update.intervalSeconds`).
-      const intervalSeconds = ctx.policyRuntime.getUpdateInterval();
+  /**
+   * Arma el temporizador de un pipeline. `initial` sólo al arrancar: es lo que
+   * adelanta el primer tick del inventario (INITIAL_INVENTORY_DELAY_MS). Un
+   * cambio de intervalo NO lo usa, o cada cambio de policy traería un
+   * inventario extra a los 45 s.
+   */
+  private armPipeline(ctx: AgentContext, key: PipelineKey, intervalSeconds: number, initial: boolean) {
+    this.pipelineActive.add(key);
+    // ⚠️ Sólo el inventario adelanta su primer tick. Es el único cuya demora es
+    // visible para el operador: la versión del agente, el software y el
+    // hardware que muestra el portal salen de aquí.
+    const firstDelayMs = initial && key === "inventory" ? INITIAL_INVENTORY_DELAY_MS : undefined;
+    this.armJitteredPipeline(
+      key,
+      intervalSeconds * 1000,
+      30000,
+      () => {
+        logger.info(`[scheduler] ${key} tick`);
+        this.runPipeline(ctx, key).catch(err => logger.error(`${key} pipeline error`, { err }));
+      },
+      firstDelayMs
+    );
+  }
 
-      logger.info("Update pipeline enabled", { intervalSeconds });
+  private runPipelineNow(ctx: AgentContext, key: PipelineKey) {
+    this.runPipeline(ctx, key).catch(err => logger.error(`${key} pipeline immediate run error`, { err }));
+  }
 
-      // immediate run (no jitter for first execution)
-      this.runUpdate(ctx).catch(err =>
-        logger.error("Update pipeline initial run error", { err })
-      );
-
-      this.pipelineActive.add("update");
-      this.armJitteredPipeline("update", intervalSeconds * 1000, 30000, () => {
-        logger.info("[scheduler] update tick");
-        this.runUpdate(ctx).catch(err =>
-          logger.error("Update pipeline error", { err })
-        );
-      });
+  private runPipeline(ctx: AgentContext, key: PipelineKey): Promise<void> {
+    switch (key) {
+      case "inventory":
+        return this.runInventory(ctx);
+      case "update":
+        return this.runUpdate(ctx);
+      case "compliance":
+        return this.runCompliance(ctx);
+      case "cdp":
+        return this.runCdp(ctx);
+      case "patch":
+        return this.runPatch(ctx);
     }
+  }
 
-    if (ctx.policyRuntime.isComplianceEnabled()) {
-
-      const intervalSeconds = ctx.policyRuntime.getComplianceInterval();
-
-      logger.info("Compliance pipeline enabled", { intervalSeconds });
-
-      this.runCompliance(ctx).catch(err =>
-        logger.error("Compliance pipeline initial run error", { err })
-      );
-
-      this.pipelineActive.add("compliance");
-      this.armJitteredPipeline("compliance", intervalSeconds * 1000, 30000, () => {
-        logger.info("[scheduler] compliance tick");
-        this.runCompliance(ctx).catch(err =>
-          logger.error("Compliance pipeline error", { err })
-        );
-      });
-    }
-
-    // cdp pipeline — certificate discovery. Gated on the plugin flag
-    // alone (no module toggle): a tenant opts in by adding "cdp" to
-    // plugins.enabled, which is also the kill-switch.
-    if (ctx.policyRuntime.pluginEnabled("cdp")) {
-
-      const intervalSeconds = ctx.policyRuntime.getCdpInterval();
-
-      logger.info("CDP pipeline enabled", { intervalSeconds });
-
-      this.runCdp(ctx).catch(err =>
-        logger.error("CDP pipeline initial run error", { err })
-      );
-
-      this.pipelineActive.add("cdp");
-      this.armJitteredPipeline("cdp", intervalSeconds * 1000, 30000, () => {
-        logger.info("[scheduler] cdp tick");
-        this.runCdp(ctx).catch(err =>
-          logger.error("CDP pipeline error", { err })
-        );
-      });
-    }
-
-    // patch pipeline (future)
-    if (ctx.policyRuntime.isPatchEnabled()) {
-
-      const intervalSeconds = ctx.policyRuntime.getPatchInterval();
-
-      logger.info("Patch pipeline enabled", { intervalSeconds });
-
-      this.runPatch(ctx).catch(err =>
-        logger.error("Patch pipeline initial run error", { err })
-      );
-
-      this.pipelineActive.add("patch");
-      this.armJitteredPipeline("patch", intervalSeconds * 1000, 30000, () => {
-        logger.info("[scheduler] patch tick");
-        this.runPatch(ctx).catch(err =>
-          logger.error("Patch pipeline error", { err })
-        );
-      });
-    }
+  /** Para UN pipeline. Un tick ya en curso termina; su re-armado queda anulado. */
+  private stopPipeline(key: PipelineKey) {
+    this.pipelineActive.delete(key);
+    const timer = this.timers.get(key);
+    if (timer) clearTimeout(timer);
+    this.timers.delete(key);
   }
 
   reload() {
