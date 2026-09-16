@@ -8,8 +8,9 @@
 // ── Contrato ─────────────────────────────────────────────────────────
 //
 // params.params.writes = [
-//   { kind:"registry", hive:"HKLM", keyPath:"SOFTWARE\...", valueName:"X",
-//     valueType:"dword"|"sz"|"multi_sz", value:0|"str"|["a","b"] },
+//   { kind:"registry", hive:"HKLM"|"HKU", keyPath:"SOFTWARE\...", valueName:"X",
+//     valueType:"dword"|"sz"|"multi_sz"|"delete", value:0|"str"|["a","b"] },
+//     (HKU = cada perfil de usuario cargado, sólo bajo Software\)
 //   { kind:"secedit", section:"System Access", key:"MinimumPasswordLength", value:14 },
 // ]
 //
@@ -40,8 +41,24 @@ public enum GenericValueKind
     Delete,
 }
 
+public enum RegistryHiveKind
+{
+    /// <summary>HKEY_LOCAL_MACHINE: la máquina.</summary>
+    LocalMachine,
+    /// <summary>
+    /// HKEY_USERS\S-1-5-21-* de CADA perfil cargado — lo que lee la sonda
+    /// `registryUser.*` (UserRegistryProbes) y, por tanto, lo único que un
+    /// fix puede hacer pasar. Un perfil sin sesión no está cargado y no se
+    /// carga a propósito (`reg load` de su NTUSER.DAT lo bloquearía al
+    /// iniciar sesión): ese usuario no queda cubierto hasta que entre y
+    /// se vuelva a aplicar, o hasta que una GPO de usuario lo haga.
+    /// </summary>
+    Users,
+}
+
 public sealed class RegistryWriteSpec
 {
+    public RegistryHiveKind Hive { get; init; } = RegistryHiveKind.LocalMachine;
     public required string SubKey { get; init; }
     public required string ValueName { get; init; }
     public required GenericValueKind Kind { get; init; }
@@ -49,12 +66,15 @@ public sealed class RegistryWriteSpec
     public string? StringValue { get; init; }
     public string[]? MultiValue { get; init; }
 
+    /// <summary>"HKLM" o "HKU\*" (todos los perfiles cargados) para los textos.</summary>
+    public string HiveLabel => Hive == RegistryHiveKind.Users ? "HKU\\*" : "HKLM";
+
     public string Describe() => Kind switch
     {
-        GenericValueKind.DWord => $"HKLM\\{SubKey}:{ValueName}={DwordValue}",
-        GenericValueKind.String => $"HKLM\\{SubKey}:{ValueName}=\"{StringValue}\"",
-        GenericValueKind.Delete => $"HKLM\\{SubKey}:{ValueName} (deleted)",
-        _ =>$"HKLM\\{SubKey}:{ValueName}=[{string.Join(",", MultiValue ?? Array.Empty<string>())}]",
+        GenericValueKind.DWord => $"{HiveLabel}\\{SubKey}:{ValueName}={DwordValue}",
+        GenericValueKind.String => $"{HiveLabel}\\{SubKey}:{ValueName}=\"{StringValue}\"",
+        GenericValueKind.Delete => $"{HiveLabel}\\{SubKey}:{ValueName} (deleted)",
+        _ =>$"{HiveLabel}\\{SubKey}:{ValueName}=[{string.Join(",", MultiValue ?? Array.Empty<string>())}]",
     };
 }
 
@@ -168,10 +188,18 @@ public static class GenericWriteShape
     private static void ParseRegistry(JsonElement w, GenericWrites out_)
     {
         var hive = Str(w, "hive") ?? "";
-        if (!hive.Equals("HKLM", StringComparison.OrdinalIgnoreCase) &&
-            !hive.Equals("HKEY_LOCAL_MACHINE", StringComparison.OrdinalIgnoreCase))
+        RegistryHiveKind hiveKind;
+        if (hive.Equals("HKLM", StringComparison.OrdinalIgnoreCase) ||
+            hive.Equals("HKEY_LOCAL_MACHINE", StringComparison.OrdinalIgnoreCase))
+            hiveKind = RegistryHiveKind.LocalMachine;
+        else if (hive.Equals("HKU", StringComparison.OrdinalIgnoreCase) ||
+                 hive.Equals("HKEY_USERS", StringComparison.OrdinalIgnoreCase))
+            hiveKind = RegistryHiveKind.Users;
+        else
         {
-            out_.Rejected.Add($"hive '{hive}' not allowed (HKLM only)");
+            // HKCU no existe para un servicio: no hay "usuario actual". Lo que
+            // hay son perfiles cargados, y eso es HKU.
+            out_.Rejected.Add($"hive '{hive}' not allowed (HKLM or HKU)");
             return;
         }
         var subKey = NormalizeSubKey(Str(w, "keyPath") ?? "");
@@ -179,6 +207,15 @@ public static class GenericWriteShape
         if (subKey.Length == 0 || subKey.Length > 512 || subKey.Contains("..") || subKey.Contains('\0'))
         {
             out_.Rejected.Add($"keyPath '{subKey}' invalid");
+            return;
+        }
+        if (hiveKind == RegistryHiveKind.Users &&
+            !subKey.StartsWith("SOFTWARE\\", StringComparison.OrdinalIgnoreCase))
+        {
+            // Toda directiva de usuario vive bajo Software\. Fuera de ahí
+            // (Control Panel, Environment, Keyboard Layout…) es el perfil de
+            // alguien, no una política, y el catálogo nunca lo pide.
+            out_.Rejected.Add($"HKU write outside Software\\ refused: {subKey}");
             return;
         }
         if (valueName.Length > 255 || valueName.Contains('\0'))
@@ -189,7 +226,7 @@ public static class GenericWriteShape
         var guard = GuardReasonForKey(subKey);
         if (guard is not null)
         {
-            out_.Rejected.Add($"guarded: HKLM\\{subKey} — {guard}");
+            out_.Rejected.Add($"guarded: {(hiveKind == RegistryHiveKind.Users ? "HKU\\*" : "HKLM")}\\{subKey} — {guard}");
             return;
         }
         var type = Str(w, "valueType") ?? "";
@@ -198,7 +235,7 @@ public static class GenericWriteShape
             // Sin `value`: no hay nada que escribir. Si el payload lo trae, se
             // ignora — un borrado no puede convertirse en escritura por un
             // campo de más.
-            out_.Registry.Add(new RegistryWriteSpec { SubKey = subKey, ValueName = valueName, Kind = GenericValueKind.Delete });
+            out_.Registry.Add(new RegistryWriteSpec { Hive = hiveKind, SubKey = subKey, ValueName = valueName, Kind = GenericValueKind.Delete });
             return;
         }
         if (!w.TryGetProperty("value", out var v))
@@ -214,7 +251,7 @@ public static class GenericWriteShape
                     out_.Rejected.Add($"dword value invalid for {subKey}:{valueName}");
                     return;
                 }
-                out_.Registry.Add(new RegistryWriteSpec { SubKey = subKey, ValueName = valueName, Kind = GenericValueKind.DWord, DwordValue = d });
+                out_.Registry.Add(new RegistryWriteSpec { Hive = hiveKind, SubKey = subKey, ValueName = valueName, Kind = GenericValueKind.DWord, DwordValue = d });
                 return;
             case "sz":
                 if (v.ValueKind != JsonValueKind.String)
@@ -224,7 +261,7 @@ public static class GenericWriteShape
                 }
                 var s = v.GetString() ?? "";
                 if (s.Length > 4096 || s.Contains('\0')) { out_.Rejected.Add($"sz value too long for {subKey}:{valueName}"); return; }
-                out_.Registry.Add(new RegistryWriteSpec { SubKey = subKey, ValueName = valueName, Kind = GenericValueKind.String, StringValue = s });
+                out_.Registry.Add(new RegistryWriteSpec { Hive = hiveKind, SubKey = subKey, ValueName = valueName, Kind = GenericValueKind.String, StringValue = s });
                 return;
             case "multi_sz":
                 if (v.ValueKind != JsonValueKind.Array)
@@ -241,7 +278,7 @@ public static class GenericWriteShape
                     items.Add(str);
                 }
                 if (items.Count > 256) { out_.Rejected.Add($"multi_sz too many items for {subKey}:{valueName}"); return; }
-                out_.Registry.Add(new RegistryWriteSpec { SubKey = subKey, ValueName = valueName, Kind = GenericValueKind.MultiString, MultiValue = items.ToArray() });
+                out_.Registry.Add(new RegistryWriteSpec { Hive = hiveKind, SubKey = subKey, ValueName = valueName, Kind = GenericValueKind.MultiString, MultiValue = items.ToArray() });
                 return;
             default:
                 out_.Rejected.Add($"valueType '{type}' not allowed");

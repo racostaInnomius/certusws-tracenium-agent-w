@@ -783,6 +783,29 @@ public static class PmpRemediation
     // se pide DWORD) no se sobreescribe: es señal de que la sonda y el
     // sistema no hablan de lo mismo.
 
+    // ── Dónde vive cada escritura ─────────────────────────────────
+    //
+    // Una escritura HKLM tiene UN destino. Una HKU tiene uno por perfil
+    // cargado (HKEY_USERS\S-1-5-21-*, el mismo criterio que la sonda
+    // registryUser): se lee y se escribe en TODOS, y sólo cumple si cumple
+    // en todos — que es exactamente lo que el evaluador del control plane
+    // exige a la sonda. Los perfiles sin sesión no están cargados y no se
+    // cargan (ver UserRegistryProbes.cs).
+    private readonly record struct RegistryTarget(string Label, RegistryKey Root, string Prefix);
+
+    private static List<RegistryTarget> TargetsFor(RegistryWriteSpec w)
+    {
+        if (w.Hive != RegistryHiveKind.Users)
+            return new List<RegistryTarget> { new("HKLM", Registry.LocalMachine, "") };
+        var targets = new List<RegistryTarget>();
+        foreach (var sid in Registry.Users.GetSubKeyNames())
+        {
+            if (!UserRegistryProbeShape.IsUserProfileHive(sid)) continue;
+            targets.Add(new("HKU\\" + sid, Registry.Users, sid + "\\"));
+        }
+        return targets;
+    }
+
     private static ReadResult ReadGenericRegistry(Dictionary<string, object>? p)
     {
         var writes = GenericWriteShape.FromParams(p);
@@ -791,33 +814,54 @@ public static class PmpRemediation
 
         var entries = new List<object>();
         var compliant = true;
+        var profiles = -1;
         foreach (var w in writes.Registry)
         {
-            object? current = null;
-            string? kind = null;
-            var present = false;
-            using (var key = Registry.LocalMachine.OpenSubKey(w.SubKey))
+            var targets = TargetsFor(w);
+            if (w.Hive == RegistryHiveKind.Users)
             {
-                if (key is not null)
+                profiles = targets.Count;
+                // Sin perfil cargado no hay dónde mirar ni dónde escribir: no
+                // cumple y se dice por qué, en vez de un "cumple" vacío.
+                if (targets.Count == 0)
                 {
-                    var raw = key.GetValue(w.ValueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
-                    if (raw is not null)
-                    {
-                        present = true;
-                        current = RegistryProbeShape.Normalize(raw);
-                        kind = key.GetValueKind(w.ValueName).ToString();
-                    }
+                    compliant = false;
+                    entries.Add(new { key = w.HiveLabel + "\\" + w.SubKey, name = w.ValueName, present = false, kind = (string?)null, current = (object?)null, expected = w.Describe(), matches = false, reason = "no user profile loaded" });
+                    continue;
                 }
             }
-            // Un borrado cumple cuando NO está; cualquier otra escritura, cuando
-            // está y vale lo pedido.
-            var matches = w.Kind == GenericValueKind.Delete
-                ? !present
-                : present && GenericWriteShape.RegistryValueMatches(w, current);
-            if (!matches) compliant = false;
-            entries.Add(new { key = @"HKLM\" + w.SubKey, name = w.ValueName, present, kind, current, expected = w.Describe(), matches });
+            foreach (var t in targets)
+            {
+                object? current = null;
+                string? kind = null;
+                var present = false;
+                using (var key = t.Root.OpenSubKey(t.Prefix + w.SubKey))
+                {
+                    if (key is not null)
+                    {
+                        var raw = key.GetValue(w.ValueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+                        if (raw is not null)
+                        {
+                            present = true;
+                            current = RegistryProbeShape.Normalize(raw);
+                            kind = key.GetValueKind(w.ValueName).ToString();
+                        }
+                    }
+                }
+                // Un borrado cumple cuando NO está; cualquier otra escritura, cuando
+                // está y vale lo pedido.
+                var matches = w.Kind == GenericValueKind.Delete
+                    ? !present
+                    : present && GenericWriteShape.RegistryValueMatches(w, current);
+                if (!matches) compliant = false;
+                entries.Add(new { key = t.Label + "\\" + w.SubKey, name = w.ValueName, present, kind, current, expected = w.Describe(), matches });
+            }
         }
-        return new ReadResult { State = new { writes = entries }, IsCompliant = compliant };
+        return new ReadResult
+        {
+            State = profiles >= 0 ? new { writes = entries, profiles } : new { writes = entries },
+            IsCompliant = compliant,
+        };
     }
 
     private static RemediateResult ApplyGenericRegistry(Dictionary<string, object>? p)
@@ -834,56 +878,79 @@ public static class PmpRemediation
             };
         }
 
-        // Comprobación de tipos ANTES de escribir nada.
-        foreach (var w in writes.Registry)
+        // Los destinos se resuelven UNA vez: leer y escribir sobre la misma
+        // lista de perfiles, aunque alguien inicie sesión a mitad.
+        var plan = writes.Registry.Select(w => (Write: w, Targets: TargetsFor(w))).ToList();
+        var userWrite = plan.FirstOrDefault(x => x.Write.Hive == RegistryHiveKind.Users && x.Targets.Count == 0);
+        if (userWrite.Write is not null)
+        {
+            // Nada que escribir no es "aplicado": el control plane vería un
+            // éxito y el check seguiría en fail en la próxima colección.
+            return new RemediateResult
+            {
+                ExitCode = 5, DurationMs = sw.ElapsedMilliseconds,
+                StderrExcerpt = $"no user profile loaded on this device; {userWrite.Write.Describe()} has nowhere to go until someone signs in",
+                ChangesApplied = new List<string>(),
+            };
+        }
+
+        // Comprobación de tipos ANTES de escribir nada, en todos los destinos.
+        foreach (var (w, targets) in plan)
         {
             // Borrar no depende del tipo que tenga el valor.
             if (w.Kind == GenericValueKind.Delete) continue;
-            using var key = Registry.LocalMachine.OpenSubKey(w.SubKey);
-            if (key is null || key.GetValue(w.ValueName) is null) continue;
-            var existing = key.GetValueKind(w.ValueName);
-            var wanted = KindOf(w.Kind);
-            var compatible = existing == wanted
-                || (wanted == RegistryValueKind.String && existing == RegistryValueKind.ExpandString);
-            if (!compatible)
+            foreach (var t in targets)
             {
-                return new RemediateResult
+                using var key = t.Root.OpenSubKey(t.Prefix + w.SubKey);
+                if (key is null || key.GetValue(w.ValueName) is null) continue;
+                var existing = key.GetValueKind(w.ValueName);
+                var wanted = KindOf(w.Kind);
+                var compatible = existing == wanted
+                    || (wanted == RegistryValueKind.String && existing == RegistryValueKind.ExpandString);
+                if (!compatible)
                 {
-                    ExitCode = 3, DurationMs = sw.ElapsedMilliseconds,
-                    StderrExcerpt = $@"HKLM\{w.SubKey}:{w.ValueName} exists as {existing}, expected {wanted}; not overwritten",
-                    ChangesApplied = new List<string>(),
-                };
+                    return new RemediateResult
+                    {
+                        ExitCode = 3, DurationMs = sw.ElapsedMilliseconds,
+                        StderrExcerpt = $@"{t.Label}\{w.SubKey}:{w.ValueName} exists as {existing}, expected {wanted}; not overwritten",
+                        ChangesApplied = new List<string>(),
+                    };
+                }
             }
         }
 
         var changes = new List<string>();
-        foreach (var w in writes.Registry)
+        foreach (var (w, targets) in plan)
         {
-            if (w.Kind == GenericValueKind.Delete)
+            foreach (var t in targets)
             {
-                // ⚠️ OpenSubKey, NUNCA CreateSubKey: borrar un valor de una clave
-                // que no existe no debe dejar la clave creada como efecto
-                // secundario. Si ya no está, no es un error: es el estado pedido.
-                using var existing = Registry.LocalMachine.OpenSubKey(w.SubKey, writable: true);
-                if (existing is null || existing.GetValue(w.ValueName) is null)
+                var where = t.Label + "\\" + w.SubKey + ":" + w.ValueName;
+                if (w.Kind == GenericValueKind.Delete)
                 {
-                    changes.Add(w.Describe() + " — already absent");
+                    // ⚠️ OpenSubKey, NUNCA CreateSubKey: borrar un valor de una clave
+                    // que no existe no debe dejar la clave creada como efecto
+                    // secundario. Si ya no está, no es un error: es el estado pedido.
+                    using var existing = t.Root.OpenSubKey(t.Prefix + w.SubKey, writable: true);
+                    if (existing is null || existing.GetValue(w.ValueName) is null)
+                    {
+                        changes.Add(where + " (deleted) — already absent");
+                        continue;
+                    }
+                    existing.DeleteValue(w.ValueName, throwOnMissingValue: false);
+                    changes.Add(where + " (deleted)");
                     continue;
                 }
-                existing.DeleteValue(w.ValueName, throwOnMissingValue: false);
-                changes.Add(w.Describe());
-                continue;
+                using var key = t.Root.CreateSubKey(t.Prefix + w.SubKey, writable: true)
+                    ?? throw new InvalidOperationException($@"could not open or create {t.Label}\{w.SubKey}");
+                object value = w.Kind switch
+                {
+                    GenericValueKind.DWord => unchecked((int)w.DwordValue),
+                    GenericValueKind.String => w.StringValue ?? "",
+                    _ => w.MultiValue ?? Array.Empty<string>(),
+                };
+                key.SetValue(w.ValueName, value, KindOf(w.Kind));
+                changes.Add(w.Hive == RegistryHiveKind.Users ? where + " = " + w.Describe().Split('=', 2).Last() : w.Describe());
             }
-            using var key = Registry.LocalMachine.CreateSubKey(w.SubKey, writable: true)
-                ?? throw new InvalidOperationException($@"could not open or create HKLM\{w.SubKey}");
-            object value = w.Kind switch
-            {
-                GenericValueKind.DWord => unchecked((int)w.DwordValue),
-                GenericValueKind.String => w.StringValue ?? "",
-                _ => w.MultiValue ?? Array.Empty<string>(),
-            };
-            key.SetValue(w.ValueName, value, KindOf(w.Kind));
-            changes.Add(w.Describe());
         }
         sw.Stop();
         return new RemediateResult { ExitCode = 0, DurationMs = sw.ElapsedMilliseconds, RequiresReboot = false, ChangesApplied = changes };
