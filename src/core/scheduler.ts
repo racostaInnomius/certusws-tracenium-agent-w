@@ -11,6 +11,7 @@ import type { CdpNamespace } from "../domain/cdp-types";
 import type { PmpNamespace } from "../domain/pmp-types";
 import type { ScpNamespace } from "../domain/scp-types";
 import { runUpdateTask } from "../update/update-task";
+import os from "os";
 
 // Change-detection hash helpers live in namespace-hash.ts so they can
 // be unit-tested without this file's outbox/update-task import graph.
@@ -23,6 +24,11 @@ import {
   type PipelineKey,
   type PipelinePlan,
 } from "./pipeline-plan";
+import {
+  STARTUP_SERIAL_ORDER,
+  STARTUP_STEP_CAP_MS,
+  startupPatchDelayMs,
+} from "./startup-sequence";
 
 // Force-clear threshold for the *Running guard flags. If a worker has
 // been "running" for longer than this, we assume it's hung on some
@@ -180,6 +186,16 @@ class Scheduler {
    */
   private plan: PipelinePlan | null = null;
   private capabilitySig: string | null = null;
+  /**
+   * Secuencia de arranque (startup-sequence.ts). La generación la anula al
+   * parar o rearrancar; `startupPending` son los pipelines que la secuencia aún
+   * no ha corrido: el reconciliador NO los lanza por su cuenta, o una policy
+   * recibida al conectar dispararía el escaneo de parches saltándose la espera.
+   */
+  private startupGen = 0;
+  private startupPending: Set<PipelineKey> = new Set();
+  /** Uptime de la MÁQUINA en segundos. Inyectable en tests. */
+  machineUptimeSeconds: () => number = () => os.uptime();
   private policyListeners: Array<{
     event: string;
     handler: (...args: any[]) => void;
@@ -252,7 +268,10 @@ class Scheduler {
       if (next[key].armed) this.armPipeline(ctx, key, next[key].intervalSeconds, false);
     }
     for (const key of runNow) {
-      if (key !== "inventory") this.runPipelineNow(ctx, key);
+      if (key === "inventory") continue;
+      // La secuencia de arranque lo correrá en su turno, con el plan de entonces.
+      if (this.startupPending.has(key)) continue;
+      this.runPipelineNow(ctx, key);
     }
     if (runNow.includes("inventory") || capabilitiesChanged) {
       this.runPipelineNow(ctx, "inventory");
@@ -361,10 +380,48 @@ class Scheduler {
     for (const key of PIPELINE_KEYS) {
       if (!plan[key].armed) continue;
       logger.info(`${key} pipeline enabled`, { intervalSeconds: plan[key].intervalSeconds });
-      // ⚠️ Sólo el inventario adelanta su primer tick en vez de correr ya: el
-      // arranque del servicio ya hizo un inventario inmediato (start()).
-      if (key !== "inventory") this.runPipelineNow(ctx, key);
       this.armPipeline(ctx, key, plan[key].intervalSeconds, true);
+    }
+
+    // El inventario ya corrió en start() y adelanta su primer tick. El update es
+    // una comprobación de red, no va por el carril del PrivSvc: corre ya.
+    if (plan.update.armed) this.runPipelineNow(ctx, "update");
+    // compliance → CDP → parches, en serie y con la espera de uptime.
+    void this.runStartupSequence(ctx);
+  }
+
+  /** Ver startup-sequence.ts. Nunca lanza. */
+  private async runStartupSequence(ctx: AgentContext): Promise<void> {
+    const gen = ++this.startupGen;
+    this.startupPending = new Set(STARTUP_SERIAL_ORDER);
+    const alive = () => gen === this.startupGen;
+
+    for (const key of STARTUP_SERIAL_ORDER) {
+      if (!alive()) return;
+
+      if (key === "patch") {
+        const waitMs = startupPatchDelayMs(this.machineUptimeSeconds());
+        if (waitMs > 0) {
+          logger.info("[scheduler] startup patch scan waits for machine uptime", { waitMs });
+          await delay(waitMs);
+          if (!alive()) return;
+        }
+      }
+
+      // El plan VIGENTE, no el del arranque: una policy pudo cambiarlo mientras
+      // tanto (y el reconciliador dejó este pipeline para aquí).
+      this.startupPending.delete(key);
+      if (!this.plan?.[key].armed) continue;
+
+      const finished = await withCap(this.runPipeline(ctx, key), STARTUP_STEP_CAP_MS).catch(err => {
+        logger.error(`${key} startup run error`, { err });
+        return true;
+      });
+      if (!finished) {
+        logger.warn(`[scheduler] startup ${key} still running after cap, moving on`, {
+          capMs: STARTUP_STEP_CAP_MS
+        });
+      }
     }
   }
 
@@ -429,6 +486,10 @@ class Scheduler {
   }
 
   private stopAll() {
+
+    // Anula una secuencia de arranque en curso (incluida su espera de uptime).
+    this.startupGen++;
+    this.startupPending.clear();
 
     // clearTimeout and clearInterval are interchangeable in Node — they
     // dispatch on the timer kind internally — so this works whether the
@@ -1032,6 +1093,28 @@ class Scheduler {
       this.patchStartedAt = 0;
 
     }
+  }
+}
+
+/** Espera sin retener el proceso: parar el agente no debe esperar a esto. */
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => {
+    const t = setTimeout(resolve, ms);
+    (t as any).unref?.();
+  });
+}
+
+/** true si `p` terminó antes de `ms`; false si se agotó el techo (p sigue corriendo). */
+async function withCap(p: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const cap = new Promise<boolean>(resolve => {
+    timer = setTimeout(() => resolve(false), ms);
+    (timer as any).unref?.();
+  });
+  try {
+    return await Promise.race([p.then(() => true), cap]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

@@ -44,11 +44,14 @@ let spies: Record<string, ReturnType<typeof vi.spyOn>>;
 const calls = () => Object.fromEntries(RUNS.map((r) => [r, spies[r].mock.calls.length]));
 const resetCalls = () => RUNS.forEach((r) => spies[r].mockClear());
 
-async function started(doc: any) {
+async function started(doc: any, uptimeSeconds = 6 * 3600) {
   const s = storeWith(doc);
   const rt = new PolicyRuntime(s.store, null);
   await rt.init();
+  S.machineUptimeSeconds = () => uptimeSeconds;
   await scheduler.start({ policyRuntime: rt, enrollment: { deviceId: "dev-1", tenantId: "t-1" } } as any);
+  // Deja terminar la secuencia de arranque (en serie; ver startup-sequence.ts).
+  await vi.advanceTimersByTimeAsync(1);
   return { rt, set: s.set };
 }
 
