@@ -12,6 +12,7 @@ import {
   CONTROL_GROUP,
   makeEphemeralCertificate,
   measureOsTlsCapability,
+  parseSystemClientJson,
   startLoopbackServer,
   verdictFrom,
   windowsScript,
@@ -112,9 +113,14 @@ describe("measureOsTlsCapability", () => {
         osBuild: "26200",
         ubr: 6725,
         displayVersion: "25H2",
+        tlsCmdlets: true,
+        eccCurves: ["curve25519", "NistP256", "NistP384"],
+        policyManaged: false,
       }),
     });
     expect(r).toMatchObject({ platform: "windows", method: "loopback_schannel", supported: true, osBuild: "26200", ubr: 6725, displayVersion: "25H2", measuredAt: "2026-09-15T12:00:00.000Z" });
+    // ADR-0024: la lista y la GPO viajan en el bloque.
+    expect(r).toMatchObject({ tlsCmdlets: true, eccCurves: ["curve25519", "NistP256", "NistP384"], policyManaged: false });
   });
 
   it.runIf(canHybrid)("un cliente del sistema sin el grupo → false; uno que no corre → null", async () => {
@@ -136,5 +142,34 @@ describe("windowsScript", () => {
     expect(s).toMatch(/UBR/);
     expect(s).toMatch(/SslProtocols\]::None/);
     expect(s).toMatch(/ConvertTo-Json/);
+  });
+
+  it("⭐ ADR-0024: lee la lista de grupos y la GPO que la gobierna, y NO cambia nada", () => {
+    const s = windowsScript(4431, 4432);
+    expect(s).toMatch(/Get-TlsEccCurve/);
+    expect(s).toMatch(/HKLM:\\SOFTWARE\\Policies\\Microsoft\\Cryptography\\Configuration\\SSL\\00010002'/);
+    expect(s).toMatch(/EccCurves/);
+    // La sonda es de sólo lectura: ningún cmdlet que escriba la configuración.
+    expect(s).not.toMatch(/(Enable|Disable)-TlsEccCurve|Set-ItemProperty|New-ItemProperty|Remove-ItemProperty/);
+  });
+});
+
+describe("parseSystemClientJson (ADR-0024)", () => {
+  const base = { hybrid: { ok: false }, control: { ok: true, protocol: "Tls13" }, osBuild: "26200", ubr: 9457, displayVersion: "25H2" };
+
+  it("⭐ trae la lista efectiva de grupos EN ORDEN y la GPO", () => {
+    const r = parseSystemClientJson({ ...base, tlsCmdlets: true, eccCurves: ["curve25519", "NistP256", "NistP384", "X25519_MLKEM768"], policyManaged: false, policyCurves: null });
+    expect(r).toMatchObject({ tlsCmdlets: true, eccCurves: ["curve25519", "NistP256", "NistP384", "X25519_MLKEM768"], policyManaged: false, policyCurves: null, ubr: 9457 });
+  });
+
+  it("PowerShell 5.1 aplana un array de un elemento: se acepta el escalar", () => {
+    expect(parseSystemClientJson({ ...base, eccCurves: "curve25519", policyManaged: true, policyCurves: "NistP256" })).toMatchObject({ eccCurves: ["curve25519"], policyManaged: true, policyCurves: ["NistP256"] });
+  });
+
+  it("ausente no es «vacío»: sin cmdlets ni lista, null — no una lista vacía que parezca «ningún grupo»", () => {
+    const r = parseSystemClientJson(base);
+    expect(r.eccCurves).toBeNull();
+    expect(r.tlsCmdlets).toBeNull();
+    expect(r.policyManaged).toBeNull();
   });
 });

@@ -168,6 +168,13 @@ export type SystemClientResult = {
   osBuild?: string | null;
   ubr?: number | null;
   displayVersion?: string | null;
+  /** ADR-0024: si existen los cmdlets TLS (`Get-TlsEccCurve`…). */
+  tlsCmdlets?: boolean | null;
+  /** ADR-0024: la lista EFECTIVA de grupos, en orden (`Get-TlsEccCurve`). */
+  eccCurves?: string[] | null;
+  /** ADR-0024: una GPO «ECC Curve Order» gobierna la lista y pisaría un cambio local. */
+  policyManaged?: boolean | null;
+  policyCurves?: string[] | null;
   /** El script no corrió (PowerShell ausente, timeout, JSON ilegible). */
   runError?: string;
 };
@@ -176,12 +183,26 @@ export type SystemClientResult = {
 export function windowsScript(hybridPort: number, controlPort: number): string {
   return `
 $ErrorActionPreference = 'Continue'
-$o = [ordered]@{ hybrid = $null; control = $null; osBuild = $null; ubr = $null; displayVersion = $null }
+$o = [ordered]@{ hybrid = $null; control = $null; osBuild = $null; ubr = $null; displayVersion = $null; tlsCmdlets = $false; eccCurves = $null; policyManaged = $false; policyCurves = $null }
 try {
   $k = Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion'
   $o.osBuild = [string]$k.CurrentBuildNumber
   if ($null -ne $k.UBR) { $o.ubr = [int]$k.UBR }
   $o.displayVersion = [string]$k.DisplayVersion
+} catch {}
+# ADR-0024: la lista efectiva de grupos y si una GPO la gobierna. Solo se LEE.
+try {
+  if (Get-Command Get-TlsEccCurve -ErrorAction SilentlyContinue) {
+    $o.tlsCmdlets = $true
+    $o.eccCurves = @(Get-TlsEccCurve | ForEach-Object { [string]$_ })
+  }
+} catch {}
+try {
+  $gp = Get-ItemProperty 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Cryptography\\Configuration\\SSL\\00010002' -ErrorAction Stop
+  if ($null -ne $gp.EccCurves) {
+    $o.policyManaged = $true
+    $o.policyCurves = @($gp.EccCurves | ForEach-Object { [string]$_ })
+  }
 } catch {}
 function Try-Handshake([int]$port) {
   $r = [ordered]@{ ok = $false; error = $null; protocol = $null }
@@ -219,6 +240,31 @@ function runPowerShell(script: string, timeoutMs: number): Promise<string> {
   });
 }
 
+/**
+ * PowerShell 5.1 aplana a veces un array de un elemento a escalar al
+ * serializar: se aceptan las dos formas. null si no vino.
+ */
+function stringList(v: unknown): string[] | null {
+  if (v == null) return null;
+  const arr = Array.isArray(v) ? v : [v];
+  return arr.map((x) => String(x ?? "").trim()).filter(Boolean).slice(0, 64);
+}
+
+/** Puro: del JSON del script al resultado. Exportado para probar la forma sin PowerShell. */
+export function parseSystemClientJson(j: any): Omit<SystemClientResult, "runError"> {
+  return {
+    hybrid: handshakeOf(j?.hybrid),
+    control: handshakeOf(j?.control),
+    osBuild: j?.osBuild ? String(j.osBuild) : null,
+    ubr: Number.isInteger(j?.ubr) ? Number(j.ubr) : null,
+    displayVersion: j?.displayVersion ? String(j.displayVersion) : null,
+    tlsCmdlets: j?.tlsCmdlets === true ? true : j?.tlsCmdlets === false ? false : null,
+    eccCurves: stringList(j?.eccCurves),
+    policyManaged: j?.policyManaged === true ? true : j?.policyManaged === false ? false : null,
+    policyCurves: stringList(j?.policyCurves),
+  };
+}
+
 function handshakeOf(v: any): SystemHandshake {
   return { ok: v?.ok === true, error: v?.error ? String(v.error).slice(0, 300) : null, protocol: v?.protocol ? String(v.protocol) : null };
 }
@@ -230,14 +276,7 @@ export async function runWindowsSystemClient(hybridPort: number, controlPort: nu
     const out = await runPowerShell(windowsScript(hybridPort, controlPort), HANDSHAKE_TIMEOUT_MS);
     const line = out.trim().split(/\r?\n/).filter((l) => l.trim().startsWith("{")).pop();
     if (!line) return { hybrid: empty, control: empty, runError: `no JSON from PowerShell: ${out.trim().slice(0, 200)}` };
-    const j = JSON.parse(line);
-    return {
-      hybrid: handshakeOf(j.hybrid),
-      control: handshakeOf(j.control),
-      osBuild: j.osBuild ? String(j.osBuild) : null,
-      ubr: Number.isInteger(j.ubr) ? Number(j.ubr) : null,
-      displayVersion: j.displayVersion ? String(j.displayVersion) : null,
-    };
+    return parseSystemClientJson(JSON.parse(line));
   } catch (err: any) {
     return { hybrid: empty, control: empty, runError: String(err?.message || err).slice(0, 300) };
   }
@@ -311,6 +350,10 @@ export async function measureOsTlsCapability(options: MeasureOptions = {}): Prom
       ...(client.osBuild ? { osBuild: client.osBuild } : {}),
       ...(client.ubr != null ? { ubr: client.ubr } : {}),
       ...(client.displayVersion ? { displayVersion: client.displayVersion } : {}),
+      ...(client.tlsCmdlets != null ? { tlsCmdlets: client.tlsCmdlets } : {}),
+      ...(client.eccCurves ? { eccCurves: client.eccCurves } : {}),
+      ...(client.policyManaged != null ? { policyManaged: client.policyManaged } : {}),
+      ...(client.policyCurves ? { policyCurves: client.policyCurves } : {}),
     };
   } catch (err: any) {
     return { ...base, method: "loopback_schannel", detail: "The loopback test could not be set up.", error: String(err?.message || err).slice(0, 300) };

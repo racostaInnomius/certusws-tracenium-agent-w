@@ -270,6 +270,17 @@ export type CdpOsTlsCapability = {
   osBuild?: string;
   ubr?: number;
   displayVersion?: string;
+  /**
+   * ADR-0024 — lo que separa «puede migrar pero requiere el fix» de «no
+   * puede»: si hay cmdlets TLS, la lista EFECTIVA de grupos en orden
+   * (`Get-TlsEccCurve`) y si una GPO «ECC Curve Order» la gobierna
+   * (en cuyo caso un cambio local se deshace en el siguiente gpupdate).
+   * Sólo lectura: la sonda no cambia nada del sistema.
+   */
+  tlsCmdlets?: boolean;
+  eccCurves?: string[];
+  policyManaged?: boolean;
+  policyCurves?: string[];
   measuredAt: string;
 };
 
