@@ -70,7 +70,14 @@ export async function collectAdcs(ctx: AgentContext, options: Options = {}): Pro
   const caName = String(res.caName || "unknown-ca").slice(0, 200);
   // El PrivSvc devuelve el volcado crudo (`dump`); `csv` es el nombre viejo.
   const parsed = parseCertutilDump(String(res.dump ?? res.csv ?? ""), caName, maxRows);
-  if (!parsed.columnsFound.requestId || !parsed.columnsFound.rawCertificate) {
+  // Una lectura incremental VACIA (nada nuevo desde el cursor) no trae
+  // filas y por tanto no trae cabecera: no se juzga ni se avisa. Mandarla
+  // con todas las columnas a false pintaba «header not recognized» sobre
+  // una CA sana (T111, 16-sep).
+  // Vacia = el PrivSvc conto 0 filas (o el volcado viene en blanco); un
+  // volcado con contenido que no se sabe partir SI es una cabecera rara.
+  const emptyRead = res.rows === 0 || String(res.dump ?? res.csv ?? "").trim() === "";
+  if (!emptyRead && (!parsed.columnsFound.requestId || !parsed.columnsFound.rawCertificate)) {
     // La cabecera no es la esperada: se dice con la cabecera recibida, que
     // es lo unico que permite arreglar el parser sin ir al servidor.
     ctx.logger?.warn?.("CDP/ADCS: cabecera de certutil no reconocida", { header: parsed.header.slice(0, 12), stderr: res.stderr });
@@ -90,6 +97,6 @@ export async function collectAdcs(ctx: AgentContext, options: Options = {}): Pro
     issued: parsed.issued,
     truncated: res.truncated === true,
     parseFailures: parsed.parseFailures,
-    columnsFound: parsed.columnsFound
+    columnsFound: emptyRead ? null : parsed.columnsFound
   };
 }

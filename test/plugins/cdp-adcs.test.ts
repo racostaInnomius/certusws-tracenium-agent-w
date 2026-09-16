@@ -200,3 +200,13 @@ describe("collectAdcs", () => {
     expect(params[0].maxRows).toBe(5000);
   });
 });
+
+describe("collectAdcs — lectura incremental vacia (T111, 16-sep)", () => {
+  it("⭐ sin filas nuevas no se juzga la cabecera: columnsFound null y sin aviso", async () => {
+    const warn = vi.fn();
+    const ctx: any = { policyRuntime: { getCdpAdcs: () => ({ enabled: true, maxPerScan: 2000, hosts: ["ca01"] }) }, priv: { call: vi.fn() }, logger: { warn, info: vi.fn() }, enrollment: {} };
+    const r = await collectAdcs(ctx, { hostname: "ca01", call: async () => ({ ok: true, result: { isCa: true, caName: "MSIG-RADIUS-CA", dump: "Schema:\n  Column Name  Localized Name  Type\n\nMaximum Row Index: 0\n\nRow Index: 0\n", rows: 0, truncated: false } }) });
+    expect(r).toMatchObject({ isCa: true, caName: "MSIG-RADIUS-CA", issued: [], columnsFound: null });
+    expect(warn).not.toHaveBeenCalledWith("CDP/ADCS: cabecera de certutil no reconocida", expect.anything());
+  });
+});
