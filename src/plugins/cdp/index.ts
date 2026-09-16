@@ -17,6 +17,7 @@ import crypto from "crypto";
 import type { AgentContext } from "../../core/agent-context";
 import type {
   CdpAdcsReport,
+  CdpOsTlsCapability,
   CdpVcenterReport,
   CdpAnchorPinReport,
   CdpCertItem,
@@ -370,6 +371,29 @@ async function collectOnce(
     }
   }
 
+  // ── ¿La pila TLS del sistema hace ML-KEM? Medido (15-sep) ──────────
+  //
+  // Solo Windows se mide hoy (SChannel por bucle local); el resto manda
+  // «no medido» con el motivo, para que el control plane no deduzca por
+  // build lo que aqui se pudo preguntar. Viaja cuando cambia (digest sin
+  // la hora) o en un baseline. Fallo blando.
+  let osTls: CdpOsTlsCapability | undefined;
+  let osTlsChanged = false;
+  try {
+    const { measureOsTlsCapability } = await import("./providers/os-tls-capability");
+    const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
+    const measured = await measureOsTlsCapability();
+    const { measuredAt: _t, ...stable } = measured;
+    const digest = crypto.createHash("sha256").update(JSON.stringify(stable)).digest("hex");
+    if (options?.full === true || readCdpMeta("os_tls_digest") !== digest) {
+      osTls = measured;
+      osTlsChanged = true;
+      writeCdpMeta("os_tls_digest", digest);
+    }
+  } catch (err: any) {
+    ctx.logger?.warn?.("CDP/OS TLS: la medicion fallo (no fatal)", { error: err?.message || String(err) });
+  }
+
   // ── §5.2: claves de host SSH y candidatos a objetivo de sonda ──────
   //
   // Los dos van fuera de `certificates`: no son X.509 y no deben entrar
@@ -489,6 +513,7 @@ async function collectOnce(
     : anchorChanged ||
       adcsChanged ||
       vcenterChanged ||
+      osTlsChanged ||
       sideChanged ||
       delta.added.length > 0 ||
       delta.removed.length > 0 ||
@@ -522,6 +547,7 @@ async function collectOnce(
     ...(partial ? { partial } : {}),
     ...(adcs ? { adcs } : {}),
     ...(vcenter ? { vcenter } : {}),
+    ...(osTls ? { osTls } : {}),
     ...(sshHostKeys ? { sshHostKeys } : {}),
     ...(probeCandidates ? { probeCandidates } : {})
   };

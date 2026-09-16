@@ -241,11 +241,36 @@ export type CdpNamespace = {
   sshHostKeys?: CdpSshHostKeys;
 
   /**
+   * Si la pila TLS del propio sistema negocia intercambio hibrido
+   * post-cuantico, MEDIDO en un handshake de bucle local (15-sep), mas
+   * el numero de revision de Windows (UBR). Sustituye la deduccion por
+   * build del control plane. Viaja cuando cambia o en un baseline.
+   */
+  osTls?: CdpOsTlsCapability;
+
+  /**
    * Candidatos a objetivo de sonda: servicios TLS INTERNOS con los que
    * este equipo tiene conexiones salientes establecidas. Nunca se sondean
    * por si solos; el operador los promueve desde la policy.
    */
   probeCandidates?: CdpProbeCandidate[];
+};
+
+/** Capacidad TLS post-cuantica de la pila del SISTEMA, medida. */
+export type CdpOsTlsCapability = {
+  platform: "windows" | "macos" | "linux";
+  /** El grupo probado: X25519MLKEM768. */
+  group: string;
+  /** true = negocio el grupo; false = TLS 1.3 si, el grupo no; null = no se pudo medir. */
+  supported: boolean | null;
+  method: "loopback_schannel" | "not_measured" | "agent_openssl_lacks_group";
+  detail?: string;
+  error?: string | null;
+  /** Windows: CurrentBuildNumber, UBR y DisplayVersion del registro. */
+  osBuild?: string;
+  ubr?: number;
+  displayVersion?: string;
+  measuredAt: string;
 };
 
 /** Un certificado leido de vCenter o de un ESXi: los campos del item de
