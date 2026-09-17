@@ -125,3 +125,44 @@ export function rebootCancelCommandFor(platform: NodeJS.Platform): { cmd: string
 export function rebootAckSuffix(d: PatchRebootDecision): string {
   return d.reboot ? `; rebootScheduled=true; rebootInSec=${Math.round(d.graceMs / 1000)}` : "";
 }
+
+// ── Reinicio bajo demanda (job `device_reboot`, 17-sep) ─────────────────────
+//
+// El CUÁNDO lo decidió el control plane: si el operador eligió «maintenance
+// window», el job no llega hasta que la ventana abre (y el despachador vuelve a
+// comprobarla al entregarlo). Aquí sólo se valida la forma y se arma el reinicio
+// con la misma mecánica que tras un parche: temporizador del SO, aviso a los
+// usuarios conectados, cancelable con `shutdown /a`.
+
+export const DEVICE_REBOOT_DEFAULT_DELAY_S = 60;
+
+export type DeviceRebootPlan =
+  | { ok: true; graceMs: number; comment: string }
+  | { ok: false; error: string };
+
+/** Lo que ven los usuarios conectados en el aviso de Windows. Sin comillas ni controles. */
+function sanitizeReason(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return raw.replace(/[\u0000-\u001f"]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+export function planDeviceReboot(payload: unknown): DeviceRebootPlan {
+  const p = payload as any;
+  if (!p || typeof p !== "object" || Array.isArray(p)) return { ok: false, error: "invalid payload" };
+  // Mismo contrato que el backend: `when` obligatorio. Un job sin él viene de
+  // algo que no pasó por la puerta de la ventana, y no se ejecuta.
+  if (p.when !== "maintenance_window" && p.when !== "now") return { ok: false, error: "missing when" };
+  let delay = DEVICE_REBOOT_DEFAULT_DELAY_S;
+  if (p.delaySeconds != null) {
+    if (!Number.isInteger(p.delaySeconds) || p.delaySeconds < 30 || p.delaySeconds > 600) {
+      return { ok: false, error: "invalid delaySeconds" };
+    }
+    delay = p.delaySeconds;
+  }
+  const reason = sanitizeReason(p.reason);
+  return {
+    ok: true,
+    graceMs: delay * 1000,
+    comment: `Tracenium: restart requested by your IT administrator${reason ? ` (${reason})` : ""}`,
+  };
+}

@@ -46,25 +46,41 @@ export async function armPatchReboot(
   deps: RebootExecDeps = {}
 ): Promise<boolean> {
   if (!decision.reboot) return false;
+  return armReboot(decision.graceMs, undefined, "patch restart", deps);
+}
 
+/** Reinicio bajo demanda (`device_reboot`). Misma mecánica y mismas garantías. */
+export async function armDeviceReboot(
+  plan: { graceMs: number; comment: string },
+  deps: RebootExecDeps = {}
+): Promise<boolean> {
+  return armReboot(plan.graceMs, plan.comment, "on-demand restart", deps);
+}
+
+async function armReboot(
+  graceMs: number,
+  comment: string | undefined,
+  label: string,
+  deps: RebootExecDeps
+): Promise<boolean> {
   const platform = deps.platform ?? process.platform;
   const run = deps.run ?? defaultRun;
-  const { cmd, args } = rebootCommandFor(platform, Math.round(decision.graceMs / 1000));
+  const { cmd, args } = rebootCommandFor(platform, Math.round(graceMs / 1000), comment);
 
   try {
     const r = await run(cmd, args);
     if (r.ok) {
-      deps.logger?.info?.("patch restart armed", { cmd, args, graceMs: decision.graceMs });
+      deps.logger?.info?.(`${label} armed`, { cmd, args, graceMs });
       return true;
     }
-    deps.logger?.warn?.("patch restart could NOT be armed — the endpoint stays pending reboot", {
+    deps.logger?.warn?.(`${label} could NOT be armed — the endpoint stays pending reboot`, {
       cmd,
       args,
       error: r.error,
     });
     return false;
   } catch (e: any) {
-    deps.logger?.warn?.("patch restart could NOT be armed — the endpoint stays pending reboot", {
+    deps.logger?.warn?.(`${label} could NOT be armed — the endpoint stays pending reboot`, {
       error: e?.message ?? String(e),
     });
     return false;

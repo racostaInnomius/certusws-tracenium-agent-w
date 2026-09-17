@@ -10,6 +10,7 @@ import {
   rebootCancelCommandFor,
   rebootAckSuffix,
   DEFAULT_REBOOT_GRACE_MS,
+  planDeviceReboot,
 } from "../../src/plugins/pmp/reboot";
 
 const base = { rebootIfRequired: true, rebootRequired: true, installedCount: 3, failedCount: 0 };
@@ -113,7 +114,7 @@ describe("rebootAckSuffix", () => {
 });
 
 // ── the executor ───────────────────────────────────────────────────────────
-import { armPatchReboot, cancelPatchReboot } from "../../src/plugins/pmp/reboot-exec";
+import { armPatchReboot, cancelPatchReboot, armDeviceReboot } from "../../src/plugins/pmp/reboot-exec";
 
 describe("armPatchReboot", () => {
   const spy = () => {
@@ -160,5 +161,46 @@ describe("armPatchReboot", () => {
     const s = spy();
     expect(await cancelPatchReboot({ platform: "win32", run: s.run })).toBe(true);
     expect(s.calls[0]).toEqual({ cmd: "shutdown", args: ["/a"] });
+  });
+});
+
+// ── device_reboot (reinicio bajo demanda, 17-sep) ──────────────────────────
+describe("planDeviceReboot", () => {
+  it("⚠️ `when` obligatorio, como en el backend", () => {
+    expect(planDeviceReboot({})).toEqual({ ok: false, error: "missing when" });
+    expect(planDeviceReboot({ when: "later" })).toEqual({ ok: false, error: "missing when" });
+    expect(planDeviceReboot(null)).toMatchObject({ ok: false });
+  });
+
+  it("60 s por defecto, o la demora pedida dentro de 30–600", () => {
+    expect(planDeviceReboot({ when: "now" })).toMatchObject({ ok: true, graceMs: 60_000 });
+    expect(planDeviceReboot({ when: "maintenance_window", delaySeconds: 300 })).toMatchObject({ ok: true, graceMs: 300_000 });
+    expect(planDeviceReboot({ when: "now", delaySeconds: 5 })).toMatchObject({ ok: false });
+  });
+
+  it("el motivo llega limpio al aviso de Windows: sin comillas, controles ni longitud sin tope", () => {
+    const p = planDeviceReboot({ when: "now", reason: 'KB5122882 "urgente"\n' + "x".repeat(300) }) as any;
+    expect(p.comment.startsWith("Tracenium: restart requested by your IT administrator (KB5122882 urgente xxx")).toBe(true);
+    expect(p.comment).not.toMatch(/["\n]/);
+    expect(p.comment.length).toBeLessThanOrEqual("Tracenium: restart requested by your IT administrator ()".length + 120);
+  });
+});
+
+describe("armDeviceReboot", () => {
+  it("⭐ misma mecánica que tras un parche: temporizador del SO y el aviso propio", async () => {
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+    const armed = await armDeviceReboot(
+      { graceMs: 60_000, comment: "Tracenium: restart requested by your IT administrator" },
+      { platform: "win32", run: async (cmd, args) => (calls.push({ cmd, args }), { ok: true }) }
+    );
+    expect(armed).toBe(true);
+    expect(calls[0]).toEqual({
+      cmd: "shutdown",
+      args: ["/r", "/t", "60", "/c", "Tracenium: restart requested by your IT administrator", "/d", "p:2:17"],
+    });
+  });
+
+  it("si el SO lo rechaza devuelve false", async () => {
+    expect(await armDeviceReboot({ graceMs: 60_000, comment: "x" }, { platform: "win32", run: async () => ({ ok: false }) })).toBe(false);
   });
 });

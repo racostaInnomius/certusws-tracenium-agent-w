@@ -9,8 +9,8 @@ import type { Namespaces, DeviceFacts } from "../domain/device-facts";
 import type { PmpNamespace } from "../domain/pmp-types";
 import { updatePmpState, isRemediateInFlight } from "../plugins/pmp/state";
 import { runRemediation } from "../plugins/pmp/remediation";
-import { planPatchReboot, rebootAckSuffix } from "../plugins/pmp/reboot";
-import { armPatchReboot } from "../plugins/pmp/reboot-exec";
+import { planPatchReboot, planDeviceReboot, rebootAckSuffix } from "../plugins/pmp/reboot";
+import { armPatchReboot, armDeviceReboot } from "../plugins/pmp/reboot-exec";
 import { buildHeartbeat } from "./heartbeat-message";
 // SDP no longer imported here — `software_install` is dispatched via
 // ctx.plugins.run("sdp.install", ...) so it goes through the
@@ -1097,6 +1097,38 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       } finally {
         (ctx as any)._patchInstallInProgress = false;
       }
+    }
+
+    // Reinicio bajo demanda desde el portal (17-sep). La VENTANA ya la
+    // decidió el control plane: un «maintenance_window» no llega fuera de
+    // ella. Aquí sólo las salvaguardas del equipo: nunca a mitad de un
+    // install, una remediación o una actualización del agente.
+    case "device_reboot": {
+      if ((ctx as any)._patchInstallInProgress) {
+        return { status: 1, message: "device_reboot retry: patch install in progress" };
+      }
+      if (isRemediateInFlight()) {
+        return { status: 1, message: "device_reboot retry: patch_remediate in progress" };
+      }
+      if ((ctx as any)._agentUpdateInProgress) {
+        return { status: 1, message: "device_reboot retry: agent_update in progress" };
+      }
+
+      const plan = planDeviceReboot(payload);
+      if (!plan.ok) {
+        return { status: 2, message: `device_reboot rejected: ${plan.error}` };
+      }
+
+      // Mismo orden que tras un parche: el temporizador del SO se arma ANTES
+      // del ACK, y la demora es lo que deja salir ese ACK del equipo.
+      const armed = await armDeviceReboot(plan, { logger: ctx.logger });
+      if (!armed) {
+        return { status: 2, message: "device_reboot failed: the operating system did not accept the restart" };
+      }
+      return {
+        status: 0,
+        message: `device_reboot scheduled; rebootScheduled=true; rebootInSec=${Math.round(plan.graceMs / 1000)}`
+      };
     }
 
     case "patch_remediate": {

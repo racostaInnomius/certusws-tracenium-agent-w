@@ -28,6 +28,8 @@ import { EventEmitter } from "events";
 
 const mocks = vi.hoisted(() => ({
   createGrpcClient: vi.fn(),
+  // Nunca un `shutdown` de verdad desde un test.
+  armDeviceReboot: vi.fn(async () => true),
   runUpdateTask: vi.fn(async () => ({ status: "started", version: "9.9.9" })),
   outbox: {
     enqueue: vi.fn(() => 1),
@@ -60,6 +62,10 @@ vi.mock("../../src/plugins/pmp/state", () => ({
   isRemediateInFlight: vi.fn(() => false)
 }));
 vi.mock("../../src/plugins/pmp/remediation", () => ({ runRemediation: vi.fn() }));
+vi.mock("../../src/plugins/pmp/reboot-exec", async (orig) => ({
+  ...(await orig<typeof import("../../src/plugins/pmp/reboot-exec")>()),
+  armDeviceReboot: mocks.armDeviceReboot
+}));
 vi.mock("../../src/update/update-task", () => ({
   runUpdateTask: mocks.runUpdateTask,
   ackForUpdateOutcome: () => ({ status: 0, message: "update_started;src=origin" })
@@ -550,6 +556,69 @@ describe("grpc-stream — agent_update manual con Self-update apagado", () => {
         params: expect.objectContaining({ eventId: "job-upd-1", status: 0 })
       })
     );
+  });
+});
+
+// ── device_reboot: reinicio bajo demanda (17-sep) ────────────────────
+//
+// La ventana la decidió el control plane; el agente arma el reinicio en el SO
+// y confirma ANTES de apagar. `when` obligatorio, como en el backend.
+describe("grpc-stream — runJob device_reboot", () => {
+  const ackOf = (jobId: string) =>
+    (ctx.priv.call as any).mock.calls
+      .map((c: any[]) => c[0])
+      .find((r: any) => r?.method === "grpc.ack" && r?.params?.eventId === jobId)?.params;
+
+  beforeEach(() => mocks.armDeviceReboot.mockReset().mockResolvedValue(true));
+
+  it("⭐ arma el reinicio con el aviso para los usuarios y confirma con la demora", async () => {
+    await startFresh();
+    latestStream().emit("data", {
+      runJob: { jobId: "job-rb-1", jobType: "device_reboot", payload: { when: "now", reason: "KB5122882" } }
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(mocks.armDeviceReboot).toHaveBeenCalledTimes(1);
+    expect((mocks.armDeviceReboot.mock.calls[0] as any[])[0]).toMatchObject({
+      graceMs: 60_000,
+      comment: "Tracenium: restart requested by your IT administrator (KB5122882)"
+    });
+    expect(ackOf("job-rb-1")).toMatchObject({ status: 0, message: "device_reboot scheduled; rebootScheduled=true; rebootInSec=60" });
+  });
+
+  it("⚠️ sin `when` no reinicia: no pasó por la puerta de la ventana", async () => {
+    await startFresh();
+    latestStream().emit("data", { runJob: { jobId: "job-rb-2", jobType: "device_reboot", payload: {} } });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(mocks.armDeviceReboot).not.toHaveBeenCalled();
+    expect(ackOf("job-rb-2")).toMatchObject({ status: 2 });
+  });
+
+  it("si el SO no acepta el reinicio, el job falla (no se da por hecho)", async () => {
+    mocks.armDeviceReboot.mockResolvedValue(false);
+    await startFresh();
+    latestStream().emit("data", {
+      runJob: { jobId: "job-rb-3", jobType: "device_reboot", payload: { when: "maintenance_window" } }
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(ackOf("job-rb-3")).toMatchObject({ status: 2 });
+  });
+
+  it("nunca a mitad de un update del agente: pide reintento", async () => {
+    await startFresh();
+    (ctx as any)._agentUpdateInProgress = true;
+    try {
+      latestStream().emit("data", {
+        runJob: { jobId: "job-rb-4", jobType: "device_reboot", payload: { when: "now" } }
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(mocks.armDeviceReboot).not.toHaveBeenCalled();
+      expect(ackOf("job-rb-4")).toMatchObject({ status: 1 });
+    } finally {
+      (ctx as any)._agentUpdateInProgress = false;
+    }
   });
 });
 
