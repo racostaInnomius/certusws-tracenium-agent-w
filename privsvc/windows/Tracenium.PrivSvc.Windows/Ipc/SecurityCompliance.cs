@@ -153,55 +153,17 @@ public static class SecurityCompliance
         }
     }
 
+    // BitLocker: la forma, y por qué los estados viajan como texto, vive en
+    // BitLockerShape.cs, donde se prueba.
     private static object GetBitlockerStatus()
     {
         try
         {
-            var output = RunPs(
-                "Get-BitLockerVolume | Select-Object MountPoint, VolumeStatus | ConvertTo-Json -Depth 3"
-            );
-
-            if (string.IsNullOrWhiteSpace(output))
-                return new { status = "unknown" };
-
-            List<Dictionary<string, object>>? arr;
-
-            if (output.TrimStart().StartsWith("["))
-            {
-                arr = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(output);
-            }
-            else
-            {
-                var single = JsonSerializer.Deserialize<Dictionary<string, object>>(output);
-                arr = single != null ? new List<Dictionary<string, object>> { single } : null;
-            }
-
-            if (arr == null || arr.Count == 0)
-                return new { status = "unknown" };
-
-            var enabledDrives = arr
-                .Where(v => v.ContainsKey("VolumeStatus") &&
-                            v["VolumeStatus"]?.ToString()?.Contains("FullyEncrypted") == true)
-                .Select(v => v["MountPoint"]?.ToString())
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .ToList();
-
-            double coverage = 0;
-            if (arr.Count > 0)
-            {
-                coverage = (double)enabledDrives.Count / arr.Count;
-            }
-
-            return new
-            {
-                status = enabledDrives.Count > 0 ? "enabled" : "disabled",
-                drives = enabledDrives,
-                coverage
-            };
+            return BitLockerShape.Parse(RunPs(BitLockerShape.Script));
         }
         catch
         {
-            return new { status = "unknown" };
+            return BitLockerShape.Unknown();
         }
     }
 
