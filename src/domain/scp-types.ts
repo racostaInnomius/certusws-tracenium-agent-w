@@ -74,6 +74,11 @@ export type ScpNamespace = {
   shares?: unknown;
   antivirus?: unknown;
   domain?: unknown;
+  // P2-10 (Windows) — AccessPostureShape.cs:
+  //   deviceJoin  { status, azureAdJoined, domainJoined, directoryJoined, tenantName, ... }
+  //   localAdmins { status, count, members: [{ name, class, source }] }
+  deviceJoin?: unknown;
+  localAdmins?: unknown;
   // Platform integrity (Windows). Passed through verbatim from the privsvc;
   // the backend catalog decides pass/fail. Expected shapes (see
   // certusws-tracenium migration 20260708_compliance_tpm_secureboot.sql):

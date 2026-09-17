@@ -77,6 +77,9 @@ public static class SecurityCompliance
                 shares = GetRiskyShares(),
                 antivirus = GetAntivirusStatus(defender),
                 domain = GetDomainAndGpoStatus(),
+                // P2-10 — directorio (Entra ID / AD) y administradores locales.
+                deviceJoin = GetDeviceJoinStatus(),
+                localAdmins = GetLocalAdmins(),
                 // Platform integrity — TPM + UEFI Secure Boot. Consumed by the
                 // backend catalog checks windows.tpm.* / windows.secureboot.*.
                 tpm = GetTpmStatus(),
@@ -667,6 +670,38 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
             appliedComputerGpoScope = gpos.ComputerScope,
             appliedUserGpoScope = gpos.UserScope
         };
+    }
+
+    // Forma y motivos en AccessPostureShape.cs, donde se prueba.
+    private static object GetDeviceJoinStatus()
+    {
+        try
+        {
+            var r = RunProcessWithTimeout(new ProcessStartInfo("dsregcmd", "/status")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }, 20_000);
+            return r.TimedOut ? AccessPostureShape.Unknown() : AccessPostureShape.ParseDsregcmd(r.Stdout);
+        }
+        catch
+        {
+            return AccessPostureShape.Unknown();
+        }
+    }
+
+    private static object GetLocalAdmins()
+    {
+        try
+        {
+            return AccessPostureShape.ParseLocalAdmins(RunPs(AccessPostureShape.LocalAdminsScript));
+        }
+        catch
+        {
+            return AccessPostureShape.Unknown();
+        }
     }
 
     private sealed class AppliedGpos

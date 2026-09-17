@@ -603,6 +603,20 @@ async function collectSoftwareUpdate() {
  * `equals path=accounts.guestEnabled expected=false` pass on a
  * hardened default install.
  */
+/**
+ * `dscl . -read /Groups/admin GroupMembership` → "GroupMembership: root alice".
+ * Sin la clave (grupo sin miembros extra la omite) la lista es vacía; una
+ * salida ilegible o ausente es null.
+ */
+export function parseAdminGroupMembership(output: string | null): string[] | null {
+  if (output === null) return null;
+  const text = output.trim();
+  if (!text) return null;
+  const m = text.match(/^GroupMembership:\s*(.*)$/m);
+  if (!m) return /No such key: GroupMembership/i.test(text) ? [] : null;
+  return m[1].split(/\s+/).map((s) => s.trim()).filter(Boolean);
+}
+
 async function collectAccounts() {
   const guest = await run(
     "/usr/bin/defaults",
@@ -618,8 +632,15 @@ async function collectAccounts() {
   // non-zero exit was treated as "off" (fail-open on a security control).
   const guestEnabled = boolFromDefaultsRead(guest, false);
 
+  // P2-10 — quién está en el grupo admin local: lo que se revisa en una
+  // revisión de accesos privilegiados. Lectura fallida = sin el campo (el
+  // check no se evalúa), nunca "no hay administradores".
+  const admins = await run("/usr/bin/dscl", [".", "-read", "/Groups/admin", "GroupMembership"], 5000);
+  const adminMembers = parseAdminGroupMembership(admins.ok ? admins.output : null);
+
   return {
     guestEnabled,
+    ...(adminMembers ? { adminMembers, adminCount: adminMembers.length } : {}),
     raw: guest.ok ? truncate(guest.output) : undefined
   };
 }

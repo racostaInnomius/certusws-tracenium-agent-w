@@ -166,6 +166,10 @@ export async function collectWindowsScp(ctx: AgentContext): Promise<ScpNamespace
     shares: posture?.shares,
     antivirus: posture?.antivirus ?? posture?.defender,
     domain: posture?.domain,
+    // P2-10 — directorio (Entra ID / AD, por dsregcmd) y miembros del grupo
+    // local de Administradores. Allowlist: si no se nombra, no viaja.
+    deviceJoin: posture?.deviceJoin,
+    localAdmins: posture?.localAdmins,
     // Platform integrity — TPM + UEFI Secure Boot. Forwarded verbatim; absent
     // until the privsvc collector (SecurityCompliance.cs) emits them, in which
     // case the backend catalog checks activate automatically (schema 2.0).
