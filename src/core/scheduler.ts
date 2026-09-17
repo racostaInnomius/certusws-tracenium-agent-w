@@ -16,6 +16,7 @@ import os from "os";
 // Change-detection hash helpers live in namespace-hash.ts so they can
 // be unit-tested without this file's outbox/update-task import graph.
 import { hashNamespace, buildScpStateForHash, buildPmpStateForHash } from "./namespace-hash";
+import { decideComplianceSend } from "./compliance-send-gate";
 import {
   PIPELINE_KEYS,
   capabilitySignature,
@@ -779,12 +780,25 @@ class Scheduler {
 
       namespaces.scp.hasChanges = hasChanges;
 
-      if (!hasChanges) {
+      // P3-11 — sin cambios también se manda una vez al día: el snapshot con
+      // fecha es la evidencia de que el equipo se evaluó. Ver
+      // compliance-send-gate.ts.
+      const complianceGate = decideComplianceSend({
+        hasChanges,
+        lastSentAtMs: Number(outbox.getState("lastSentFactsAt:compliance")),
+        nowMs: Date.now()
+      });
+      if (!complianceGate.send) {
         logger.info("Skipping SCP FACTS enqueue — no changes detected", {
           deviceId: ctx.enrollment.deviceId,
           namespace: "scp"
         });
         return;
+      }
+      if (!hasChanges) {
+        logger.info("Forcing SCP FACTS enqueue — compliance silence exceeded (daily heartbeat)", {
+          deviceId: ctx.enrollment.deviceId
+        });
       }
 
       const facts = await buildDeviceFacts(ctx, namespaces);
