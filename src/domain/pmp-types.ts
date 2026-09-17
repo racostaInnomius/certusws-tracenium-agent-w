@@ -90,6 +90,14 @@ export type PmpNamespace = {
      * Absent on a healthy scan. Never contains anything but diagnostic text.
      */
     note?: string;
+    /**
+     * Reinicio pendiente leído EN VIVO de Windows en este escaneo (WUA
+     * SystemInfo.RebootRequired, CBS RebootPending, WU Auto Update
+     * RebootRequired). Ausente = el PrivSvc no lo leyó (versión anterior).
+     * No confundir con `remediation.rebootRequired`, que es la marca histórica
+     * de la última instalación.
+     */
+    rebootPending?: boolean;
   };
   remediation?: {
     status: PmpRemediationStatus;

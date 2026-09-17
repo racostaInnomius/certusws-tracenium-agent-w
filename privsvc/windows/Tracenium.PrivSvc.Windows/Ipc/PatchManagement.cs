@@ -120,9 +120,24 @@ $scanNote = $(if ($catalogUsable) {
   'Windows Update has no record of a successful sync, so the cached catalogue cannot be trusted; a count of 0 is not evidence the machine is patched.'
 })
 
+# Reinicio pendiente, leido EN VIVO en cada escaneo. Hasta 2026-09-17 no se
+# leia: el agente reenviaba la marca que dejo la ultima instalacion, y nada la
+# borraba al reiniciar. En T111 cuatro servidores ya reiniciados salian
+# 'reboot pending'. Contrastado a mano en los 6 marcados: estas tres senales
+# coincidieron siempre entre si y con la realidad.
+#
+# PendingFileRenameOperations queda FUERA a proposito: salia True en MSIG-TSPDC
+# y MSIG-WSUS sin reinicio pendiente (lo escriben antivirus e instaladores).
+$rebootWua = $(try { [bool](New-Object -ComObject Microsoft.Update.SystemInfo).RebootRequired } catch { $null })
+$rebootCbs = Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending'
+$rebootWu = Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
+$rebootPending = ($rebootWua -eq $true) -or $rebootCbs -or $rebootWu
+
 [pscustomobject]@{
   source = 'windows_update_agent'
   scannedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+  rebootPending = [bool]$rebootPending
+  rebootSignals = [pscustomobject]@{ wua = $rebootWua; cbs = [bool]$rebootCbs; wu = [bool]$rebootWu }
   updateCount = $items.Count
   securityUpdateCount = $securityItems.Count
   searchMode = 'cached'

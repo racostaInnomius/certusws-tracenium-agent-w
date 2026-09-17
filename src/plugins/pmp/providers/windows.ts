@@ -1,3 +1,4 @@
+import os from "os";
 import type { AgentContext } from "../../../core/agent-context";
 import type { PmpNamespace, PmpScanItem, PmpSeverity } from "../../../domain/pmp-types";
 import { loadPmpState } from "../state";
@@ -59,15 +60,46 @@ function normalizePatchItems(items: any[]): PmpScanItem[] {
   }));
 }
 
+/**
+ * ¿Hay un reinicio pendiente DE VERDAD?
+ *
+ * ⚠️ Hasta 2026-09-17 esto era `remediation.rebootRequired`: la marca que dejó
+ * la última instalación en pmp-state.json, que nada borraba al reiniciar. En
+ * T111 cuatro servidores ya reiniciados (MSIG-DOMAIN01, MSIG-FILESHARE,
+ * MSIG-TSPDC, MSIG-WSUS) salían «reboot pending»; Windows decía que no.
+ *
+ *   `live` (PrivSvc nuevo lee WUA + CBS + WU)  → manda
+ *   sin `live` (PrivSvc anterior)              → la marca, salvo que la máquina
+ *                                                arrancara después de instalar
+ *
+ * `remediation.rebootRequired` se sigue mandando tal cual: es el histórico de la
+ * instalación, no el estado de la máquina.
+ */
+export function resolveWindowsRebootPending(input: {
+  live: unknown;
+  remediation: { rebootRequired?: boolean; finishedAtUtc?: string } | null | undefined;
+  /** Hora del último arranque de la MÁQUINA (ms). */
+  bootAtMs: number;
+}): boolean {
+  if (typeof input.live === "boolean") return input.live;
+  if (input.remediation?.rebootRequired !== true) return false;
+  const finishedMs = Date.parse(String(input.remediation.finishedAtUtc ?? ""));
+  if (Number.isFinite(finishedMs) && Number.isFinite(input.bootAtMs) && input.bootAtMs > finishedMs) {
+    return false;
+  }
+  return true;
+}
+
 function deriveOverallStatus(
   scanStatus: "healthy" | "updates_available" | "inventory_only" | "error",
-  remediation: PmpNamespace["remediation"]
+  remediation: PmpNamespace["remediation"],
+  rebootPending: boolean
 ): PmpNamespace["overall"]["status"] {
   if (remediation?.status === "in_progress") {
     return "installing";
   }
 
-  if (remediation?.rebootRequired) {
+  if (rebootPending) {
     return "reboot_required";
   }
 
@@ -95,7 +127,11 @@ function deriveOverallScore(status: PmpNamespace["overall"]["status"]): number {
   }
 }
 
-export async function collectWindowsPmp(ctx: AgentContext): Promise<PmpNamespace> {
+export async function collectWindowsPmp(
+  ctx: AgentContext,
+  /** Uptime de la máquina en segundos. Inyectable en tests. */
+  machineUptimeSeconds: () => number = () => os.uptime()
+): Promise<PmpNamespace> {
   const remediationState = loadPmpState();
   const remediation: NonNullable<PmpNamespace["remediation"]> = {
     status: remediationState.status || "idle",
@@ -162,7 +198,13 @@ export async function collectWindowsPmp(ctx: AgentContext): Promise<PmpNamespace
     };
   }
 
-  const overallStatus = deriveOverallStatus(scanStatus, remediation);
+  const livePending = typeof posture?.rebootPending === "boolean" ? posture.rebootPending : undefined;
+  const rebootPending = resolveWindowsRebootPending({
+    live: livePending,
+    remediation,
+    bootAtMs: Date.now() - machineUptimeSeconds() * 1000
+  });
+  const overallStatus = deriveOverallStatus(scanStatus, remediation, rebootPending);
 
   return {
     schemaVersion: "1.0",
@@ -185,6 +227,9 @@ export async function collectWindowsPmp(ctx: AgentContext): Promise<PmpNamespace
       // fault into "Inventory Only, 0 patches", which looks like a healthy
       // machine with nothing pending.
       note: deriveScanNote(posture),
+      // Sólo cuando el PrivSvc lo leyó en vivo. Ausente = PrivSvc anterior: el
+      // backend aplica entonces su propia regla del arranque posterior.
+      ...(livePending !== undefined ? { rebootPending: livePending } : {}),
       installedPatchCount: Number(posture?.updateCount ?? scanItems.length),
       securityPatchCount: Number(posture?.securityUpdateCount ?? scanItems.length),
       items: scanItems
