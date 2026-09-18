@@ -76,6 +76,35 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_software_baseline_install_id
       ON software_baseline(install_id);
   `);
+
+  // ── Las cuatro columnas de identidad de ADR-0019 F0 ───────────────
+  //
+  // 🔴 Medido en prod el 18-sep (T111, WES-MSIG-RC-JL, agente 1.1.76): 147
+  // mensajes AMP en UNA hora, todos con `software.hasChanges=true` y 98 apps
+  // en `updated`, todas con la misma versión, editor y ruta que la vez
+  // anterior. Cada uno de esos mensajes dispara en el backend una
+  // reevaluación completa del equipo; un solo equipo agotó las 8 conexiones
+  // del pool del tenant (~690 timeouts de conexión en 15 minutos).
+  //
+  // La causa: desde 1.1.65 `isAppUpdated` compara también la identidad
+  // (productCode, uninstallString, quietUninstallString, uninstallKeyPath),
+  // pero esta tabla nunca las guardó. La baseline volvía de SQLite con las
+  // cuatro en `undefined`, el inventario recién recogido SÍ las traía, y la
+  // comparación daba "actualizada" en CADA ciclo, para siempre. El efecto de
+  // una sola vez que describe `software-inventory-delta.ts` se volvió
+  // permanente porque el lado que debía recordar el valor no existía.
+  //
+  // El fichero ya existe en cada equipo, así que las columnas se añaden con
+  // ALTER sobre lo que haya (el mismo patrón que `printer_baseline`). Tras
+  // actualizar, la primera pasada marca las apps win32 como `updated` una vez
+  // —ahí es cuando se rellenan— y a partir de la segunda converge.
+  const cols = new Set(
+    (db.prepare(`PRAGMA table_info(software_baseline)`).all() as Array<{ name: string }>).map(c => c.name)
+  );
+  if (!cols.has("uninstall_string")) db.exec(`ALTER TABLE software_baseline ADD COLUMN uninstall_string TEXT`);
+  if (!cols.has("quiet_uninstall_string")) db.exec(`ALTER TABLE software_baseline ADD COLUMN quiet_uninstall_string TEXT`);
+  if (!cols.has("product_code")) db.exec(`ALTER TABLE software_baseline ADD COLUMN product_code TEXT`);
+  if (!cols.has("uninstall_key_path")) db.exec(`ALTER TABLE software_baseline ADD COLUMN uninstall_key_path TEXT`);
 }
 
 /**
@@ -95,14 +124,31 @@ export function loadSoftwareBaseline(): SoftwareApplication[] {
         source,
         install_location as installLocation,
         package_family_name as packageFamilyName,
+        uninstall_string as uninstallString,
+        quiet_uninstall_string as quietUninstallString,
+        product_code as productCode,
+        uninstall_key_path as uninstallKeyPath,
         detected_at_utc as detectedAtUtc
       FROM software_baseline
       ORDER BY install_id
       `
     )
-    .all();
+    .all() as any[];
 
-  return rows as SoftwareApplication[];
+  // SQLite devuelve NULL donde el tipo dice `string | undefined`. La
+  // diferencia importa: `undefined` es lo que trae un origen que no sabe
+  // desinstalar (pkgutil, dpkg…), y es con lo que se compara el delta.
+  return rows.map(r => ({
+    ...r,
+    version: r.version ?? undefined,
+    publisher: r.publisher ?? undefined,
+    installLocation: r.installLocation ?? undefined,
+    packageFamilyName: r.packageFamilyName ?? undefined,
+    uninstallString: r.uninstallString ?? undefined,
+    quietUninstallString: r.quietUninstallString ?? undefined,
+    productCode: r.productCode ?? undefined,
+    uninstallKeyPath: r.uninstallKeyPath ?? undefined
+  })) as SoftwareApplication[];
 }
 
 /**
@@ -134,6 +180,10 @@ export function upsertSoftwareBaseline(apps: SoftwareApplication[]) {
       source,
       install_location,
       package_family_name,
+      uninstall_string,
+      quiet_uninstall_string,
+      product_code,
+      uninstall_key_path,
       detected_at_utc
     ) VALUES (
       @installId,
@@ -143,6 +193,10 @@ export function upsertSoftwareBaseline(apps: SoftwareApplication[]) {
       @source,
       @installLocation,
       @packageFamilyName,
+      @uninstallString,
+      @quietUninstallString,
+      @productCode,
+      @uninstallKeyPath,
       @detectedAtUtc
     )
     ON CONFLICT(install_id) DO UPDATE SET
@@ -152,6 +206,10 @@ export function upsertSoftwareBaseline(apps: SoftwareApplication[]) {
       source = excluded.source,
       install_location = excluded.install_location,
       package_family_name = excluded.package_family_name,
+      uninstall_string = excluded.uninstall_string,
+      quiet_uninstall_string = excluded.quiet_uninstall_string,
+      product_code = excluded.product_code,
+      uninstall_key_path = excluded.uninstall_key_path,
       detected_at_utc = COALESCE(software_baseline.detected_at_utc, excluded.detected_at_utc)
   `);
 
@@ -170,6 +228,10 @@ export function upsertSoftwareBaseline(apps: SoftwareApplication[]) {
         source: app.source,
         installLocation: app.installLocation ?? null,
         packageFamilyName: app.packageFamilyName ?? null,
+        uninstallString: app.uninstallString ?? null,
+        quietUninstallString: app.quietUninstallString ?? null,
+        productCode: app.productCode ?? null,
+        uninstallKeyPath: app.uninstallKeyPath ?? null,
         detectedAtUtc: app.detectedAtUtc
       });
     }
