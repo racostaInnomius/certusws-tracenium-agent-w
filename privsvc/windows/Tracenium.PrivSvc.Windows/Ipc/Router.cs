@@ -190,6 +190,9 @@ public sealed class Router
             "asp.ad.collect" => AspCollector.HandleCollect(req),
             // ADR-0023 — impresoras publicadas en AD (AMP), script firmado por -File.
             "amp.ad.printers" => AdPrinters.Handle(req),
+            // Cobertura — objetos de equipo de AD: qué equipos existen y cuáles
+            // no tienen agente. Mismo colector designado, mismo mecanismo.
+            "amp.ad.computers" => AdComputers.Handle(req),
 
             // Crypto
             // Infrastructure Gateway credential custody (ADR-0001). PrivSvc holds

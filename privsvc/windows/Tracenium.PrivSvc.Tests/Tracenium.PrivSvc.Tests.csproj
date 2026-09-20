@@ -49,6 +49,7 @@
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\AspCollectorShape.cs" />
     <!-- ADR-0023 — validación y argumentos de amp.ad.printers. Puro. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\AdPrintersShape.cs" />
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\AdComputersShape.cs" />
     <!-- Remediacion generica (registro/secedit): el parseo y la validacion de
          las escrituras, las guardas y la plantilla .inf son puros
          (System.Text.Json); la escritura real queda en PmpRemediation.cs. -->

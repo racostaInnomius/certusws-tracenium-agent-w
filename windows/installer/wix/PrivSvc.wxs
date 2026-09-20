@@ -135,6 +135,19 @@
 
       </Component>
 
+      <!-- Cobertura: los objetos de equipo de Active Directory. Mismo colector
+           designado y mismas reglas que el script de impresoras. -->
+      <Component Id="PrivSvcAdComputersComponent"
+                 Directory="PRIVSVC_SCRIPTS_DIR"
+                 Guid="*">
+
+        <File Id="AdComputersScript"
+              Source="binaries\PrivSvc\Scripts\ad-computers.ps1"
+              KeyPath="yes"
+              Vital="yes"/>
+
+      </Component>
+
       <!-- ============================= -->
       <!-- Root CA Asset -->
       <!-- ============================= -->

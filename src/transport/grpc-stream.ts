@@ -3,6 +3,7 @@ import { AgentContext } from "../core/agent-context";
 import { createGrpcClient } from "./grpc-client";
 import { outbox } from "../queue/sqlite-outbox";
 import { AD_PRINTERS_JOB_TYPE, runAdPrintersJob } from "../plugins/amp/ad-printers-job";
+import { AD_DISCOVERY_JOB_TYPE, runAdDiscoveryJob } from "../plugins/amp/ad-discovery-job";
 import { PolicyStore } from "../core/policy-store";
 import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { Namespaces, DeviceFacts } from "../domain/device-facts";
@@ -1434,6 +1435,23 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
     // en plugins/amp/ad-printers-job.ts; aquí sólo se le dan sus dependencias.
     case AD_PRINTERS_JOB_TYPE: {
       return runAdPrintersJob(
+        {
+          platform: process.platform,
+          isCollector: () => ctx.policyRuntime.isAdPrinterCollector(),
+          call: (req) => ctx.priv.call(req as any),
+          enqueue: (p) => outbox.enqueue({ type: "FACTS_SNAPSHOT", payload: p }),
+          meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId },
+          logger: ctx.logger,
+        },
+        { jobId, payload }
+      );
+    }
+
+    // Cobertura — objetos de equipo de Active Directory. Misma forma que el job
+    // de impresoras y el MISMO rol de colector: aquí sólo se le dan sus
+    // dependencias.
+    case AD_DISCOVERY_JOB_TYPE: {
+      return runAdDiscoveryJob(
         {
           platform: process.platform,
           isCollector: () => ctx.policyRuntime.isAdPrinterCollector(),

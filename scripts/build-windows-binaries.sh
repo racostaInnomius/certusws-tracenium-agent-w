@@ -296,11 +296,12 @@ distribute_exe() {
 # Authenticode antes del MSI. Fuente única: los .ps1 del proyecto.
 #   asp-ad-collector.ps1 — ADR-0022, Assessment Suite
 #   ad-printers.ps1      — ADR-0023, impresoras publicadas en AD (AMP)
+#   ad-computers.ps1     — Cobertura, objetos de equipo de AD (AMP)
 stage_privsvc_scripts() {
   arch="$1"
   target="$STAGE_BASE/$arch/PrivSvc/Scripts"
   mkdir -p "$target"
-  for name in asp-ad-collector.ps1 ad-printers.ps1; do
+  for name in asp-ad-collector.ps1 ad-printers.ps1 ad-computers.ps1; do
     src="$AGENT_REPO_DIR/privsvc/windows/Tracenium.PrivSvc.Windows/Scripts/$name"
     if [ ! -f "$src" ]; then
       echo "ERROR: PrivSvc script not found at: $src" >&2

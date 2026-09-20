@@ -71,6 +71,13 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
     </Content>
+    <!-- Cobertura — lectura de los objetos de equipo de AD. Mismas reglas: en
+         disco junto al binario, firmado (release.yml firma toda la carpeta
+         Scripts con filtro ps1), nunca embebido ni codificado. -->
+    <Content Include="Scripts\ad-computers.ps1">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
     <Protobuf Include="..\..\..\proto\controlplane.proto"
               ProtoRoot="../../../proto"
               GrpcServices="Client" />

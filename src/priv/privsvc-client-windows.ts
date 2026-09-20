@@ -136,6 +136,11 @@ export function getTimeoutForMethod(method: string): number {
     // 60 s, va al carril lento.
     case "amp.ad.printers":
       return 150 * 1000;
+    // Cobertura — objetos de equipo de AD. Mismo handler (120 s) y mismo
+    // carril lento que la lectura de impresoras: un AD grande tarda más que
+    // 21 colas, pero el techo lo pone el handler, no esto.
+    case "amp.ad.computers":
+      return 150 * 1000;
     case "patch.install":
       return 95 * 60 * 1000; // privsvc: 90min (Windows) + 5min margin
     case "patch.scan":
