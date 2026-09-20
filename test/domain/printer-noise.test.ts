@@ -33,6 +33,8 @@ describe("printerNoiseKind — virtuales, sólo por puerto", () => {
     ["AnyDesk Printer", "AnyDesk v4 Printer Driver", "AD_Port"],
     ["TSPrint PDF", "TSPrintDRV", "TSPRINTPort:"],
     ["PDF", "CUPS-PDF", "cups-pdf:/"],
+    // Control remoto: imprime al equipo de quien está conectado, no en papel.
+    ["RustDesk Printer", "RustDesk v4 Printer Driver", "RustDesk Printer"],
   ])("%s", (name, driver, port) => {
     expect(printerNoiseKind(cola(name, driver, port))).toBe("virtual");
   });

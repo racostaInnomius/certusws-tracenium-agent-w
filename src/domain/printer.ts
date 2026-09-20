@@ -248,4 +248,4 @@ export function printerNoiseKind(
 }
 
 const VIRTUAL_PORT =
-  /^(portprompt:|nul:?$|shrfax:|file:|xpsport:|onenote|microsoft\.office\.onenote|pdf[a-z]*:|cups-pdf:|ad_port$|tsprintport:|nitro pdf.*port:?$|[a-z]:\\|documents\\|.*fax_port$)/i;
+  /^(portprompt:|nul:?$|shrfax:|file:|xpsport:|onenote|microsoft\.office\.onenote|pdf[a-z]*:|cups-pdf:|ad_port$|tsprintport:|nitro pdf.*port:?$|rustdesk|teamviewer|splashtop|[a-z]:\\|documents\\|.*fax_port$)/i;
