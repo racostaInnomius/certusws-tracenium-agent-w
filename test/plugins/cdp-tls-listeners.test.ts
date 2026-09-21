@@ -92,6 +92,27 @@ describe("parseNetstat", () => {
     expect(parseNetstat(out).sort((a, b) => a - b)).toEqual([443, 5985]);
   });
 
+  it("parses Spanish Windows output, where State reads ESCUCHANDO", () => {
+    const out = [
+      "Conexiones activas",
+      "",
+      "  Proto  Dirección local          Dirección remota        Estado           PID",
+      "  TCP    0.0.0.0:135            0.0.0.0:0              ESCUCHANDO       1044",
+      "  TCP    127.0.0.1:8443         0.0.0.0:0              ESCUCHANDO       2200",
+      "  TCP    10.0.0.12:3389         10.0.0.50:51544        ESTABLECIDO      1288",
+      "  TCP    10.0.0.12:5000         0.0.0.0:0              ESCUCHANDO       900",
+      "  TCP    [::]:445               [::]:0                 ESCUCHANDO       4",
+      "  TCP    [::1]:9443             [::]:0                 ESCUCHANDO       321"
+    ].join("\r\n");
+    // 5000 is bound to an external interface only — not loopback-reachable.
+    expect(parseNetstat(out).sort((a, b) => a - b)).toEqual([135, 445, 8443, 9443]);
+  });
+
+  it("skips Windows rows with a real peer, whatever the state says", () => {
+    const out = "  TCP    127.0.0.1:49670        127.0.0.1:443          ESTABLECIDO";
+    expect(parseNetstat(out)).toEqual([]);
+  });
+
   it("returns nothing for empty or malformed input", () => {
     expect(parseNetstat("")).toEqual([]);
     expect(parseNetstat("no listeners here")).toEqual([]);

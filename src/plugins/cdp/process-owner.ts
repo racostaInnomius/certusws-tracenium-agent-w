@@ -27,6 +27,7 @@ import fs from "fs";
 import os from "os";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { isWindowsTcpListener } from "./listening-ports";
 
 const execFileAsync = promisify(execFile);
 
@@ -223,15 +224,19 @@ export function parsePsPaths(output: string): Map<number, string> {
 
 // ── Windows ───────────────────────────────────────────────────────
 
-/** Parse `netstat -ano` — the last column is the owning PID. */
+/**
+ * Parse `netstat -ano` — the last column is the owning PID. Listeners are
+ * picked by their `0.0.0.0:0` / `[::]:0` remote column, not the State
+ * word, which Windows localizes (ESCUCHANDO on Spanish Windows).
+ */
 export function parseNetstatPids(output: string): Map<number, number> {
   const out = new Map<number, number>();
 
-  for (const raw of String(output).split("\n")) {
+  for (const raw of String(output).split(/\r?\n/)) {
     const line = raw.trim();
-    if (!line || !/LISTENING/i.test(line)) continue;
+    if (!line) continue;
     const cols = line.split(/\s+/);
-    if (cols.length < 5) continue;
+    if (cols.length < 5 || !isWindowsTcpListener(cols)) continue;
 
     const local = cols[1];
     const pid = Number(cols[cols.length - 1]);

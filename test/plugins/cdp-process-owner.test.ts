@@ -73,6 +73,30 @@ describe("parseNetstatPids (Windows)", () => {
     expect(out.get(5985)).toBe(1234);
     expect(out.has(49670)).toBe(false);
   });
+
+  it("finds listeners on Spanish Windows, where State reads ESCUCHANDO", () => {
+    // Real `netstat -ano -p TCP` layout from an es-MX Windows host (CRLF).
+    const ES = [
+      "Conexiones activas",
+      "",
+      "  Proto  Dirección local          Dirección remota        Estado           PID",
+      "  TCP    0.0.0.0:135            0.0.0.0:0              ESCUCHANDO       1044",
+      "  TCP    127.0.0.1:8443         0.0.0.0:0              ESCUCHANDO       2200",
+      "  TCP    10.0.0.12:3389         10.0.0.50:51544        ESTABLECIDO      1288",
+      "  TCP    [::]:445               [::]:0                 ESCUCHANDO       4"
+    ].join("\r\n");
+    const out = parseNetstatPids(ES);
+    expect(out.get(135)).toBe(1044);
+    expect(out.get(8443)).toBe(2200);
+    expect(out.get(445)).toBe(4);
+    expect(out.has(3389)).toBe(false);
+    expect(out.size).toBe(3);
+  });
+
+  it("does not depend on the state word at all (German ABHÖREN)", () => {
+    const DE = "  TCP    127.0.0.1:9443         0.0.0.0:0              ABHÖREN          777";
+    expect(parseNetstatPids(DE).get(9443)).toBe(777);
+  });
 });
 
 describe("parseTasklist (Windows)", () => {

@@ -73,20 +73,45 @@ export function parseProcNetTcp(content: string): number[] {
   return ports;
 }
 
+/**
+ * Is this whitespace-split `netstat -an[o]` row a Windows TCP listener?
+ *
+ * Windows localizes the State column (LISTENING / ESCUCHANDO / ABHÖREN /
+ * À L'ÉCOUTE …), so the state word cannot be trusted. The shape can: a
+ * listening socket has no peer, and Windows prints that as `0.0.0.0:0`
+ * or `[::]:0` in every language. Same rule as the live-query probe
+ * (parseWindowsNetstatListeners in live-query/probes.ts).
+ *
+ * The proto column is exactly `TCP` on Windows (v4 and v6 alike); BSD
+ * prints `tcp4` / `tcp6` / `tcp46`, so those rows never match here.
+ */
+export function isWindowsTcpListener(cols: string[]): boolean {
+  if (cols.length < 3 || cols[0] !== "TCP") return false;
+  const remote = cols[2];
+  return remote === "0.0.0.0:0" || remote === "[::]:0";
+}
+
 /** Parse `netstat -an` output (macOS BSD and Windows formats). */
 export function parseNetstat(output: string): number[] {
   const ports: number[] = [];
 
-  for (const raw of String(output).split("\n")) {
+  for (const raw of String(output).split(/\r?\n/)) {
     const line = raw.trim();
-    if (!line || !/LISTEN/i.test(line)) continue;
+    if (!line) continue;
 
     const cols = line.split(/\s+/);
-    // BSD: "tcp4  0  0  127.0.0.1.8443  *.*  LISTEN"
-    // Win: "  TCP    0.0.0.0:443    0.0.0.0:0    LISTENING"
-    const local = cols.find(
-      (c) => /[.:]\d+$/.test(c) && !/^LISTEN/i.test(c)
-    );
+    let local: string | undefined;
+    if (cols[0] === "TCP") {
+      // Win: "  TCP    0.0.0.0:443    0.0.0.0:0    LISTENING" — state is
+      // localized, so decide by the remote column instead.
+      if (!isWindowsTcpListener(cols)) continue;
+      local = cols[1];
+    } else {
+      // BSD: "tcp4  0  0  127.0.0.1.8443  *.*  LISTEN" — macOS does not
+      // localize netstat's state column.
+      if (!/LISTEN/i.test(line)) continue;
+      local = cols.find((c) => /[.:]\d+$/.test(c) && !/^LISTEN/i.test(c));
+    }
     if (!local) continue;
 
     const sep = Math.max(local.lastIndexOf(":"), local.lastIndexOf("."));
