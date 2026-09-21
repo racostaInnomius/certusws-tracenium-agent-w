@@ -759,6 +759,31 @@ class Scheduler {
     this.complianceStartedAt = Date.now();
 
     try {
+      // ADR-0027 — integridad de ficheros. Va ANTES de SCP y aparte: viaja en
+      // su propio mensaje, y el snapshot de SCP de abajo puede salir temprano
+      // (sin cambios) sin que eso deje la vigilancia de ficheros sin correr.
+      // Fail-soft: un disco lento o un permiso raro no tumban el cumplimiento.
+      try {
+        const { runFileIntegrityPass, realFs } = await import("../plugins/scp/file-integrity-pipeline");
+        const { loadFileIntegrityBaseline, replaceFileIntegrityBaseline } = await import("../domain/file-integrity-baseline-repo");
+        const { FACTS_SCHEMA_VERSION } = await import("../update/update-source-report");
+        const fim = await runFileIntegrityPass({
+          platform: os.platform(),
+          policy: ctx.policyRuntime.getFileIntegrity(),
+          fs: realFs,
+          now: Date.now(),
+          getState: (k) => outbox.getState(k),
+          setState: (k, v) => outbox.setState(k, v),
+          enqueue: (payload) => outbox.enqueue({ type: "FACTS_SNAPSHOT", payload: payload as any }),
+          loadBaseline: loadFileIntegrityBaseline,
+          replaceBaseline: replaceFileIntegrityBaseline,
+          schemaVersion: FACTS_SCHEMA_VERSION,
+        });
+        if (fim.sent) logger.info("FIM facts enqueued", { kind: fim.kind, scope: fim.scope, files: fim.files });
+      } catch (fimErr: any) {
+        logger.warn("File integrity pass failed (non-fatal)", { error: fimErr?.message || String(fimErr) });
+      }
+
       logger.info("Collecting SCP facts...");
 
       const namespaces = {} as Namespaces;

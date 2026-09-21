@@ -1,5 +1,6 @@
 // src/core/policy-runtime.ts
 import { parseExtensionPolicy, type ExtensionPolicy } from "../domain/extension-policy";
+import { sanitizeFileIntegrityPolicy, type FileIntegrityPolicy } from "../domain/file-integrity-policy";
 import { sanitizeHostList } from "./host-match";
 import { parseProbeTarget, probeTargetKey, type ProbeTarget } from "../domain/probe-target";
 import { EventEmitter } from "events";
@@ -72,6 +73,8 @@ export type RuntimePolicy = {
      *  lista cerrada del PrivSvc de macOS (pref, pmset, launchctl,
      *  systemsetup, mac, authdb, file, files, lines). */
     macosProbes?: string[];
+    /** ADR-0027 — qué ficheros vigilar. null/ausente = el tenant no vigila nada. */
+    fileIntegrity?: FileIntegrityPolicy | null;
   };
   patch?: {
     intervalSeconds?: number;
@@ -890,6 +893,11 @@ export class PolicyRuntime extends EventEmitter {
     return this.policy.compliance?.registryProbes ?? [];
   }
 
+  /** ADR-0027 — la vigilancia de ficheros declarada, o null si no hay. */
+  getFileIntegrity(): FileIntegrityPolicy | null {
+    return this.policy.compliance?.fileIntegrity ?? null;
+  }
+
   getRegistryUserProbes(): string[] {
     return this.policy.compliance?.registryUserProbes ?? [];
   }
@@ -1143,7 +1151,10 @@ export class PolicyRuntime extends EventEmitter {
       registryProbes: sanitizeRegistryProbes(policy.compliance?.registryProbes),
       registryUserProbes: sanitizeRegistryUserProbes(policy.compliance?.registryUserProbes),
       linuxProbes: sanitizeLinuxProbes(policy.compliance?.linuxProbes),
-      macosProbes: sanitizeMacosProbes(policy.compliance?.macosProbes)
+      macosProbes: sanitizeMacosProbes(policy.compliance?.macosProbes),
+      // ADR-0027. Mismo motivo que las sondas: sin nombrarlo aquí, el merge lo
+      // tira y el agente no vigila nada aunque el tenant lo haya declarado.
+      fileIntegrity: sanitizeFileIntegrityPolicy((policy.compliance as any)?.fileIntegrity)
     };
     const mergedPatch = {
       intervalSeconds:
