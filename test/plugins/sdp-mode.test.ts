@@ -9,6 +9,7 @@ import {
   postDetectFailureReason,
   identityForUninstall,
   skipIsTransient,
+  isPermanentUninstallError,
 } from "../../src/plugins/sdp/mode";
 
 describe("parseMode", () => {
@@ -179,5 +180,26 @@ describe("identityForUninstall", () => {
     expect(identityForUninstall(undefined)).toBeNull();
     // registry_uninstall with neither productCode nor displayNameLike
     expect(identityForUninstall({ type: "registry_uninstall" })).toBeNull();
+  });
+});
+
+describe("isPermanentUninstallError", () => {
+  // ⚠️ Las negativas de seguridad de la privsvc de Linux no se arreglan
+  // reintentando: como `failed`, el operador reintentaría y recibiría la misma.
+  it("⭐ las negativas de la simulación de Linux son permanentes", () => {
+    expect(isPermanentUninstallError("would_remove_dependents")).toBe(true);
+    expect(isPermanentUninstallError("uninstall_simulation_unreadable")).toBe(true);
+  });
+
+  it("mantiene las que ya lo eran", () => {
+    for (const c of ["format_unsupported", "uninstall_no_identity", "identity_not_found"]) {
+      expect(isPermanentUninstallError(c)).toBe(true);
+    }
+  });
+
+  it("un fallo corriente o un timeout se pueden reintentar", () => {
+    for (const c of ["install_failed", "uninstall_failed", "install_timeout", undefined, null, ""]) {
+      expect(isPermanentUninstallError(c)).toBe(false);
+    }
   });
 });

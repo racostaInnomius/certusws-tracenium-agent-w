@@ -44,6 +44,13 @@ import { logger } from "./logger";
 import { DATA_DIR, certPaths } from "./paths";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
+import {
+  dependentsMessage,
+  isPackageName,
+  judgeAptSimulation,
+  judgeDnfSimulation,
+  type SimulationVerdict,
+} from "./uninstall-simulation";
 
 const execFileAsync = promisify(execFile);
 
@@ -1013,10 +1020,60 @@ export async function handleSdpVerifySignature(req: PrivSvcRequest): Promise<Pri
 //   debian → apt-get remove -y <name>
 //   rhel   → dnf remove -y <name>   (yum fallback on RHEL 7)
 //
-// `packageName` comes from a validated catalog rule (dpkg-query / rpm -q name),
-// so it can't carry shell metacharacters — but we exec via execFile (no shell)
-// anyway. A name the package DB doesn't know makes apt/dnf exit non-zero, which
-// the agent's post-detect turns into a clear "still present"/failed outcome.
+// ⚠️ Y SIEMPRE SIMULANDO ANTES (ver uninstall-simulation.ts): `remove -y` se
+// lleva todo lo que depende del paquete sin preguntar.
+//
+// `packageName` ya no sale sólo de una regla de catálogo: desde ADR-0019 puede
+// venir del INVENTARIO, así que se valida contra la forma de un nombre de
+// paquete (`isPackageName`) antes de pasarlo a nada. Se ejecuta con execFile
+// (sin shell), pero un nombre que empiece por «-» sería una OPCIÓN para apt.
+
+/**
+ * Pregunta al gestor de paquetes qué se llevaría la desinstalación, sin
+ * ejecutarla. La decisión la toma `uninstall-simulation.ts`; aquí sólo se
+ * lanza el comando y se recoge la salida.
+ *
+ * ⚠️ LANG=C: los dos intérpretes leen frases en inglés («Remv», «Removing
+ * dependent packages:»). En otro idioma la salida no se entiende y el veredicto
+ * es rechazar — correcto, pero sería rechazar todo en un servidor en español.
+ */
+async function simulateUninstall(format: "deb" | "rpm", packageName: string): Promise<SimulationVerdict> {
+  const env = { ...process.env, DEBIAN_FRONTEND: "noninteractive", LANG: "C", LC_ALL: "C" };
+  if (format === "deb") {
+    try {
+      const { stdout, stderr } = await execFileAsync("/usr/bin/apt-get", ["-s", "remove", packageName], {
+        timeout: 120_000,
+        maxBuffer: 16 * 1024 * 1024,
+        env,
+      });
+      return judgeAptSimulation(packageName, `${stdout}\n${stderr}`, 0);
+    } catch (err: any) {
+      const code = Number.isFinite(Number(err?.code)) ? Number(err.code) : 1;
+      return judgeAptSimulation(packageName, `${err?.stdout ?? ""}\n${err?.stderr ?? ""}`, code);
+    }
+  }
+
+  const dnfBin = fs.existsSync("/usr/bin/dnf")
+    ? "/usr/bin/dnf"
+    : fs.existsSync("/usr/bin/yum")
+      ? "/usr/bin/yum"
+      : null;
+  if (!dnfBin) {
+    return { ok: false, code: "uninstall_simulation_unreadable", detail: "no dnf or yum binary found in /usr/bin" };
+  }
+  try {
+    const { stdout, stderr } = await execFileAsync(dnfBin, ["remove", "--assumeno", packageName], {
+      timeout: 120_000,
+      maxBuffer: 16 * 1024 * 1024,
+      env,
+    });
+    return judgeDnfSimulation(packageName, `${stdout}\n${stderr}`);
+  } catch (err: any) {
+    // Con --assumeno, salir con 1 es lo NORMAL cuando hay transacción: la
+    // salida se juzga igual. Un timeout no deja salida y acaba en «ilegible».
+    return judgeDnfSimulation(packageName, `${err?.stdout ?? ""}\n${err?.stderr ?? ""}`);
+  }
+}
 
 async function runDebUninstaller(packageName: string, timeoutSeconds: number): Promise<InstallRunResult> {
   const start = Date.now();
@@ -1087,6 +1144,9 @@ export async function handleSdpUninstall(req: PrivSvcRequest): Promise<PrivSvcRe
     // defend in depth. Permanent: retrying won't grow a package name.
     return fail(req.id, "identity_not_found", "uninstall requires a packageName (dpkg_installed/rpm_installed rule)");
   }
+  if (!isPackageName(packageName)) {
+    return fail(req.id, "identity_not_found", `"${packageName.slice(0, 80)}" is not a valid package name`);
+  }
 
   const distro = detectFamily();
   if (format === "deb" && distro.family !== "debian") {
@@ -1096,14 +1156,51 @@ export async function handleSdpUninstall(req: PrivSvcRequest): Promise<PrivSvcRe
     return fail(req.id, "format_unsupported", `rpm uninstall on non-rpm family (${distro.family})`);
   }
 
+  if (format !== "deb" && format !== "rpm") {
+    return fail(req.id, "format_unsupported", `format ${format} not supported for uninstall on linux`);
+  }
+
+  // ⚠️ SIMULAR ANTES DE EJECUTAR. `remove -y` se lleva en silencio todo lo que
+  // depende del paquete; ver uninstall-simulation.ts. Si la transacción toca
+  // algo más que el objetivo, no se ejecuta nada.
+  const verdict = await simulateUninstall(format, packageName);
+  if (!verdict.ok) {
+    logger.warn("sdp_uninstall_refused", {
+      packageId,
+      packageName,
+      format,
+      code: verdict.code,
+      dependents: verdict.code === "would_remove_dependents" ? verdict.dependents.slice(0, 50) : undefined,
+      detail: verdict.code === "uninstall_simulation_unreadable" ? verdict.detail : undefined,
+    });
+    return verdict.code === "would_remove_dependents"
+      ? fail(req.id, "would_remove_dependents", dependentsMessage(packageName, verdict.dependents))
+      : fail(
+          req.id,
+          "uninstall_simulation_unreadable",
+          `Could not tell what removing ${packageName} would take with it (${verdict.detail}). Nothing was uninstalled.`
+        );
+  }
+  if (verdict.kind === "not_installed") {
+    // Nada que quitar: forma de éxito, y el post-detect del agente lo confirma.
+    return success(req.id, {
+      exitCode: 0,
+      stderrExcerpt: `${packageName} is not installed`,
+      durationMs: 0,
+    });
+  }
+
   let result: InstallRunResult;
   try {
-    if (format === "deb") {
-      result = await runDebUninstaller(packageName, timeoutSeconds);
-    } else if (format === "rpm") {
-      result = await runRpmUninstaller(packageName, timeoutSeconds);
-    } else {
-      return fail(req.id, "format_unsupported", `format ${format} not supported for uninstall on linux`);
+    result = format === "deb"
+      ? await runDebUninstaller(packageName, timeoutSeconds)
+      : await runRpmUninstaller(packageName, timeoutSeconds);
+    if (verdict.unusedDependencies.length > 0) {
+      // Se dice, aunque sea la limpieza normal de dnf: el operador pidió un
+      // paquete y ve cuántos más se fueron y cuáles.
+      result.stderrExcerpt =
+        `also removed ${verdict.unusedDependencies.length} unused dependenc(ies): ` +
+        `${verdict.unusedDependencies.slice(0, 10).join(", ")}\n${result.stderrExcerpt ?? ""}`.trim();
     }
   } catch (err: any) {
     if (err?.code === "uninstall_timeout") {

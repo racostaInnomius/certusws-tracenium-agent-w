@@ -39,6 +39,7 @@ import {
   postDetectIsFailure,
   postDetectFailureReason,
   identityForUninstall,
+  isPermanentUninstallError,
 } from "./mode";
 import { evaluateSignatureGate, normalizeVerifyResponse } from "./signature-gate";
 import { decideReboot, shouldSkipPostDetect, withRebootExitCodes } from "./reboot";
@@ -493,10 +494,7 @@ export async function runSoftwareInstall(
 
       if (!runResp?.ok) {
         const errCode = (runResp as any)?.error?.code || "uninstall_failed";
-        const isPermanent =
-          errCode === "format_unsupported" ||
-          errCode === "uninstall_no_identity" ||
-          errCode === "identity_not_found";
+        const isPermanent = isPermanentUninstallError(errCode);
         outcome = errCode === "install_timeout" || errCode === "uninstall_timeout"
           ? "timed_out"
           : isPermanent ? "rejected" : "failed";

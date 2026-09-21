@@ -179,3 +179,24 @@ export function identityForUninstall(rule: unknown): UninstallIdentity | null {
       return null;
   }
 }
+
+/**
+ * Errores de `sdp.uninstall` que reintentar no arregla → `rejected`, no `failed`.
+ *
+ * ⚠️ `would_remove_dependents` y `uninstall_simulation_unreadable` son
+ * NEGATIVAS DE SEGURIDAD de la privsvc de Linux (se llevaría otros paquetes, o
+ * no se pudo saber cuáles). Como `failed` se leerían como «algo falló, vuelve a
+ * probar», y el reintento daría exactamente la misma negativa. Lo que cambia
+ * el resultado es que un humano decida sobre los paquetes afectados.
+ */
+const PERMANENT_UNINSTALL_ERRORS: ReadonlySet<string> = new Set([
+  "format_unsupported",
+  "uninstall_no_identity",
+  "identity_not_found",
+  "would_remove_dependents",
+  "uninstall_simulation_unreadable",
+]);
+
+export function isPermanentUninstallError(code: unknown): boolean {
+  return PERMANENT_UNINSTALL_ERRORS.has(String(code ?? ""));
+}
