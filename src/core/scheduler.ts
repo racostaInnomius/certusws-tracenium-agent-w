@@ -12,6 +12,8 @@ import type { PmpNamespace } from "../domain/pmp-types";
 import type { ScpNamespace } from "../domain/scp-types";
 import { runUpdateTask } from "../update/update-task";
 import os from "os";
+import { DexCollector, defaultMemPct, defaultSourceDeps } from "../plugins/dex/dex-collector";
+import { readCpuTimes } from "../plugins/dex/dex-windows";
 
 // Change-detection hash helpers live in namespace-hash.ts so they can
 // be unit-tested without this file's outbox/update-task import graph.
@@ -182,6 +184,13 @@ class Scheduler {
   // disk says "no changes" (e.g. no apps added/removed between runs).
   private initialInventorySent: boolean = false;
   /**
+   * ADR-0030 — experiencia del equipo. Va aparte de los pipelines del plan:
+   * tiene dos ritmos (muestra por minuto, envío por hora), no pasa por el
+   * carril del PrivSvc y no depende de intervalos de la política; se apaga
+   * solo cuando AMP no está activo.
+   */
+  private dex: DexCollector | null = null;
+  /**
    * Lo que está armado ahora mismo, y la firma de plugins+módulos que se
    * reportó. Contra esto se compara cada evento de policy: ver pipeline-plan.ts.
    */
@@ -213,6 +222,7 @@ class Scheduler {
     await this.runInventory(ctx);
 
     this.startPipelines(ctx);
+    this.startDex(ctx);
 
     // --- dynamic policy bindings ---
     //
@@ -279,8 +289,32 @@ class Scheduler {
     }
   }
 
+  private startDex(ctx: AgentContext) {
+    this.dex?.stop();
+    try {
+      this.dex = new DexCollector({
+        enabled: () => ctx.policyRuntime.pluginEnabled("amp"),
+        nowMs: () => Date.now(),
+        readCpu: () => readCpuTimes(),
+        readMemPct: () => defaultMemPct(),
+        sources: defaultSourceDeps(),
+        getState: (k) => outbox.getState(k),
+        setState: (k, v) => outbox.setState(k, v),
+        enqueue: (payload) => outbox.enqueue({ type: "FACTS_SNAPSHOT", payload }),
+        logger,
+      });
+      this.dex.start();
+    } catch (err) {
+      // Fail-soft: DEX no puede tumbar el scheduler.
+      logger.warn("[dex] collector failed to start", { err });
+      this.dex = null;
+    }
+  }
+
   async stop(_ctx?: AgentContext) {
     logger.info("TaskScheduler stopping...");
+    this.dex?.stop();
+    this.dex = null;
     this.stopAll();
     this.clearPolicyListeners();
     this.ctx = null;
