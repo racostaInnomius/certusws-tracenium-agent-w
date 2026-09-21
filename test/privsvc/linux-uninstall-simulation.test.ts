@@ -63,6 +63,61 @@ describe("judgeAptSimulation", () => {
     });
   });
 
+  // Salida REAL de apt 2.8.3 (Ubuntu 24.04, host con Plesk), 21-sep. Dos cosas
+  // que los fixtures inventados no tenían: el segundo corchete con paquetes
+  // tras la versión, y la lista de «no longer required» delante — que no son
+  // parte de la transacción y no deben contar.
+  it("⭐ salida real: quitar curl en un servidor con Plesk se llevaría 19 paquetes más", () => {
+    const out = [
+      APT_HEADER,
+      "The following packages were automatically installed and are no longer required:",
+      "  libfwupd2 libgusb2 libslirp0 slirp4netns",
+      "Use 'apt autoremove' to remove them.",
+      "The following packages will be REMOVED:",
+      "  curl plesk-core ubuntu-server",
+      "0 upgraded, 0 newly installed, 20 to remove and 0 not upgraded.",
+      "Remv plesk-web-hosting [18.0-v.ubuntu.24.04+p18.0.80.6+t260901.1328] [plesk-roundcube:amd64 ]",
+      "Remv plesk-core [18.0-v.ubuntu.24.04+p18.0.80.7+t260909.1936] [plesk-web-socket:amd64 plesk-repair-kit:amd64 ]",
+      "Remv curl [8.5.0-2ubuntu10.13] [plesk-web-socket:amd64 ubuntu-server:amd64 pollinate:amd64 ]",
+      "Remv ubuntu-server [1.539.2] [psa-updates:amd64 pollinate:amd64 ]",
+      "Remv psa-updates [18.0-v.ubuntu.24.04+p18.0.79.0+t260610.0535]",
+    ].join("\n");
+    expect(judgeAptSimulation("curl", out, 0)).toEqual({
+      ok: false,
+      code: "would_remove_dependents",
+      // Sólo los que apt QUITA; los del segundo corchete y los «no longer
+      // required» no.
+      dependents: ["plesk-web-hosting", "plesk-core", "ubuntu-server", "psa-updates"],
+    });
+  });
+
+  it("salida real: hasta htop arrastra el metapaquete ubuntu-server", () => {
+    const out = [
+      APT_HEADER,
+      "The following packages will be REMOVED:",
+      "  htop ubuntu-server",
+      "0 upgraded, 0 newly installed, 2 to remove and 0 not upgraded.",
+      "Remv ubuntu-server [1.539.2]",
+      "Remv htop [3.3.0-4build1]",
+    ].join("\n");
+    expect(judgeAptSimulation("htop", out, 0)).toMatchObject({
+      ok: false,
+      dependents: ["ubuntu-server"],
+    });
+  });
+
+  it("salida real: apt se niega (libc6) con código 100 → no se toca nada", () => {
+    const out = [
+      APT_HEADER,
+      " util-linux : PreDepends: libc6 (>= 2.38) but it is not going to be installed",
+      "E: Error, pkgProblemResolver::Resolve generated breaks, this may be caused by held packages.",
+    ].join("\n");
+    expect(judgeAptSimulation("libc6", out, 100)).toMatchObject({
+      ok: false,
+      code: "uninstall_simulation_unreadable",
+    });
+  });
+
   it("la arquitectura no convierte al propio paquete en un dependiente", () => {
     const out = [APT_HEADER, "Remv libfoo1:amd64 [1.2-3]"].join("\n");
     expect(judgeAptSimulation("libfoo1", out, 0)).toMatchObject({ ok: true, kind: "proceed" });
