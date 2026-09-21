@@ -4,6 +4,9 @@ import { createGrpcClient } from "./grpc-client";
 import { outbox } from "../queue/sqlite-outbox";
 import { AD_PRINTERS_JOB_TYPE, runAdPrintersJob } from "../plugins/amp/ad-printers-job";
 import { AD_DISCOVERY_JOB_TYPE, runAdDiscoveryJob } from "../plugins/amp/ad-discovery-job";
+import { LIVE_QUERY_JOB_TYPE, runLiveQueryJob } from "../plugins/live-query/live-query-job";
+import { defaultProbeDeps } from "../plugins/live-query/probes";
+import { resolveListenerOwners } from "../plugins/cdp/process-owner";
 import { PolicyStore } from "../core/policy-store";
 import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { Namespaces, DeviceFacts } from "../domain/device-facts";
@@ -1458,6 +1461,23 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
           call: (req) => ctx.priv.call(req as any),
           enqueue: (p) => outbox.enqueue({ type: "FACTS_SNAPSHOT", payload: p }),
           meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId },
+          logger: ctx.logger,
+        },
+        { jobId, payload }
+      );
+    }
+
+    // ADR-0029 — una pregunta de la consulta en vivo. Lecturas tipadas; la
+    // pregunta se revalida dentro y la respuesta viaja en su namespace.
+    case LIVE_QUERY_JOB_TYPE: {
+      return runLiveQueryJob(
+        {
+          probe: {
+            ...defaultProbeDeps(),
+            listenerName: async (port) => (await resolveListenerOwners([port])).get(port)?.name ?? null,
+          },
+          ampEnabled: () => ctx.policyRuntime.pluginEnabled("amp"),
+          enqueue: (p) => outbox.enqueue({ type: "FACTS_SNAPSHOT", payload: p }),
           logger: ctx.logger,
         },
         { jobId, payload }
