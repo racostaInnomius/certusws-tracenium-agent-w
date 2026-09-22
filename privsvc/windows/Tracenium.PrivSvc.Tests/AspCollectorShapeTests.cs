@@ -33,6 +33,15 @@ public class AspCollectorShapeTests
     }
 
     [Fact]
+    public void Validate_AcceptsOwnerSearch_TheKindTheScriptGainedInCatalog120()
+    {
+        const string q = "[{\"id\":\"ASP-AD-PRV-015\",\"query\":{\"kind\":\"owner_search\",\"base\":\"{domainDn}\",\"filter\":\"(adminCount=1)\",\"allowedOwnerSids\":[\"S-1-5-18\"]}}]";
+        var (req, err) = AspCollectorShape.Validate(Params(Batch(q)));
+        Assert.Null(err);
+        Assert.Equal(1, req!.QueryCount);
+    }
+
+    [Fact]
     public void Validate_AcceptsAclSearch_TheKindTheScriptGainedInCatalog110()
     {
         const string q = "[{\"id\":\"ASP-AD-PRV-007\",\"query\":{\"kind\":\"acl_search\",\"base\":\"{domainDn}\",\"filter\":\"(adminCount=1)\",\"rights\":[\"GenericAll\"]}}]";

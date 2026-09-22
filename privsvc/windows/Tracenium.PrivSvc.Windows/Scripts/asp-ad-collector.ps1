@@ -399,6 +399,55 @@ function AspAclSearch($query, $ctx, [int]$limit) {
   $all = @($trustees.Values | Sort-Object -Property @{ Expression = { $_.objects }; Descending = $true })
   return [ordered]@{ count = $all.Count; sample = @($all | Select-Object -First $limit); truncated = ($all.Count -gt $limit); objectsScanned = $scanned }
 }
+# DUEÑO del descriptor sobre un conjunto de objetos (catálogo 1.2.0, contraste
+# con Purple Knight SI000025/SI000050). El owner puede reescribir el DACL entero,
+# así que un objeto privilegiado cuyo dueño no es un administrador es una ruta de
+# toma de control aunque su DACL esté impecable — y el DACL es lo único que
+# miraba `acl_search`.
+#
+# ⚠️ Mismas garantías que AspAclSearch: un objeto sin descriptor o más de
+# `maxObjects` FALLAN la consulta; nunca un pass con datos a medias.
+function AspOwnerSearch($query, $ctx, [int]$limit) {
+  $searcher = New-Object System.DirectoryServices.DirectorySearcher
+  $searcher.SearchRoot = AspEntry (AspExpand ([string]$query.base) $ctx)
+  $searcher.Filter = AspExpand ([string]$query.filter) $ctx
+  $searcher.SearchScope = AspScope ([string](AspProp $query 'scope'))
+  $searcher.PageSize = 500
+  $searcher.SecurityMasks = [System.DirectoryServices.SecurityMasks]::Owner
+  [void]$searcher.PropertiesToLoad.Add('distinguishedname')
+  [void]$searcher.PropertiesToLoad.Add('ntsecuritydescriptor')
+  $maxObjects = 2000
+  $requestedMax = AspProp $query 'maxObjects'
+  if ($null -ne $requestedMax) { $maxObjects = [int]$requestedMax }
+
+  $allowed = @{}
+  foreach ($s in @(AspProp $query 'allowedOwnerSids')) { if ($s) { $allowed[(AspExpand ([string]$s) $ctx)] = $true } }
+
+  $owners = @{}
+  $scanned = 0
+  foreach ($r in $searcher.FindAll()) {
+    $scanned++
+    if ($scanned -gt $maxObjects) { throw "owner_search_object_limit: more than $maxObjects objects match" }
+    $dn = [string]$r.Properties['distinguishedname'][0]
+    if (-not $r.Properties.Contains('ntsecuritydescriptor') -or $r.Properties['ntsecuritydescriptor'].Count -eq 0) {
+      throw "nTSecurityDescriptor not returned for $dn"
+    }
+    $sd = New-Object System.DirectoryServices.ActiveDirectorySecurity
+    $sd.SetSecurityDescriptorBinaryForm([byte[]]$r.Properties['ntsecuritydescriptor'][0])
+    $owner = $sd.GetOwner([System.Security.Principal.SecurityIdentifier])
+    if ($null -eq $owner) { throw "owner not returned for $dn" }
+    $sid = [string]$owner.Value
+    if ($allowed.ContainsKey($sid)) { continue }
+    if (-not $owners.ContainsKey($sid)) {
+      $name = $null
+      try { $name = $owner.Translate([System.Security.Principal.NTAccount]).Value } catch { $name = $null }
+      $owners[$sid] = [ordered]@{ sid = $sid; name = $name; objects = 0; exampleDn = $dn }
+    }
+    $owners[$sid].objects++
+  }
+  $all = @($owners.Values | Sort-Object -Property @{ Expression = { $_.objects }; Descending = $true })
+  return [ordered]@{ count = $all.Count; sample = @($all | Select-Object -First $limit); truncated = ($all.Count -gt $limit); objectsScanned = $scanned }
+}
 function AspSysvolFiles($query, $ctx, [int]$limit) {
   $policies = "\\$($ctx.dnsHostName)\SYSVOL\$($ctx.dnsDomain)\Policies"
   # -Path y no -LiteralPath: -Include se ignora con -LiteralPath en 5.1. Las
@@ -481,6 +530,7 @@ foreach ($item in $request.queries) {
       'group_members' { AspGroupMembers $q $ctx $limit }
       'acl' { AspAcl $q $ctx $limit }
       'acl_search' { AspAclSearch $q $ctx $limit }
+      'owner_search' { AspOwnerSearch $q $ctx $limit }
       'rootdse' { AspRootDse $q }
       'sysvol_files' { AspSysvolFiles $q $ctx $limit }
       'registry' { AspRegistry $q }
