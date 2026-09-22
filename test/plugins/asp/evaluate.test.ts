@@ -150,6 +150,51 @@ describe("catálogo 1.1.0 — los tipos nuevos evalúan", () => {
   });
 });
 
+describe("catálogo 1.2.0 — owner_search y el P1 de Purple Knight", () => {
+  const cat120 = require("./fixtures/asp-ad-1.2.0.json");
+  function ind120(id: string): AgentIndicator {
+    const i = (cat120.indicators as any[]).find((x) => x.controlId === id);
+    if (!i) throw new Error(id);
+    return { controlId: i.controlId, severity: i.severity, requires: i.requires, query: i.query, derive: i.derive ?? [], predicate: i.predicate, onFail: i.onFail, whenMissing: i.whenMissing ?? "not_assessed" };
+  }
+
+  it("⭐ dueño no permitido → needs_review, con cuántos objetos posee cada uno", () => {
+    const r = evaluateIndicator(
+      ind120("ASP-AD-PRV-015"),
+      { ok: true, data: { count: 1, sample: [{ sid: "S-1-5-21-1-1105", name: "D\\helpdesk", objects: 7, exampleDn: "CN=svc,DC=m" }], objectsScanned: 47 } },
+      DC,
+      opts
+    );
+    expect(r).toMatchObject({ status: "needs_review", affectedCount: 1, evidence: { count: 1, objectsScanned: 47 } });
+    expect((r.evidence as any).sample[0].objects).toBe(7);
+  });
+
+  it("todos los dueños permitidos → pass", () => {
+    expect(evaluateIndicator(ind120("ASP-AD-PRV-015"), { ok: true, data: { count: 0, sample: [], objectsScanned: 47 } }, DC, opts).status).toBe("pass");
+  });
+
+  it("⭐ escribir la delegación de krbtgt es fail crítico, no needs_review", () => {
+    const r = evaluateIndicator(
+      ind120("ASP-AD-PRV-013"),
+      { ok: true, data: { count: 1, sample: [{ sid: "S-1-5-21-1-1106", name: "D\\backup", rights: "WriteProperty" }] } },
+      DC,
+      opts
+    );
+    expect(r).toMatchObject({ status: "fail", severity: "critical", affectedCount: 1 });
+  });
+
+  it("un objeto sin descriptor hace FALLAR la consulta, y eso es not_assessed, nunca pass", () => {
+    const r = evaluateIndicator(
+      ind120("ASP-AD-PRV-015"),
+      { ok: false, error: { hresult: "0x80131501", type: "RuntimeException", message: "nTSecurityDescriptor not returned for CN=x,DC=m" } },
+      DC,
+      opts
+    );
+    expect(r.status).toBe("not_assessed");
+    expect((r.evidence as any).collectorError.message).toContain("nTSecurityDescriptor not returned");
+  });
+});
+
 describe("el dominio del spike (MSIG-TSPDC, ADR §Fase 0)", () => {
   const spike: Record<string, { data: any; expect: string }> = {
     "ASP-AD-KRB-002": { data: { count: 2, sample: ["CN=Administrator,CN=Users,DC=m", "CN=next gsys,OU=IT,DC=m"] }, expect: "fail" },
