@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace Tracenium.PrivSvc.Windows.Ipc;
 
 /// <summary>
@@ -57,6 +59,36 @@ public static class UninstallIdentity
     }
 
     /// <summary>
+    /// Patrón ILIKE (`Foo App%`) → regex anclada e insensible a mayúsculas.
+    /// Sólo `%` y `_` son comodines; el resto se escapa.
+    ///
+    /// ⚠️ UNA SOLA COPIA, y aquí. La usan la detección y la búsqueda del
+    /// desinstalador en HKLM (Sdp) Y la búsqueda en los perfiles de usuario
+    /// (UserScopedUninstall). Si divergieran, el pre-detect diría «está» con un
+    /// patrón y la desinstalación buscaría con otro — y no encontraría nada, o
+    /// encontraría otra cosa. Vivía privada en Sdp; se mudó para poder
+    /// compartirse y probarse.
+    /// </summary>
+    public static Regex LikeToRegex(string pattern)
+    {
+        var sb = new System.Text.StringBuilder("^");
+        foreach (var ch in pattern)
+        {
+            switch (ch)
+            {
+                case '%': sb.Append(".*"); break;
+                case '_': sb.Append('.'); break;
+                default:
+                    sb.Append(Regex.Escape(ch.ToString()));
+                    break;
+            }
+        }
+        sb.Append('$');
+        return new Regex(sb.ToString(),
+            RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    }
+
+    /// <summary>
     /// Ruta de una app instalada POR USUARIO: <c>HKU\&lt;SID&gt;\...</c>.
     ///
     /// ⚠️ El SID va en la ruta a propósito, y no como campo aparte: la lista de
@@ -65,9 +97,10 @@ public static class UninstallIdentity
     /// `antivirus.products` y a la propia identidad de desinstalación). La ruta
     /// ya viaja entera hasta el backend.
     ///
-    /// Y es lo que permite al backend negarse a desinstalarla: el PrivSvc corre
-    /// como SYSTEM, y un desinstalador de usuario lanzado así no sabe de quién
-    /// es el perfil.
+    /// Y es lo que le dice al backend que la desinstalación es DE UN USUARIO:
+    /// no se lanza como SYSTEM (que no sabría de quién es el perfil, y además
+    /// ejecutaría un comando que ese usuario puede escribir) sino con el token
+    /// de su sesión — ver UserScopedUninstall.
     /// </summary>
     public static string BuildUserKeyPath(string sid, string subName) =>
         $@"HKU\{sid}\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{subName}";

@@ -100,6 +100,11 @@
          ruta de clave mal construida no falla, se guarda, y el error sale
          meses despues cuando alguien intenta desinstalar con ella. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UninstallIdentity.cs" />
+    <!-- ADR-0019 paso 3 — desinstalar lo instalado POR USUARIO. Aqui entran
+         las decisiones (que comando, como se resumen varios perfiles); el
+         recorrido de HKEY_USERS y el lanzamiento con el token del usuario
+         (UserScopedUninstall.cs) son Win32 y se quedan fuera. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UserUninstallShape.cs" />
     <!-- Impresoras de red por usuario. El recorrido de HKEY_USERS se queda
          fuera (Microsoft.Win32); aqui entra la forma pura: decodificar
          `,,SRV,Cola` a UNC y fundir sin duplicar. Un nombre mal decodificado

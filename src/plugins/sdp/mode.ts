@@ -147,6 +147,11 @@ export interface UninstallIdentity {
   productCode?: string;
   /** Windows — ILIKE pattern to find the registered UninstallString. */
   displayNameLike?: string;
+  /**
+   * Windows — "user": la app es de un perfil de usuario. La privsvc la busca en
+   * HKEY_USERS y la ejecuta con el token de ESE usuario, nunca como SYSTEM.
+   */
+  scope?: "user";
   /** macOS app bundle id — locate + remove /Applications/<App>.app. */
   bundleId?: string;
   /** macOS pkg receipt — `pkgutil --forget <pkgId>` (+ file cleanup). */
@@ -163,7 +168,11 @@ export function identityForUninstall(rule: unknown): UninstallIdentity | null {
       const id: UninstallIdentity = {};
       if (typeof r.productCode === "string" && r.productCode.trim()) id.productCode = r.productCode.trim();
       if (typeof r.displayNameLike === "string" && r.displayNameLike.trim()) id.displayNameLike = r.displayNameLike.trim();
-      return id.productCode || id.displayNameLike ? id : null;
+      if (!id.productCode && !id.displayNameLike) return null;
+      // Por usuario la privsvc necesita el NOMBRE para buscar en cada perfil: un
+      // ProductCode solo no le dice en qué hive mirar.
+      if (r.scope === "user") return id.displayNameLike ? { ...id, scope: "user" } : null;
+      return id;
     }
     case "bundle_version":
       return typeof r.bundleId === "string" && r.bundleId.trim() ? { bundleId: r.bundleId.trim() } : null;
@@ -195,6 +204,12 @@ const PERMANENT_UNINSTALL_ERRORS: ReadonlySet<string> = new Set([
   "identity_not_found",
   "would_remove_dependents",
   "uninstall_simulation_unreadable",
+  // Windows por usuario: no hay sesión del usuario (sin su token no se ejecuta,
+  // y como SYSTEM no es una alternativa) o no registró desinstalador
+  // silencioso. Reintentar sin que cambie eso daría lo mismo; el reintento es
+  // manual, cuando el usuario haya iniciado sesión.
+  "user_not_logged_on",
+  "no_silent_uninstall",
 ]);
 
 export function isPermanentUninstallError(code: unknown): boolean {

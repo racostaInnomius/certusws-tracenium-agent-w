@@ -203,3 +203,37 @@ describe("isPermanentUninstallError", () => {
     }
   });
 });
+
+describe("identityForUninstall — instalada POR USUARIO (ADR-0019 paso 3)", () => {
+  it("⭐ lleva el scope a la privsvc, que es lo que la hace buscar en los perfiles", () => {
+    expect(identityForUninstall({ type: "registry_uninstall", displayNameLike: "RingCentral", scope: "user" })).toEqual({
+      displayNameLike: "RingCentral",
+      scope: "user",
+    });
+  });
+
+  // Sin nombre, la privsvc no sabe qué buscar en cada perfil: un ProductCode
+  // solo no dice en qué hive mirar.
+  it("por usuario con sólo ProductCode no es una identidad", () => {
+    expect(
+      identityForUninstall({ type: "registry_uninstall", productCode: "{E5D37376-9D50-4461-B4DE-F3A72A4E82B5}", scope: "user" })
+    ).toBeNull();
+  });
+
+  it("sin scope sigue siendo de máquina, como siempre", () => {
+    expect(identityForUninstall({ type: "registry_uninstall", displayNameLike: "Dropbox" })).toEqual({
+      displayNameLike: "Dropbox",
+    });
+  });
+
+  it("un scope que no es «user» no se inventa", () => {
+    expect(identityForUninstall({ type: "registry_uninstall", displayNameLike: "Dropbox", scope: "machine" })).toEqual({
+      displayNameLike: "Dropbox",
+    });
+  });
+
+  it("⭐ sin sesión o sin desinstalador silencioso es permanente: reintentar da lo mismo", () => {
+    expect(isPermanentUninstallError("user_not_logged_on")).toBe(true);
+    expect(isPermanentUninstallError("no_silent_uninstall")).toBe(true);
+  });
+});

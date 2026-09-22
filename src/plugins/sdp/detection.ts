@@ -31,6 +31,12 @@ export type DetectionRule =
       type: "registry_uninstall";
       displayNameLike: string;
       minVersion?: string;
+      /**
+       * "user" = instalada POR USUARIO: la privsvc la busca en los perfiles
+       * cargados (HKEY_USERS) y la desinstala con el token de cada usuario.
+       * Ausente = de máquina (HKLM), como siempre.
+       */
+      scope?: "user";
     }
   | {
       type: "bundle_version";
@@ -117,6 +123,13 @@ export function normalizeRule(raw: any): DetectionRule | null {
       if (typeof raw.minVersion === "string" && raw.minVersion.trim()) {
         (out as any).minVersion = String(raw.minVersion).trim();
       }
+      // ⚠️ ESTA LISTA ES EXPLÍCITA, y un campo que no se copie aquí se pierde
+      // en silencio antes de llegar a la privsvc (le pasó a uptimeSeconds, a
+      // antivirus.products y a la identidad de desinstalación). Sin `scope`, la
+      // privsvc buscaría una app de usuario en HKLM, no la vería, y el
+      // pre-detect cerraría la desinstalación como «ya no está» sin ejecutar
+      // nada.
+      if (raw.scope === "user") (out as any).scope = "user";
       return out;
     }
     case "bundle_version": {

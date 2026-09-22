@@ -89,3 +89,35 @@ public class UninstallIdentityTests
         Assert.Equal(4, new HashSet<string>(rutas).Count);
     }
 }
+
+public class LikeToRegexTests
+{
+    // Se mudó de Sdp a UninstallIdentity para que la detección y la búsqueda
+    // en los perfiles usen EL MISMO patrón. Si divergieran, «está» y «lo
+    // quito» buscarían cosas distintas.
+
+    [Fact]
+    public void Porcentaje_es_cualquier_cosa_y_ancla_los_dos_extremos()
+    {
+        var re = UninstallIdentity.LikeToRegex("Google Chrome%");
+        Assert.Matches(re, "Google Chrome");
+        Assert.Matches(re, "Google Chrome Beta");
+        Assert.DoesNotMatch(re, "Old Google Chrome");
+    }
+
+    [Fact]
+    public void Sin_comodines_es_el_nombre_exacto_sin_mayusculas()
+    {
+        var re = UninstallIdentity.LikeToRegex("Zoom Workplace");
+        Assert.Matches(re, "zoom workplace");
+        Assert.DoesNotMatch(re, "Zoom Workplace (64-bit)");
+    }
+
+    [Fact]
+    public void Los_metacaracteres_de_regex_son_literales()
+    {
+        var re = UninstallIdentity.LikeToRegex("Notepad++ (x64)");
+        Assert.Matches(re, "Notepad++ (x64)");
+        Assert.DoesNotMatch(re, "Notepadd (x64)");
+    }
+}

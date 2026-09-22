@@ -805,6 +805,39 @@ public static class Sdp
             identity.TryGetValue("productCode", out var productCode);
             identity.TryGetValue("displayNameLike", out var displayNameLike);
 
+            // ── Instalada POR USUARIO (ADR-0019 paso 3) ─────────────────────
+            // Se busca en los perfiles cargados y se ejecuta con el token de cada
+            // usuario — NUNCA como SYSTEM: ver la cabecera de UserScopedUninstall.
+            // Va antes que el formato: una app de usuario no es «msi» ni «exe»
+            // para esta decisión, es de alguien.
+            identity.TryGetValue("scope", out var scope);
+            if (string.Equals(scope, "user", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(displayNameLike))
+                {
+                    return PrivSvcResponse.Fail(req.Id, "identity_not_found",
+                        "a per-user uninstall needs displayNameLike");
+                }
+                try
+                {
+                    var outcome = await UserScopedUninstall.RunAsync(displayNameLike!, timeoutSeconds);
+                    if (outcome.ErrorCode != null)
+                    {
+                        return PrivSvcResponse.Fail(req.Id, outcome.ErrorCode, outcome.Summary);
+                    }
+                    return PrivSvcResponse.Success(req.Id, new
+                    {
+                        exitCode = outcome.ExitCode,
+                        stderrExcerpt = outcome.Summary,
+                        durationMs = 0L,
+                    });
+                }
+                catch (TimeoutException timeoutEx)
+                {
+                    return PrivSvcResponse.Fail(req.Id, "install_timeout", timeoutEx.Message);
+                }
+            }
+
             InstallRunResult result;
             try
             {
@@ -957,7 +990,7 @@ public static class Sdp
     private static (string? uninstallString, string? quietUninstallString) FindUninstallEntry(string? displayNameLike)
     {
         if (string.IsNullOrWhiteSpace(displayNameLike)) return (null, null);
-        var regex = LikeToRegex(displayNameLike!);
+        var regex = UninstallIdentity.LikeToRegex(displayNameLike!);
         var roots = new[]
         {
             (View: RegistryView.Registry64, Path: @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
@@ -1031,8 +1064,18 @@ public static class Sdp
             throw new InvalidOperationException("registry_uninstall.displayNameLike required");
         }
 
+        // ⚠️ POR USUARIO SE MIRA EN LOS PERFILES, no en HKLM. Sin esta rama, una
+        // app de usuario no «estaría» nunca: el pre-detect de la desinstalación
+        // la daría por ausente y el agente cerraría el job como éxito SIN
+        // EJECUTAR NADA — y el post-detect, igual de ciego, lo confirmaría.
+        rule.TryGetValue("scope", out var scope);
+        if (string.Equals(scope, "user", StringComparison.OrdinalIgnoreCase))
+        {
+            return DetectUserScoped(pattern!, minVersion);
+        }
+
         // ILIKE → regex: % → .*, _ → ., escape regex metas, anchor.
-        var regex = LikeToRegex(pattern!);
+        var regex = UninstallIdentity.LikeToRegex(pattern!);
 
         // Both views — 32-bit installers register under WOW6432Node on
         // 64-bit Windows; 64-bit installers register under the standard
@@ -1100,6 +1143,49 @@ public static class Sdp
                 installedVersion = bestVersion,
                 minVersion,
                 hits,
+            },
+        };
+    }
+
+    /// <summary>
+    /// La detección de una app instalada por usuario: en los perfiles cargados,
+    /// con la misma búsqueda que usará la desinstalación (una sola función, para
+    /// que «está» y «lo quito» no puedan discrepar).
+    /// </summary>
+    private static DetectionResult DetectUserScoped(string pattern, string? minVersion)
+    {
+        var entries = UserScopedUninstall.FindEntries(pattern);
+        if (entries.Count == 0)
+        {
+            return new DetectionResult
+            {
+                Matched = false,
+                Snapshot = new { displayNameLike = pattern, scope = "user", found = false },
+            };
+        }
+
+        string? bestVersion = null;
+        foreach (var e in entries)
+        {
+            if (!string.IsNullOrWhiteSpace(e.DisplayVersion) &&
+                (bestVersion == null || CompareSemver(e.DisplayVersion!, bestVersion) > 0))
+            {
+                bestVersion = e.DisplayVersion;
+            }
+        }
+
+        return new DetectionResult
+        {
+            Matched = MeetsMinVersion(bestVersion, minVersion),
+            Snapshot = new
+            {
+                displayNameLike = pattern,
+                scope = "user",
+                found = true,
+                installedVersion = bestVersion,
+                minVersion,
+                // El SID de cada perfil: es lo que dice DE QUIÉN es cada copia.
+                hits = entries.Select(e => new { sid = e.Sid, displayName = e.DisplayName, displayVersion = e.DisplayVersion }).ToList(),
             },
         };
     }
@@ -1490,30 +1576,6 @@ public static class Sdp
 
     private static string Truncate(string s, int max) =>
         s.Length <= max ? s : s.Substring(0, max);
-
-    /// <summary>
-    /// Translate a SQL-ILIKE pattern (`Foo App%`) into a case-insensitive
-    /// anchored regex. Only `%` and `_` are treated as wildcards; other
-    /// regex metacharacters in the pattern are escaped.
-    /// </summary>
-    private static Regex LikeToRegex(string pattern)
-    {
-        var sb = new System.Text.StringBuilder("^");
-        foreach (var ch in pattern)
-        {
-            switch (ch)
-            {
-                case '%': sb.Append(".*"); break;
-                case '_': sb.Append('.'); break;
-                default:
-                    sb.Append(Regex.Escape(ch.ToString()));
-                    break;
-            }
-        }
-        sb.Append('$');
-        return new Regex(sb.ToString(),
-            RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    }
 
     /// <summary>
     /// Semver-ish comparison. Same shape as the macOS sibling: split
