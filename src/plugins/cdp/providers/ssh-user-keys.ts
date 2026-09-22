@@ -133,6 +133,22 @@ export function localUsers(platform: NodeJS.Platform = os.platform()): Array<{ u
     return out;
   }
 
+  // ⚠️ En macOS las cuentas de PERSONA viven en OpenDirectory, no en
+  // /etc/passwd — ahi solo estan las del sistema. El fichero EXISTE, asi
+  // que el `catch` de abajo nunca salta y sin esto no se miraria ni un
+  // solo home real. Se enumera /Users ademas del passwd (y no con `dscl`,
+  // que seria un proceso hijo mas que excluir en el EDR).
+  if (platform === "darwin") {
+    try {
+      for (const name of fs.readdirSync("/Users")) {
+        if (name.startsWith(".") || ["Shared", "Guest"].includes(name)) continue;
+        add(name, path.join("/Users", name));
+      }
+    } catch {
+      /* sin /Users legible no hay homes que mirar */
+    }
+  }
+
   try {
     const passwd = fs.readFileSync("/etc/passwd", "utf8");
     for (const line of passwd.split("\n")) {

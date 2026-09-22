@@ -26,6 +26,7 @@ import {
   collectSshUserKeys,
   describeOpensshPrivateKey,
   isPrivateKeyName,
+  localUsers,
   parseAuthorizedKeyLine,
   splitAuthorizedOptions
 } from "../../src/plugins/cdp/providers/ssh-user-keys";
@@ -118,6 +119,17 @@ describe("parseAuthorizedKeyLine", () => {
     expect(k?.algorithm).toBe("Ed25519");
     // Y sigue SIN contar como clave de host: el colector de sshd la tira.
     expect(parseSshPublicKey(line.split(" ").slice(0, 2).join(" "))).toBeNull();
+  });
+});
+
+describe("localUsers", () => {
+  it("⭐ en macOS se enumera /Users ademas de /etc/passwd", () => {
+    // Las cuentas de persona de macOS viven en OpenDirectory: /etc/passwd
+    // EXISTE y solo trae las del sistema, asi que sin esto no se miraria
+    // ni un home real. Se comprueba contra el /Users de esta maquina.
+    const homes = localUsers("darwin").map((u) => u.home);
+    const real = fs.readdirSync("/Users").filter((n) => !n.startsWith(".") && !["Shared", "Guest"].includes(n));
+    for (const n of real) expect(homes).toContain(path.join("/Users", n));
   });
 });
 
