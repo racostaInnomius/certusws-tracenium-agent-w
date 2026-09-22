@@ -95,7 +95,16 @@ export type RuntimePolicy = {
     /** Optional narrowing: when non-empty, ONLY these ports are probed
      *  (still intersected with what is actually listening). */
     tlsListenerPorts?: number[];
+    /** Raíces EXTRA (o las únicas, con fileDiscovery "configured") donde
+     *  buscar certificados, keystores y claves sueltas en disco. */
     certFilePaths?: string[];
+    /**
+     * Ola 1.1 — descubrimiento de ficheros:
+     *   "default"    (por omisión) raíces por SO + certFilePaths;
+     *   "configured" solo certFilePaths (lo de antes de la ola 1);
+     *   "off"        nada.
+     */
+    fileDiscovery?: CdpFileDiscoveryMode;
     /**
      * Rol Probe (fase 2, analisis de madurez 2026-09): objetivos TLS
      * remotos `host:port` que este equipo sondea para inventariar lo que
@@ -570,6 +579,23 @@ function sanitizeSecurityPolicy(input: any, logger: any): SecurityPolicy {
   return out;
 }
 
+export type CdpFileDiscoveryMode = "default" | "configured" | "off";
+
+/**
+ * `cdp.fileDiscovery`. Ausente = "default": la ola 1.1 existe para que el
+ * descubrimiento funcione sin configurar nada (con certFilePaths opt-in,
+ * los tres tenants tenían la lista vacía y no se inventariaba ningún
+ * fichero). Un valor DESCONOCIDO, en cambio, cae en "configured" — el
+ * comportamiento anterior — y no en el recorrido por defecto: si alguien
+ * escribió algo que no entendemos, no es el momento de ampliar alcance.
+ */
+function sanitizeFileDiscovery(input: unknown, logger: any): CdpFileDiscoveryMode {
+  if (input === undefined || input === null) return "default";
+  if (input === "default" || input === "configured" || input === "off") return input;
+  logger?.warn?.("cdp.fileDiscovery: valor desconocido, se usa 'configured'", { value: String(input).slice(0, 40) });
+  return "configured";
+}
+
 // Bounds for cdp.javaKeystorePaths — a policy is operator-authored but
 // still crosses a trust boundary before reaching a SYSTEM/root process,
 // so paths are validated hard: absolute, bounded length, bounded count.
@@ -932,13 +958,6 @@ export class PolicyRuntime extends EventEmitter {
   }
 
   /**
-   * Rutas donde buscar certificados sueltos en disco.
-   *
-   * Sin default a propósito: lista vacía = función apagada. Un default
-   * seria inutil (demasiado estrecho) o un escaneo recursivo de algo
-   * grande en cada endpoint de la flota.
-   */
-  /**
    * Conector AD CS: en que equipos leer la base de la CA (`hosts`, por
    * nombre) y cuantas filas por escaneo. Sin hosts esta APAGADO aunque
    * `enabled` sea true: un toggle a nivel de tenant para algo que solo
@@ -965,6 +984,11 @@ export class PolicyRuntime extends EventEmitter {
 
   getCdpCertFilePaths(): string[] {
     return this.policy.cdp?.certFilePaths ?? [];
+  }
+
+  /** Ola 1.1 — modo del descubrimiento de ficheros (ver sanitizeFileDiscovery). */
+  getCdpFileDiscovery(): CdpFileDiscoveryMode {
+    return this.policy.cdp?.fileDiscovery ?? "default";
   }
 
   getCdpTlsListenerPorts(): number[] {
@@ -1180,6 +1204,8 @@ export class PolicyRuntime extends EventEmitter {
       scanTlsListeners: policy.cdp?.scanTlsListeners === true,
       tlsListenerPorts: sanitizeTlsListenerPorts(policy.cdp?.tlsListenerPorts, this.logger),
       certFilePaths: sanitizeJavaKeystorePaths(policy.cdp?.certFilePaths, this.logger),
+      // Nombrado aquí o el merge lo tira (ver la trampa de validatePolicy).
+      fileDiscovery: sanitizeFileDiscovery(policy.cdp?.fileDiscovery, this.logger),
       probeTargets: sanitizeProbeTargets(policy.cdp?.probeTargets, this.logger),
       probeHosts: sanitizeHostList(policy.cdp?.probeHosts),
       adcs: {

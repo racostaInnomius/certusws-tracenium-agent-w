@@ -86,9 +86,11 @@ describe("collectCertFiles", () => {
     for (const item of r.items) expect(item.source).toBe("file");
   });
 
-  it("nunca reporta hasPrivateKey en un certificado de fichero", async () => {
-    // No abrimos claves, así que no podemos afirmar que exista una. Decir
-    // `true` seria inventarse evidencia que nadie recogio.
+  it("el colector no afirma hasPrivateKey en un certificado PEM suelto", async () => {
+    // El colector solo ve ficheros sueltos. Que la clave de un `.crt` esté
+    // en el equipo lo afirma después matchLooseKeys (index.ts), y solo con
+    // evidencia: el hash de la parte pública de la clave casa con el del
+    // certificado. Aquí, sin ese cruce, decir `true` sería inventarlo.
     const r = await collectCertFiles([root]);
     for (const item of r.items) expect(item.hasPrivateKey).toBe(false);
   });
@@ -98,9 +100,9 @@ describe("collectCertFiles", () => {
     expect(r.stores.some((s) => s.name.includes("node_modules"))).toBe(false);
   });
 
-  it("apagado por defecto: sin rutas no escanea nada", async () => {
-    // Es la diferencia entre una función opt-in y un escaneo recursivo
-    // en cada endpoint de la flota.
+  it("sin raíces no escanea nada", async () => {
+    // Las raíces por defecto (ola 1.1) las decide y las pasa index.ts
+    // según `cdp.fileDiscovery`; el colector no inventa ninguna.
     const r = await collectCertFiles([]);
     expect(r.filesScanned).toBe(0);
     expect(r.items).toEqual([]);

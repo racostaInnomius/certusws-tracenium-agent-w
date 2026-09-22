@@ -18,10 +18,11 @@ import {
   extractExtendedKeyUsage,
   extractSpkiDer,
   extractCrlUrls,
-  extractOcspUrls
+  extractOcspUrls,
+  extractCaIssuerUrls
 } from "./der";
 import { algorithmName, curveName } from "./algorithm-oids";
-import type { CdpCertItem, CdpStoreInfo } from "../../domain/cdp-types";
+import type { CdpCertItem, CdpKeyStorage, CdpStoreInfo } from "../../domain/cdp-types";
 
 /** Extract CN from an OpenSSL-style DN block ("subject=\nCN=Foo\nO=Bar"). */
 function extractCN(dn: string | undefined): string | undefined {
@@ -130,7 +131,34 @@ export function certIdFor(fingerprint256: string, storeId: string): string {
 export type ParseCertOptions = {
   store: CdpStoreInfo;
   hasPrivateKey?: boolean;
+  /** Solo con `hasPrivateKey`: lo que el proveedor sabe de la clave SIN
+   *  exportarla (ola 1.3b). Ausente = no se sabe. */
+  keyExportable?: boolean;
+  keyStorage?: CdpKeyStorage;
 };
+
+// ── Registro de DER por escaneo (ola 1.3a) ────────────────────────────
+//
+// La validación de cadena de los certificados de ALMACÉN necesita los
+// bytes (para verificar firmas), y el item del cable no los lleva — ni
+// debe: engordaría un payload con tope por algo que el control plane no
+// usa. Así que cada certificado que pasa por aquí deja su DER en un mapa
+// por huella que vive lo que dura un escaneo: `resetParsedDerRegistry` al
+// empezar y `parsedDerRegistry` al validar. Por huella y no por item:
+// los proveedores clonan o mutan el item después de crearlo.
+//
+// Tope defensivo: un proceso que parsea sin escanear (una sonda suelta,
+// un test) no puede hacer crecer el mapa sin límite.
+const DER_REGISTRY_MAX = 20000;
+const derRegistry = new Map<string, Buffer>();
+
+export function resetParsedDerRegistry(): void {
+  derRegistry.clear();
+}
+
+export function parsedDerRegistry(): ReadonlyMap<string, Buffer> {
+  return derRegistry;
+}
 
 /**
  * Parse a single certificate (PEM string or DER buffer) into the CDP
@@ -181,6 +209,9 @@ export function parseCertToItem(
   }
 
   const fingerprint256 = cert.fingerprint256.replace(/:/g, "").toLowerCase();
+  if (derRegistry.size < DER_REGISTRY_MAX && !derRegistry.has(fingerprint256)) {
+    derRegistry.set(fingerprint256, cert.raw);
+  }
   const fingerprintSha1 = cert.fingerprint
     ? cert.fingerprint.replace(/:/g, "").toLowerCase()
     : undefined;
@@ -241,15 +272,23 @@ export function parseCertToItem(
     ...(() => {
       const crlUrls = extractCrlUrls(cert.raw);
       const ocspUrls = extractOcspUrls(cert.raw);
+      // Ola 1.7: con el emisor descargable, el control plane puede armar
+      // la petición OCSP. Ausente cuando no hay (casi siempre en raíces).
+      const caIssuerUrls = extractCaIssuerUrls(cert.raw);
       return {
         ...(crlUrls.length ? { crlUrls } : {}),
-        ...(ocspUrls.length ? { ocspUrls } : {})
+        ...(ocspUrls.length ? { ocspUrls } : {}),
+        ...(caIssuerUrls.length ? { caIssuerUrls } : {})
       };
     })(),
 
     isCA: cert.ca,
     selfSigned: subjectDN !== undefined && subjectDN === issuerDN,
     hasPrivateKey: opts.hasPrivateKey ?? false,
+    // Solo cuando hay clave y el proveedor lo supo: un `unknown` en cada
+    // raíz de la flota no diría nada y ocuparía payload.
+    ...(opts.hasPrivateKey && typeof opts.keyExportable === "boolean" ? { keyExportable: opts.keyExportable } : {}),
+    ...(opts.hasPrivateKey && opts.keyStorage ? { keyStorage: opts.keyStorage } : {}),
 
     keyUsage,
     // Ausente (undefined) cuando el certificado no la declara: un `[]`

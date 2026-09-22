@@ -55,6 +55,43 @@ export const ALGORITHM_NAMES: Record<string, string> = {
   "2.16.840.1.101.3.4.4.2": "ML-KEM-768",
   "2.16.840.1.101.3.4.4.3": "ML-KEM-1024",
 
+  // ── Composite ML-DSA (draft-ietf-lamps-pq-composite-sigs-19, abr-2026) ──
+  // Un solo algoritmo que ya es híbrido: ML-DSA + uno clásico, los dos
+  // obligatorios. Arco 1.3.6.1.5.5.7.6.x asignado por IANA en el draft.
+  // El control plane los clasifica por OID (HYBRID_OIDS); aquí solo se
+  // nombran para que la UI no enseñe `oid:…`.
+  "1.3.6.1.5.5.7.6.37": "MLDSA44-RSA2048-PSS-SHA256",
+  "1.3.6.1.5.5.7.6.38": "MLDSA44-RSA2048-PKCS15-SHA256",
+  "1.3.6.1.5.5.7.6.39": "MLDSA44-Ed25519-SHA512",
+  "1.3.6.1.5.5.7.6.40": "MLDSA44-ECDSA-P256-SHA256",
+  "1.3.6.1.5.5.7.6.41": "MLDSA65-RSA3072-PSS-SHA512",
+  "1.3.6.1.5.5.7.6.42": "MLDSA65-RSA3072-PKCS15-SHA512",
+  "1.3.6.1.5.5.7.6.43": "MLDSA65-RSA4096-PSS-SHA512",
+  "1.3.6.1.5.5.7.6.44": "MLDSA65-RSA4096-PKCS15-SHA512",
+  "1.3.6.1.5.5.7.6.45": "MLDSA65-ECDSA-P256-SHA512",
+  "1.3.6.1.5.5.7.6.46": "MLDSA65-ECDSA-P384-SHA512",
+  "1.3.6.1.5.5.7.6.47": "MLDSA65-ECDSA-brainpoolP256r1-SHA512",
+  "1.3.6.1.5.5.7.6.48": "MLDSA65-Ed25519-SHA512",
+  "1.3.6.1.5.5.7.6.49": "MLDSA87-ECDSA-P384-SHA512",
+  "1.3.6.1.5.5.7.6.50": "MLDSA87-ECDSA-brainpoolP384r1-SHA512",
+  "1.3.6.1.5.5.7.6.51": "MLDSA87-Ed448-SHAKE256",
+  "1.3.6.1.5.5.7.6.52": "MLDSA87-RSA3072-PSS-SHA512",
+  "1.3.6.1.5.5.7.6.53": "MLDSA87-RSA4096-PSS-SHA512",
+  "1.3.6.1.5.5.7.6.54": "MLDSA87-ECDSA-P521-SHA512",
+  // ── Composite ML-KEM (draft-ietf-lamps-pq-composite-kem-21, sep-2026) ──
+  "1.3.6.1.5.5.7.6.55": "MLKEM768-RSA2048-SHA3-256",
+  "1.3.6.1.5.5.7.6.56": "MLKEM768-RSA3072-SHA3-256",
+  "1.3.6.1.5.5.7.6.57": "MLKEM768-RSA4096-SHA3-256",
+  "1.3.6.1.5.5.7.6.58": "MLKEM768-X25519-SHA3-256",
+  "1.3.6.1.5.5.7.6.59": "MLKEM768-ECDH-P256-SHA3-256",
+  "1.3.6.1.5.5.7.6.60": "MLKEM768-ECDH-P384-SHA3-256",
+  "1.3.6.1.5.5.7.6.61": "MLKEM768-ECDH-brainpoolP256r1-SHA3-256",
+  "1.3.6.1.5.5.7.6.62": "MLKEM1024-RSA3072-SHA3-256",
+  "1.3.6.1.5.5.7.6.63": "MLKEM1024-ECDH-P384-SHA3-256",
+  "1.3.6.1.5.5.7.6.64": "MLKEM1024-ECDH-brainpoolP384r1-SHA3-256",
+  "1.3.6.1.5.5.7.6.65": "MLKEM1024-X448-SHA3-256",
+  "1.3.6.1.5.5.7.6.66": "MLKEM1024-ECDH-P521-SHA3-256",
+
   // ── Stateful hash-based signatures (RFC 8554 / RFC 8391) ─────────
   // PQ-safe, but one-time-key stateful — used for firmware/code signing.
   "1.2.840.113549.1.9.16.3.17": "HSS-LMS",

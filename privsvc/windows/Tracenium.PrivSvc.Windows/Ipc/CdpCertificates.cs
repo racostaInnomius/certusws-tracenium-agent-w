@@ -8,8 +8,11 @@
 //
 // SECURITY CONTRACT: this handler NEVER exports or touches private key
 // material. `hasPrivateKey` is the X509Certificate2.HasPrivateKey
-// attribute — a boolean lookup, not a key read. RawData is the public
-// certificate blob only. Same read-only class as security.compliance.
+// attribute — a boolean lookup, not a key read. `keyStorage` /
+// `keyExportable` (ola 1.3b) come from the key's provider name and its
+// export POLICY (CdpKeyInfo): the container may be opened to read that
+// property, never exported. RawData is the public certificate blob only.
+// Same read-only class as security.compliance.
 
 using System.Diagnostics;
 using System.Security.Cryptography.X509Certificates;
@@ -97,11 +100,24 @@ public static class CdpCertificates
                                 break;
                             }
 
+                            var hasKey = SafeHasPrivateKey(cert);
+                            // Ola 1.3b: dónde vive la clave y si su política
+                            // permite exportarla — leído, nunca exportado
+                            // (ver CdpKeyInfo). Solo para las que tienen clave.
+                            bool? keyExportable = null;
+                            string? keyStorage = null;
+                            if (hasKey)
+                            {
+                                (keyExportable, keyStorage) = CdpKeyInfo.Read(cert);
+                            }
+
                             certificates.Add(new
                             {
                                 store = storeName,
                                 rawDerBase64 = Convert.ToBase64String(cert.RawData),
-                                hasPrivateKey = SafeHasPrivateKey(cert)
+                                hasPrivateKey = hasKey,
+                                keyExportable,
+                                keyStorage
                             });
                         }
                         finally

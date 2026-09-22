@@ -16,7 +16,8 @@
 //      default views and the cdp_cert_expiry alert.
 //
 // Parsing strategy:
-//   * JKS (magic 0xFEEDFEED): parsed in-process with jks.ts — no
+//   * JKS (magic 0xFEEDFEED) and JCEKS (0xCECECECE, same entry layout):
+//     parsed in-process with jks.ts — no
 //     password needed (certs are plaintext; encrypted keys are skipped
 //     unread). Key entries mark the leaf cert hasPrivateKey=true.
 //   * PKCS12 (JDK 9+ default; cacerts since JDK 18): shelled out to the
@@ -34,7 +35,7 @@ import { promisify } from "util";
 import type { AgentContext } from "../../../core/agent-context";
 import type { CdpCertItem, CdpStoreInfo, CdpUnreadableStore } from "../../../domain/cdp-types";
 import { parseCertToItem, splitPemBundle } from "../parse-cert";
-import { looksLikeJks, parseJks } from "../jks";
+import { looksLikeJceks, looksLikeJks, parseJks } from "../jks";
 
 const execFileAsync = promisify(execFile);
 
@@ -188,7 +189,12 @@ function parseStoreBuffer(
         // JKS key entries: the leaf (first in chain) is the cert the
         // store holds a private key for. We never touched that key —
         // this is structural metadata from the entry tag alone.
-        hasPrivateKey: entry.type === "key" && idx === 0
+        hasPrivateKey: entry.type === "key" && idx === 0,
+        // Una clave en un keystore es un fichero: vive en software y es
+        // tan extraíble como el fichero (con su contraseña). No hay una
+        // política de exportación que leer, como la hay en CNG.
+        keyStorage: "software",
+        keyExportable: true
       });
       if (item) {
         item.source = "java-store";
@@ -254,7 +260,7 @@ export async function collectJavaStores(
     }
 
     try {
-      if (looksLikeJks(buf)) {
+      if (looksLikeJks(buf) || looksLikeJceks(buf)) {
         result.stores.push(store);
         parseStoreBuffer(buf, store, result);
       } else {
@@ -293,7 +299,7 @@ export async function collectJavaStores(
     }
 
     try {
-      if (looksLikeJks(buf)) {
+      if (looksLikeJks(buf) || looksLikeJceks(buf)) {
         result.stores.push(store);
         parseStoreBuffer(buf, store, result);
       } else if (cacertsList.length > 0) {

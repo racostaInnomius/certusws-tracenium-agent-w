@@ -32,6 +32,16 @@
 // java-stores.ts.
 
 export const JKS_MAGIC = 0xfeedfeed;
+/**
+ * JCEKS (SunJCE) comparte el formato de JKS entrada a entrada: las claves
+ * privadas van cifradas (con otro algoritmo, que aquí da igual porque no
+ * se leen) y los certificados en DER EN CLARO, igual que en JKS. Lo único
+ * nuevo es la entrada de clave secreta (tag 3): un `SealedObject` de Java
+ * serializado, SIN prefijo de longitud — saltarlo exigiría deserializar
+ * Java. Así que un JCEKS con claves secretas no se lee (y se dice), y uno
+ * sin ellas se lee entero.
+ */
+export const JCEKS_MAGIC = 0xcececece;
 
 export type JksEntry = {
   alias: string;
@@ -101,13 +111,18 @@ export function looksLikeJks(buf: Buffer): boolean {
   return buf.length >= 8 && buf.readUInt32BE(0) === JKS_MAGIC;
 }
 
+export function looksLikeJceks(buf: Buffer): boolean {
+  return buf.length >= 8 && buf.readUInt32BE(0) === JCEKS_MAGIC;
+}
+
 const MAX_ENTRIES = 10000;
 const MAX_CHAIN = 32;
 
 export function parseJks(buf: Buffer): JksEntry[] {
   const cur = new Cursor(buf);
 
-  if (cur.u4() !== JKS_MAGIC) {
+  const magic = cur.u4();
+  if (magic !== JKS_MAGIC && magic !== JCEKS_MAGIC) {
     throw new JksParseError("not a JKS file (bad magic)");
   }
   const version = cur.u4();
@@ -147,6 +162,9 @@ export function parseJks(buf: Buffer): JksEntry[] {
       if (version === 2) cur.utf(); // certType
       const der = cur.bytes(cur.u4());
       entries.push({ alias, timestampMs, type: "trusted", certsDer: [der] });
+    } else if (tag === 3 && magic === JCEKS_MAGIC) {
+      // Ver JCEKS_MAGIC: sin longitud, no se puede saltar sin deserializar.
+      throw new JksParseError("JCEKS secret-key entry not supported");
     } else {
       throw new JksParseError(`unknown entry tag ${tag} at entry ${i}`);
     }

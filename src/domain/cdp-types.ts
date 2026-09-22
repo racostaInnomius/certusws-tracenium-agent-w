@@ -24,6 +24,31 @@ export type CdpStoreInfo = {
   scope: CdpStoreScope;
 };
 
+/**
+ * Dónde vive la clave privada de un certificado (ola 1.3b), sabido SIN
+ * exportarla: por el proveedor criptográfico en Windows, por ser un
+ * fichero en Linux/ficheros. `unknown` = el proveedor no se pudo leer.
+ */
+export type CdpKeyStorage = "software" | "tpm" | "smartcard" | "unknown";
+
+/**
+ * Veredicto de cadena de un certificado de ALMACÉN (ola 1.3a), calculado
+ * contra lo inventariado en el mismo escaneo. Los listeners y las sondas
+ * no lo llevan: su cadena la juzga el handshake (`tls.chainAuthorized`).
+ * Ausente en un autofirmado (no tiene emisor que buscar).
+ */
+export type CdpChainVerdict = {
+  /** ¿Está el emisor (mismo DN, y AKI/SKI si los hay) en el inventario? */
+  issuerFound: boolean;
+  /** ¿Verifica la firma contra ese emisor? Ausente si no se pudo comprobar
+   *  (emisor ausente, o algoritmo que el OpenSSL del agente no conoce). */
+  signatureValid?: boolean;
+  /** ¿Termina la cadena en una raíz del almacén de confianza del SO?
+   *  false = termina en un autofirmado que NO es raíz de confianza;
+   *  ausente = no se pudo construir hasta arriba. */
+  trusted?: boolean;
+};
+
 export type CdpCertItem = {
   /** Stable per-device key: sha256(fingerprint256 + ":" + storeId). */
   id: string;
@@ -71,6 +96,9 @@ export type CdpCertItem = {
   crlUrls?: string[];
   /** OCSP responder URLs from Authority Information Access. */
   ocspUrls?: string[];
+  /** AIA caIssuers (solo http): dónde descargar el certificado emisor,
+   *  que el control plane necesita para preguntar por OCSP (ola 1.7). */
+  caIssuerUrls?: string[];
   /** Only for `source: "listener"` — what the live handshake revealed
    *  about the chain the service serves (ADR-0004 b). */
   tls?: {
@@ -128,6 +156,12 @@ export type CdpCertItem = {
   selfSigned?: boolean;
   /** Metadata only — the key itself is NEVER read or transmitted. */
   hasPrivateKey?: boolean;
+  /** Solo con `hasPrivateKey`. ¿Permite el proveedor exportar la clave?
+   *  Leído de la política de exportación, nunca intentando exportar. */
+  keyExportable?: boolean;
+  keyStorage?: CdpKeyStorage;
+  /** Ola 1.3a — ver CdpChainVerdict. */
+  chain?: CdpChainVerdict;
 
   keyUsage?: string[];
   extendedKeyUsage?: string[];
@@ -136,7 +170,9 @@ export type CdpCertItem = {
   store: CdpStoreInfo;
   /** Where the certificate was found:
    *   "store"      — OS certificate store
-   *   "java-store" — JKS/PKCS12 keystore (JVM cacerts or app keystore)
+   *   "java-store" — JKS/JCEKS/PKCS12 keystore (JVM cacerts, app keystore,
+   *                  or one the file discovery found by its magic bytes)
+   *   "file"       — PEM/DER/PKCS#12 file on disk (file discovery)
    *   "listener"   — captured from a live local TLS handshake, i.e. what
    *                  the service actually serves (may differ from any
    *                  store). */
@@ -249,11 +285,71 @@ export type CdpNamespace = {
   osTls?: CdpOsTlsCapability;
 
   /**
+   * Ola 1.1 — claves privadas SUELTAS encontradas por el descubrimiento de
+   * ficheros: solo PRESENCIA (ruta, tipo y tamaño si la parte pública lo
+   * dice, cifrada o no, y si casa con un certificado). Nunca un byte de la
+   * clave. Lista completa del equipo; viaja cuando cambia (digest) o en un
+   * baseline. Las de rutas que este escaneo no pudo ver se arrastran de la
+   * última lista enviada, así que el control plane puede reconciliar por
+   * ausencia sin más.
+   */
+  looseKeys?: { keys: CdpLooseKey[] };
+
+  /**
+   * Ola 1.1 — cómo fue el descubrimiento de ficheros de este escaneo:
+   * modo, raíces, cuánto se miró, si se cortó por tiempo o por número y
+   * qué raíces quedaron a medias. Informativo; viaja con el namespace
+   * cuando este viaja (no dispara un envío por sí solo).
+   */
+  fileDiscovery?: CdpFileDiscoveryStats;
+
+  /**
    * Candidatos a objetivo de sonda: servicios TLS INTERNOS con los que
    * este equipo tiene conexiones salientes establecidas. Nunca se sondean
    * por si solos; el operador los promueve desde la policy.
    */
   probeCandidates?: CdpProbeCandidate[];
+};
+
+export type CdpLooseKey = {
+  path: string;
+  /** pkcs8 | pkcs8-encrypted | pkcs1 | sec1 | dsa | pem-encrypted (Proc-Type
+   *  heredado) | unknown (fichero de clave que no se pudo leer). */
+  format: "pkcs8" | "pkcs8-encrypted" | "pkcs1" | "sec1" | "dsa" | "pem-encrypted" | "unknown";
+  /** null = no se sabe (fichero ilegible). */
+  encrypted: boolean | null;
+  /** false = el fichero existe con nombre de clave pero no se pudo leer. */
+  readable: boolean;
+  keyAlgorithm?: string;
+  keySizeBits?: number;
+  curve?: string;
+  /** sha256 de la SPKI de la parte PÚBLICA (mismo valor que el
+   *  `publicKeyHash` de los certificados). Solo cuando la parte pública
+   *  viene en claro en la estructura. */
+  publicKeyHash?: string;
+  /** Con qué certificado casa por clave pública. `unknown` = la parte
+   *  pública no era derivable (cifrada, Ed25519 v1, ilegible...). */
+  certMatch: "same-dir" | "inventory" | "none" | "unknown";
+  matchedFingerprint256?: string;
+};
+
+export type CdpFileDiscoveryStats = {
+  mode: "default" | "configured";
+  roots: string[];
+  filesScanned: number;
+  cacheHits: number;
+  elapsedMs: number;
+  /** Por qué se cortó el recorrido, o null si llegó al final. */
+  truncated: "time" | "files" | null;
+  /** Raíces que no se terminaron: lo que haya debajo no se da por retirado. */
+  incompleteRoots: string[];
+  /** Directorios/ficheros sin permiso bajo las raíces por defecto. */
+  deniedPaths: number;
+  /** Ficheros que eran copias de un bundle de raíces públicas (certifi,
+   *  ca-bundle...) y no se inventariaron uno a uno. */
+  trustBundlesSkipped: number;
+  keystores: number;
+  keys: number;
 };
 
 /** Capacidad TLS post-cuantica de la pila del SISTEMA, medida. */

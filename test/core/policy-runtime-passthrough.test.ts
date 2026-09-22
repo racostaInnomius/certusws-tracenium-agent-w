@@ -125,3 +125,24 @@ describe("ADR-0023 — adPrinterCollector sobrevive al validador", () => {
     expect(rt.isAdPrinterCollector()).toBe(false);
   });
 });
+
+describe("cdp.fileDiscovery (ola 1.1) sobrevive a validatePolicy", () => {
+  const rtWith = async (cdp: any) => {
+    const rt = new PolicyRuntime(storeWith({ version: "9", plugins: { enabled: ["cdp"] }, cdp }).store, null);
+    await rt.init();
+    return rt;
+  };
+
+  it("ausente = «default»: el descubrimiento funciona sin configurar nada", async () => {
+    expect((await rtWith({})).getCdpFileDiscovery()).toBe("default");
+  });
+
+  it("⭐ «configured» y «off» llegan al getter (sin nombrarlo en el merge se perdían)", async () => {
+    expect((await rtWith({ fileDiscovery: "configured" })).getCdpFileDiscovery()).toBe("configured");
+    expect((await rtWith({ fileDiscovery: "off" })).getCdpFileDiscovery()).toBe("off");
+  });
+
+  it("un valor desconocido NO amplía el alcance: cae en «configured»", async () => {
+    expect((await rtWith({ fileDiscovery: "everything" })).getCdpFileDiscovery()).toBe("configured");
+  });
+});

@@ -412,11 +412,11 @@ export function extractCrlUrls(der: Buffer): string[] {
 }
 
 /**
- * OCSP responder URLs from Authority Information Access. Collected for
- * completeness and display; the control plane cannot actually query them
- * without the ISSUER's certificate (an OCSP request identifies a
- * certificate by hashes of the issuer's name and public key, neither of
- * which is derivable from the metadata we keep). See ADR-0004 (c).
+ * OCSP responder URLs from Authority Information Access. On their own the
+ * control plane cannot query them: an OCSP request identifies a
+ * certificate by hashes of the ISSUER's name and public key. The issuer is
+ * fetched from the caIssuers URL (extractCaIssuerUrls, ola 1.7), which is
+ * why the two travel together. See ADR-0004 (c).
  */
 export function extractOcspUrls(der: Buffer): string[] {
   const ext = extractExtension(der, EXT_AUTHORITY_INFO_ACCESS);
@@ -432,6 +432,38 @@ export function extractOcspUrls(der: Buffer): string[] {
     collectUris(der, accessDescription, urls);
   }
   return urls;
+}
+
+const ACCESS_METHOD_CA_ISSUERS = "1.3.6.1.5.5.7.48.2";
+
+/**
+ * URLs AIA caIssuers: dónde publica el emisor su propio certificado.
+ *
+ * Es la pieza que faltaba para OCSP (ola 1.7): una petición OCSP nombra
+ * el certificado por los hashes del NOMBRE y la CLAVE del emisor, y con
+ * esta URL el control plane puede descargar ese emisor sin que un solo
+ * byte de certificado salga del equipo.
+ *
+ * Solo `http://`, a propósito: RFC 5280 §4.2.2.1 publica caIssuers por
+ * HTTP (o LDAP) y la integridad la da la firma del propio certificado, no
+ * el transporte. Un `https://` aquí es raro y, peor, circular — validar
+ * el TLS del servidor que sirve el emisor exige ya tener cadenas. LDAP
+ * tampoco: el control plane no va a hablar LDAP con directorios ajenos.
+ */
+export function extractCaIssuerUrls(der: Buffer): string[] {
+  const ext = extractExtension(der, EXT_AUTHORITY_INFO_ACCESS);
+  if (!ext) return [];
+  const inner = readTlv(der, ext.start);
+  if (!inner || inner.tag !== TAG_SEQUENCE) return [];
+
+  const urls: string[] = [];
+  for (const accessDescription of children(der, inner)) {
+    if (accessDescription.tag !== TAG_SEQUENCE) continue;
+    const parts = children(der, accessDescription);
+    if (decodeOid(der, parts[0]) !== ACCESS_METHOD_CA_ISSUERS) continue;
+    collectUris(der, accessDescription, urls);
+  }
+  return urls.filter((u) => /^http:\/\//i.test(u));
 }
 
 // ── Extended Key Usage (RFC 5280 §4.2.1.12) ──────────────────────────

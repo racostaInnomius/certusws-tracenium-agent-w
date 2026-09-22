@@ -21,6 +21,8 @@ import type {
   CdpVcenterReport,
   CdpAnchorPinReport,
   CdpCertItem,
+  CdpFileDiscoveryStats,
+  CdpLooseKey,
   CdpNamespace,
   CdpProbeCandidate,
   CdpSshHostKeys,
@@ -39,11 +41,65 @@ import { collectWindowsCdp } from "./providers/windows";
 import { collectMacosCdp } from "./providers/macos";
 import { collectLinuxCdp } from "./providers/linux";
 import { collectJavaStores } from "./providers/java-stores";
+import fs from "fs";
+import path from "path";
+import { parsedDerRegistry, resetParsedDerRegistry } from "./parse-cert";
+import { annotateStoreChains } from "./chain-verify";
+import type { CertFileKey, FileRoot, FileScanCache } from "./providers/cert-files";
 
 // Defensive cap: a pathological host (mass-imported cert farm) must not
 // produce a payload the outbox rejects (>2MB). Priority keeps the certs
 // an operator actually cares about.
 const MAX_ITEMS = 2000;
+/** Claves sueltas por equipo. Un servidor normal tiene decenas. */
+const MAX_LOOSE_KEYS = 500;
+/** Versión del registro de la caché de ficheros (se suma a la del agente). */
+const FILE_CACHE_SCHEMA = "1";
+
+/**
+ * Casa cada clave suelta con un certificado del inventario por el hash de
+ * su parte PÚBLICA (el mismo `publicKeyHash` de los certificados). Prefiere
+ * uno del mismo directorio — `server.key` junto a `server.crt` —, y si no,
+ * cualquiera del equipo.
+ *
+ * De paso marca `hasPrivateKey` en los certificados de FICHERO que casan:
+ * la clave está en este equipo, en disco. Es la misma afirmación que el
+ * almacén de Windows hace con HasPrivateKey, ahora con evidencia (la
+ * clave pública casa byte a byte). No toca certificados de almacén: esos
+ * ya dicen lo suyo.
+ */
+export function matchLooseKeys(keys: CertFileKey[], items: CdpCertItem[]): CdpLooseKey[] {
+  const byHash = new Map<string, CdpCertItem[]>();
+  for (const it of items) {
+    if (!it.publicKeyHash) continue;
+    const list = byHash.get(it.publicKeyHash) ?? [];
+    list.push(it);
+    byHash.set(it.publicKeyHash, list);
+  }
+  return keys.map((k) => {
+    const { path: keyPath, ...facts } = k;
+    if (!k.publicKeyHash) return { ...facts, path: keyPath, certMatch: "unknown" as const };
+    const matches = byHash.get(k.publicKeyHash) ?? [];
+    if (matches.length === 0) return { ...facts, path: keyPath, certMatch: "none" as const };
+    const dir = path.dirname(keyPath);
+    const fileBacked = (i: CdpCertItem) => i.store.id.startsWith("file:");
+    const sameDir = matches.find((i) => fileBacked(i) && path.dirname(i.store.name) === dir);
+    for (const i of matches) {
+      if (fileBacked(i) && !i.hasPrivateKey) {
+        i.hasPrivateKey = true;
+        i.keyStorage = "software";
+        i.keyExportable = true;
+      }
+    }
+    const chosen = sameDir ?? matches[0];
+    return {
+      ...facts,
+      path: keyPath,
+      certMatch: sameDir ? ("same-dir" as const) : ("inventory" as const),
+      matchedFingerprint256: chosen.fingerprint256
+    };
+  });
+}
 
 type ProviderResult = {
   items: CdpCertItem[];
@@ -124,6 +180,9 @@ async function collectOnce(
   options?: CollectCdpOptions
 ): Promise<CdpNamespace> {
   const platform = os.platform();
+  // El registro de DER es por escaneo (ver parse-cert): lo de un escaneo
+  // anterior no puede entrar en la validación de cadena de este.
+  resetParsedDerRegistry();
   const base: Pick<CdpNamespace, "schemaVersion" | "collector" | "collectedAt"> = {
     schemaVersion: "1.0",
     collector: { plugin: "cdp", version: ctx.config.agentVersion },
@@ -253,32 +312,119 @@ async function collectOnce(
     unscoped.push(`nss: ${err?.message || String(err)}`);
   }
 
-  // Certificates that live as files on disk. Opt-in via policy: an empty
-  // path list means the feature is off, and there is no default set —
-  // see the collector for why. Fail-soft like the Java stores: a bad
-  // path must never cost us the store scan that just succeeded.
+  // ── Ficheros en disco: certificados, keystores y claves sueltas ─────
+  //
+  // Ola 1.1: por defecto (`cdp.fileDiscovery` ausente = "default") se
+  // recorren las raíces por SO además de `cdp.certFilePaths`; "configured"
+  // es el comportamiento anterior (solo las rutas del operador) y "off" lo
+  // apaga. Un runtime sin el getter —una policy vieja o un doble de test—
+  // equivale a "configured": ampliar alcance tiene que ser explícito en el
+  // código que lo decide, no un efecto de que falte un método.
+  //
+  // Fallo blando como el resto. Lo que el recorrido no pudo ver se ACOTA
+  // en vez de afirmarse: directorios ilegibles y raíces cortadas por el
+  // presupuesto viajan como almacenes-prefijo (`file:<dir>/`), así que
+  // solo SUS certificados quedan a salvo de la baja — antes un solo
+  // directorio ilegible dejaba el escaneo entero sin poder afirmar
+  // ninguna baja (`unscoped`).
+  const fileMode = ctx.policyRuntime.getCdpFileDiscovery?.() ?? "configured";
   const certFileRoots = ctx.policyRuntime.getCdpCertFilePaths();
-  if (certFileRoots.length > 0) {
+  let fileDiscovery: CdpFileDiscoveryStats | undefined;
+  /** null = el recorrido no corrió o falló: el bloque de claves no viaja. */
+  let fileKeys: CertFileKey[] | null = fileMode === "off" ? [] : null;
+  let fileKeyUnseen: (path: string) => boolean = () => false;
+  if (fileMode !== "off" && (fileMode === "default" || certFileRoots.length > 0)) {
     try {
-      const { collectCertFiles } = await import("./providers/cert-files");
-      const files = await collectCertFiles(certFileRoots);
+      const { collectCertFiles, defaultFileDiscoveryRoots, dirPrefix } = await import("./providers/cert-files");
+      // Las del operador primero: un fichero que cuelga de las dos se
+      // trata con la semántica de lo que el operador pidió.
+      const roots: FileRoot[] = certFileRoots.map((p) => ({ path: p, origin: "configured" as const }));
+      let exclude: string[] = [];
+      if (fileMode === "default") {
+        const d = defaultFileDiscoveryRoots(platform);
+        roots.push(...d.roots.map((p) => ({ path: p, origin: "default" as const })));
+        exclude = d.exclude;
+      }
+      let cache: FileScanCache | undefined;
+      try {
+        const { openCdpFileScanCache } = await import("../../domain/cdp-file-cache-repo");
+        cache = openCdpFileScanCache(`${FILE_CACHE_SCHEMA}:${ctx.config.agentVersion}`);
+      } catch (err: any) {
+        // Sin caché se relee todo: más lento, igual de correcto.
+        ctx.logger?.warn?.("CDP: cache de ficheros no disponible (no fatal)", { error: err?.message || String(err) });
+      }
+      // Los keystores de `javaKeystorePaths` ya los inventaría el proveedor
+      // Java con su propio id de almacén; encontrarlos otra vez aquí los
+      // duplicaría.
+      const excludeRealPaths = new Set<string>();
+      for (const p of ctx.policyRuntime.getCdpJavaKeystorePaths?.() ?? []) {
+        try {
+          excludeRealPaths.add(fs.realpathSync(p));
+        } catch {
+          /* no existe: nada que deduplicar */
+        }
+      }
+
+      const files = await collectCertFiles(roots, { cache, excludePaths: exclude, excludeRealPaths });
       result.items.push(...files.items);
       result.stores.push(...files.stores);
       result.parseFailures += files.parseFailures;
-      for (const f of files.unreadableFiles ?? []) {
+      for (const f of files.unreadableFiles) {
         unreadable.push({ id: `file:${f}`, name: f, reason: files.unreadableReasons?.[f] ?? "unreadable" });
       }
-      // Un directorio que existe y no se lista, o el tope de ficheros,
-      // esconden almacenes que no se pueden nombrar.
-      if ((files.unreadableDirs ?? []).length > 0) {
-        unscoped.push(`file: unreadable directories: ${files.unreadableDirs.slice(0, 5).join(", ")}`);
+      for (const d of files.unreadableDirs) {
+        const pre = dirPrefix(d);
+        unreadable.push({ id: `file:${pre}`, name: pre, reason: "directory unreadable", prefix: true });
       }
-      if (files.capped) unscoped.push("file: scan capped at MAX_FILES");
-      if (files.capped || files.unreadable > 0) {
+      for (const r of files.incompleteRoots) {
+        const pre = dirPrefix(r);
+        unreadable.push({ id: `file:${pre}`, name: pre, reason: `file discovery truncated (${files.truncated})`, prefix: true });
+      }
+      // Lo denegado bajo una raíz por defecto es lo NORMAL en Linux (el
+      // agente no es root: /etc/ssl/private, datos de postgres...). Solo
+      // se protege lo que tenía algo inventariado — si nunca se pudo leer,
+      // no hay baja que evitar, y nombrar cientos de rutas en cada escaneo
+      // solo haría que todos los escaneos parecieran parciales.
+      const deniedMatch = (id: string, p: string) => id === `file:${p}` || id.startsWith(`file:${dirPrefix(p)}`);
+      if (files.deniedPaths.length > 0) {
+        const withHistory = loadCdpBaselineItemsByStore(
+          (id) => files.deniedPaths.some((p) => deniedMatch(id, p)),
+          new Set()
+        );
+        for (const p of files.deniedPaths) {
+          // Un denegado puede ser un fichero (id exacto) o un directorio
+          // (prefijo); no se sabe cuál, así que se mira qué tenía debajo.
+          if (withHistory.some((i) => i.store.id === `file:${p}`)) {
+            unreadable.push({ id: `file:${p}`, name: p, reason: "permission denied" });
+          }
+          const pre = dirPrefix(p);
+          if (withHistory.some((i) => i.store.id.startsWith(`file:${pre}`))) {
+            unreadable.push({ id: `file:${pre}`, name: pre, reason: "permission denied", prefix: true });
+          }
+        }
+      }
+      const unseen = [...files.incompleteRoots, ...files.unreadableDirs, ...files.deniedPaths];
+      fileKeyUnseen = (keyPath) => unseen.some((p) => keyPath === p || keyPath.startsWith(dirPrefix(p)));
+      fileKeys = files.keys;
+      fileDiscovery = {
+        mode: fileMode === "default" ? "default" : "configured",
+        roots: roots.map((r) => r.path),
+        filesScanned: files.filesScanned,
+        cacheHits: files.cacheHits,
+        elapsedMs: files.elapsedMs,
+        truncated: files.truncated,
+        incompleteRoots: files.incompleteRoots,
+        deniedPaths: files.deniedPaths.length,
+        trustBundlesSkipped: files.trustBundlesSkipped,
+        keystores: files.keystores,
+        keys: files.keys.length
+      };
+      if (files.truncated || files.unreadable > 0) {
         ctx.logger?.warn?.("CDP: cert file scan incomplete", {
           filesScanned: files.filesScanned,
           unreadable: files.unreadable,
-          capped: files.capped
+          truncated: files.truncated,
+          incompleteRoots: files.incompleteRoots
         });
       }
     } catch (err: any) {
@@ -286,6 +432,7 @@ async function collectOnce(
         error: err?.message || String(err)
       });
       unscoped.push(`file: ${err?.message || String(err)}`);
+      fileKeys = null;
     }
   }
 
@@ -433,6 +580,57 @@ async function collectOnce(
     }
   }
 
+  // Las claves sueltas viajan como las claves SSH: lista completa cuando
+  // cambia (digest) o en un baseline.
+  let looseKeysOut: { keys: CdpLooseKey[] } | undefined;
+  let looseKeysPending: CdpLooseKey[] | undefined;
+
+  // ── Ola 1.3a: cadena de los certificados de almacén ────────────────
+  // Antes del recorte y del diff: el veredicto es parte del item, y un
+  // emisor que aparece (o desaparece) cambia el de sus hijos.
+  try {
+    annotateStoreChains(result.items, parsedDerRegistry());
+  } catch (err: any) {
+    ctx.logger?.warn?.("CDP: validacion de cadena fallo (no fatal)", { error: err?.message || String(err) });
+  }
+
+  // ── Ola 1.1: claves sueltas — casarlas con su certificado ──────────
+  let looseKeys: CdpLooseKey[] | undefined;
+  if (fileKeys) {
+    looseKeys = matchLooseKeys(fileKeys, result.items);
+    // Arrastre: las de rutas que este escaneo no pudo ver siguen en la
+    // lista (el control plane reconcilia por ausencia).
+    try {
+      const { readCdpMeta } = await import("../../domain/cdp-adcs-repo");
+      const prev = JSON.parse(readCdpMeta("loose_keys_last") ?? "[]");
+      const present = new Set(looseKeys.map((k) => k.path));
+      if (Array.isArray(prev)) {
+        for (const k of prev) {
+          if (k && typeof k.path === "string" && !present.has(k.path) && fileKeyUnseen(k.path)) looseKeys.push(k);
+        }
+      }
+    } catch {
+      /* sin memoria previa no hay nada que arrastrar */
+    }
+    looseKeys.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    looseKeys = looseKeys.slice(0, MAX_LOOSE_KEYS);
+    looseKeysPending = looseKeys;
+  }
+  if (looseKeysPending) {
+    try {
+      const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
+      const digest = crypto.createHash("sha256").update(JSON.stringify(looseKeysPending)).digest("hex");
+      if (options?.full === true || readCdpMeta("loose_keys_digest") !== digest) {
+        looseKeysOut = { keys: looseKeysPending };
+        writeCdpMeta("loose_keys_digest", digest);
+        writeCdpMeta("loose_keys_last", JSON.stringify(looseKeysPending));
+        if (options?.full !== true) sideChanged = true;
+      }
+    } catch (err: any) {
+      ctx.logger?.warn?.("CDP: claves sueltas no registradas (no fatal)", { error: err?.message || String(err) });
+    }
+  }
+
   const { items, truncated } = applyCap(result.items);
 
   if (result.parseFailures > 0) {
@@ -549,7 +747,9 @@ async function collectOnce(
     ...(vcenter ? { vcenter } : {}),
     ...(osTls ? { osTls } : {}),
     ...(sshHostKeys ? { sshHostKeys } : {}),
-    ...(probeCandidates ? { probeCandidates } : {})
+    ...(probeCandidates ? { probeCandidates } : {}),
+    ...(looseKeysOut ? { looseKeys: looseKeysOut } : {}),
+    ...(fileDiscovery ? { fileDiscovery } : {})
   };
 }
 

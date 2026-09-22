@@ -133,6 +133,8 @@
          test en macOS prueba lo mismo que corre en Windows, que es justo
          lo que NO pasaba con X509Chain. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\CertIssuedBy.cs" />
+    <!-- Ola 1.3b — proveedor → almacenamiento y política de exportación (lógica pura). -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\CdpKeyInfoShape.cs" />
     <!-- A qué peers sirve un Distribution Point: el conjunto de CAs emisoras
          aceptadas y la criba de las que entrega el control plane. Puro
          (encima de CertIssuedBy); la lectura de almacenes y del fichero se

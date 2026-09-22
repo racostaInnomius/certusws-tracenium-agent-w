@@ -7,10 +7,12 @@
 // parse-cert helper so all three platforms produce identical items.
 //
 // PrivSvc NEVER exports key material — hasPrivateKey is the
-// X509Certificate2.HasPrivateKey attribute, nothing more.
+// X509Certificate2.HasPrivateKey attribute; keyStorage/keyExportable
+// (ola 1.3b) come from the key's provider name and its export POLICY,
+// read without attempting an export.
 
 import type { AgentContext } from "../../../core/agent-context";
-import type { CdpCertItem, CdpStoreInfo } from "../../../domain/cdp-types";
+import type { CdpCertItem, CdpKeyStorage, CdpStoreInfo } from "../../../domain/cdp-types";
 import { parseCertToItem } from "../parse-cert";
 
 // LocalMachine stores scanned in Phase A. CurrentUser stores need
@@ -27,6 +29,11 @@ export type WindowsCdpResult = {
    *  Sus certificados no son bajas. */
   userStoresUnavailable?: string;
 };
+
+const KEY_STORAGES = new Set<CdpKeyStorage>(["software", "tpm", "smartcard", "unknown"]);
+function isKeyStorage(v: unknown): v is CdpKeyStorage {
+  return typeof v === "string" && KEY_STORAGES.has(v as CdpKeyStorage);
+}
 
 export async function collectWindowsCdp(ctx: AgentContext): Promise<WindowsCdpResult> {
   const resp = await ctx.priv.call({
@@ -66,6 +73,9 @@ export async function collectWindowsCdp(ctx: AgentContext): Promise<WindowsCdpRe
     store?: string;
     rawDerBase64?: string;
     hasPrivateKey?: boolean;
+    /** Ola 1.3b — PrivSvc ≥ esta versión. Ausentes en uno anterior. */
+    keyExportable?: boolean | null;
+    keyStorage?: string | null;
   }> = Array.isArray(resp.result?.certificates) ? resp.result.certificates : [];
 
   const items: CdpCertItem[] = [];
@@ -90,7 +100,12 @@ export async function collectWindowsCdp(ctx: AgentContext): Promise<WindowsCdpRe
 
     const item = parseCertToItem(Buffer.from(raw.rawDerBase64, "base64"), {
       store,
-      hasPrivateKey: raw.hasPrivateKey === true
+      hasPrivateKey: raw.hasPrivateKey === true,
+      // Lo que PrivSvc supo de la clave SIN exportarla (proveedor CNG/CSP y
+      // su política de exportación). Un valor fuera de la lista cerrada, o
+      // un PrivSvc antiguo que no lo manda, se queda en «no se sabe».
+      ...(typeof raw.keyExportable === "boolean" ? { keyExportable: raw.keyExportable } : {}),
+      ...(isKeyStorage(raw.keyStorage) ? { keyStorage: raw.keyStorage } : {})
     });
 
     if (item) {
