@@ -69,6 +69,7 @@ import {
 } from "./cdp-keys";
 import { handleCdpCertInstall } from "./cdp-cert-install";
 import { handleCdpAnchorState } from "./cdp-anchor-state";
+import { handleCdpAnchorDistrust } from "./cdp-anchor-distrust";
 
 function isRoot() {
   return typeof process.getuid === "function" ? process.getuid() === 0 : false;
@@ -188,6 +189,13 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     // (gate 1) de un equipo que no reporta.
     case "cdp.anchor.state":
       return handleCdpAnchorState(req);
+
+    // ADR-0011 decision 10 — desconfiar de un ancla. Faltaba: el job
+    // `cdp_anchor_distrust` moria aqui en "unknown method". Lista de
+    // bloqueo de p11-kit (RHEL/SUSE) o `!` en ca-certificates.conf
+    // (Debian), regenerado y VERIFICADO contra lo extraido.
+    case "cdp.anchor.distrust":
+      return handleCdpAnchorDistrust(req);
 
     case "crypto.cert.renew": {
       // ADR-0015 — el transporte se INYECTA aquí y no se importa en

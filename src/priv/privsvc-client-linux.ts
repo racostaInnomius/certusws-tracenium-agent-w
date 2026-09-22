@@ -154,6 +154,12 @@ export function getTimeoutForMethod(method: string): number {
       return 120 * 1000; // pkcs12 + hasta 3 llamadas a `security`
     case "crypto.csr.generate":
       return 60 * 1000; // clave + CSR en proceso, sin red
+    // ADR-0011 decision 10. El handler regenera el trust store
+    // (`update-ca-trust extract` / `update-ca-certificates --fresh`, que
+    // en Debian corre los hooks —el de Java reescribe cacerts—) con un
+    // techo de 60s (REBUILD_TIMEOUT_MS), más dos lecturas de los bundles.
+    case "cdp.anchor.distrust":
+      return 90 * 1000;
     default:
       return DEFAULT_TIMEOUT_MS;
   }

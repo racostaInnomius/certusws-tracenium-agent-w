@@ -86,6 +86,11 @@ const PRIVSVC_CEILING_MS: Record<string, { windows?: number; macos?: number; lin
   // helper's 10s kill grace. If either moves, this number has to move with
   // it, which is the whole point of asserting it here.
   "rcp.consent.request": { windows: 100_000, macos: 100_000, linux: 100_000 },
+  // ADR-0011 decision 10 en Linux: regenerar el trust store tiene techo
+  // de 60s (REBUILD_TIMEOUT_MS en privsvc/linux/src/cdp-anchor-distrust.ts)
+  // más la lectura de los bundles antes y después. Sin entrada caía en el
+  // default de 8s y un `update-ca-certificates` con el hook de Java lo pasa.
+  "cdp.anchor.distrust": { linux: 70_000 },
 };
 
 const CLIENTS = {
