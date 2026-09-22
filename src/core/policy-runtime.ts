@@ -3,6 +3,14 @@ import { parseExtensionPolicy, type ExtensionPolicy } from "../domain/extension-
 import { sanitizeFileIntegrityPolicy, type FileIntegrityPolicy } from "../domain/file-integrity-policy";
 import { sanitizeHostList } from "./host-match";
 import { parseProbeTarget, probeTargetKey, type ProbeTarget } from "../domain/probe-target";
+import {
+  parseProbeRange,
+  probeRangeEntry,
+  probeRangeKey,
+  PROBE_RANGES_MAX,
+  type CdpProbeRangeEntry,
+  type ProbeRange
+} from "../domain/probe-range";
 import { EventEmitter } from "events";
 import { PolicyStore } from "./policy-store";
 import {
@@ -119,6 +127,14 @@ export type RuntimePolicy = {
      * esto todo el parque sondeaba cada objetivo (repaso 2026-09-07).
      */
     probeHosts?: string[];
+    /**
+     * Ola 1.2 — rangos de red a BARRER desde los mismos `probeHosts`.
+     * Cada entrada: un CIDR (>= /22) o un `inicio-fin` IPv4, la lista de
+     * puertos, y opcionalmente el nombre a mandar como SNI. Vacio o
+     * ausente = no se barre nada, que es el comportamiento de siempre.
+     * Saneado y acotado al recibir la policy (ver domain/probe-range.ts).
+     */
+    probeRanges?: CdpProbeRangeEntry[];
     /**
      * Conector AD CS (fase 4): en un equipo con el rol Certification
      * Authority, leer la base de emisiones por RequestID (incremental) y
@@ -706,6 +722,35 @@ export function sanitizeProbeTargets(input: unknown, logger?: any): string[] {
   return out;
 }
 
+/**
+ * Rangos a barrer. Los topes de FORMA (prefijo minimo, puertos por
+ * entrada) los aplica el parser compartido; aqui solo el numero de
+ * entradas y la deduplicacion. Una entrada que no pasa el parser se
+ * TIRA: barrer «casi» lo que pedia el operador —un /16 recortado a un
+ * /22, por ejemplo— seria inventarse una instruccion que nadie dio.
+ */
+export function sanitizeProbeRanges(input: unknown, logger?: any): CdpProbeRangeEntry[] {
+  if (!Array.isArray(input)) return [];
+  const out: CdpProbeRangeEntry[] = [];
+  const seen = new Set<string>();
+  for (const raw of input) {
+    if (out.length >= PROBE_RANGES_MAX) {
+      logger?.warn?.("cdp.probeRanges: cap reached, dropping remainder", { cap: PROBE_RANGES_MAX });
+      break;
+    }
+    const r = parseProbeRange(raw);
+    if (!r) {
+      logger?.debug?.("cdp.probeRanges: dropping invalid range", { raw: JSON.stringify(raw ?? null).slice(0, 120) });
+      continue;
+    }
+    const key = probeRangeKey(r);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(probeRangeEntry(r));
+  }
+  return out;
+}
+
 const DEFAULT_POLICY: RuntimePolicy = {
   inventory: {
     intervalSeconds: 21600 // 6h
@@ -975,6 +1020,13 @@ export class PolicyRuntime extends EventEmitter {
     return sanitizeHostList(this.policy.cdp?.probeHosts);
   }
 
+  /** Ola 1.2 — rangos ya saneados, resueltos a limites numericos. */
+  getCdpProbeRanges(): ProbeRange[] {
+    return (this.policy.cdp?.probeRanges ?? [])
+      .map((e) => parseProbeRange(e))
+      .filter((r): r is ProbeRange => r !== null);
+  }
+
   /** Objetivos remotos ya saneados, como pares host/port. */
   getCdpProbeTargets(): ProbeTarget[] {
     return (this.policy.cdp?.probeTargets ?? [])
@@ -1207,6 +1259,8 @@ export class PolicyRuntime extends EventEmitter {
       // Nombrado aquí o el merge lo tira (ver la trampa de validatePolicy).
       fileDiscovery: sanitizeFileDiscovery(policy.cdp?.fileDiscovery, this.logger),
       probeTargets: sanitizeProbeTargets(policy.cdp?.probeTargets, this.logger),
+      // Nombrado aquí o el merge lo tira (la trampa de validatePolicy).
+      probeRanges: sanitizeProbeRanges(policy.cdp?.probeRanges, this.logger),
       probeHosts: sanitizeHostList(policy.cdp?.probeHosts),
       adcs: {
         enabled: policy.cdp?.adcs?.enabled !== false,

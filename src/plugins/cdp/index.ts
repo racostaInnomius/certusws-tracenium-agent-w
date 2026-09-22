@@ -25,6 +25,7 @@ import type {
   CdpLooseKey,
   CdpNamespace,
   CdpProbeCandidate,
+  CdpProbeSweepStats,
   CdpSshHostKeys,
   CdpStoreInfo,
   CdpUnreadableStore
@@ -465,7 +466,8 @@ async function collectOnce(
   // Y solo desde los equipos nombrados en `cdp.probeHosts`: sin esto, cada
   // equipo bajo la policy sondeaba cada objetivo (repaso 2026-09-07).
   const probeHosts = ctx.policyRuntime.getCdpProbeHosts?.() ?? [];
-  if ((ctx.policyRuntime.getCdpProbeTargets?.() ?? []).length > 0 && hostMatches(probeHosts, thisHostname())) {
+  const isProbeHost = hostMatches(probeHosts, thisHostname());
+  if ((ctx.policyRuntime.getCdpProbeTargets?.() ?? []).length > 0 && isProbeHost) {
     try {
       const { collectTlsProbes } = await import("./providers/tls-probes");
       const probes = await collectTlsProbes(ctx);
@@ -477,6 +479,40 @@ async function collectOnce(
         error: err?.message || String(err)
       });
       unscoped.push(`probe: ${err?.message || String(err)}`);
+    }
+  }
+
+  // Ola 1.2 — barrido por rangos. Mismo portero que las sondas sueltas
+  // (`probeHosts`) y la misma regla: sin rangos en la policy no se abre
+  // un socket. Fallo blando, y un barrido que revienta no puede costar el
+  // inventario del propio equipo.
+  let probeSweep: CdpProbeSweepStats | undefined;
+  if ((ctx.policyRuntime.getCdpProbeRanges?.() ?? []).length > 0 && isProbeHost) {
+    try {
+      const { collectRangeSweep } = await import("./providers/tls-range-sweep");
+      const sweep = await collectRangeSweep(ctx);
+      result.items.push(...sweep.items);
+      result.stores.push(...sweep.stores);
+      result.parseFailures += sweep.parseFailures;
+      probeSweep = sweep.stats;
+      // Un barrido CORTADO no ha mirado la red entera: lo que no se llego
+      // a sondear no esta de baja, solo no se miro. Se protege el prefijo
+      // de los almacenes de sonda igual que una raiz de ficheros a medias.
+      // Cubre de paso los objetivos explicitos, que comparten prefijo:
+      // una fila vieja que un operador ve es mejor que una baja fantasma.
+      if (sweep.stats.truncated) {
+        unreadable.push({
+          id: "probe/tcp/",
+          name: "probe/tcp/",
+          reason: `range sweep truncated (${sweep.stats.truncated})`,
+          prefix: true
+        });
+      }
+    } catch (err: any) {
+      ctx.logger?.warn?.("CDP: barrido de rangos fallo (no fatal)", {
+        error: err?.message || String(err)
+      });
+      unscoped.push(`sweep: ${err?.message || String(err)}`);
     }
   }
 
@@ -749,7 +785,8 @@ async function collectOnce(
     ...(sshHostKeys ? { sshHostKeys } : {}),
     ...(probeCandidates ? { probeCandidates } : {}),
     ...(looseKeysOut ? { looseKeys: looseKeysOut } : {}),
-    ...(fileDiscovery ? { fileDiscovery } : {})
+    ...(fileDiscovery ? { fileDiscovery } : {}),
+    ...(probeSweep ? { probeSweep } : {})
   };
 }
 

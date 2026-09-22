@@ -150,6 +150,14 @@ export type CdpCertItem = {
     /** El puerto exigio un preambulo StartTLS (smtp, imap, pop3, ldap,
      *  postgres, mysql) antes del handshake. Ausente = TLS implicito. */
     startTls?: string;
+    /** Ola 1.2 — el nombre que se mando como SNI y que produjo ESTE
+     *  certificado. Ausente = no se mando ninguno (lo que sirve la
+     *  direccion por defecto). El barrido hace los dos intentos. */
+    sni?: string;
+    /** Ola 1.2 — la entrada de `cdp.probeRanges` que descubrio este
+     *  endpoint, tal como la escribio el operador. Ausente en un
+     *  objetivo explicito de `probeTargets` o en un listener local. */
+    sweep?: string;
   };
 
   isCA?: boolean;
@@ -304,6 +312,15 @@ export type CdpNamespace = {
   fileDiscovery?: CdpFileDiscoveryStats;
 
   /**
+   * Ola 1.2 — como fue el barrido por rangos de este escaneo. Igual que
+   * `fileDiscovery`: informativo, viaja con el namespace cuando este
+   * viaja y no dispara un envio por si solo. Su `truncated` es lo que
+   * impide que el control plane retire por ausencia lo que el barrido no
+   * llego a mirar.
+   */
+  probeSweep?: CdpProbeSweepStats;
+
+  /**
    * Candidatos a objetivo de sonda: servicios TLS INTERNOS con los que
    * este equipo tiene conexiones salientes establecidas. Nunca se sondean
    * por si solos; el operador los promueve desde la policy.
@@ -331,6 +348,35 @@ export type CdpLooseKey = {
    *  pública no era derivable (cifrada, Ed25519 v1, ilegible...). */
   certMatch: "same-dir" | "inventory" | "none" | "unknown";
   matchedFingerprint256?: string;
+};
+
+/**
+ * Ola 1.2 — que cubrio el barrido por rangos de ESTA ejecucion.
+ *
+ * No es decoracion: un barrido cortado por presupuesto NO ha visto la
+ * red entera, y el control plane necesita saberlo para no retirar por
+ * ausencia los endpoints que simplemente no se llegaron a mirar.
+ */
+export type CdpProbeSweepStats = {
+  /** Entradas de `cdp.probeRanges` en la policy. */
+  ranges: number;
+  /** Direcciones planificadas (ya sin loopback, enlace local y multicast). */
+  addresses: number;
+  /** Conexiones TCP abiertas (direccion x puerto). */
+  attempts: number;
+  /** Cuantas aceptaron la conexion. */
+  accepted: number;
+  /** Cuantos certificados se obtuvieron (contando la variante por SNI). */
+  answered: number;
+  /** Direcciones:puerto que ya cubre `probeTargets` y no se barrieron. */
+  skippedExisting: number;
+  /** Segundos intentos con SNI. */
+  sniAttempts: number;
+  /** Veces que el SNI dio un certificado DISTINTO al de la direccion. */
+  sniDistinct: number;
+  elapsedMs: number;
+  /** Por que se corto, o null si se completo. */
+  truncated: "time" | "attempts" | "addresses" | "items" | null;
 };
 
 export type CdpFileDiscoveryStats = {
