@@ -17,9 +17,13 @@
 //
 // **It never reads private key material.** `.key` and `.pem` files that
 // hold a PRIVATE KEY block are skipped by content, not by extension —
-// `server.pem` routinely holds both halves. A PKCS#12 is only opened
-// with an empty password, and a `.p12` that needs a real one is reported
-// as an unreadable file rather than prompted for or brute-forced. The
+// `server.pem` routinely holds both halves. A PKCS#12 (`.p12`/`.pfx`) is
+// opened with the EMPTY password only (see ../pkcs12.ts): its
+// certificates are read, its key bags are never decrypted — only their
+// localKeyId attribute is looked at, to set `hasPrivateKey`. A PFX that
+// needs a real password (or that we cannot decode) is reported as an
+// UNREADABLE store with the reason, never as an empty file, and never
+// prompted for or brute-forced. The
 // v1 non-goal — never collect key material — is the same one this
 // plugin has always had, and file scanning is where it would be easiest
 // to break by accident.
@@ -34,6 +38,7 @@ import fs from "fs";
 import path from "path";
 import type { CdpCertItem, CdpStoreInfo } from "../../../domain/cdp-types";
 import { parseCertToItem } from "../parse-cert";
+import { looksLikePkcs12, readPkcs12Certificates, Pkcs12Error } from "../pkcs12";
 
 /** Extensions worth opening. Anything else is not looked at. */
 const CERT_EXTENSIONS = new Set([".crt", ".cer", ".pem", ".der", ".p12", ".pfx"]);
@@ -63,6 +68,9 @@ export type CertFileResult = {
   unreadable: number;
   /** The same, by path: each file is its own store (`file:<path>`). */
   unreadableFiles: string[];
+  /** Why, when there is something better to say than "unreadable" — a
+   *  PKCS#12 that needs a password is not the same as EACCES. */
+  unreadableReasons: Record<string, string>;
   /** Directories under a root that exist and could not be listed. Their
    *  stores cannot be named, so a scan with any of these cannot claim a
    *  single removal for the `file` source. */
@@ -161,6 +169,7 @@ export async function collectCertFiles(roots: string[]): Promise<CertFileResult>
     filesScanned: 0,
     unreadable: 0,
     unreadableFiles: [],
+    unreadableReasons: {},
     unreadableDirs: [],
     capped: false
   };
@@ -184,7 +193,27 @@ export async function collectCertFiles(roots: string[]): Promise<CertFileResult>
         continue;
       }
 
-      const blobs = certificatesInBuffer(buf, filePath);
+      // PKCS#12: certificados + si su clave está en el fichero. Solo si
+      // TIENE PINTA de PFX — un `.pfx` que no lo es cae al camino normal
+      // y, como un `.crt` basura, no produce nada.
+      let blobs: { der: Buffer | string; hasPrivateKey: boolean }[];
+      const ext = path.extname(filePath).toLowerCase();
+      if ((ext === ".p12" || ext === ".pfx") && looksLikePkcs12(buf)) {
+        try {
+          blobs = readPkcs12Certificates(buf);
+        } catch (err) {
+          // Un PFX que no abrimos NO es un fichero vacío: si ayer tenía
+          // certificados, hoy no son bajas (2a80f2c). La razón nunca
+          // lleva bytes del fichero.
+          result.unreadable += 1;
+          result.unreadableFiles.push(filePath);
+          result.unreadableReasons[filePath] =
+            err instanceof Pkcs12Error ? `pkcs12: ${err.message}` : "pkcs12: malformed";
+          continue;
+        }
+      } else {
+        blobs = certificatesInBuffer(buf, filePath).map((der) => ({ der, hasPrivateKey: false }));
+      }
       if (blobs.length === 0) continue;
 
       const store: CdpStoreInfo = {
@@ -197,7 +226,7 @@ export async function collectCertFiles(roots: string[]): Promise<CertFileResult>
       seenStores.set(store.id, store);
 
       for (const blob of blobs) {
-        const item = parseCertToItem(blob, { store, hasPrivateKey: false });
+        const item = parseCertToItem(blob.der, { store, hasPrivateKey: blob.hasPrivateKey });
         if (item) {
           result.items.push({ ...item, source: "file" });
         } else {

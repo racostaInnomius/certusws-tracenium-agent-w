@@ -266,7 +266,7 @@ async function collectOnce(
       result.stores.push(...files.stores);
       result.parseFailures += files.parseFailures;
       for (const f of files.unreadableFiles ?? []) {
-        unreadable.push({ id: `file:${f}`, name: f, reason: "unreadable" });
+        unreadable.push({ id: `file:${f}`, name: f, reason: files.unreadableReasons?.[f] ?? "unreadable" });
       }
       // Un directorio que existe y no se lista, o el tope de ficheros,
       // esconden almacenes que no se pueden nombrar.
