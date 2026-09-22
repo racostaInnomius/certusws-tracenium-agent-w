@@ -100,14 +100,30 @@ function buildCryptoEvidence(posture: any): ScpCryptoEvidence {
   };
 }
 
-function buildPatchesEvidence(posture: any): ScpPatchesEvidence {
+export function buildPatchesEvidence(posture: any): ScpPatchesEvidence {
   const items = normalizeArray(posture?.patches?.items);
 
-  return {
+  const evidence: ScpPatchesEvidence = {
     items,
     count: Number(posture?.patches?.count ?? items.length) || items.length,
     lastScanUtc: posture?.patches?.lastScanUtc ?? undefined
   };
+
+  // ⚠️ Este objeto se RECONSTRUYE, no se reenvía: lo que no se copie aquí no
+  // sale del equipo. Así se perdían ya los fallos antes de llegar a PrivSvc;
+  // no se pueden perder otra vez en este paso.
+  //
+  // Sólo se copian si PrivSvc los mandó. Un PrivSvc antiguo —o el respaldo
+  // Get-HotFix, que no ve fallos— no los trae, y convertir esa ausencia en
+  // `[]` diría «sin fallos» sobre algo que nadie miró.
+  const patches = posture?.patches;
+  if (patches && Object.prototype.hasOwnProperty.call(patches, "failures")) {
+    evidence.failures = normalizeArray(patches.failures);
+  }
+  if (patches && Object.prototype.hasOwnProperty.call(patches, "uninstalls")) {
+    evidence.uninstalls = normalizeArray(patches.uninstalls);
+  }
+  return evidence;
 }
 
 export async function collectWindowsScp(ctx: AgentContext): Promise<ScpNamespace> {

@@ -44,9 +44,20 @@ export type ScpCryptoEvidence = {
 };
 
 export type ScpPatchesEvidence = {
+  /** SÓLO instalaciones correctas: lo leen `count` y los checks de SCP. */
   items?: unknown[];
   count?: number;
   lastScanUtc?: string;
+  /**
+   * Instalaciones con error, fallidas o abortadas (ResultCode 3/4/5), con su
+   * HRESULT. Materia prima del Confidence Score de parches (22-sep-2026).
+   *
+   * AUSENTE ≠ vacía: ausente = no se recogió (PrivSvc antiguo, o el respaldo
+   * Get-HotFix, que no ve fallos); `[]` = se miró y no hubo ninguno.
+   */
+  failures?: unknown[];
+  /** Desinstalaciones (Operation 2): un rollback. Misma regla de ausencia. */
+  uninstalls?: unknown[];
 };
 
 /** Diagnostic block surfaced when the collector itself failed to run

@@ -1024,8 +1024,21 @@ foreach ($p in $protocols) {
         //   matches what the operator sees on the device.
         //
         //   Schema mapping per IUpdateHistoryEntry:
-        //     ResultCode 2  → Succeeded   (we filter to this)
-        //     Operation 1   → Installation (skip Uninstallation = 2)
+        //     ResultCode 2  → Succeeded   → `items`
+        //     ResultCode 3/4/5 on an install → `failures`
+        //     Operation 2 (Uninstallation)   → `uninstalls`
+        //
+        //   ⚠️ WHY THREE LISTS AND NOT ONE (22-sep-2026). `items` fed — and
+        //   still feeds — every SCP check that reads "installed patches"
+        //   (`count`, "patched in the last N days"). Until this change the
+        //   failures were thrown away right here, on the device, and they are
+        //   exactly what the patch Confidence Score needs: how often a KB
+        //   fails, with which HRESULT, and whether it got rolled back. Putting
+        //   them in `items` would have made any backend count a failed install
+        //   as a patched device. So `items` and `count` are byte-for-byte what
+        //   they were, and the new outcomes ride next to them: an old backend
+        //   stores them without reading them, and nothing depends on which
+        //   side deploys first.
         //     Title         → free-form, KB id usually in parens
         //     Date          → install timestamp (UTC)
         //     UpdateIdentity.UpdateID → stable GUID for cross-platform refs
@@ -1060,19 +1073,33 @@ $session = New-Object -ComObject Microsoft.Update.Session
 $searcher = $session.CreateUpdateSearcher()
 $total = $searcher.GetTotalHistoryCount()
 if ($total -le 0) {
-  '[]'
+  ConvertTo-Json -Compress -InputObject @{ items = @(); failures = @(); uninstalls = @() }
   return
+}
+
+# HRESULT as the 8-digit hex Windows Update shows (0x80070070). It arrives as
+# a signed Int32, and in PowerShell 5.1 the literal 0xFFFFFFFF is -1, so the
+# unsigned value is built by hand.
+function Format-HResult($value) {
+  try {
+    $h = [int64]$value
+    if ($h -lt 0) { $h += [int64]4294967296 }
+    return ('0x{0:X8}' -f $h)
+  } catch { return $null }
 }
 
 $history = $searcher.QueryHistory(0, $total)
 $items = @()
+$failures = @()
+$uninstalls = @()
 foreach ($entry in $history) {
-  # Only successful installs. ResultCode enum:
-  #   0 NotStarted, 1 InProgress, 2 Succeeded, 3 SucceededWithErrors,
-  #   4 Failed, 5 Aborted
-  # Operation enum: 1 Installation, 2 Uninstallation
-  if ([int]$entry.ResultCode -ne 2) { continue }
-  if ([int]$entry.Operation -ne 1) { continue }
+  # ResultCode: 0 NotStarted, 1 InProgress, 2 Succeeded, 3 SucceededWithErrors,
+  #             4 Failed, 5 Aborted
+  # Operation:  1 Installation, 2 Uninstallation
+  $code = [int]$entry.ResultCode
+  $op = [int]$entry.Operation
+  # Not an outcome yet: nothing to learn from it.
+  if ($code -lt 2) { continue }
 
   $title = [string]$entry.Title
   $kb = $null
@@ -1081,24 +1108,46 @@ foreach ($entry in $history) {
 
   $updateId = $null
   try { $updateId = [string]$entry.UpdateIdentity.UpdateID } catch {}
+  $when = $entry.Date.ToUniversalTime().ToString('o')
 
-  $items += [pscustomobject]@{
-    hotFixId      = $kb
-    title         = $title
-    description   = [string]$entry.Description
-    installedOn   = $entry.Date.ToUniversalTime().ToString('o')
-    installedBy   = 'Windows Update'
-    operation     = 'install'
-    resultCode    = [int]$entry.ResultCode
-    updateId      = $updateId
-    supportUrl    = $(try { [string]$entry.SupportUrl } catch { $null })
+  if ($op -eq 1 -and $code -eq 2) {
+    # UNCHANGED shape: every SCP check reads these.
+    $items += [pscustomobject]@{
+      hotFixId      = $kb
+      title         = $title
+      description   = [string]$entry.Description
+      installedOn   = $when
+      installedBy   = 'Windows Update'
+      operation     = 'install'
+      resultCode    = $code
+      updateId      = $updateId
+      supportUrl    = $(try { [string]$entry.SupportUrl } catch { $null })
+    }
+    continue
   }
+
+  # Lean on purpose (no description, no URL): it rides in every snapshot.
+  $outcome = [pscustomobject]@{
+    hotFixId    = $kb
+    title       = $title
+    updateId    = $updateId
+    attemptedOn = $when
+    operation   = $(if ($op -eq 2) { 'uninstall' } else { 'install' })
+    resultCode  = $code
+    hresult     = Format-HResult $entry.HResult
+  }
+  if ($op -eq 2) { $uninstalls += $outcome } else { $failures += $outcome }
 }
 
-# Sort newest-first. Stable string sort works because installedOn is
-# ISO-8601 UTC.
-$items = $items | Sort-Object -Property installedOn -Descending
-$items | ConvertTo-Json -Depth 4
+# Newest-first. Stable string sort works because the dates are ISO-8601 UTC.
+# @(...) keeps a one-element result an ARRAY: piping unwraps it to a scalar.
+$items = @($items | Sort-Object -Property installedOn -Descending)
+# Capped: a device whose Windows Update retries a broken KB every day for years
+# would otherwise push hundreds of rows into every snapshot. The newest are the
+# ones that matter.
+$failures = @($failures | Sort-Object -Property attemptedOn -Descending | Select-Object -First 100)
+$uninstalls = @($uninstalls | Sort-Object -Property attemptedOn -Descending | Select-Object -First 100)
+ConvertTo-Json -Depth 4 -Compress -InputObject @{ items = $items; failures = $failures; uninstalls = $uninstalls }
 ", PATCHES_TIMEOUT_MS);
 
             if (ps.TimedOut)
@@ -1120,15 +1169,21 @@ $items | ConvertTo-Json -Depth 4
                 return TryPatchesFallback();
             }
 
-            var items = ParseJsonArray(ps.Stdout);
+            // Pure parsing lives in UpdateHistoryShape.cs so it can be tested off Windows.
+            var history = UpdateHistoryShape.ParseBuckets(ps.Stdout);
+            var items = history.Items;
             var nowUtc = DateTime.UtcNow.ToString("O");
 
             return new
             {
                 status = items.Count > 0 ? "present" : "empty",
+                // `count` and `items` keep meaning SUCCESSFUL installs — see
+                // the note above. The outcomes live in their own keys.
                 count = items.Count,
                 lastScanUtc = nowUtc,
-                items
+                items,
+                failures = history.Failures,
+                uninstalls = history.Uninstalls
             };
         }
         catch (Exception ex)
