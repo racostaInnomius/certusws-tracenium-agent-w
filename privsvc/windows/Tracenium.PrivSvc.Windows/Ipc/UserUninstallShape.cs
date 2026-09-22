@@ -46,6 +46,11 @@ public static class UserUninstallShape
         var quiet = e.QuietUninstallString?.Trim();
         if (!string.IsNullOrEmpty(quiet)) return new CommandChoice(quiet, null);
 
+        // Sin QuietUninstallString, pero el fabricante documenta la forma
+        // silenciosa de SU desinstalador (OneDrive, Zoom, Chrome por usuario).
+        var known = KnownSilentUninstall(e.UninstallString);
+        if (known != null) return new CommandChoice(known, null);
+
         // Un MSI por usuario sí tiene forma silenciosa aunque no registre
         // QuietUninstallString: msiexec /x con /qn. Pero SÓLO si el nombre de la
         // clave es de verdad un ProductCode: `msiexec /x` con basura no falla
@@ -57,6 +62,62 @@ public static class UserUninstallShape
 
         return new CommandChoice(null, NoSilentUninstall);
     }
+
+    /// <summary>
+    /// Desinstaladores que NO registran QuietUninstallString pero cuyo
+    /// fabricante documenta cómo ejecutarlos sin ventana. Devuelve la línea
+    /// silenciosa, o null si no es uno de ellos.
+    ///
+    /// ⚠️ SÓLO LO DOCUMENTADO, nada adivinado. Añadir `/S` a cualquier
+    /// «uninstall.exe» funcionaría con los NSIS y, con el resto, le abriría al
+    /// usuario una ventana a media mañana — justo lo que la regla del
+    /// silencioso existe para evitar. Una app que no esté aquí sigue bloqueada.
+    ///
+    /// ⚠️ ESTA TABLA TIENE UN GEMELO en el backend
+    /// (`modules/software-delivery/known-silent-uninstall.ts`), que la usa
+    /// para decidir en la vista previa. Si divergen, el portal diría
+    /// «accionable» y el agente se negaría, o al revés. Los tests de los dos
+    /// lados usan las MISMAS líneas reales de T111.
+    ///
+    /// Se casa sobre la ruta del ejecutable y el verbo de desinstalación, no
+    /// sobre el nombre de la app: el parámetro silencioso es del BINARIO.
+    /// </summary>
+    public static string? KnownSilentUninstall(string? uninstallString)
+    {
+        var cmd = uninstallString?.Trim();
+        if (string.IsNullOrEmpty(cmd)) return null;
+
+        // OneDrive por usuario: `OneDriveSetup.exe /uninstall` no pregunta
+        // (así lo documenta Microsoft para quitarlo por script). 13 filas en T111.
+        if (OneDrive.IsMatch(cmd)) return cmd;
+
+        // Zoom por usuario: `%APPDATA%\Zoom\uninstall\Installer.exe /uninstall`
+        // es la desinstalación por línea de comandos de Zoom. 17 filas en T111.
+        if (Zoom.IsMatch(cmd)) return cmd;
+
+        // Chrome por usuario: `setup.exe --uninstall` pide confirmación;
+        // `--force-uninstall` la quita (switch documentado del instalador).
+        if (Chrome.IsMatch(cmd))
+        {
+            return cmd.Contains("--force-uninstall", StringComparison.OrdinalIgnoreCase)
+                ? cmd
+                : cmd + " --force-uninstall";
+        }
+
+        return null;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex OneDrive = new(
+        @"\\OneDriveSetup\.exe""?\s+/uninstall\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static readonly System.Text.RegularExpressions.Regex Zoom = new(
+        @"\\Zoom\\uninstall\\Installer\.exe""?\s+/uninstall\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static readonly System.Text.RegularExpressions.Regex Chrome = new(
+        @"\\Google\\Chrome\\Application\\[\d.]+\\Installer\\setup\.exe""?\s.*--uninstall\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     public enum ProfileStatus { Removed, Failed, NotLoggedOn, NoSilentUninstall }
 

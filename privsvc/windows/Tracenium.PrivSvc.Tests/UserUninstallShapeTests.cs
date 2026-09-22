@@ -33,9 +33,10 @@ public class UserUninstallShapeTests
     [Fact]
     public void Sin_linea_silenciosa_se_niega_aunque_haya_una_normal()
     {
-        // Zoom per-user registra sólo «Installer.exe /uninstall», que abre
-        // ventana. Como el usuario, le saldría en su escritorio.
-        var c = ChooseCommand(Entry(plain: "\"C:\\Users\\warehouse\\AppData\\Roaming\\Zoom\\uninstall\\Installer.exe\" /uninstall"));
+        // GoToMeeting per-user registra sólo «G2MUninstall.exe /uninstall», sin
+        // forma silenciosa documentada. Como el usuario, le saldría en su
+        // escritorio. (Zoom era el ejemplo antes de la tabla de fabricantes.)
+        var c = ChooseCommand(Entry(plain: "\"C:\\Users\\berthac\\AppData\\Local\\GoToMeeting\\19992\\G2MUninstall.exe\" /uninstall"));
         Assert.Null(c.CommandLine);
         Assert.Equal(NoSilentUninstall, c.Refusal);
     }
@@ -147,5 +148,62 @@ public class UserUninstallShapeTests
         var o = Aggregate(Array.Empty<ProfileResult>());
         Assert.Null(o.ErrorCode);
         Assert.Equal(0, o.ExitCode);
+    }
+}
+
+public class KnownSilentUninstallTests
+{
+    // Líneas REALES del inventario de T111 (22-sep). El gemelo del backend
+    // (known-silent-uninstall.test.ts) usa exactamente las mismas: si las dos
+    // tablas divergen, uno de los dos lados cae.
+    private const string OneDrive = "\"C:\\Users\\trustonepc\\AppData\\Local\\Microsoft\\OneDrive\\26.163.0823.0004\\OneDriveSetup.exe\"  /uninstall ";
+    private const string Zoom = "\"C:\\Users\\warehouse\\AppData\\Roaming\\Zoom\\uninstall\\Installer.exe\" /uninstall";
+    private const string Chrome = "\"C:\\Users\\santiagof\\AppData\\Local\\Google\\Chrome\\Application\\153.0.8010.50\\Installer\\setup.exe\" --uninstall --channel=stable --verbose-logging";
+
+    [Fact]
+    public void OneDrive_desinstala_en_silencio_tal_cual() =>
+        Assert.Equal(OneDrive.Trim(), UserUninstallShape.KnownSilentUninstall(OneDrive));
+
+    [Fact]
+    public void Zoom_desinstala_en_silencio_tal_cual() =>
+        Assert.Equal(Zoom, UserUninstallShape.KnownSilentUninstall(Zoom));
+
+    [Fact]
+    public void Chrome_por_usuario_gana_force_uninstall_para_no_preguntar() =>
+        Assert.Equal(Chrome + " --force-uninstall", UserUninstallShape.KnownSilentUninstall(Chrome));
+
+    [Fact]
+    public void Chrome_que_ya_lo_trae_no_lo_repite()
+    {
+        var ya = Chrome + " --force-uninstall";
+        Assert.Equal(ya, UserUninstallShape.KnownSilentUninstall(ya));
+    }
+
+    [Theory]
+    // Sin parámetro documentado: añadir /S a ciegas abriría una ventana al usuario.
+    [InlineData("\"C:\\Users\\berthac\\AppData\\Local\\GoToMeeting\\19992\\G2MUninstall.exe\" /uninstall")]
+    [InlineData("C:\\Users\\santiagof\\AppData\\Local\\CapCut\\Apps\\uninst.exe")]
+    [InlineData("\"C:\\Users\\daniela\\AppData\\Local\\Programs\\Cisco Spark\\WebexUninstaller.exe\" /uninstall")]
+    // Una PWA de Chrome NO es el instalador de Chrome aunque diga «uninstall».
+    [InlineData("\"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe\" --profile-directory=Default --uninstall-app-id=mpnpojknpmm")]
+    // OneDrive sin el verbo es instalar, no desinstalar.
+    [InlineData("\"C:\\Users\\x\\AppData\\Local\\Microsoft\\OneDrive\\26.1\\OneDriveSetup.exe\"")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void Lo_que_no_esta_documentado_sigue_sin_forma_silenciosa(string? cmd) =>
+        Assert.Null(UserUninstallShape.KnownSilentUninstall(cmd));
+
+    [Fact]
+    public void ChooseCommand_usa_la_tabla_cuando_no_hay_QuietUninstallString()
+    {
+        var e = new UserUninstallShape.UserEntry("S-1-5-21-1-2-3-1001", "ZoomUMX", "Zoom Workplace", Zoom, null, false);
+        Assert.Equal(Zoom, UserUninstallShape.ChooseCommand(e).CommandLine);
+    }
+
+    [Fact]
+    public void Con_QuietUninstallString_manda_la_del_instalador_no_la_tabla()
+    {
+        var e = new UserUninstallShape.UserEntry("S-1-5-21-1-2-3-1001", "ZoomUMX", "Zoom", Zoom, "\"C:\\z.exe\" /quiet", false);
+        Assert.Equal("\"C:\\z.exe\" /quiet", UserUninstallShape.ChooseCommand(e).CommandLine);
     }
 }
