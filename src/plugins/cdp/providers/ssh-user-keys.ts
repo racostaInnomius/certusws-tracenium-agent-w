@@ -24,12 +24,37 @@
 // ── Solo inventario. NUNCA material de clave ────────────────────────
 //
 // De las claves publicas se lee todo: son publicas por definicion. De
-// las PRIVADAS solo la PRESENCIA: ruta, si esta cifrada y el tipo cuando
-// la mitad publica lo dice (el blob publico va en claro dentro del
-// propio fichero `openssh-key-v1`, antes de la parte cifrada, y en el
-// `.pub` hermano). Ni un byte del secreto se lee, se guarda ni se manda.
+// las PRIVADAS, por defecto, NI SE ABRE EL FICHERO.
+//
+// ⚠️ POR QUE (22-sep-2026, hecho medido, no una precaucion teorica):
+// ejecutar la primera version de este colector en un Mac con CrowdStrike
+// disparo una deteccion **High**. Un proceso leyendo `~/.ssh/id_*` ES el
+// patron de «credential access» que todos los EDR vigilan, y da igual
+// que nosotros no nos quedemos el secreto: lo que el EDR ve es la
+// lectura. Un agente de inventario marcado como robo de credenciales en
+// la flota del cliente es un incidente para el cliente y una llamada de
+// soporte para nosotros.
+//
+// De ahi los tres modos de `cdp.sshUserKeys`:
+//
+//   "public-only" (POR DEFECTO)
+//        `authorized_keys`, `authorized_keys2` y `*.pub` se LEEN — son
+//        publicos por definicion y ningun EDR los vigila. De las
+//        privadas solo se hace `stat`: existe, que permisos tiene, que
+//        tamano y de cuando es. El tipo y la huella salen del `.pub`
+//        hermano cuando esta. `encrypted` queda en null, que ya
+//        significa «no se sabe».
+//   "full"
+//        ademas se lee la CABECERA de las privadas para decir si estan
+//        cifradas (el blob publico y el nombre del cifrado van en claro
+//        antes de la parte cifrada). Sigue sin leerse un byte del
+//        secreto, pero ABRE el fichero — y eso es lo que dispara al EDR.
+//        Quien lo encienda necesita exclusiones documentadas.
+//   "off"
+//        no se mira nada.
+//
 // La descripcion de formatos PEM la hace private-key-info.ts (ola 1.1),
-// que ya tiene esa disciplina escrita.
+// que ya tiene esa disciplina escrita, y solo se usa en modo "full".
 //
 // ── Opciones de authorized_keys: hechos, no juicios ─────────────────
 //
@@ -57,13 +82,24 @@ const MAX_USERS = 200;
 /** Un fichero de claves de mas de 1 MB no es un fichero de claves. */
 const MAX_FILE_BYTES = 1024 * 1024;
 
+/** Ver la cabecera del fichero: "public-only" es el defecto por el EDR. */
+export type SshUserKeysMode = "public-only" | "full" | "off";
+
 export type SshUserKeysOptions = {
   platform?: NodeJS.Platform;
+  mode?: SshUserKeysMode;
   /** Semilla de test: [usuario, home]. */
   users?: Array<{ user: string; home: string }>;
   /** Semilla de test: rutas de sistema con authorized_keys. */
   systemFiles?: string[];
 };
+
+/**
+ * Nombres de clave privada de OpenSSH. Se reconoce por el NOMBRE y por
+ * tener un `.pub` hermano, nunca abriendo el fichero: las dos señales
+ * bastan y ninguna toca el contenido.
+ */
+const PRIVATE_KEY_NAME_RE = /^(id_[a-z0-9_]+|.*\.(pem|key))$/i;
 
 /**
  * Usuarios y sus directorios personales.
@@ -265,16 +301,25 @@ export function describeOpensshPrivateKey(text: string): { encrypted: boolean; p
   return { encrypted, publicLine: `${keyType} ${pub.toString("base64")}` };
 }
 
-/** ¿Tiene el fichero pinta de ser una clave privada SSH? */
-function looksLikePrivateKeyFile(name: string, text: string): boolean {
+/**
+ * ¿Es este fichero una clave privada? Se decide SIN abrirlo: por el
+ * nombre o porque existe su `.pub` hermano. Las dos señales son de
+ * metadatos, y ninguna dispara al EDR.
+ */
+export function isPrivateKeyName(name: string, entries: string[]): boolean {
   if (name.endsWith(".pub")) return false;
-  return /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/.test(text);
+  if (["known_hosts", "known_hosts2", "config", "authorized_keys", "authorized_keys2", "environment", "rc"].includes(name)) return false;
+  if (name.endsWith(".old") || name.endsWith(".bak")) return false;
+  if (entries.includes(`${name}.pub`)) return true;
+  return PRIVATE_KEY_NAME_RE.test(name);
 }
 
 export async function collectSshUserKeys(options: SshUserKeysOptions = {}): Promise<CdpSshUserKeys> {
   const platform = options.platform ?? os.platform();
+  const mode: SshUserKeysMode = options.mode ?? "public-only";
   const users = options.users ?? localUsers(platform);
-  const result: CdpSshUserKeys = { users: 0, keys: [], privateKeys: [], unreadable: 0, truncated: false };
+  const result: CdpSshUserKeys = { users: 0, keys: [], privateKeys: [], unreadable: 0, truncated: false, mode };
+  if (mode === "off") return result;
   const seenUsers = new Set<string>();
 
   const pushKey = (k: CdpSshUserKey) => {
@@ -340,17 +385,15 @@ export async function collectSshUserKeys(options: SshUserKeysOptions = {}): Prom
         });
         continue;
       }
-      // Lo que queda puede ser una clave PRIVADA. Solo presencia.
-      if (name === "known_hosts" || name === "config" || name.endsWith(".old")) continue;
-      const text = readTextFile(full);
-      if (text === null) continue;
-      if (!looksLikePrivateKeyFile(name, text)) continue;
+      // Lo que queda puede ser una clave PRIVADA. Solo presencia, y —
+      // salvo en modo "full" — sin abrir el fichero (ver la cabecera).
+      if (!isPrivateKeyName(name, entries)) continue;
       if (result.privateKeys.length >= MAX_SSH_USER_PRIVATE_KEYS) {
         result.truncated = true;
         continue;
       }
       seenUsers.add(user);
-      result.privateKeys.push(describeUserPrivateKey(full, user, text, sshDir, entries));
+      result.privateKeys.push(describeUserPrivateKey(full, user, sshDir, entries, mode));
     }
   }
 
@@ -368,46 +411,69 @@ export async function collectSshUserKeys(options: SshUserKeysOptions = {}): Prom
 /**
  * Presencia de una clave privada de usuario.
  *
- * El tipo sale de la cabecera publica del formato OpenSSH o del `.pub`
- * hermano; el resto lo describe private-key-info (PEM clasico). Si no se
- * puede derivar, se dice que no se sabe: inventarlo seria peor que el
- * hueco.
+ * En "public-only" (el defecto) NO se abre el fichero: solo `stat`
+ * —existe, permisos, tamaño, fecha— y lo que diga el `.pub` hermano, que
+ * es publico. `encrypted` queda en null, que es la respuesta honesta:
+ * «no se sabe», no «no».
+ *
+ * En "full" se lee ademas la cabecera para decir si esta cifrada. Sigue
+ * sin leerse un byte del secreto, pero abre el fichero — y eso es lo que
+ * un EDR marca como acceso a credenciales.
  */
 function describeUserPrivateKey(
   file: string,
   user: string,
-  text: string,
   sshDir: string,
-  entries: string[]
+  entries: string[],
+  mode: SshUserKeysMode
 ): CdpSshUserPrivateKey {
   const base: CdpSshUserPrivateKey = { user, path: file, format: "unknown", encrypted: null, readable: true };
 
-  const openssh = describeOpensshPrivateKey(text);
-  if (openssh) {
-    base.format = "openssh";
-    base.encrypted = openssh.encrypted;
-    const parsed = openssh.publicLine ? parseSshPublicKey(openssh.publicLine, file, { allowSk: true }) : null;
-    if (parsed) {
-      base.keyType = parsed.keyType;
-      base.keyAlgorithm = parsed.algorithm;
-      if (parsed.bits !== null) base.keySizeBits = parsed.bits;
-      if (parsed.curve) base.curve = parsed.curve;
-      base.fingerprintSha256 = parsed.fingerprintSha256;
-    }
-  } else {
-    const facts = describePrivateKeys(Buffer.from(text, "utf8"))[0];
-    if (facts) {
-      base.format = facts.format;
-      base.encrypted = facts.encrypted;
-      if (facts.keyAlgorithm) base.keyAlgorithm = facts.keyAlgorithm;
-      if (facts.keySizeBits) base.keySizeBits = facts.keySizeBits;
-      if (facts.curve) base.curve = facts.curve;
+  // Metadatos: ni abren el fichero ni lo leen. `mode` en octal es el dato
+  // de higiene que un auditor pide (una clave 0644 la lee cualquiera).
+  try {
+    const st = fs.statSync(file);
+    base.sizeBytes = st.size;
+    base.modifiedAt = new Date(st.mtimeMs).toISOString();
+    base.filePermissions = (st.mode & 0o777).toString(8).padStart(3, "0");
+  } catch {
+    base.readable = false;
+  }
+
+  if (mode === "full" && base.readable) {
+    const text = readTextFile(file);
+    if (text === null) {
+      base.readable = false;
+    } else {
+      const openssh = describeOpensshPrivateKey(text);
+      if (openssh) {
+        base.format = "openssh";
+        base.encrypted = openssh.encrypted;
+        const parsed = openssh.publicLine ? parseSshPublicKey(openssh.publicLine, file, { allowSk: true }) : null;
+        if (parsed) {
+          base.keyType = parsed.keyType;
+          base.keyAlgorithm = parsed.algorithm;
+          if (parsed.bits !== null) base.keySizeBits = parsed.bits;
+          if (parsed.curve) base.curve = parsed.curve;
+          base.fingerprintSha256 = parsed.fingerprintSha256;
+        }
+      } else {
+        const facts = describePrivateKeys(Buffer.from(text, "utf8"))[0];
+        if (facts) {
+          base.format = facts.format;
+          base.encrypted = facts.encrypted;
+          if (facts.keyAlgorithm) base.keyAlgorithm = facts.keyAlgorithm;
+          if (facts.keySizeBits) base.keySizeBits = facts.keySizeBits;
+          if (facts.curve) base.curve = facts.curve;
+        }
+      }
     }
   }
 
   // La mitad publica hermana: identifica la MISMA clave que el
   // authorized_keys de otro equipo, que es como se cierra el circulo
-  // «esta clave privada abre aquellas N cuentas».
+  // «esta clave privada abre aquellas N cuentas». Y es publica, asi que
+  // se lee en los dos modos.
   const pubName = `${path.basename(file)}.pub`;
   if (entries.includes(pubName)) {
     const pubPath = path.join(sshDir, pubName);

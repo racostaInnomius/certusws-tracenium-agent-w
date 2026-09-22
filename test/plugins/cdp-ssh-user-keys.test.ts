@@ -5,7 +5,17 @@
 //   · las opciones viajan tal cual, incluidas las que llevan comas
 //     dentro de comillas (`command="a,b"`), que es donde un split
 //     ingenuo parte la linea por la mitad;
-//   · de una clave PRIVADA solo sale presencia, y ni un byte del secreto.
+//   · ⭐ por DEFECTO no se abre ningun fichero de clave privada.
+//
+// ⚠️ ESTE FICHERO NO ESCRIBE CLAVES PRIVADAS EN DISCO, ni siquiera de
+// usar y tirar. La primera version si lo hacia (ssh-keygen -t ed25519 en
+// un temporal) y ejecutarla disparo una deteccion **High** de CrowdStrike
+// en la Mac de desarrollo: `id_ed25519` en un directorio `.ssh` es el
+// patron que los EDR vigilan, y nada de lo que se prueba aqui lo
+// necesita. Las claves PUBLICAS se generan de verdad (hacen falta blobs
+// validos para que la huella signifique algo); la presencia de una
+// privada se prueba con un fichero VACIO con ese nombre, que es
+// exactamente lo que el modo por defecto mira.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "fs";
@@ -15,25 +25,34 @@ import { execFileSync } from "child_process";
 import {
   collectSshUserKeys,
   describeOpensshPrivateKey,
+  isPrivateKeyName,
   parseAuthorizedKeyLine,
   splitAuthorizedOptions
 } from "../../src/plugins/cdp/providers/ssh-user-keys";
 import { parseSshPublicKey } from "../../src/plugins/cdp/providers/ssh-host-keys";
 
-// Claves reales, generadas una vez: hace falta un blob SSH valido para
-// que la huella signifique algo.
 let dir: string;
 let ed25519Pub: string;
 let rsaPub: string;
+let ed25519Fingerprint: string;
 
 beforeAll(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "cdp-sshuser-"));
-  const keygen = (name: string, args: string[]) =>
-    execFileSync("ssh-keygen", ["-q", "-f", path.join(dir, name), "-N", "", ...args], { stdio: "pipe" });
-  keygen("id_ed25519", ["-t", "ed25519", "-C", "javier@laptop"]);
-  keygen("id_rsa", ["-t", "rsa", "-b", "2048", "-C", "build@ci"]);
-  ed25519Pub = fs.readFileSync(path.join(dir, "id_ed25519.pub"), "utf8").trim();
-  rsaPub = fs.readFileSync(path.join(dir, "id_rsa.pub"), "utf8").trim();
+  // Se generan pares reales para quedarse SOLO con la mitad publica: la
+  // privada se borra en el acto y nunca vive en un `.ssh`.
+  const gen = (name: string, args: string[]) => {
+    const keyPath = path.join(dir, `gen-${name}`);
+    execFileSync("ssh-keygen", ["-q", "-f", keyPath, "-N", "", ...args], { stdio: "pipe" });
+    const pub = fs.readFileSync(`${keyPath}.pub`, "utf8").trim();
+    const fp = execFileSync("ssh-keygen", ["-lf", `${keyPath}.pub`], { encoding: "utf8" });
+    fs.rmSync(keyPath, { force: true });
+    fs.rmSync(`${keyPath}.pub`, { force: true });
+    return { pub, fingerprint: (/SHA256:[A-Za-z0-9+/]+/.exec(fp) ?? [""])[0] };
+  };
+  const ed = gen("a", ["-t", "ed25519", "-C", "javier@laptop"]);
+  ed25519Pub = ed.pub;
+  ed25519Fingerprint = ed.fingerprint;
+  rsaPub = gen("b", ["-t", "rsa", "-b", "2048", "-C", "build@ci"]).pub;
 });
 
 afterAll(() => {
@@ -78,13 +97,11 @@ describe("parseAuthorizedKeyLine", () => {
     expect(k.bits).toBe(2048);
     expect(k.comment).toBe("build@ci");
     expect(k.options).toEqual(["no-pty", 'from="10.0.0.0/8"']);
-    expect(k.fingerprintSha256).toMatch(/^SHA256:[A-Za-z0-9+/]{43}$/);
   });
 
   it("la huella es la de `ssh-keygen -lf`", () => {
     const k = parseAuthorizedKeyLine(ed25519Pub, "javier", "/x")!;
-    const out = execFileSync("ssh-keygen", ["-lf", path.join(dir, "id_ed25519.pub")], { encoding: "utf8" });
-    expect(out).toContain(k.fingerprintSha256);
+    expect(k.fingerprintSha256).toBe(ed25519Fingerprint);
   });
 
   it("comentarios, lineas vacias y basura no son concesiones", () => {
@@ -104,22 +121,59 @@ describe("parseAuthorizedKeyLine", () => {
   });
 });
 
+describe("isPrivateKeyName", () => {
+  it("⭐ se decide por el NOMBRE y por el `.pub` hermano, sin abrir nada", () => {
+    expect(isPrivateKeyName("id_ed25519", ["id_ed25519", "id_ed25519.pub"])).toBe(true);
+    expect(isPrivateKeyName("id_rsa", ["id_rsa"])).toBe(true);
+    // Sin nombre de clave, el `.pub` hermano lo delata igual.
+    expect(isPrivateKeyName("deploy-2026", ["deploy-2026", "deploy-2026.pub"])).toBe(true);
+    expect(isPrivateKeyName("server.pem", ["server.pem"])).toBe(true);
+  });
+
+  it("lo que NO es una clave no se toca", () => {
+    for (const n of ["known_hosts", "config", "authorized_keys", "authorized_keys2", "id_rsa.pub", "id_rsa.old", "environment"]) {
+      expect(isPrivateKeyName(n, [n])).toBe(false);
+    }
+  });
+});
+
 describe("describeOpensshPrivateKey", () => {
+  // Cabecera `openssh-key-v1` armada a mano: los dos campos que se leen
+  // (nombre del cifrado y blob publico) van en claro y son publicos, asi
+  // que no hace falta —ni se quiere— una clave de verdad en disco.
+  const header = (cipher: string, publicBlob: Buffer) => {
+    const field = (b: Buffer) => {
+      const len = Buffer.alloc(4);
+      len.writeUInt32BE(b.length);
+      return Buffer.concat([len, b]);
+    };
+    const count = Buffer.alloc(4);
+    count.writeUInt32BE(1);
+    const blob = Buffer.concat([
+      Buffer.from("openssh-key-v1\0", "latin1"),
+      field(Buffer.from(cipher)),
+      field(Buffer.from(cipher === "none" ? "none" : "bcrypt")),
+      field(Buffer.alloc(0)),
+      count,
+      field(publicBlob),
+      field(Buffer.from("cifrado-o-no, aqui no se mira"))
+    ]);
+    return `-----BEGIN OPENSSH PRIVATE KEY-----\n${blob.toString("base64")}\n-----END OPENSSH PRIVATE KEY-----`;
+  };
+  const publicBlob = () => Buffer.from(ed25519Pub.split(/\s+/)[1], "base64");
+
   it("⭐ dice el tipo y si esta cifrada leyendo SOLO la cabecera publica", () => {
-    const text = fs.readFileSync(path.join(dir, "id_ed25519"), "utf8");
-    const out = describeOpensshPrivateKey(text)!;
+    const out = describeOpensshPrivateKey(header("none", publicBlob()))!;
     expect(out.encrypted).toBe(false);
     const parsed = parseSshPublicKey(out.publicLine!, "", { allowSk: true })!;
     expect(parsed.keyType).toBe("ssh-ed25519");
     // La huella de la cabecera es la MISMA que la del `.pub`: es la misma
     // clave publica, que es lo unico que se ha leido.
-    expect(parsed.fingerprintSha256).toBe(parseSshPublicKey(ed25519Pub)!.fingerprintSha256);
+    expect(parsed.fingerprintSha256).toBe(ed25519Fingerprint);
   });
 
-  it("una clave con contraseña se reporta como cifrada, sin abrirla", () => {
-    execFileSync("ssh-keygen", ["-q", "-f", path.join(dir, "locked"), "-t", "ed25519", "-N", "secreto"], { stdio: "pipe" });
-    const out = describeOpensshPrivateKey(fs.readFileSync(path.join(dir, "locked"), "utf8"))!;
-    expect(out.encrypted).toBe(true);
+  it("un cifrado distinto de `none` es una clave con contraseña", () => {
+    expect(describeOpensshPrivateKey(header("aes256-ctr", publicBlob()))!.encrypted).toBe(true);
   });
 
   it("lo que no es openssh-key-v1 devuelve null", () => {
@@ -130,24 +184,31 @@ describe("describeOpensshPrivateKey", () => {
 
 describe("collectSshUserKeys", () => {
   let home: string;
+  let sshDir: string;
   let sysFile: string;
 
   beforeAll(() => {
     home = fs.mkdtempSync(path.join(os.tmpdir(), "cdp-home-"));
-    const ssh = path.join(home, ".ssh");
-    fs.mkdirSync(ssh);
-    fs.writeFileSync(path.join(ssh, "authorized_keys"), `# claves del equipo\nno-pty ${rsaPub}\n${ed25519Pub}\n`);
-    fs.writeFileSync(path.join(ssh, "authorized_keys2"), `${rsaPub}\n`);
-    fs.copyFileSync(path.join(dir, "id_ed25519"), path.join(ssh, "id_ed25519"));
-    fs.copyFileSync(path.join(dir, "id_ed25519.pub"), path.join(ssh, "id_ed25519.pub"));
-    fs.writeFileSync(path.join(ssh, "known_hosts"), "github.com ssh-ed25519 AAAA\n");
-    fs.writeFileSync(path.join(ssh, "config"), "Host *\n  User javier\n");
+    sshDir = path.join(home, ".ssh");
+    fs.mkdirSync(sshDir);
+    fs.writeFileSync(path.join(sshDir, "authorized_keys"), `# claves del equipo\nno-pty ${rsaPub}\n${ed25519Pub}\n`);
+    fs.writeFileSync(path.join(sshDir, "authorized_keys2"), `${rsaPub}\n`);
+    // Presencia: fichero VACIO con nombre de clave. No hay material
+    // privado en disco en ningun momento de esta suite.
+    fs.writeFileSync(path.join(sshDir, "id_ed25519"), "");
+    fs.chmodSync(path.join(sshDir, "id_ed25519"), 0o600);
+    fs.writeFileSync(path.join(sshDir, "id_ed25519.pub"), `${ed25519Pub}\n`);
+    fs.writeFileSync(path.join(sshDir, "known_hosts"), "github.com ssh-ed25519 AAAA\n");
+    fs.writeFileSync(path.join(sshDir, "config"), "Host *\n  User javier\n");
     sysFile = path.join(home, "etc-authorized_keys");
     fs.writeFileSync(sysFile, `${ed25519Pub}\n`);
   });
 
+  // Funcion y no constante: `home` se crea en el beforeAll.
+  const only = () => ({ users: [{ user: "javier", home }], systemFiles: [] as string[] });
+
   it("⭐ separa lo que CONCEDE acceso de lo que el usuario tiene", async () => {
-    const r = await collectSshUserKeys({ users: [{ user: "javier", home }], systemFiles: [] });
+    const r = await collectSshUserKeys(only());
     const authorized = r.keys.filter((k) => k.kind === "authorized");
     const pub = r.keys.filter((k) => k.kind === "public");
     // 2 en authorized_keys + 1 en authorized_keys2
@@ -157,27 +218,79 @@ describe("collectSshUserKeys", () => {
     expect(authorized.find((k) => k.keyType === "ssh-rsa")!.options).toEqual(["no-pty"]);
     expect(r.users).toBe(1);
     expect(r.truncated).toBe(false);
+    expect(r.mode).toBe("public-only");
   });
 
-  it("⭐ de la clave privada solo sale presencia: ruta, cifrado, tipo y el .pub hermano", async () => {
-    const r = await collectSshUserKeys({ users: [{ user: "javier", home }], systemFiles: [] });
-    expect(r.privateKeys).toHaveLength(1);
-    const k = r.privateKeys[0];
-    expect(k.path.endsWith("id_ed25519")).toBe(true);
-    expect(k.format).toBe("openssh");
-    expect(k.encrypted).toBe(false);
-    expect(k.keyType).toBe("ssh-ed25519");
-    expect(k.publicHalfPath!.endsWith("id_ed25519.pub")).toBe(true);
-    // Y NADA que se parezca a material de clave.
-    const dump = JSON.stringify(r);
+  it("⭐ POR DEFECTO no se abre el fichero de la clave privada: solo `stat` y el `.pub` hermano", async () => {
+    // Es la regla que evita la deteccion de acceso a credenciales del
+    // EDR. Si alguien la quita, este test cae.
+    const opened: string[] = [];
+    const realRead = fs.readFileSync;
+    const spy = (f: any, ...rest: any[]) => {
+      if (typeof f === "string") opened.push(f);
+      return (realRead as any)(f, ...rest);
+    };
+    (fs as any).readFileSync = spy;
+    try {
+      const r = await collectSshUserKeys(only());
+      expect(opened.some((f) => f.endsWith(`${path.sep}id_ed25519`))).toBe(false);
+      // Y los publicos SI se leen: no disparan nada.
+      expect(opened.some((f) => f.endsWith("id_ed25519.pub"))).toBe(true);
+      expect(opened.some((f) => f.endsWith("authorized_keys"))).toBe(true);
+
+      const k = r.privateKeys[0];
+      expect(k.path.endsWith("id_ed25519")).toBe(true);
+      // «No se sabe», que no es «no cifrada».
+      expect(k.encrypted).toBeNull();
+      expect(k.format).toBe("unknown");
+      // Lo que `stat` si da, y que es lo que pide un auditor.
+      expect(k.filePermissions).toBe("600");
+      expect(k.sizeBytes).toBe(0);
+      expect(typeof k.modifiedAt).toBe("string");
+      // El tipo y la huella salen del `.pub`, que es publico.
+      expect(k.keyType).toBe("ssh-ed25519");
+      expect(k.fingerprintSha256).toBe(ed25519Fingerprint);
+      expect(k.publicHalfPath!.endsWith("id_ed25519.pub")).toBe(true);
+    } finally {
+      (fs as any).readFileSync = realRead;
+    }
+  });
+
+  it("⭐ en modo `full` SI se abre (y por eso no es el defecto)", async () => {
+    const opened: string[] = [];
+    const realRead = fs.readFileSync;
+    (fs as any).readFileSync = (f: any, ...rest: any[]) => {
+      if (typeof f === "string") opened.push(f);
+      return (realRead as any)(f, ...rest);
+    };
+    try {
+      const r = await collectSshUserKeys({ ...only(), mode: "full" });
+      expect(opened.some((f) => f.endsWith(`${path.sep}id_ed25519`))).toBe(true);
+      expect(r.mode).toBe("full");
+      // El fichero esta vacio a proposito: no es una clave, asi que el
+      // formato sigue siendo desconocido y nada se inventa.
+      expect(r.privateKeys[0].format).toBe("unknown");
+    } finally {
+      (fs as any).readFileSync = realRead;
+    }
+  });
+
+  it("⭐ en modo `off` no se mira nada en absoluto", async () => {
+    const r = await collectSshUserKeys({ ...only(), mode: "off" });
+    expect(r).toEqual({ users: 0, keys: [], privateKeys: [], unreadable: 0, truncated: false, mode: "off" });
+  });
+
+  it("nunca sale material de clave en el payload", async () => {
+    const dump = JSON.stringify(await collectSshUserKeys({ ...only(), mode: "full" }));
     expect(dump).not.toContain("PRIVATE KEY");
     expect(dump).not.toContain("BEGIN");
   });
 
   it("known_hosts y config no son claves", async () => {
-    const r = await collectSshUserKeys({ users: [{ user: "javier", home }], systemFiles: [] });
+    const r = await collectSshUserKeys(only());
     expect(r.keys.some((k) => k.path.endsWith("known_hosts"))).toBe(false);
     expect(r.privateKeys.some((k) => k.path.endsWith("config"))).toBe(false);
+    expect(r.privateKeys).toHaveLength(1);
   });
 
   it("un authorized_keys de sistema se atribuye al fichero, no a una persona", async () => {

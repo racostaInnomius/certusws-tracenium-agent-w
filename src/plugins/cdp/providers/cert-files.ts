@@ -71,12 +71,29 @@ const KEY_EXTENSIONS = new Set([".key", ".p8", ".pk8"]);
 /** Keystores that conventionally have no extension (Tomcat's `~/.keystore`, `conf/keystore`). */
 const KEYSTORE_NAMES = new Set(["keystore", ".keystore", "truststore", ".truststore"]);
 
-/** Never descended into, under any root: huge, hostile to walk, or nothing to do with us. */
+/**
+ * Never descended into, under any root: huge, hostile to walk, or nothing
+ * to do with us.
+ *
+ * ⚠️ The credential directories (`.ssh`, `.aws`, `.gnupg`, `Keychains`)
+ * are here for a DIFFERENT reason than the rest, and it is not size.
+ * Opening `~/.ssh/id_rsa` is the exact pattern every EDR watches as
+ * credential access — measured on 2026-09-22, when reading those files
+ * raised a **High** detection in CrowdStrike. It does not matter that we
+ * keep no secret: what the EDR sees is the read, and an inventory agent
+ * flagged as credential theft on the customer's fleet is unacceptable.
+ *
+ * Nothing is lost by skipping them: `~/.ssh` is inventoried by
+ * `providers/ssh-user-keys.ts`, which reads only the public halves and
+ * `stat`s the rest, and `~/.gnupg` / `~/.aws` hold no X.509 this
+ * collector could use.
+ */
 const SKIP_DIRS = new Set([
   "node_modules", ".git", ".svn", ".hg", "__pycache__",
   "proc", "sys", "dev", "run", "tmp",
   "WinSxS",
-  "Caches"
+  "Caches",
+  ".ssh", ".aws", ".gnupg", ".gnupg2", "Keychains"
 ]);
 
 /**

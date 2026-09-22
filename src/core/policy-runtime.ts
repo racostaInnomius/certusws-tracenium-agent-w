@@ -114,6 +114,16 @@ export type RuntimePolicy = {
      */
     fileDiscovery?: CdpFileDiscoveryMode;
     /**
+     * Ola 1.4 — alcance del inventario de claves SSH de usuario:
+     *   "public-only" (por omisión) `authorized_keys` y `*.pub` se leen
+     *                 (son públicos); de las privadas solo `stat`;
+     *   "full"        además abre la cabecera de las privadas para decir
+     *                 si están cifradas. ⚠️ ABRIR `~/.ssh/id_*` dispara
+     *                 detecciones de acceso a credenciales en los EDR;
+     *   "off"         no se mira nada.
+     */
+    sshUserKeys?: CdpSshUserKeysMode;
+    /**
      * Rol Probe (fase 2, analisis de madurez 2026-09): objetivos TLS
      * remotos `host:port` que este equipo sondea para inventariar lo que
      * sirven y lo que negocian — balanceadores, appliances, bases de
@@ -597,6 +607,24 @@ function sanitizeSecurityPolicy(input: any, logger: any): SecurityPolicy {
 
 export type CdpFileDiscoveryMode = "default" | "configured" | "off";
 
+export type CdpSshUserKeysMode = "public-only" | "full" | "off";
+
+/**
+ * `cdp.sshUserKeys`. Ausente = "public-only".
+ *
+ * ⚠️ Un valor DESCONOCIDO cae en "public-only" y no en "full": si alguien
+ * escribió algo que no entendemos, no es el momento de empezar a abrir
+ * ficheros de clave privada. Es la misma regla que `fileDiscovery` —
+ * ante la duda, el alcance MENOR— y aquí importa más, porque el alcance
+ * mayor es el que dispara al EDR del cliente.
+ */
+function sanitizeSshUserKeysMode(input: unknown, logger: any): CdpSshUserKeysMode {
+  if (input === undefined || input === null) return "public-only";
+  if (input === "public-only" || input === "full" || input === "off") return input;
+  logger?.warn?.("cdp.sshUserKeys: valor desconocido, se usa 'public-only'", { value: String(input).slice(0, 40) });
+  return "public-only";
+}
+
 /**
  * `cdp.fileDiscovery`. Ausente = "default": la ola 1.1 existe para que el
  * descubrimiento funcione sin configurar nada (con certFilePaths opt-in,
@@ -1043,6 +1071,11 @@ export class PolicyRuntime extends EventEmitter {
     return this.policy.cdp?.fileDiscovery ?? "default";
   }
 
+  /** Ola 1.4 — alcance de las claves SSH de usuario (ver el saneador). */
+  getCdpSshUserKeys(): CdpSshUserKeysMode {
+    return this.policy.cdp?.sshUserKeys ?? "public-only";
+  }
+
   getCdpTlsListenerPorts(): number[] {
     return this.policy.cdp?.tlsListenerPorts ?? [];
   }
@@ -1258,6 +1291,8 @@ export class PolicyRuntime extends EventEmitter {
       certFilePaths: sanitizeJavaKeystorePaths(policy.cdp?.certFilePaths, this.logger),
       // Nombrado aquí o el merge lo tira (ver la trampa de validatePolicy).
       fileDiscovery: sanitizeFileDiscovery(policy.cdp?.fileDiscovery, this.logger),
+      // Nombrado aquí o el merge lo tira (la trampa de validatePolicy).
+      sshUserKeys: sanitizeSshUserKeysMode(policy.cdp?.sshUserKeys, this.logger),
       probeTargets: sanitizeProbeTargets(policy.cdp?.probeTargets, this.logger),
       // Nombrado aquí o el merge lo tira (la trampa de validatePolicy).
       probeRanges: sanitizeProbeRanges(policy.cdp?.probeRanges, this.logger),

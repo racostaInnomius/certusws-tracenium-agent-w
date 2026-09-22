@@ -294,6 +294,15 @@ export type CdpNamespace = {
   sshUserKeys?: CdpSshUserKeys;
 
   /**
+   * Ola 1.5 — que libreria criptografica carga cada SERVICIO. Lista
+   * completa de los procesos con puerto a la escucha; viaja cuando
+   * cambia (digest) o en un baseline, como las claves SSH. El veredicto
+   * de «esto bloquea la migracion» lo pone el control plane, que ya
+   * tiene los umbrales escritos y citados (agility.service).
+   */
+  processLibraries?: CdpProcessLibraries;
+
+  /**
    * Si la pila TLS del propio sistema negocia intercambio hibrido
    * post-cuantico, MEDIDO en un handshake de bucle local (15-sep), mas
    * el numero de revision de Windows (UBR). Sustituye la deduccion por
@@ -503,15 +512,29 @@ export type CdpSshUserKey = {
   options?: string[];
 };
 
-/** Ola 1.4 — una clave privada de usuario: PRESENCIA, nunca material. */
+/**
+ * Ola 1.4 — una clave privada de usuario: PRESENCIA, nunca material.
+ *
+ * ⚠️ En el modo por defecto (`public-only`) el fichero NI SIQUIERA SE
+ * ABRE: solo `stat` y lo que diga el `.pub` hermano. Leer `~/.ssh/id_*`
+ * dispara una detección de acceso a credenciales en CrowdStrike —
+ * medido el 22-sep-2026 — y un agente de inventario marcado como robo de
+ * credenciales es inaceptable. De ahí que `format` sea `unknown` y
+ * `encrypted` null salvo en modo `full`.
+ */
 export type CdpSshUserPrivateKey = {
   user: string;
   path: string;
-  /** `openssh` (openssh-key-v1) o los formatos PEM de private-key-info. */
+  /** `openssh` / formatos PEM de private-key-info; `unknown` sin leerlo. */
   format: string;
-  /** null = no se pudo saber. */
+  /** null = no se sabe (lo normal: no se abre el fichero). */
   encrypted: boolean | null;
   readable: boolean;
+  /** Metadatos de `stat`: no abren el fichero. */
+  sizeBytes?: number;
+  modifiedAt?: string;
+  /** Permisos en octal (`600`, `644`): higiene que un auditor pide. */
+  filePermissions?: string;
   keyType?: string;
   keyAlgorithm?: string;
   keySizeBits?: number;
@@ -532,6 +555,50 @@ export type CdpSshUserKeys = {
   /** Se alcanzo un tope: la lista NO es completa y no se puede
    *  reconciliar por ausencia. */
   truncated: boolean;
+  /** Con que alcance se recogio: `public-only` (defecto) no abre ningun
+   *  fichero de clave privada; `full` si. El control plane lo necesita
+   *  para no leer «no cifrada» donde pone «no se sabe». */
+  mode: "public-only" | "full" | "off";
+};
+
+/**
+ * Ola 1.5 — una libreria criptografica CARGADA por un proceso concreto.
+ *
+ * Hoy la agilidad se mide por PAQUETES (inventario de software) y por
+ * rutas de `cacerts`. Eso responde «que versiones de OpenSSL hay» y no
+ * «que servicios se quedan fuera de la migracion», que es la pregunta
+ * que se acciona: nadie reinicia «openssl», se reinicia nginx.
+ */
+export type CdpProcessLibrary = {
+  /** Informativo: la identidad estable es `imagePath` (+ `service`). */
+  pid: number;
+  process: string;
+  imagePath?: string;
+  /** Unidad de systemd o servicio de Windows, cuando lo hay. */
+  service?: string;
+  /** Puertos TCP a la escucha de ese proceso. */
+  ports: number[];
+  /** openssl | libressl | gnutls | nss | gcrypt | schannel | security-framework */
+  library: string;
+  /** Ruta REAL (resuelta): `libssl.so.3` casi siempre es un enlace. */
+  libraryPath: string;
+  version?: string;
+  /**
+   * De donde sale la version, porque no valen lo mismo: `soname` no
+   * distingue un OpenSSL 3.0.2 de un 3.6.2 —y ese es justo el umbral de
+   * ML-KEM—, mientras que `file` y `module` si.
+   */
+  versionSource?: "soname" | "file" | "path" | "module";
+};
+
+export type CdpProcessLibraries = {
+  /** Procesos mirados (los que tienen un puerto TCP a la escucha). */
+  processes: number;
+  libraries: CdpProcessLibrary[];
+  /** Se agoto un tope o el presupuesto: la lista NO es completa. */
+  truncated: boolean;
+  /** Por que no se pudo mirar (plataforma o permisos). */
+  unsupported?: string;
 };
 
 export type CdpProbeCandidate = {
