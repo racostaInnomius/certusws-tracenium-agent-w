@@ -26,6 +26,7 @@ import type {
   CdpNamespace,
   CdpProbeCandidate,
   CdpProbeSweepStats,
+  CdpProcessLibraries,
   CdpSshHostKeys,
   CdpSshUserKeys,
   CdpStoreInfo,
@@ -603,7 +604,10 @@ async function collectOnce(
   try {
     const { collectSshUserKeys, sshUserKeysDigest } = await import("./providers/ssh-user-keys");
     const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
-    const block = await collectSshUserKeys();
+    // ⚠️ El alcance lo decide la policy y el defecto NO abre ningun
+    // fichero de clave privada: hacerlo dispara detecciones de acceso a
+    // credenciales en los EDR (medido con CrowdStrike el 22-sep-2026).
+    const block = await collectSshUserKeys({ mode: ctx.policyRuntime.getCdpSshUserKeys?.() ?? "public-only" });
     const digest = sshUserKeysDigest(block);
     const previous = readCdpMeta("ssh_userkeys_digest");
     // Un equipo que NUNCA ha tenido material SSH no manda un bloque vacio:
@@ -622,6 +626,41 @@ async function collectOnce(
     }
   } catch (err: any) {
     ctx.logger?.warn?.("CDP: claves SSH de usuario fallaron (no fatal)", { error: err?.message || String(err) });
+  }
+
+  // ── Ola 1.5: libreria criptografica por proceso ────────────────────
+  //
+  // Va CON la sonda de listeners, al reves que las claves de usuario: el
+  // alcance es «los procesos que tienen un puerto a la escucha», que es
+  // exactamente la poblacion que el interruptor de red ya autoriza a
+  // mirar, y resolver puerto→proceso es lo mismo que hace el colector de
+  // listeners. Lista completa; viaja cuando cambia. Fallo blando.
+  let processLibraries: CdpProcessLibraries | undefined;
+  if (ctx.policyRuntime.getCdpScanTlsListeners()) {
+    try {
+      const { collectProcessLibraries } = await import("./providers/process-libraries");
+      const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
+      const block = await collectProcessLibraries();
+      // El digest ignora los PID: un reinicio de nginx cambia el pid y no
+      // cambia nada de lo que se afirma (la identidad es la imagen), asi
+      // que contarlo como cambio seria un tick por cada reinicio.
+      const stable = {
+        ...block,
+        libraries: block.libraries.map(({ pid: _pid, ...rest }) => rest)
+      };
+      const digest = crypto.createHash("sha256").update(JSON.stringify(stable)).digest("hex");
+      const previous = readCdpMeta("process_libs_digest");
+      // Mismo criterio que las claves SSH de usuario: un equipo que nunca
+      // ha tenido nada que decir no gasta un tick diciendolo.
+      const nothingEverSeen = previous === null && block.libraries.length === 0;
+      if (!nothingEverSeen && (options?.full === true || previous !== digest)) {
+        processLibraries = block;
+        writeCdpMeta("process_libs_digest", digest);
+        if (options?.full !== true) sideChanged = true;
+      }
+    } catch (err: any) {
+      ctx.logger?.warn?.("CDP: librerias por proceso fallaron (no fatal)", { error: err?.message || String(err) });
+    }
   }
 
   if (ctx.policyRuntime.getCdpScanTlsListeners()) {
@@ -821,6 +860,7 @@ async function collectOnce(
     ...(osTls ? { osTls } : {}),
     ...(sshHostKeys ? { sshHostKeys } : {}),
     ...(sshUserKeys ? { sshUserKeys } : {}),
+    ...(processLibraries ? { processLibraries } : {}),
     ...(probeCandidates ? { probeCandidates } : {}),
     ...(looseKeysOut ? { looseKeys: looseKeysOut } : {}),
     ...(fileDiscovery ? { fileDiscovery } : {}),
