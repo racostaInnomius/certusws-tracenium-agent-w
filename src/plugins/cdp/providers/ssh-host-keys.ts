@@ -52,8 +52,16 @@ function readField(buf: Buffer, off: number): { value: Buffer; next: number } | 
   return { value: buf.subarray(off + 4, off + 4 + len), next: off + 4 + len };
 }
 
-/** `<type> <base64> [comment]` → clave con tipo/tamano/huella, o null. */
-export function parseSshPublicKey(line: string, filePath = ""): SshHostKey | null {
+/**
+ * `<type> <base64> [comment]` → clave con tipo/tamano/huella, o null.
+ *
+ * `allowSk` (ola 1.4): las claves FIDO (`sk-ssh-ed25519@openssh.com`,
+ * `sk-ecdsa-…`) no son claves de HOST y por eso el colector de sshd las
+ * descarta, pero SI aparecen en un `authorized_keys` de usuario — y son
+ * de las pocas concesiones que estan respaldadas por hardware, asi que
+ * esconderlas del inventario de acceso seria justo al reves.
+ */
+export function parseSshPublicKey(line: string, filePath = "", opts: { allowSk?: boolean } = {}): SshHostKey | null {
   const parts = line.trim().split(/\s+/);
   if (parts.length < 2) return null;
   const [keyType, b64] = parts;
@@ -91,8 +99,19 @@ export function parseSshPublicKey(line: string, filePath = ""): SshHostKey | nul
     algorithm = "DSA";
     bits = 1024;
   } else if (keyType.startsWith("sk-")) {
-    // Claves FIDO: no son de host.
-    return null;
+    // Claves FIDO: no son de host, pero si de usuario (ver `allowSk`).
+    if (!opts.allowSk) return null;
+    if (keyType.startsWith("sk-ssh-ed25519")) {
+      algorithm = "Ed25519";
+      bits = 256;
+      curve = "Ed25519";
+    } else if (keyType.startsWith("sk-ecdsa-sha2-nistp256")) {
+      algorithm = "EC";
+      curve = "nistp256";
+      bits = 256;
+    } else {
+      algorithm = keyType.toUpperCase();
+    }
   } else {
     algorithm = keyType.toUpperCase();
   }

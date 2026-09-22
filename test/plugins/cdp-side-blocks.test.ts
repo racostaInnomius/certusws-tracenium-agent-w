@@ -38,6 +38,14 @@ const sshKeys = vi.fn();
 vi.mock("../../src/plugins/cdp/providers/ssh-host-keys", () => ({ collectSshHostKeys: (...a: any[]) => sshKeys(...a) }));
 const outbound = vi.fn();
 vi.mock("../../src/plugins/cdp/providers/outbound-tls", () => ({ collectOutboundTlsCandidates: (...a: any[]) => outbound(...a) }));
+// Ola 1.4 — las claves SSH de USUARIO se recogen SIEMPRE (no abren un
+// socket), asi que hay que mockearlas o el test lee el ~/.ssh de quien
+// ejecute la suite.
+const sshUser = vi.fn();
+vi.mock("../../src/plugins/cdp/providers/ssh-user-keys", async () => {
+  const real: any = await vi.importActual("../../src/plugins/cdp/providers/ssh-user-keys");
+  return { collectSshUserKeys: (...a: any[]) => sshUser(...a), sshUserKeysDigest: real.sshUserKeysDigest };
+});
 
 beforeAll(() => {
   vi.spyOn(os, "platform").mockReturnValue("darwin");
@@ -63,6 +71,14 @@ const ctx = (scan: boolean) =>
 
 const SSH = { host: "srv-01", listening: true, keys: [{ keyType: "ssh-ed25519", algorithm: "Ed25519", bits: 256, curve: "Ed25519", fingerprintSha256: "SHA256:abc", path: "/etc/ssh/ssh_host_ed25519_key.pub" }], unreadable: 0 };
 const CANDS = [{ host: "10.0.0.5", port: 443, connections: 3, process: "chrome" }];
+const EMPTY_USER_KEYS = { users: 0, keys: [], privateKeys: [], unreadable: 0, truncated: false };
+const USER_KEYS = {
+  users: 1,
+  keys: [{ kind: "authorized", user: "deploy", path: "/home/deploy/.ssh/authorized_keys", keyType: "ssh-ed25519", algorithm: "Ed25519", bits: 256, curve: "Ed25519", fingerprintSha256: "SHA256:zzz" }],
+  privateKeys: [],
+  unreadable: 0,
+  truncated: false
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -70,6 +86,7 @@ beforeEach(() => {
   collectMacosCdp.mockResolvedValue({ items: [item("sys-1")], stores: [sysStore], parseFailures: 0, loginKeychains: { discovered: 0, read: 0 }, unreadable: [] });
   sshKeys.mockResolvedValue(SSH);
   outbound.mockResolvedValue(CANDS);
+  sshUser.mockResolvedValue(EMPTY_USER_KEYS);
 });
 
 describe("claves SSH y candidatos de sonda en el namespace", () => {
@@ -81,6 +98,36 @@ describe("claves SSH y candidatos de sonda en el namespace", () => {
     expect(ns.sshHostKeys).toBeUndefined();
     expect(ns.probeCandidates).toBeUndefined();
     expect(ns.hasChanges).toBe(false);
+  });
+
+  // Ola 1.4 — al reves que las de HOST.
+  it("⭐ las claves SSH de USUARIO si se recogen con la sonda apagada: no abren un socket", async () => {
+    computeCdpDelta.mockReturnValue({ added: [], updated: [], removed: [] });
+    sshUser.mockResolvedValue(USER_KEYS);
+    const ns = await collectCDP(ctx(false));
+    expect(sshUser).toHaveBeenCalled();
+    expect(ns.sshUserKeys).toEqual(USER_KEYS);
+    // Y una concesion nueva cuenta como cambio aunque los certificados
+    // no se muevan: si no, el bloque no viajaria nunca.
+    expect(ns.hasChanges).toBe(true);
+  });
+
+  it("⭐ un equipo que NUNCA tuvo material SSH no manda un bloque vacio: seria un tick para toda la flota", async () => {
+    computeCdpDelta.mockReturnValue({ added: [], updated: [], removed: [] });
+    const ns = await collectCDP(ctx(false));
+    expect(sshUser).toHaveBeenCalled();
+    expect(ns.sshUserKeys).toBeUndefined();
+    expect(ns.hasChanges).toBe(false);
+  });
+
+  it("⭐ pero uno que SI las tuvo manda el vacio: es la unica forma de retirarlas", async () => {
+    computeCdpDelta.mockReturnValue({ added: [], updated: [], removed: [] });
+    sshUser.mockResolvedValue(USER_KEYS);
+    await collectCDP(ctx(false));
+    sshUser.mockResolvedValue(EMPTY_USER_KEYS);
+    const ns = await collectCDP(ctx(false));
+    expect(ns.sshUserKeys).toEqual(EMPTY_USER_KEYS);
+    expect(ns.hasChanges).toBe(true);
   });
 
   it("⭐ la primera vez viajan y cuentan como cambio aunque los certificados no se muevan", async () => {

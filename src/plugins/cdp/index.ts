@@ -27,6 +27,7 @@ import type {
   CdpProbeCandidate,
   CdpProbeSweepStats,
   CdpSshHostKeys,
+  CdpSshUserKeys,
   CdpStoreInfo,
   CdpUnreadableStore
 } from "../../domain/cdp-types";
@@ -587,6 +588,42 @@ async function collectOnce(
   let sshHostKeys: CdpSshHostKeys | undefined;
   let probeCandidates: CdpProbeCandidate[] | undefined;
   let sideChanged = false;
+
+  // ── Ola 1.4: claves SSH POR USUARIO ────────────────────────────────
+  //
+  // FUERA del `if (scanTlsListeners)` a proposito, al contrario que las
+  // claves de HOST. Aquellas se leen porque hay un sshd escuchando y el
+  // interruptor de red es el que decide mirar servicios; un
+  // `authorized_keys` es una concesion de acceso permanente que existe
+  // aunque este equipo no sirva nada, y esconderla detras del
+  // interruptor de las sondas la dejaria invisible en los tres tenants
+  // (ninguno lo tiene encendido). Solo se leen ficheros locales: no abre
+  // un socket, asi que no hay nada que condicionar.
+  let sshUserKeys: CdpSshUserKeys | undefined;
+  try {
+    const { collectSshUserKeys, sshUserKeysDigest } = await import("./providers/ssh-user-keys");
+    const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
+    const block = await collectSshUserKeys();
+    const digest = sshUserKeysDigest(block);
+    const previous = readCdpMeta("ssh_userkeys_digest");
+    // Un equipo que NUNCA ha tenido material SSH no manda un bloque vacio:
+    // seria un tick de cambio para toda la flota (los portatiles no tienen
+    // `~/.ssh`) a cambio de nada. Pero uno que SI lo tuvo manda el vacio,
+    // porque ahi el bloque es la afirmacion «ya no hay concesiones» y es
+    // lo unico que permite retirarlas.
+    const nothingEverSeen = previous === null && block.keys.length === 0 && block.privateKeys.length === 0;
+    if (!nothingEverSeen && (options?.full === true || previous !== digest)) {
+      sshUserKeys = block;
+      writeCdpMeta("ssh_userkeys_digest", digest);
+      if (options?.full !== true) sideChanged = true;
+    }
+    if (block.unreadable > 0) {
+      ctx.logger?.warn?.("CDP: ficheros de claves SSH de usuario no leidos", { unreadable: block.unreadable });
+    }
+  } catch (err: any) {
+    ctx.logger?.warn?.("CDP: claves SSH de usuario fallaron (no fatal)", { error: err?.message || String(err) });
+  }
+
   if (ctx.policyRuntime.getCdpScanTlsListeners()) {
     try {
       const { listListeningPorts } = await import("./listening-ports");
@@ -783,6 +820,7 @@ async function collectOnce(
     ...(vcenter ? { vcenter } : {}),
     ...(osTls ? { osTls } : {}),
     ...(sshHostKeys ? { sshHostKeys } : {}),
+    ...(sshUserKeys ? { sshUserKeys } : {}),
     ...(probeCandidates ? { probeCandidates } : {}),
     ...(looseKeysOut ? { looseKeys: looseKeysOut } : {}),
     ...(fileDiscovery ? { fileDiscovery } : {}),

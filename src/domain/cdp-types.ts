@@ -285,6 +285,15 @@ export type CdpNamespace = {
   sshHostKeys?: CdpSshHostKeys;
 
   /**
+   * Ola 1.4 — claves SSH por usuario: `authorized_keys` (quien PUEDE
+   * entrar), los `.pub` que cada cuenta tiene, y la presencia de las
+   * privadas. Lista COMPLETA del equipo; viaja cuando cambia (digest) o
+   * en un baseline, como las claves de host. `truncated` dice cuando NO
+   * es completa, y entonces no se puede reconciliar por ausencia.
+   */
+  sshUserKeys?: CdpSshUserKeys;
+
+  /**
    * Si la pila TLS del propio sistema negocia intercambio hibrido
    * post-cuantico, MEDIDO en un handshake de bucle local (15-sep), mas
    * el numero de revision de Windows (UBR). Sustituye la deduccion por
@@ -464,6 +473,65 @@ export type CdpSshHostKeys = {
     fingerprintSha256: string;
     path: string;
   }>;
+};
+
+/**
+ * Ola 1.4 — material SSH POR USUARIO. Solo inventario.
+ *
+ * `authorized` = la clave CONCEDE acceso a esa cuenta (el hecho de
+ * seguridad); `public` = la clave que el usuario TIENE. Se separan
+ * porque mezclarlas produce un numero grande y sin significado.
+ */
+export type CdpSshUserKey = {
+  kind: "authorized" | "public";
+  /** Cuenta dueña del fichero, o `(system)`/`(administrators)`. */
+  user: string;
+  path: string;
+  keyType: string;
+  algorithm: string;
+  bits: number | null;
+  curve: string | null;
+  /** `SHA256:<base64 sin relleno>` — el formato de `ssh-keygen -lf`. */
+  fingerprintSha256: string;
+  comment?: string;
+  /**
+   * Solo en `authorized_keys`: las restricciones tal cual las escribio
+   * quien concedio el acceso (`no-pty`, `from="…"`, `command="…"`).
+   * HECHOS: si una concesion sin acotar es aceptable lo decide el
+   * control plane, que puede cambiar de opinion sin desplegar la flota.
+   */
+  options?: string[];
+};
+
+/** Ola 1.4 — una clave privada de usuario: PRESENCIA, nunca material. */
+export type CdpSshUserPrivateKey = {
+  user: string;
+  path: string;
+  /** `openssh` (openssh-key-v1) o los formatos PEM de private-key-info. */
+  format: string;
+  /** null = no se pudo saber. */
+  encrypted: boolean | null;
+  readable: boolean;
+  keyType?: string;
+  keyAlgorithm?: string;
+  keySizeBits?: number;
+  curve?: string;
+  /** Huella de la mitad PUBLICA, que casa con los `authorized_keys` de
+   *  otros equipos: asi se cierra «esta clave abre aquellas N cuentas». */
+  fingerprintSha256?: string;
+  publicHalfPath?: string;
+};
+
+export type CdpSshUserKeys = {
+  /** Cuentas con material SSH (no cuentas del equipo). */
+  users: number;
+  keys: CdpSshUserKey[];
+  privateKeys: CdpSshUserPrivateKey[];
+  /** Ficheros que existen y no se pudieron leer: eso es un dato, no un cero. */
+  unreadable: number;
+  /** Se alcanzo un tope: la lista NO es completa y no se puede
+   *  reconciliar por ausencia. */
+  truncated: boolean;
 };
 
 export type CdpProbeCandidate = {
