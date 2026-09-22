@@ -68,7 +68,40 @@ export interface TokenAttempt {
 
 export interface TokenLookup {
   token: string | null;
+  /** Qué fuente ganó. `null` cuando no se encontró en ninguna. */
+  source: TokenSourceName | null;
+  /** Dónde estaba, tal cual, para poder repetirlo a mano. */
+  location: string | null;
   attempts: TokenAttempt[];
+}
+
+/**
+ * Identificador NO SECRETO de un token, para poder nombrarlo en un log.
+ *
+ * ⚠️ Por qué existe. El 2026-09-22 un equipo de T111 repetía
+ * `403 Token exhausted` después de reinstalar con un token nuevo. Averiguar
+ * cuál estaba mandando exigió leer el registro a mano, calcular el SHA-256 y
+ * compararlo contra `enrollment_tokens.token_hash` en la base de control.
+ * Resultó que el MSI no había reescrito el valor y seguía el de agosto.
+ *
+ * Es el MISMO sha256 que guarda el backend, así que estos 12 caracteres se
+ * comparan de un vistazo contra `left(token_hash,12)` sin pedirle a nadie que
+ * copie una credencial por correo. El token tiene entropía de sobra (43
+ * caracteres base64url): un prefijo del hash no acerca a nadie al valor.
+ */
+export function tokenFingerprint(token: string): string {
+  return crypto.createHash("sha256").update(token.trim()).digest("hex").slice(0, 12);
+}
+
+/**
+ * Una línea para el log: de dónde salió el token y cuál es, sin el valor.
+ */
+export function describeTokenSource(lookup: TokenLookup): string {
+  if (!lookup.token || !lookup.source) return "no enrollment token";
+  return (
+    `${lookup.source} — ${lookup.location} ` +
+    `(sha256:${tokenFingerprint(lookup.token)})`
+  );
 }
 
 function enrollmentTokenFilePath(): string | null {
@@ -112,6 +145,19 @@ function queryRegistry(view: "64" | "32"): { value: string | null; detail?: stri
 export function resolveEnrollmentToken(): TokenLookup {
   const attempts: TokenAttempt[] = [];
   let token: string | null = null;
+  let source: TokenSourceName | null = null;
+  let location: string | null = null;
+
+  // La fuente GANADORA se anota junto al token. Antes sólo se devolvía el
+  // valor, así que el log podía decir "token detectado" pero nunca de dónde
+  // —y con cuatro fuentes en cascada, ésa es justo la pregunta que importa
+  // cuando el token que llega no es el que alguien acaba de poner.
+  const gana = (s: TokenSourceName, loc: string, value: string) => {
+    if (token) return;
+    token = value;
+    source = s;
+    location = loc;
+  };
 
   const envToken = (process.env.ENROLLMENT_TOKEN || "").trim();
   attempts.push({
@@ -120,7 +166,7 @@ export function resolveEnrollmentToken(): TokenLookup {
     found: envToken.length > 0,
     detail: envToken.length > 0 ? undefined : "not set",
   });
-  if (envToken) token = envToken;
+  if (envToken) gana("env", "ENROLLMENT_TOKEN", envToken);
 
   const file = enrollmentTokenFilePath();
   if (file) {
@@ -138,7 +184,7 @@ export function resolveEnrollmentToken(): TokenLookup {
       detail = `unreadable (${err?.code || err?.message || "error"})`;
     }
     attempts.push({ source: "file", location: file, found: !!fileToken, detail });
-    if (!token && fileToken) token = fileToken;
+    if (fileToken) gana("file", file, fileToken);
   }
 
   if (os.platform() === "win32") {
@@ -146,17 +192,18 @@ export function resolveEnrollmentToken(): TokenLookup {
     // indistinguible de "no existe" si sólo se pregunta una vez.
     for (const view of ["64", "32"] as const) {
       const r = queryRegistry(view);
+      const loc = `${REGISTRY_KEY}\\${REGISTRY_VALUE} (${view}-bit view)`;
       attempts.push({
         source: `registry:${view}`,
-        location: `${REGISTRY_KEY}\\${REGISTRY_VALUE} (${view}-bit view)`,
+        location: loc,
         found: !!r.value,
         detail: r.value ? undefined : r.detail,
       });
-      if (!token && r.value) token = r.value;
+      if (r.value) gana(`registry:${view}`, loc, r.value);
     }
   }
 
-  return { token, attempts };
+  return { token, source, location, attempts };
 }
 
 /**

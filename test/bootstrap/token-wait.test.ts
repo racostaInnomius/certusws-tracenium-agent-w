@@ -17,10 +17,14 @@ import type { TokenLookup } from "../../src/bootstrap/token-source";
 
 const sinToken: TokenLookup = {
   token: null,
+  source: null,
+  location: null,
   attempts: [{ source: "env", location: "ENROLLMENT_TOKEN", found: false, detail: "not set" }],
 };
 const conToken: TokenLookup = {
   token: "tok_abc",
+  source: "file",
+  location: "/x/enrollment.token",
   attempts: [{ source: "file", location: "/x/enrollment.token", found: true }],
 };
 

@@ -24,7 +24,9 @@ import path from "path";
 import { agentDataDir } from "./paths";
 import {
   describeTokenLookup,
+  describeTokenSource,
   resolveEnrollmentToken,
+  tokenFingerprint,
   type TokenLookup,
 } from "./token-source";
 
@@ -94,15 +96,22 @@ const defaultSleep = (ms: number) =>
  * que saber buscarlo. Un archivo con una sola cosa adentro es lo que encuentra
  * quien está frente al equipo sin conocer el producto.
  */
-export function writeBlockedMarker(diagnosis: string, at: Date): void {
+export function writeBlockedMarker(
+  diagnosis: string,
+  at: Date,
+  // El motivo por defecto es "no hay token". El otro caso —hay uno, pero el
+  // backend lo rechaza— necesita decir otra cosa: quien lee esto tiene que
+  // saber si le falta poner un token o si tiene que REEMPLAZAR el que hay.
+  cause = "it has no enrollment token"
+): void {
   try {
     const file = path.join(agentDataDir(), BLOCKED_MARKER_NAME);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(
       file,
       `Tracenium Agent — NOT ENROLLED\n${at.toISOString()}\n\n` +
-        `The agent is running but cannot enroll: it has no enrollment token.\n` +
-        `It is retrying on its own and will continue as soon as a token exists.\n\n` +
+        `The agent is running but cannot enroll: ${cause}.\n` +
+        `It is retrying on its own and will continue as soon as a usable token exists.\n\n` +
         `${diagnosis}\n`,
       "utf8"
     );
@@ -127,10 +136,78 @@ export function clearBlockedMarker(): void {
 export async function waitForEnrollmentToken(
   deps: TokenWaitDeps = {}
 ): Promise<string | null> {
+  return esperarToken(
+    {
+      sirve: (lookup) => !!lookup.token,
+      cause: "it has no enrollment token",
+      primerAviso: (diagnosis) =>
+        "[Enroll] No enrollment token. The agent cannot enroll until one exists.\n" +
+        diagnosis +
+        "\nThe agent will keep checking and will continue on its own; " +
+        "restarting the service will NOT help.",
+      avisoRepetido: (attempt) =>
+        `[Enroll] Still no enrollment token (check ${attempt}).`,
+    },
+    deps
+  );
+}
+
+/**
+ * Espera a que aparezca un token DISTINTO del que el backend acaba de rechazar.
+ *
+ * ⚠️ Por qué hace falta. Un `403 Token exhausted` no mejora reintentándolo: el
+ * token está gastado y lo seguirá estando. Pero morir tampoco sirve —el gestor
+ * de servicios relanza el proceso y vuelve el bucle de arranques que motivó
+ * este módulo—, y reintentar el POST tampoco es inocuo: cada intento es una
+ * petición de certificado contra el control plane.
+ *
+ * Así que se trata igual que "no hay token": esperar, con la misma espera
+ * creciente y el mismo log racionado, hasta que alguien ponga OTRO. La
+ * diferencia es el criterio de "sirve" y lo que dice el aviso, porque aquí el
+ * remedio no es *poner* un token sino *reemplazarlo*.
+ */
+export async function waitForReplacementToken(
+  rechazado: string,
+  motivo: string,
+  deps: TokenWaitDeps = {}
+): Promise<string | null> {
+  const huella = tokenFingerprint(rechazado);
+
+  return esperarToken(
+    {
+      // Mismo valor = mismo rechazo. Sólo un token distinto puede avanzar.
+      sirve: (lookup) => !!lookup.token && lookup.token.trim() !== rechazado.trim(),
+      cause: `the enrollment token it has was rejected by the server (${motivo})`,
+      primerAviso: (diagnosis) =>
+        `[Enroll] The server rejected this enrollment token: ${motivo}.\n` +
+        `The token in use is sha256:${huella} — compare it with the tenant's ` +
+        `tokens in the portal; a new one must REPLACE it.\n` +
+        diagnosis +
+        `\nThe agent will keep checking and will continue on its own as soon as ` +
+        `a different token exists; restarting the service will NOT help.`,
+      avisoRepetido: (attempt) =>
+        `[Enroll] Still the same rejected token sha256:${huella} (check ${attempt}).`,
+    },
+    deps
+  );
+}
+
+interface EsperaOpts {
+  sirve: (lookup: TokenLookup) => boolean;
+  cause: string;
+  primerAviso: (diagnosis: string) => string;
+  avisoRepetido: (attempt: number) => string;
+}
+
+async function esperarToken(
+  opts: EsperaOpts,
+  deps: TokenWaitDeps
+): Promise<string | null> {
   const read = deps.read ?? resolveEnrollmentToken;
   const sleep = deps.sleep ?? defaultSleep;
   const log = deps.logger ?? console;
-  const onBlocked = deps.onBlocked ?? ((d: string) => writeBlockedMarker(d, new Date()));
+  const onBlocked =
+    deps.onBlocked ?? ((d: string) => writeBlockedMarker(d, new Date(), opts.cause));
   const onRecovered = deps.onRecovered ?? clearBlockedMarker;
 
   let attempt = 0;
@@ -139,10 +216,14 @@ export async function waitForEnrollmentToken(
     attempt += 1;
 
     const lookup = read();
-    if (lookup.token) {
+    if (opts.sirve(lookup)) {
+      // De QUÉ fuente salió, siempre y desde el primer intento. Con cuatro
+      // fuentes en cascada, "token detectado" a secas no permite distinguir
+      // el token que alguien acaba de poner del que lleva meses en otra.
+      log.info(`[Enroll] Enrollment token read from ${describeTokenSource(lookup)}`);
       if (attempt > 1) {
         log.info(
-          `[Enroll] Enrollment token appeared after ${attempt} checks. Continuing.`
+          `[Enroll] Usable enrollment token appeared after ${attempt} checks. Continuing.`
         );
         onRecovered();
       }
@@ -153,15 +234,10 @@ export async function waitForEnrollmentToken(
 
     if (attempt === 1) {
       // El primer fallo es el que se lee. Va completo y con el remedio.
-      log.error(
-        "[Enroll] No enrollment token. The agent cannot enroll until one exists.\n" +
-          diagnosis +
-          "\nThe agent will keep checking and will continue on its own; " +
-          "restarting the service will NOT help."
-      );
+      log.error(opts.primerAviso(diagnosis));
       onBlocked(diagnosis);
     } else if (shouldLogAttempt(attempt)) {
-      log.warn(`[Enroll] Still no enrollment token (check ${attempt}).`);
+      log.warn(opts.avisoRepetido(attempt));
     }
 
     if (deps.maxAttempts !== undefined && attempt >= deps.maxAttempts) {

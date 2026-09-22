@@ -21,7 +21,16 @@ import { EventEmitter } from "events";
 const h = vi.hoisted(() => ({
   instalaciones: [] as Array<"ok" | "fail">,
   metodos: [] as string[],
-  estado: { current: null as any }
+  estado: { current: null as any },
+  // Respuestas del backend al POST /enroll, en orden. "ok" = certificado.
+  respuestas: [] as Array<"ok" | "exhausted">,
+  // Tokens que va devolviendo la espera de reemplazo, y cuántas veces se pidió.
+  reemplazos: [] as string[],
+  esperas: { n: 0 },
+  reemplazo: async (_rechazado: string, _motivo: string) => {
+    h.esperas.n += 1;
+    return h.reemplazos.shift() ?? "token-de-reemplazo";
+  },
 }));
 
 vi.mock("../../src/bootstrap/config", () => ({
@@ -42,13 +51,22 @@ vi.mock("../../src/bootstrap/enrollment-store", () => ({
   }
 }));
 vi.mock("../../src/bootstrap/token-source", () => ({
-  resolveEnrollmentToken: () => ({ token: "bootstrap-token-xyz", attempts: [] }),
+  resolveEnrollmentToken: () => ({
+    token: "bootstrap-token-xyz",
+    source: "registry:64",
+    location: "HKLM\\...\\ENROLLMENT_TOKEN (64-bit view)",
+    attempts: [],
+  }),
   readEnrollmentToken: () => "bootstrap-token-xyz",
   describeTokenLookup: () => "",
   clearEnrollmentTokenFile: () => {}
 }));
 vi.mock("../../src/bootstrap/token-wait", () => ({
   waitForEnrollmentToken: async () => "bootstrap-token-xyz",
+  // ⚠️ Toda ruta NUEVA de enroll.ts necesita su doble aquí: el mock sustituye
+  // al módulo ENTERO, así que una función que falte llega como `undefined` y
+  // revienta al llamarla, no al importar.
+  waitForReplacementToken: h.reemplazo,
   clearBlockedMarker: () => {}
 }));
 vi.mock("../../src/platform/device-id", () => ({ getDeviceId: () => "device-under-test" }));
@@ -95,7 +113,17 @@ vi.mock("net", () => {
   return { default: api, ...api };
 });
 
-const fetchMock = vi.fn(async () => ({
+const fetchMock = vi.fn(async () => {
+  if (h.respuestas.length && h.respuestas[0] === "exhausted") {
+    h.respuestas.shift();
+    return {
+      ok: false,
+      status: 403,
+      text: async () => JSON.stringify({ error: "Token exhausted" }),
+    } as any;
+  }
+  h.respuestas.shift();
+  return ({
   ok: true,
   status: 200,
   text: async () => JSON.stringify({
@@ -106,7 +134,8 @@ const fetchMock = vi.fn(async () => ({
       caBundlePem: "-----BEGIN CERTIFICATE-----\nCADENA\n-----END CERTIFICATE-----\n"
     }
   })
-}) as any);
+}) as any;
+});
 vi.stubGlobal("fetch", fetchMock);
 
 import { ensureEnrolled } from "../../src/bootstrap/enroll";
@@ -115,6 +144,9 @@ beforeEach(() => {
   vi.useFakeTimers();
   h.instalaciones = [];
   h.metodos = [];
+  h.respuestas = [];
+  h.reemplazos = [];
+  h.esperas.n = 0;
   h.estado.current = null;
   fetchMock.mockClear();
   vi.spyOn(console, "log").mockImplementation(() => {});
@@ -169,5 +201,47 @@ describe("enrolamiento — el certificado se pide una sola vez", () => {
 
     expect(instalaciones()).toBe(6);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("token rechazado — no se reintenta, se espera otro", () => {
+  it("un 403 'Token exhausted' NO repite el POST: pide un token de reemplazo", async () => {
+    // ⚠️ El caso de campo (2026-09-22, T111): el MSI no reescribió el token al
+    // reinstalar y el equipo mandaba el de agosto, con sus 42 usos gastados.
+    // El 403 sólo era terminal si decía `Token expired`, así que "agotado"
+    // caía en el reintento genérico: 5 vueltas con espera creciente y otra
+    // ronda cada 30 s, para siempre, contra un token que no iba a mejorar.
+    h.respuestas = ["exhausted", "ok"];
+    h.reemplazos = ["token-nuevo-del-portal"];
+
+    const estado = await hastaAsentar(ensureEnrolled());
+
+    // DOS peticiones: la que fue rechazada y la que se hizo con el token
+    // nuevo. Sin el arreglo, el primer 403 costaba cinco.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(h.esperas.n).toBe(1);
+
+    // Y la segunda va con el token de reemplazo, no con el rechazado.
+    const cuerpo = JSON.parse(String((fetchMock.mock.calls[1] as any)[1].body));
+    expect(cuerpo.bootstrapToken).toBe("token-nuevo-del-portal");
+
+    // El CSR no se regenera: la clave ya estaba, y el certificado se emite
+    // para el mismo deviceId.
+    expect(h.metodos.filter((m) => m === "crypto.csr.generate")).toHaveLength(1);
+    expect(estado.deviceId).toBe("device-under-test");
+  });
+
+  it("y el equipo termina enrolado, sin morir por el camino", async () => {
+    // Morir sería lo otro que no debe pasar: `ENROLL_FATAL` mata el arranque
+    // y el gestor de servicios relanza el proceso — el bucle de 3722
+    // arranques que token-wait.ts existe para evitar.
+    h.respuestas = ["exhausted", "exhausted", "ok"];
+    h.reemplazos = ["token-1", "token-2"];
+
+    const estado = await hastaAsentar(ensureEnrolled());
+
+    expect(h.esperas.n).toBe(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(estado.mtls.clientCertThumbprint).toBe("ABC123");
   });
 });

@@ -6,7 +6,7 @@ import { EnrollmentState } from "./enrollment-state";
 import { buildEnrollmentPayload } from "./enroll-payload";
 import { config } from "./config";
 import { clearEnrollmentTokenFile } from "./token-source";
-import { clearBlockedMarker, waitForEnrollmentToken } from "./token-wait";
+import { clearBlockedMarker, waitForEnrollmentToken, waitForReplacementToken } from "./token-wait";
 import { execSync } from "child_process";
 import { getDeviceId } from "../platform/device-id";
 import { writeEnrollmentMetadata } from "../platform/enrollment-meta";
@@ -14,6 +14,46 @@ import { getPrivSvcPipePath } from "../platform/privsvc-path";
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Marca de "este token no sirve, hace falta OTRO".
+ *
+ * ⚠️ El 2026-09-22 un equipo de T111 repitió `403 Token exhausted` sin parar:
+ * el 403 sólo se trataba como terminal cuando el texto decía `Token expired`,
+ * así que "agotado" caía en el reintento genérico —cinco vueltas con espera
+ * creciente, y otra ronda cada 30 s desde el bucle de fuera— contra un token
+ * que no iba a mejorar nunca.
+ *
+ * Se distingue de `ENROLL_FATAL` a propósito: fatal MATA el arranque, y el
+ * gestor de servicios relanza el proceso, que es el bucle de reinicios que
+ * token-wait.ts existe para evitar. Un token rechazado no es un error del
+ * programa: es una credencial que alguien tiene que cambiar. Así que el
+ * agente se queda vivo esperando la nueva.
+ */
+const ENROLL_TOKEN_REJECTED = "ENROLL_TOKEN_REJECTED";
+
+/**
+ * ¿Este fallo del POST /enroll significa "cambia el token"?
+ *
+ * Son las respuestas del backend que hablan del TOKEN y no del equipo ni de
+ * la red (ver modules/enroll/enroll.controller.ts). Ninguna cambia de
+ * resultado si se reintenta con el mismo valor.
+ *
+ * Deliberadamente NO están aquí `LICENSE_LIMIT_REACHED` (403) ni
+ * `DEVICE_LIFECYCLE_HIDDEN` (410): también son definitivas para el token
+ * actual, pero el remedio no es un token nuevo —es contratar licencias o
+ * reactivar el equipo— y merecen su propio aviso. Hoy siguen cayendo en el
+ * reintento genérico, igual que antes de este cambio.
+ */
+export function motivoDeRechazoDeToken(status: number, body: string): string | null {
+  const txt = body || "";
+  if (status === 401) return "the server does not recognise it";
+  if (status !== 403) return null;
+  if (txt.includes("Token exhausted")) return "all of its uses are spent";
+  if (txt.includes("Token expired")) return "it expired";
+  if (txt.includes("Token not active")) return "it was revoked or disabled";
+  return null;
 }
 
 async function retry<T>(fn: () => Promise<T>, attempts = 5, baseDelay = 1000): Promise<T> {
@@ -27,6 +67,13 @@ async function retry<T>(fn: () => Promise<T>, attempts = 5, baseDelay = 1000): P
 
       // Do not retry fatal enrollment errors
       if (err instanceof Error && err.message.startsWith("ENROLL_FATAL")) {
+        throw err;
+      }
+
+      // Tampoco un token que el servidor rechazó: el mismo token dará el
+      // mismo rechazo, y cada vuelta es una petición de certificado más
+      // contra el control plane. Lo resuelve el llamador esperando otro.
+      if (err instanceof Error && err.message.startsWith(ENROLL_TOKEN_REJECTED)) {
         throw err;
       }
 
@@ -390,7 +437,9 @@ export async function ensureEnrolled(): Promise<EnrollmentState> {
   // 3722 arranques en cinco días sin avanzar un milímetro. Ahora espera —el
   // token puede aparecer sin que nadie reinicie nada— y explica por qué, una
   // sola vez y en la máquina. Ver token-wait.ts.
-  const enrollmentToken = await waitForEnrollmentToken();
+  // `let`: si el servidor rechaza este token, el bucle de abajo espera otro
+  // y sigue con él sin volver a generar el CSR.
+  let enrollmentToken = await waitForEnrollmentToken();
 
   if (!enrollmentToken) {
     throw new Error("Missing enrollment token. Agent is not enrolled.");
@@ -499,12 +548,13 @@ export async function ensureEnrolled(): Promise<EnrollmentState> {
           if (!response.ok) {
             const txt = await response.text().catch(() => "");
 
-            // Terminal errors (do not retry)
-            if (
-              response.status === 401 ||
-              (response.status === 403 && txt.includes("Token expired"))
-            ) {
-              throw new Error(`ENROLL_FATAL: ${txt}`);
+            // El token no sirve: no se reintenta, se espera OTRO. Antes el
+            // 401 y el `Token expired` eran ENROLL_FATAL —mataban el
+            // arranque y el servicio se relanzaba en bucle— y `Token
+            // exhausted` ni siquiera estaba: reintentaba para siempre.
+            const motivo = motivoDeRechazoDeToken(response.status, txt);
+            if (motivo) {
+              throw new Error(`${ENROLL_TOKEN_REJECTED}: ${motivo}`);
             }
 
               throw new Error(`Enroll HTTP ${response.status}: ${txt}`);
@@ -626,6 +676,17 @@ export async function ensureEnrolled(): Promise<EnrollmentState> {
         console.error("[Enroll] Fatal enrollment error:", err.message);
         try { fs.unlinkSync(lockPath); } catch {}
         throw err; // stop agent startup
+      }
+
+      // Token rechazado: no hay nada que reintentar con éste. Se espera a que
+      // aparezca otro —en cualquiera de las fuentes— y se vuelve al POST con
+      // él. No se libera el lock ni se tira el CSR: la clave ya está generada
+      // y el certificado se pedirá para ESE mismo deviceId.
+      if (err instanceof Error && err.message.startsWith(ENROLL_TOKEN_REJECTED)) {
+        const motivo = err.message.slice(ENROLL_TOKEN_REJECTED.length + 2);
+        const nuevo = await waitForReplacementToken(enrollmentToken, motivo);
+        if (nuevo) enrollmentToken = nuevo;
+        continue;
       }
 
       console.error(

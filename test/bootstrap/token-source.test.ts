@@ -108,6 +108,8 @@ describe("describeRegFailure", () => {
 describe("describeTokenLookup", () => {
   const lookup: TokenLookup = {
     token: null,
+    source: null,
+    location: null,
     attempts: [
       { source: "env", location: "ENROLLMENT_TOKEN", found: false, detail: "not set" },
       {
@@ -133,6 +135,8 @@ describe("describeTokenLookup", () => {
     // lo revoque.
     const conToken: TokenLookup = {
       token: "gxq5jnXcoZkAZaUIoEgPCU5yNiZot6fy_bCYNj7PvjY",
+      source: "file",
+      location: "C:\\ProgramData\\x\\enrollment.token",
       attempts: [
         { source: "file", location: "C:\\ProgramData\\x\\enrollment.token", found: true },
       ],
