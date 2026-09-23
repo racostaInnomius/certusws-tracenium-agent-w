@@ -244,6 +244,21 @@ $rebootPending = ($rebootWua -eq $true) -or $rebootCbs -or $rebootWu
             }
 
             var kbArticleIds = GetStringArray(parameters, "kbArticleIds");
+
+            // ⚠️ SIN LISTA NO SE INSTALA NADA (23-sep-2026). Hasta hoy una lista
+            // vacía seleccionaba TODO lo que encontrara la búsqueda — el 8-sep
+            // un job con `kbArticleIds: []` instaló así 3 actualizaciones que
+            // nadie había elegido, con reinicio. El control plane y el agente
+            // ya lo rechazan; esto es la última barrera, antes de tocar WUA.
+            if (kbArticleIds.Count == 0)
+            {
+                return Task.FromResult(
+                    PrivSvcResponse.Fail(req.Id, "patch_install_no_selection",
+                        "patch_install needs an explicit list of updates; an empty list is refused " +
+                        "instead of installing everything Windows Update offers.")
+                );
+            }
+
             var modeJson = JsonSerializer.Serialize(mode);
 
             var psResult = RunPs($@"
@@ -266,8 +281,11 @@ foreach ($update in $searchResult.Updates) {{
     if ($kb) {{ $kbs += ('KB' + [string]$kb) }}
   }}
 
-  $matchesKb = ($targetKbs.Count -eq 0)
-  if (-not $matchesKb) {{
+  # Sin lista no casa NADA (antes: casaba todo). El handler ya rechaza la lista
+  # vacía antes de llegar aquí; esto es para que el script no pueda volver a
+  # instalar lo que nadie pidió aunque lo llame otro camino.
+  $matchesKb = $false
+  if ($targetKbs.Count -gt 0) {{
     foreach ($candidate in $kbs) {{
       if ($targetKbs -contains $candidate) {{
         $matchesKb = $true

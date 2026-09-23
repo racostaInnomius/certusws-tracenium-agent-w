@@ -1,4 +1,5 @@
 // src/transport/grpc-stream.ts
+import { selectedPatchIds } from "../plugins/pmp/patch-selection";
 import { AgentContext } from "../core/agent-context";
 import { createGrpcClient } from "./grpc-client";
 import { outbox } from "../queue/sqlite-outbox";
@@ -966,14 +967,29 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       // Opt-in, per run. Absent means NO: nothing restarts a production server
       // that was not explicitly enrolled in it.
       const rebootIfRequired = payload?.rebootIfRequired === true;
-      const kbArticleIds = Array.isArray(payload?.kbArticleIds)
-        ? payload.kbArticleIds.map((item: unknown) => String(item || "").trim()).filter(Boolean)
-        : [];
+      // `null` = no pidió ninguno. Se rechaza más abajo; ver patch-selection.ts.
+      const seleccion = selectedPatchIds(payload);
+      const kbArticleIds: string[] = seleccion ?? [];
 
       if (mode !== "install" && mode !== "download") {
         return {
           status: 2,
           message: "patch_install rejected: invalid mode"
+        };
+      }
+
+      // ⚠️ UNA LISTA VACÍA NO ES «NADA», ES «TODO» (23-sep-2026). El script de
+      // Windows Update del privsvc hace `$matchesKb = ($targetKbs.Count -eq 0)`:
+      // sin lista selecciona TODO lo que encuentre la búsqueda. El 8-sep un job
+      // con `kbArticleIds: []` instaló así 3 actualizaciones que nadie había
+      // elegido, con reinicio. El control plane ya no crea jobs sin lista, pero
+      // esta es la última barrera antes de tocar el equipo — y el `filter` de
+      // arriba convierte `["", ""]` en `[]` en silencio. Instalar todo lo
+      // pendiente se pide mandando LA LISTA de lo pendiente, nunca callando.
+      if (!seleccion) {
+        return {
+          status: 2,
+          message: "patch_install rejected: no_patches_selected"
         };
       }
 

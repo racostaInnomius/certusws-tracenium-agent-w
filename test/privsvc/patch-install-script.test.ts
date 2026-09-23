@@ -37,6 +37,8 @@ interface Report {
 }
 
 let scriptPath = "";
+/** El MISMO script, con la lista de KBs vacía: `$targetKbs = @()`. */
+let scriptSinLista = "";
 
 beforeAll(() => {
   const install = extractBlocks().find((b) => b.file === "PatchManagement.cs" && b.interpolated);
@@ -52,12 +54,18 @@ beforeAll(() => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "privsvc-patch-install-"));
   scriptPath = path.join(dir, "patch-install.ps1");
   fs.writeFileSync(scriptPath, body, "utf8");
+
+  let vacio = install.body;
+  vacio = vacio.replace(HOLE, "'install'");
+  vacio = vacio.replace(HOLE, "");
+  scriptSinLista = path.join(dir, "patch-install-sin-lista.ps1");
+  fs.writeFileSync(scriptSinLista, vacio, "utf8");
 });
 
-function run(scenario: string): Report {
+function run(scenario: string, script = scriptPath): Report {
   const out = execFileSync(
     "pwsh",
-    ["-NoProfile", "-File", HARNESS, "-Scenario", scenario, "-ScriptPath", scriptPath],
+    ["-NoProfile", "-File", HARNESS, "-Scenario", scenario, "-ScriptPath", script],
     { encoding: "utf8" }
   );
   return JSON.parse(out) as Report;
@@ -100,5 +108,15 @@ describe.skipIf(!pwsh)("Windows patch.install script", () => {
     expect(r).toMatchObject({ status: "success", installedCount: 3, failedCount: 0 });
     // ResultCode by name, not the bare number the operator used to get.
     expect(r.results[2]).toBe("KB5121003 installed 0x0 succeeded_with_errors");
+  });
+
+  it("🔴 con la lista VACÍA no selecciona NADA — antes seleccionaba TODO", () => {
+    // El 8-sep-2026 un job con `kbArticleIds: []` instaló 3 actualizaciones que
+    // nadie había elegido: el script leía «sin lista» como «todo». Ahora el
+    // handler rechaza la lista vacía antes de llegar aquí, y el script, además,
+    // ya no puede instalar lo que nadie pidió aunque lo llame otro camino.
+    const r = run("all-ok", scriptSinLista);
+    expect(r.calls).toEqual([]); // ni descarga ni instalación
+    expect(r.installedCount).toBe(0);
   });
 });
