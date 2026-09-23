@@ -37,3 +37,30 @@ export function parseSysadminctlScreenLock(output: string | null | undefined): S
   }
   return undefined;
 }
+
+/**
+ * ¿Se pudo leer el bloqueo de pantalla, y si no, por qué?
+ *
+ * ⚠️ La diferencia que esto fija: "no está puesto" es un veredicto; "no había
+ * nadie con sesión" no lo es. Callar el valor hacía que el control plane
+ * resolviera `not_applicable` —"a este equipo no le toca"— y cerrara el
+ * hallazgo. Un Mac de T113 alternó pass → not_applicable → pass en 4 segundos
+ * el 23-sep-2026 al pasar por la pantalla de login.
+ *
+ * El backend lee `available: false` + `reason` y deja el check como NO
+ * EVALUADO: conserva el veredicto anterior y no escribe evento.
+ */
+export function screenLockAvailability(input: {
+  /** El valor resuelto, o undefined si ninguna lectura dio uno. */
+  passwordRequired: boolean | undefined;
+  /** Si había usuario en la consola: sin él, las lecturas por usuario no corren. */
+  hasConsoleUser: boolean;
+  source: string;
+}): { available: true } | { available: false; reason: "no_console_user" | "unavailable" | "not_readable" } {
+  if (input.passwordRequired !== undefined) return { available: true };
+  if (!input.hasConsoleUser) return { available: false, reason: "no_console_user" };
+  // Con usuario: o las lecturas fallaron, o corrieron y no hay nada que leer —
+  // en macOS moderno el interruptor no escribe la clave, así que tampoco se
+  // puede afirmar cumplimiento desde ahí.
+  return { available: false, reason: input.source === "unavailable" ? "unavailable" : "not_readable" };
+}

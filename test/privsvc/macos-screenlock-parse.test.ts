@@ -8,7 +8,7 @@
 // absent≠compliant rule for anything unrecognized.
 
 import { describe, it, expect } from "vitest";
-import { parseSysadminctlScreenLock } from "../../privsvc/macos/src/screenlock-parse";
+import { parseSysadminctlScreenLock, screenLockAvailability } from "../../privsvc/macos/src/screenlock-parse";
 
 // Verbatim from the field (JPR-MacBookPro, macOS 2026-08-19). Note the
 // syslog-style prefix and that this line arrives on stderr.
@@ -45,5 +45,30 @@ describe("parseSysadminctlScreenLock", () => {
     ]) {
       expect(parseSysadminctlScreenLock(v as any), String(v)).toBeUndefined();
     }
+  });
+});
+
+describe("screenLockAvailability — decir que no se pudo leer, no callar", () => {
+  it("⭐ sin usuario de consola NO es un veredicto: es no evaluado", () => {
+    // Lo que mandaba un Mac en la pantalla de login (T113, 23-sep): el backend
+    // lo resolvía como not_applicable y cerraba el hallazgo.
+    expect(screenLockAvailability({ passwordRequired: undefined, hasConsoleUser: false, source: "not_set" }))
+      .toEqual({ available: false, reason: "no_console_user" });
+  });
+
+  it("con valor leído, disponible — y el veredicto manda como siempre", () => {
+    expect(screenLockAvailability({ passwordRequired: true, hasConsoleUser: true, source: "sysadminctl" }))
+      .toEqual({ available: true });
+    expect(screenLockAvailability({ passwordRequired: false, hasConsoleUser: false, source: "system" }))
+      .toEqual({ available: true });
+  });
+
+  it("⚠️ con usuario pero sin poder leer, tampoco se afirma nada", () => {
+    expect(screenLockAvailability({ passwordRequired: undefined, hasConsoleUser: true, source: "unavailable" }))
+      .toEqual({ available: false, reason: "unavailable" });
+    // `not_set` CON usuario: las lecturas corrieron y no hay clave. En macOS
+    // moderno el interruptor no la escribe, así que no es "cumple".
+    expect(screenLockAvailability({ passwordRequired: undefined, hasConsoleUser: true, source: "not_set" }))
+      .toEqual({ available: false, reason: "not_readable" });
   });
 });

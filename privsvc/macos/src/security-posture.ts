@@ -4,7 +4,7 @@ import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { success } from "./protocol";
 import { parseSshdConfig } from "./ssh-parse";
 import { boolFromDefaultsRead, classifyDefaultsRead } from "./defaults-parse";
-import { parseSysadminctlScreenLock } from "./screenlock-parse";
+import { parseSysadminctlScreenLock, screenLockAvailability } from "./screenlock-parse";
 import { parsePwpolicyMinimumLength } from "./pwpolicy-parse";
 import { collectMacProbes, probesFromParams, realMacProbeDeps } from "./macos-probes";
 
@@ -462,6 +462,7 @@ async function collectScreenLock() {
   const live = parseSysadminctlScreenLock(screenLockStatus.output);
   if (live) {
     return {
+      available: true,
       passwordRequired: live.passwordRequired,
       // 0 = immediately. Not evaluated by the current catalog check;
       // carried so a future delay-bounded rule needs no agent change.
@@ -492,7 +493,27 @@ async function collectScreenLock() {
       : allAbsentOrValue ? "not_set" : "unavailable"
     : systemGlobal.ok ? "system" : classifyDefaultsRead(systemGlobal) === "absent" ? "not_set" : "no_console_user";
 
+  // ⚠️ DECIR que no se pudo leer, en vez de callar el valor.
+  //
+  // Sin `passwordRequired` el control plane resolvía `not_applicable` — "este
+  // check no le toca a este equipo" — cuando la verdad es "no pudimos mirarlo
+  // porque no hay nadie con sesión". Medido el 23-sep: un Mac de T113 alternó
+  // pass → not_applicable → pass en 4 segundos al pasar por la pantalla de
+  // login, cerrando y reabriendo su hallazgo, y el portal anunciaba un cambio
+  // de configuración que nunca ocurrió.
+  //
+  // `available: false` + `reason` es el contrato que el backend lee para
+  // dejar el check como NO EVALUADO (ver evidence-gap.ts): conserva el último
+  // veredicto y no escribe evento. Con valor leído, `available: true` y el
+  // veredicto manda como siempre.
+  const availability = screenLockAvailability({
+    passwordRequired: resolved,
+    hasConsoleUser: Boolean(user),
+    source
+  });
+
   return {
+    ...availability,
     passwordRequired: resolved,
     consoleUser: user?.name,
     source,
