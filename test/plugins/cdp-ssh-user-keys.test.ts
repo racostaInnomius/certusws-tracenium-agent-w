@@ -123,13 +123,114 @@ describe("parseAuthorizedKeyLine", () => {
 });
 
 describe("localUsers", () => {
-  it("⭐ en macOS se enumera /Users ademas de /etc/passwd", () => {
-    // Las cuentas de persona de macOS viven en OpenDirectory: /etc/passwd
-    // EXISTE y solo trae las del sistema, asi que sin esto no se miraria
-    // ni un home real. Se comprueba contra el /Users de esta maquina.
-    const homes = localUsers("darwin").map((u) => u.home);
-    const real = fs.readdirSync("/Users").filter((n) => !n.startsWith(".") && !["Shared", "Guest"].includes(n));
-    for (const n of real) expect(homes).toContain(path.join("/Users", n));
+  // ⚠️ El disco se simula, no se mira el de esta maquina.
+  //
+  // La primera version de estas pruebas leia el `/Users` REAL y comparaba
+  // contra el, asi que afirmaba algo del Mac de quien la corria en vez de
+  // algo del codigo: en el runner de CI (Linux) `/Users` no existe y el
+  // test moria con ENOENT antes de comprobar nada. Y al reves, en un Mac
+  // habria pasado igual aunque la rama de darwin estuviera vacia, porque
+  // `/etc/passwd` tambien trae homes.
+  //
+  // Con el disco puesto a mano las dos direcciones se prueban de verdad, y
+  // se prueban igual en cualquier sistema operativo.
+  function conDisco<T>(
+    dirs: Record<string, string[]>,
+    ficheros: Record<string, string>,
+    fn: () => T
+  ): T {
+    const realDir = fs.readdirSync;
+    const realRead = fs.readFileSync;
+    (fs as any).readdirSync = (p: any, ...rest: any[]) => {
+      const key = String(p);
+      if (key in dirs) return dirs[key] as any;
+      if (key === "/Users" || key.startsWith("/Users/")) {
+        const e: any = new Error(`ENOENT: no such file or directory, scandir '${key}'`);
+        e.code = "ENOENT";
+        throw e;
+      }
+      return (realDir as any)(p, ...rest);
+    };
+    (fs as any).readFileSync = (p: any, ...rest: any[]) => {
+      const key = String(p);
+      if (key in ficheros) return ficheros[key] as any;
+      return (realRead as any)(p, ...rest);
+    };
+    try {
+      return fn();
+    } finally {
+      (fs as any).readdirSync = realDir;
+      (fs as any).readFileSync = realRead;
+    }
+  }
+
+  const PASSWD_MACOS =
+    "root:*:0:0:System Administrator:/var/root:/bin/sh\n" +
+    "daemon:*:1:1:System Services:/var/root:/usr/bin/false\n" +
+    "nobody:*:-2:-2:Unprivileged User:/var/empty:/usr/bin/false\n";
+
+  it("⭐ en macOS los homes de persona salen de /Users, que /etc/passwd no trae", () => {
+    // Es el fallo que motivo la rama: en macOS las cuentas de PERSONA viven
+    // en OpenDirectory. `/etc/passwd` existe y se lee sin error, asi que el
+    // `catch` nunca salta — simplemente no habria ni un home real que mirar.
+    const r = conDisco(
+      { "/Users": ["javier", "invitado", ".localized", "Shared", "Guest"] },
+      { "/etc/passwd": PASSWD_MACOS },
+      () => localUsers("darwin")
+    );
+    const homes = r.map((u) => u.home);
+
+    expect(homes).toContain("/Users/javier");
+    expect(homes).toContain("/Users/invitado");
+    // Y lo del passwd sigue ahi: es «ademas de», no «en vez de».
+    expect(homes).toContain("/var/root");
+  });
+
+  it("se saltan los ocultos, Shared y Guest", () => {
+    const homes = conDisco(
+      { "/Users": ["javier", ".localized", ".DS_Store", "Shared", "Guest"] },
+      { "/etc/passwd": PASSWD_MACOS },
+      () => localUsers("darwin")
+    ).map((u) => u.home);
+
+    expect(homes).toContain("/Users/javier");
+    for (const n of [".localized", ".DS_Store", "Shared", "Guest"]) {
+      expect(homes).not.toContain(path.join("/Users", n));
+    }
+  });
+
+  it("⭐ sin /Users no revienta: sigue con lo que diga /etc/passwd", () => {
+    // Exactamente el caso del runner de CI, y tambien el de un macOS con el
+    // volumen de datos sin montar. La rama tiene su `catch` por esto.
+    const r = conDisco({}, { "/etc/passwd": PASSWD_MACOS }, () => localUsers("darwin"));
+    expect(r.map((u) => u.home)).toContain("/var/root");
+  });
+
+  it("en Linux NO se inventa /Users: solo /etc/passwd", () => {
+    const homes = conDisco(
+      { "/Users": ["javier"] },
+      { "/etc/passwd": "git:x:1001:1001::/var/lib/git:/usr/bin/git-shell\n" },
+      () => localUsers("linux")
+    ).map((u) => u.home);
+
+    expect(homes).toContain("/var/lib/git");
+    expect(homes).not.toContain("/Users/javier");
+  });
+
+  it("los homes falsos de las cuentas del sistema no cuentan", () => {
+    const homes = conDisco(
+      {},
+      {
+        "/etc/passwd":
+          "a:x:1:1::/:/bin/sh\n" +
+          "b:x:2:2::/nonexistent:/usr/sbin/nologin\n" +
+          "c:x:3:3::/dev/null:/usr/sbin/nologin\n" +
+          "d:x:4:4::/var/lib/gitolite:/usr/bin/git-shell\n",
+      },
+      () => localUsers("linux")
+    ).map((u) => u.home);
+
+    expect(homes).toEqual(["/var/lib/gitolite"]);
   });
 });
 
