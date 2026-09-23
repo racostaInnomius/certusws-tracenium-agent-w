@@ -18,14 +18,30 @@ public static class PatchManagement
     // behind it, so this is a ceiling, not a target.
     private const int ScanTimeoutMs = 150_000;
 
-    // Install timeout: 90 min. Covers the worst common case (kernel
-    // + .NET runtime + servicing-stack update in a single batch,
-    // with download from a cold cache). Anything longer is almost
-    // always WUA wedged on its own (e.g., Component-Based-Servicing
-    // store corruption) and Kill-ing is the safe action — the next
-    // scan will surface "this update is still pending" and the
-    // operator can investigate locally.
-    private const int InstallTimeoutMs = 90 * 60_000;
+    // Install ceiling: 60 min, lowered from 90 on 2026-09-23. MEASURED,
+    // not guessed — every patch_install in the fleet's history:
+    //
+    //   57 succeeded   median 0.9 min · p90 34 min · MAX 48.3 min
+    //    2 killed here exactly 90.0 min
+    //    5 lost         exactly 100 min (the job's own deadline)
+    //
+    // No install that ever produced a usable result took longer than
+    // 49 minutes. Waiting 90 bought nothing and cost half an hour of
+    // the serial IPC lane plus half an hour of the operator not
+    // knowing. 60 min keeps a 25% margin over the worst real one.
+    //
+    // ⚠️ KILLING DOES NOT STOP THE INSTALL, and the design depends on
+    // knowing it. IUpdateInstaller hands the work to the Windows
+    // Update service and TrustedInstaller, which live OUTSIDE this
+    // process: killing PowerShell abandons our COM call and frees our
+    // handles and our lane — Windows keeps installing. Proven in the
+    // field on 2026-09-19/20: FTP-SPS and MSIG-QBOOKS were both killed
+    // here at 90 min and both came back patched (pending 2 -> 0) with
+    // the machine rebooted. So this ceiling is about how long WE wait,
+    // never about stopping the machine — and the honest answer to ship
+    // when it expires is "we do not know", which the control plane
+    // resolves with the next scan.
+    private const int InstallTimeoutMs = 60 * 60_000;
 
     public static Task<PrivSvcResponse> HandleScan(PrivSvcRequest req)
     {
@@ -470,17 +486,21 @@ $status = if ($mode -eq 'download') {{
 }} | ConvertTo-Json -Depth 8
 ", InstallTimeoutMs);
 
-            // Timeout: WUA wedged or actually still running past 90
-            // min. Either way, we don't have a useful result to ship
-            // back. The next scan will surface real state (if updates
-            // landed they show as installed; if not they're still in
-            // the available list).
+            // Se acabó NUESTRO plazo, no el de Windows. WUA puede estar
+            // atascado o puede estar instalando tan tranquilo: desde aquí no se
+            // distingue, y el servicio de Windows Update sigue a lo suyo con o
+            // sin nosotros. Así que lo que se manda es «no lo sé», y lo
+            // resuelve el escaneo posterior — que es lo que mira el equipo.
+            //
+            // ⚠️ El texto lo lee el control plane (install-interrupted.ts) para
+            // NO contar esto como un parche fallido. Si cambia, cambia allí.
             if (psResult.TimedOut)
             {
                 return Task.FromResult(
                     PrivSvcResponse.Fail(req.Id, "patch_install_timeout",
                         $"Windows Update install exceeded {InstallTimeoutMs / 60_000}min. " +
-                        $"Process was killed. stderr_tail: {Tail(psResult.Stderr, 500)}")
+                        $"Process was killed. Windows may still be installing: the outcome is " +
+                        $"unknown until the next scan. stderr_tail: {Tail(psResult.Stderr, 500)}")
                 );
             }
 

@@ -122,7 +122,9 @@ export function getTimeoutForMethod(method: string): number {
     // result_json at all.
     //
     // privsvc ceilings these must stay above:
-    //   patch.install — Windows 90min (WUA), macOS/Linux 60min
+    //   patch.install — Windows 60min (WUA, bajado de 90 el 23-sep-2026:
+    //                   ninguna instalación correcta pasó de 48,3 min en todo
+    //                   el histórico), macOS/Linux 60min
     //   patch.scan    — macOS 120s (softwareupdate --list), Windows 150s
     // ADR-0022 — una tanda del colector de Assessment Service. El handler mata
     // PowerShell a los 300 s (AspCollectorShape.HandlerCeilingMs); esto la
@@ -142,7 +144,13 @@ export function getTimeoutForMethod(method: string): number {
     case "amp.ad.computers":
       return 150 * 1000;
     case "patch.install":
-      return 95 * 60 * 1000; // privsvc: 90min (Windows) + 5min margin
+      // ⚠️ NO se baja con el techo del handler. El invariante sólo exige que el
+      // cliente SOBREVIVA al handler, y una flota se actualiza en dos pasos: si
+      // este número bajara a la vez que el MSI, un equipo con el privsvc viejo
+      // (techo 90 min) tendría al cliente rindiéndose antes y su diagnóstico se
+      // perdería — justo el fallo que este bloque documenta. Bajarlo es seguro
+      // sólo cuando NINGÚN equipo conserve el privsvc de 90 min.
+      return 95 * 60 * 1000; // privsvc: 60min (Windows, MSI ≥23-sep) o 90min (anterior)
     case "patch.scan":
       return 240 * 1000; // privsvc: 150s (Windows) + 90s for the serial lane queue
     // ── SDP + self-update ────────────────────────────────────────────
