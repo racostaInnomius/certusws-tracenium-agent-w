@@ -353,4 +353,81 @@ public class RsopXmlTests
         // medias. Eso no es un equipo sin directivas.
         Assert.Null(GpResultParsing.ExtractAppliedGposFromRsopXml(xml, GpResultParsing.RsopScope.Computer));
     }
+
+    // ── ADR-0012 (addendum): la OU del equipo ────────────────────────────
+    //
+    // ⚠️ Lo que vigilan estas pruebas es que el extractor no se traiga de más:
+    // sólo el ámbito de EQUIPO, y sólo desde el primer OU=.
+
+    private const string RSOP_NS = "http://www.microsoft.com/GroupPolicy/Rsop";
+
+    private static string RsopCon(string computerName, string? userName = null) =>
+        $@"<Rsop xmlns=""{RSOP_NS}"">
+             <ComputerResults>
+               <Name>{computerName}</Name>
+             </ComputerResults>
+             <UserResults>
+               <Name>{userName ?? "CN=jdoe,OU=Personas,DC=ejemplo,DC=local"}</Name>
+             </UserResults>
+           </Rsop>";
+
+    [Fact]
+    public void OuDelEquipo_SeLeeDelAmbitoDeEquipo()
+    {
+        var xml = RsopCon("CN=DESKTOP-1,OU=Equipos,OU=CASTICO,DC=ejemplo,DC=local");
+        Assert.Equal(
+            "OU=Equipos,OU=CASTICO,DC=ejemplo,DC=local",
+            GpResultParsing.ExtractComputerOuFromRsopXml(xml));
+    }
+
+    [Fact]
+    public void OuDelUsuario_NoSaleNunca()
+    {
+        // El nombre distinguido de una persona lleva su identidad. Aunque esté
+        // en el mismo informe, el extractor no lo mira.
+        var xml = RsopCon("CN=DESKTOP-1,OU=Equipos,DC=ejemplo,DC=local", "CN=jdoe,OU=Contabilidad,DC=ejemplo,DC=local");
+        var ou = GpResultParsing.ExtractComputerOuFromRsopXml(xml);
+        Assert.DoesNotContain("Contabilidad", ou);
+        Assert.DoesNotContain("jdoe", ou);
+    }
+
+    [Fact]
+    public void EquipoSinOu_DevuelveNull()
+    {
+        // Colgado del contenedor Computers: no está en ninguna OU, y decirlo
+        // es más honesto que devolver el dominio como si lo fuera.
+        var xml = RsopCon("CN=DESKTOP-1,CN=Computers,DC=ejemplo,DC=local");
+        Assert.Null(GpResultParsing.ExtractComputerOuFromRsopXml(xml));
+    }
+
+    [Fact]
+    public void SinSeccionDeEquipo_DevuelveNull()
+    {
+        Assert.Null(GpResultParsing.ExtractComputerOuFromRsopXml($@"<Rsop xmlns=""{RSOP_NS}""><UserResults><Name>CN=jdoe,OU=X,DC=e,DC=l</Name></UserResults></Rsop>"));
+    }
+
+    [Fact]
+    public void XmlRotoOVacio_DevuelveNull()
+    {
+        Assert.Null(GpResultParsing.ExtractComputerOuFromRsopXml("<Rsop"));
+        Assert.Null(GpResultParsing.ExtractComputerOuFromRsopXml(""));
+        Assert.Null(GpResultParsing.ExtractComputerOuFromRsopXml(null));
+    }
+
+    [Theory]
+    // Un nombre que no es un DN: distintas versiones rellenan este campo
+    // distinto, y aquí se prefiere no dar dato a dar uno inventado.
+    [InlineData(@"EJEMPLO\DESKTOP-1", null)]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
+    // El CN de cabeza se descarta: es el hostname, que el portal ya tiene.
+    [InlineData("CN=PC,OU=A,DC=e,DC=l", "OU=A,DC=e,DC=l")]
+    // Un OU= que no abre componente no cuenta.
+    [InlineData("CN=MI-OU=RARO,DC=e,DC=l", null)]
+    // Sin CN delante también vale.
+    [InlineData("OU=A,OU=B,DC=e,DC=l", "OU=A,OU=B,DC=e,DC=l")]
+    public void OuPath_DesdeElPrimerOu(string dn, string? esperado)
+    {
+        Assert.Equal(esperado, GpResultParsing.OuPathFromDistinguishedName(dn));
+    }
 }

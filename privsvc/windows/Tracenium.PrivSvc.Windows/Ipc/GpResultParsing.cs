@@ -109,6 +109,67 @@ public static class GpResultParsing
         return applied;
     }
 
+    /// <summary>
+    /// La ruta de OU del EQUIPO dentro del XML de RSOP, derivada de su nombre
+    /// distinguido. `null` cuando no se puede leer o el equipo no cuelga de
+    /// ninguna OU (el contenedor `Computers`, por ejemplo).
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ SÓLO el ámbito de equipo. El nombre distinguido de un USUARIO lleva
+    /// su identidad, y ése es justo el dato que el Sprint 4 sacó de la
+    /// evidencia. Aquí se lee `ComputerResults/Name` y nada más.
+    ///
+    /// Se devuelve desde el primer `OU=`: el `CN=` de cabeza es el hostname,
+    /// que el portal ya tiene, y repetirlo sólo añade superficie.
+    /// </remarks>
+    public static string? ExtractComputerOuFromRsopXml(string? xml)
+    {
+        if (string.IsNullOrWhiteSpace(xml)) return null;
+
+        XElement root;
+        try
+        {
+            root = XDocument.Parse(xml).Root!;
+        }
+        catch
+        {
+            return null;
+        }
+        if (root is null) return null;
+
+        var section = root.Element(XName.Get("ComputerResults", RSOP_NS));
+        if (section is null) return null;
+
+        return OuPathFromDistinguishedName(Child(section, "Name"));
+    }
+
+    /// <summary>
+    /// La ruta de OU de un nombre distinguido, desde el primer `OU=`.
+    /// </summary>
+    /// <remarks>
+    /// Lo que NO lleve ningún `OU=` devuelve `null`. Un equipo colgado del
+    /// contenedor `Computers` no está en ninguna OU, y decirlo es más honesto
+    /// que devolver el dominio como si lo fuera. Tampoco se acepta un valor
+    /// que no parezca un nombre distinguido —`DOMINIO\EQUIPO`, por ejemplo—:
+    /// distintas versiones de Windows rellenan este campo de forma distinta y
+    /// aquí se prefiere no dar dato a dar uno inventado.
+    /// </remarks>
+    public static string? OuPathFromDistinguishedName(string? dn)
+    {
+        if (string.IsNullOrWhiteSpace(dn)) return null;
+        var s = dn.Trim();
+
+        var i = s.IndexOf("OU=", StringComparison.OrdinalIgnoreCase);
+        if (i < 0) return null;
+
+        // Un `OU=` que no empieza componente —dentro de un nombre, por
+        // ejemplo— no cuenta: o abre la cadena o va detrás de una coma.
+        if (i > 0 && s[i - 1] != ',') return null;
+
+        var ou = s.Substring(i).Trim();
+        return ou.Length == 0 ? null : ou;
+    }
+
     private static string? Child(XElement parent, string localName)
         => parent.Element(XName.Get(localName, RSOP_NS))?.Value;
 

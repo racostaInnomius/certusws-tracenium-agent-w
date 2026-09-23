@@ -668,7 +668,10 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
             appliedComputerGpos = gpos.Computer,
             appliedUserGpos = gpos.User,
             appliedComputerGpoScope = gpos.ComputerScope,
-            appliedUserGpoScope = gpos.UserScope
+            appliedUserGpoScope = gpos.UserScope,
+            // ADR-0012 (addendum): la ruta de OU del equipo, que es lo que
+            // explica por qué le aplican las directivas de arriba.
+            computerOu = gpos.ComputerOu
         };
     }
 
@@ -723,6 +726,12 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
         /// </summary>
         public string ComputerScope { get; init; } = "unknown";
         public string UserScope { get; init; } = "unknown";
+
+        /// <summary>
+        /// La ruta de OU del equipo (ADR-0012 addendum). `null` = no se pudo
+        /// leer o el equipo no cuelga de ninguna OU; nunca cadena vacía.
+        /// </summary>
+        public string? ComputerOu { get; init; }
     }
 
     /// <summary>
@@ -734,7 +743,7 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
     /// </remarks>
     private static AppliedGpos GetAppliedGpos(string? consoleUser)
     {
-        var (computer, computerReason) = ReadAppliedGposFromRsopXml(
+        var (computer, computerReason, computerOu) = ReadAppliedGposFromRsopXml(
             GpResultParsing.RsopScope.Computer, null, GPRESULT_TIMEOUT_MS);
 
         // ⚠️ El ámbito de USUARIO necesita a quién preguntar. El servicio corre
@@ -767,7 +776,9 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
             var motivos = new List<string>();
             foreach (var cuenta in candidatos)
             {
-                var (items, motivo) = ReadAppliedGposFromRsopXml(
+                // ⚠️ La OU del ámbito de usuario se descarta aquí mismo: el
+                // nombre distinguido de una persona no sale del equipo.
+                var (items, motivo, _) = ReadAppliedGposFromRsopXml(
                     GpResultParsing.RsopScope.User, cuenta, GPRESULT_USER_TIMEOUT_MS);
                 porCuenta.Add(items);
                 motivos.Add(motivo);
@@ -809,7 +820,8 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
         return new AppliedGpos
         {
             Computer = computer, User = user,
-            ComputerScope = computerReason, UserScope = userReason
+            ComputerScope = computerReason, UserScope = userReason,
+            ComputerOu = computerOu
         };
     }
 
@@ -825,17 +837,22 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
     /// Es el mismo defecto que las impresoras de Windows: un fallo que se
     /// disfraza de ausencia.
     /// </summary>
-    private static (List<string>? Items, string Reason) ReadAppliedGposFromRsopXml(
+    private static (List<string>? Items, string Reason, string? ComputerOu) ReadAppliedGposFromRsopXml(
         GpResultParsing.RsopScope scope,
         string? targetUser,
         int timeoutMs)
     {
         // ⚠️ El fichero lleva PII mientras existe: el informe de RSOP trae el
-        // usuario, sus SIDs, sus grupos y la ruta de la OU. Se escribe, se
-        // extraen los NOMBRES de las directivas y se borra en el `finally`. No
-        // se sube, no se registra en el log y no sobrevive a esta función —
-        // que es la misma línea que trazó la limpieza del Sprint 4 al sacar la
-        // transcripción de gpresult de la evidencia.
+        // usuario, sus SIDs y sus grupos. Se escribe, se extraen los NOMBRES de
+        // las directivas y se borra en el `finally`. No se sube, no se registra
+        // en el log y no sobrevive a esta función — que es la misma línea que
+        // trazó la limpieza del Sprint 4 al sacar la transcripción de gpresult
+        // de la evidencia.
+        //
+        // ADR-0012 (addendum 2026-09-22) matiza esa línea en un punto: la ruta
+        // de OU del EQUIPO sí sale, porque describe cómo la organización ordena
+        // sus máquinas y es lo que explica por qué una directiva le aplica. La
+        // del USUARIO no sale, ni sus grupos, ni el transcript.
         var path = Path.Combine(Path.GetTempPath(), $"tracenium-rsop-{Guid.NewGuid():N}.xml");
 
         try
@@ -858,7 +875,7 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
             if (resultado.TimedOut)
             {
                 Log($"[GPO] {scope}: gpresult agotó {timeoutMs} ms");
-                return (null, "timeout");
+                return (null, "timeout", null);
             }
             if (!File.Exists(path))
             {
@@ -866,24 +883,30 @@ $cs = Get-CimInstance Win32_ComputerSystem | Select-Object PartOfDomain, Domain,
                 // no está, gpresult se negó — y su mensaje es lo único que lo
                 // explica, así que se registra en vez de perderse.
                 Log($"[GPO] {scope}: gpresult no escribió el informe. stderr={Recorta(resultado.Stderr)} stdout={Recorta(resultado.Stdout)}");
-                return (null, "no_file");
+                return (null, "no_file", null);
             }
 
             // ReadAllText detecta el BOM. gpresult escribe UTF-16, y leerlo
             // como UTF-8 devuelve un documento que no parsea.
             var xml = File.ReadAllText(path);
             var items = GpResultParsing.ExtractAppliedGposFromRsopXml(xml, scope);
+            // La OU se lee del MISMO informe que ya está en memoria: ni una
+            // llamada más, ni un timeout más, ni un permiso más. Y sólo del
+            // ámbito de equipo.
+            var ou = scope == GpResultParsing.RsopScope.Computer
+                ? GpResultParsing.ExtractComputerOuFromRsopXml(xml)
+                : null;
             if (items is null)
             {
                 Log($"[GPO] {scope}: el informe no trae la sección de resultados");
-                return (null, "no_section");
+                return (null, "no_section", ou);
             }
-            return (items, "collected");
+            return (items, "collected", ou);
         }
         catch (Exception ex)
         {
             Log($"[GPO] {scope}: {ex.GetType().Name}: {ex.Message}");
-            return (null, "error");
+            return (null, "error", null);
         }
         finally
         {
