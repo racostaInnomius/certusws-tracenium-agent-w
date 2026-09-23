@@ -364,6 +364,10 @@ export class ScreenSession {
       let res: any = null;
       try {
         res = await this.args.ctx.priv?.call?.({
+          // ⚠️ `v` NO es decorativo: es lo PRIMERO que mira el router del
+          // PrivSvc (`if (req.v !== 1) return fail(…, "bad_version")`), antes
+          // que el método. Sin él esta llamada no llega nunca al indicador.
+          v: 1,
           id: `rcp.indicator.show.${this.args.sessionId}`,
           method: "rcp.indicator.show",
           params: {
@@ -647,6 +651,7 @@ export class ScreenSession {
     if (process.platform !== "linux") return;
     try {
       void this.args.ctx.priv?.call?.({
+        v: 1,
         id: `rcp.indicator.hide.${this.args.sessionId}`,
         method: "rcp.indicator.hide",
         params: {}
