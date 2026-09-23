@@ -1,5 +1,6 @@
 // src/index.ts
 import { startService } from "./core/service";
+import { registerShutdownHandlers } from "./core/shutdown";
 
 // ── Crash containment ─────────────────────────────────────────────
 //
@@ -55,12 +56,8 @@ startService().catch((err) => {
   process.exit(1);
 });
 
-process.on("SIGTERM", () => {
-  console.log("[INFO] SIGTERM received. Shutting down...");
-  process.exit(0);
-});
-
-process.on("SIGINT", () => {
-  console.log("[INFO] SIGINT received. Shutting down...");
-  process.exit(0);
-});
+// Parada ordenada. ⚠️ Incluye SIGBREAK, que es la que manda WinSW al parar el
+// servicio: sin manejador, Windows mataba el proceso con 0xC000013A y el SCM
+// escribía un 7031 «terminated unexpectedly» en cada auto-actualización. Ver
+// core/shutdown.ts para la historia completa.
+registerShutdownHandlers(process);
