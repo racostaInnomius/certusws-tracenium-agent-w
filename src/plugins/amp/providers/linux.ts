@@ -26,6 +26,7 @@ import { readBootTime } from "../../../domain/boot-time";
 import type { SoftwareApplication } from "../../../domain/normalize-app";
 
 import { normalizeApp } from "../../../domain/normalize-app";
+import { installedOnFromDate, installedOnFromEpochSeconds } from "../../../domain/install-date";
 import { parsePackagePublisher } from "../../../domain/package-publisher";
 import { computeSoftwareDelta, toBaselineOps } from "../../../domain/software-inventory-delta";
 import {
@@ -378,6 +379,30 @@ async function getRhelManualPackages(): Promise<Set<string> | null> {
   return set;
 }
 
+/**
+ * Fecha de última escritura de un fichero, o null. Para las fuentes que no
+ * guardan la fecha de instalación en ningún campo pero sí reescriben un
+ * fichero suyo al instalar o actualizar (dpkg, snap, flatpak).
+ */
+async function mtimeOf(path: string): Promise<Date | null> {
+  return fs.promises.stat(path).then((st) => st.mtime, () => null);
+}
+
+/**
+ * dpkg reescribe `/var/lib/dpkg/info/<pkg>.list` al instalar o actualizar el
+ * paquete. Los paquetes multi-arch llevan la arquitectura en el nombre
+ * (`libc6:amd64.list`), así que se prueba primero así y luego sin ella.
+ */
+export async function dpkgInstalledOn(name: string, arch?: string): Promise<string | undefined> {
+  const base = "/var/lib/dpkg/info";
+  const candidates = arch ? [`${base}/${name}:${arch}.list`, `${base}/${name}.list`] : [`${base}/${name}.list`];
+  for (const p of candidates) {
+    const t = await mtimeOf(p);
+    if (t) return installedOnFromDate(t);
+  }
+  return undefined;
+}
+
 async function collectDpkg(manualSet: Set<string> | null): Promise<SoftwareApplication[]> {
   // -W is the machine-readable form; `-f` controls the field layout.
   // Tab-separated so we can split on \t (package names never contain
@@ -430,6 +455,9 @@ async function collectDpkg(manualSet: Set<string> | null): Promise<SoftwareAppli
       installLocation: "/",
       packageFamilyName: name,
       source: "dpkg",
+      // Sólo los que pasaron los filtros llegan aquí: un stat por paquete
+      // manual, no por cada dependencia del sistema.
+      installedOn: (await dpkgInstalledOn(name, parts[3])) ?? null,
     });
 
     if (n && n.name) {
@@ -453,13 +481,14 @@ async function collectRpm(manualSet: Set<string> | null): Promise<SoftwareApplic
   const out = await run("/usr/bin/rpm", [
     "-qa",
     "--qf",
-    "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\t%{VENDOR}\n",
+    // ⚠️ INSTALLTIME al FINAL: los campos previos se leen por posición.
+    "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\t%{VENDOR}\t%{INSTALLTIME}\n",
   ]);
   const lines = out.split("\n").filter(Boolean);
   const res: SoftwareApplication[] = [];
 
   for (const line of lines) {
-    const [name, version, , vendor] = line.split("\t");
+    const [name, version, , vendor, installTime] = line.split("\t");
     if (!name) continue;
 
     // Filter `gpg-pubkey-*`: rpm tracks imported GPG keys via the same
@@ -486,6 +515,8 @@ async function collectRpm(manualSet: Set<string> | null): Promise<SoftwareApplic
       installLocation: "/",
       packageFamilyName: name,
       source: "rpm",
+      // rpm guarda el instante exacto (segundos desde epoch).
+      installedOn: installedOnFromEpochSeconds(installTime) ?? null,
     });
 
     if (n && n.name) {
@@ -509,6 +540,8 @@ async function collectSnap(): Promise<SoftwareApplication[]> {
 
     const name = parts[0];
     const version = parts[1];
+    // `snap list`: Name  Version  Rev  Tracking  Publisher  Notes
+    const rev = parts[2];
 
     // The `snapd` snap is the daemon itself, plus `core*` snaps are
     // the snap runtime base. Both are infrastructure of the snap
@@ -525,6 +558,11 @@ async function collectSnap(): Promise<SoftwareApplication[]> {
       installLocation: "/snap",
       packageFamilyName: name,
       source: "snap",
+      // El .snap de la revisión montada se descarga al instalar o refrescar.
+      installedOn:
+        (rev && /^x?\d+$/.test(rev)
+          ? installedOnFromDate(await mtimeOf(`/var/lib/snapd/snaps/${name}_${rev}.snap`))
+          : undefined) ?? null,
     });
 
     if (n && n.name) {
@@ -563,6 +601,9 @@ async function collectFlatpak(): Promise<SoftwareApplication[]> {
       installLocation: "/var/lib/flatpak",
       packageFamilyName: name,
       source: "flatpak",
+      // `deploy` se escribe al desplegar cada commit de la app. Sólo la
+      // instalación de sistema; una de usuario (~/.local) queda sin fecha.
+      installedOn: installedOnFromDate(await mtimeOf(`/var/lib/flatpak/app/${name}/current/active/deploy`)) ?? null,
     });
 
     if (n && n.name) {

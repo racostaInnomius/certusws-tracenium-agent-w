@@ -380,6 +380,34 @@ describe("AMP Windows — normalización de software.inventory (contrato items/a
     expect(inv.apps.every((a: any) => a.installId.startsWith("sha256:"))).toBe(true);
   });
 
+  it("⭐ el InstallDate del registro llega a la app normalizada (no muere en el mapeo)", async () => {
+    // El objeto que se le pasa a normalizeApp se arma campo a campo: es un
+    // filtro. Sin la línea de installedOn, el PrivSvc lo lee y aquí se pierde.
+    const { collectWindowsSoftwareInventory } = await import(
+      "../../src/plugins/amp/providers/windows"
+    );
+    const ctx = makeCtx(
+      privRouter({
+        "software.inventory": () => ({
+          ok: true,
+          result: {
+            items: [
+              { name: "7-Zip", version: "24.07", source: "win32-registry", installDate: "20240315" },
+              { name: "Teams", version: "1.0", source: "ms-store", installDate: "2025-01-02" },
+              { name: "Raro", version: "1", source: "win32-registry", installDate: "15/03/2024" }
+            ]
+          }
+        })
+      })
+    );
+    const inv = await collectWindowsSoftwareInventory(ctx);
+    const by = Object.fromEntries(inv.apps.map((a: any) => [a.rawName, a.installedOn]));
+    expect(by["7-Zip"]).toBe("2024-03-15");
+    expect(by["Teams"]).toBe("2025-01-02");
+    // Día/mes ambiguo: sin fecha, no con una adivinada.
+    expect(by["Raro"]).toBeUndefined();
+  });
+
   it("fallback a 'apps' (contrato viejo) cuando no hay 'items'", async () => {
     const { collectWindowsSoftwareInventory } = await import(
       "../../src/plugins/amp/providers/windows"

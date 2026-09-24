@@ -1,5 +1,6 @@
 // src/domain/normalize-app.ts
 import crypto from "crypto";
+import { isInstalledOn } from "./install-date.js";
 import {
   normalizeSoftwareDisplayMetadata,
   type SoftwareDisplayCategory
@@ -31,6 +32,11 @@ export interface RawAppInput {
   quietUninstallString?: string | null;
   productCode?: string | null;
   uninstallKeyPath?: string | null;
+
+  // Día en que se instaló la versión actual, "YYYY-MM-DD" (ver
+  // domain/install-date.ts). ⚠️ Misma advertencia que arriba: si el llamador
+  // no lo nombra al armar este objeto, no llega.
+  installedOn?: string | null;
 }
 
 export interface SoftwareApplication {
@@ -56,6 +62,9 @@ export interface SoftwareApplication {
   quietUninstallString?: string;
   productCode?: string;
   uninstallKeyPath?: string;
+
+  /** "YYYY-MM-DD", fecha local del equipo. Ausente = no se pudo saber. */
+  installedOn?: string;
 }
 
 const SOURCE_ONLY_PUBLISHERS = new Set([
@@ -183,6 +192,10 @@ export function normalizeApp(input: RawAppInput): SoftwareApplication | null {
     uninstallString: input.uninstallString ?? undefined,
     quietUninstallString: input.quietUninstallString ?? undefined,
     productCode: input.productCode ?? undefined,
-    uninstallKeyPath: input.uninstallKeyPath ?? undefined
+    uninstallKeyPath: input.uninstallKeyPath ?? undefined,
+
+    // Se valida aquí, en el único sitio por el que pasan todas las fuentes:
+    // una fecha que no es un día plausible no viaja.
+    installedOn: isInstalledOn(input.installedOn) ? input.installedOn : undefined
   };
 }

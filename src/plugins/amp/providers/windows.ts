@@ -3,6 +3,7 @@ import os from "os";
 import si from "systeminformation";
 import type { AgentContext } from "../../../core/agent-context";
 import { normalizeApp } from "../../../domain/normalize-app";
+import { installedOnFromWindowsRegistry } from "../../../domain/install-date";
 import { computeSoftwareDelta, toBaselineOps } from "../../../domain/software-inventory-delta";
 import { loadSoftwareBaseline, upsertSoftwareBaseline, deleteSoftwareByIds } from "../../../domain/software-baseline-repo";
 import type { AmpNamespace } from "../../../domain/amp-types";
@@ -45,6 +46,10 @@ type RawApp = {
   quietUninstallString?: string | null;
   productCode?: string | null;
   uninstallKeyPath?: string | null;
+
+  // Crudo: "yyyyMMdd", "yyyy-MM-dd", un DWORD con epoch o basura. Se
+  // interpreta abajo con installedOnFromWindowsRegistry.
+  installDate?: string | number | null;
 };
 
 /**
@@ -174,7 +179,11 @@ export async function collectWindowsSoftwareInventory(ctx: AgentContext) {
         uninstallString: a.uninstallString ?? null,
         quietUninstallString: a.quietUninstallString ?? null,
         productCode: a.productCode ?? null,
-        uninstallKeyPath: a.uninstallKeyPath ?? null
+        uninstallKeyPath: a.uninstallKeyPath ?? null,
+
+        // ⚠️ Mismo filtro: sin esta línea la fecha se lee en el PrivSvc y
+        // muere aquí.
+        installedOn: installedOnFromWindowsRegistry(a.installDate) ?? null
       })
     )
     .filter((x) => x && x.name);

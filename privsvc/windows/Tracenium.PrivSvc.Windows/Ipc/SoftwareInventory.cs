@@ -230,7 +230,20 @@ public static class SoftwareInventory
                 // entrada de HKCU desde LocalSystem es otra operación (y a
                 // menudo imposible), así que quien decida tiene que poder verlo
                 // sin adivinar.
-                ["uninstallKeyPath"] = keyPathFor(subName)
+                ["uninstallKeyPath"] = keyPathFor(subName),
+
+                // El valor CRUDO de InstallDate: casi siempre "yyyyMMdd"
+                // (REG_SZ), a veces un DWORD con epoch o lo que el instalador
+                // quiso escribir. Se interpreta en el agente
+                // (domain/install-date.ts), donde está probado; aquí sólo se
+                // lee. Cadena o número, nunca un objeto: JSON lo serializa tal
+                // cual.
+                ["installDate"] = sub.GetValue("InstallDate") switch
+                {
+                    string str => str,
+                    int dword => (object)dword,
+                    _ => null
+                }
             });
         }
 
@@ -251,6 +264,11 @@ public static class SoftwareInventory
             "@{Name='publisher';Expression={$_.Publisher}}," +
             "@{Name='packageFamilyName';Expression={$_.PackageFamilyName}}," +
             "@{Name='installLocation';Expression={$null}}," +
+            // Appx no guarda fecha de instalación; la carpeta del paquete se
+            // crea al desplegar cada versión, así que su CreationTime es la
+            // fecha de ESTA versión. Formato fijo yyyy-MM-dd en hora local
+            // del equipo, que es lo que espera el agente.
+            "@{Name='installDate';Expression={try{(Get-Item -LiteralPath $_.InstallLocation -ErrorAction Stop).CreationTime.ToString('yyyy-MM-dd')}catch{$null}}}," +
             "@{Name='source';Expression={'ms-store'}} | " +
             "ConvertTo-Json -Depth 4\"";
 

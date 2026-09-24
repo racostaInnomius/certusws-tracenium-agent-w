@@ -105,6 +105,10 @@ function initSchema(db: Database.Database) {
   if (!cols.has("quiet_uninstall_string")) db.exec(`ALTER TABLE software_baseline ADD COLUMN quiet_uninstall_string TEXT`);
   if (!cols.has("product_code")) db.exec(`ALTER TABLE software_baseline ADD COLUMN product_code TEXT`);
   if (!cols.has("uninstall_key_path")) db.exec(`ALTER TABLE software_baseline ADD COLUMN uninstall_key_path TEXT`);
+  // La fecha de instalación. Mismo motivo que las de arriba: `isAppUpdated`
+  // la compara, así que la baseline tiene que recordarla o el delta dice
+  // "cambió" en cada ciclo.
+  if (!cols.has("installed_on")) db.exec(`ALTER TABLE software_baseline ADD COLUMN installed_on TEXT`);
 }
 
 /**
@@ -128,6 +132,7 @@ export function loadSoftwareBaseline(): SoftwareApplication[] {
         quiet_uninstall_string as quietUninstallString,
         product_code as productCode,
         uninstall_key_path as uninstallKeyPath,
+        installed_on as installedOn,
         detected_at_utc as detectedAtUtc
       FROM software_baseline
       ORDER BY install_id
@@ -147,7 +152,8 @@ export function loadSoftwareBaseline(): SoftwareApplication[] {
     uninstallString: r.uninstallString ?? undefined,
     quietUninstallString: r.quietUninstallString ?? undefined,
     productCode: r.productCode ?? undefined,
-    uninstallKeyPath: r.uninstallKeyPath ?? undefined
+    uninstallKeyPath: r.uninstallKeyPath ?? undefined,
+    installedOn: r.installedOn ?? undefined
   })) as SoftwareApplication[];
 }
 
@@ -184,6 +190,7 @@ export function upsertSoftwareBaseline(apps: SoftwareApplication[]) {
       quiet_uninstall_string,
       product_code,
       uninstall_key_path,
+      installed_on,
       detected_at_utc
     ) VALUES (
       @installId,
@@ -197,6 +204,7 @@ export function upsertSoftwareBaseline(apps: SoftwareApplication[]) {
       @quietUninstallString,
       @productCode,
       @uninstallKeyPath,
+      @installedOn,
       @detectedAtUtc
     )
     ON CONFLICT(install_id) DO UPDATE SET
@@ -210,6 +218,7 @@ export function upsertSoftwareBaseline(apps: SoftwareApplication[]) {
       quiet_uninstall_string = excluded.quiet_uninstall_string,
       product_code = excluded.product_code,
       uninstall_key_path = excluded.uninstall_key_path,
+      installed_on = excluded.installed_on,
       detected_at_utc = COALESCE(software_baseline.detected_at_utc, excluded.detected_at_utc)
   `);
 
@@ -232,6 +241,7 @@ export function upsertSoftwareBaseline(apps: SoftwareApplication[]) {
         quietUninstallString: app.quietUninstallString ?? null,
         productCode: app.productCode ?? null,
         uninstallKeyPath: app.uninstallKeyPath ?? null,
+        installedOn: app.installedOn ?? null,
         detectedAtUtc: app.detectedAtUtc
       });
     }

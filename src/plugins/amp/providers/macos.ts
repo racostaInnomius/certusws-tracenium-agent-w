@@ -12,6 +12,7 @@ import type { SoftwareApplication } from "../../../domain/normalize-app";
 import type { MacBundleInfo } from "../../../domain/macos-bundle-info";
 
 import { normalizeApp } from "../../../domain/normalize-app";
+import { installedOnFromDate, installedOnFromEpochSeconds } from "../../../domain/install-date";
 import { parseBundleInfo } from "../../../domain/macos-bundle-info";
 import { computeSoftwareDelta, toBaselineOps } from "../../../domain/software-inventory-delta";
 import { collectCupsPrinters } from "./printers-cups";
@@ -242,7 +243,10 @@ export function mergeMacAppsBySource(
       ...winner,
       version: winner.version ?? loser.version ?? null,
       publisher: winner.publisher ?? loser.publisher,
-      installLocation: winner.installLocation ?? loser.installLocation
+      installLocation: winner.installLocation ?? loser.installLocation,
+      // El bundle gana, y su fecha es la del directorio; si no la tiene, la
+      // del recibo del mismo paquete es la mejor que queda.
+      installedOn: winner.installedOn ?? loser.installedOn
     } as SoftwareApplication);
   }
 
@@ -371,7 +375,8 @@ export function collapseReceiptsByName(
               ...real,
               version: real.version ?? recibo.version ?? null,
               publisher: real.publisher ?? recibo.publisher,
-              installLocation: real.installLocation ?? recibo.installLocation
+              installLocation: real.installLocation ?? recibo.installLocation,
+              installedOn: real.installedOn ?? recibo.installedOn
             } as SoftwareApplication)
           : real
       );
@@ -454,13 +459,20 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
             // nombre de archivo: existe en el disco y eso ya es inventario.
           }
 
+          // La fecha de CREACIÓN del bundle: arrastrarlo a /Applications, el
+          // instalador .pkg y la App Store al actualizar crean el directorio
+          // de nuevo. Es un stat —ni Spotlight ni subprocesos—, y si falla la
+          // app se reporta igual, sin fecha.
+          const birth = await fs.promises.stat(appPath).then((st) => st.birthtime, () => null);
+
           const normalized = normalizeApp({
             name,
             version: info.version,
             publisher: undefined,
             installLocation: appPath,
             packageFamilyName: info.bundleId,
-            source: "macos-app-bundle"
+            source: "macos-app-bundle",
+            installedOn: installedOnFromDate(birth) ?? null
           });
 
           if (normalized && normalized.name) {
@@ -518,6 +530,11 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
           const version = versions[versions.length - 1];
           if (!version) continue;
 
+          // Cada versión vive en su propio directorio del Cellar, creado al
+          // instalarla: su fecha de creación ES la de esta versión.
+          const keg = `${cellar}/${formula}/${version}`;
+          const kegBirth = await fs.promises.stat(keg).then((st) => st.birthtime, () => null);
+
           const normalized = normalizeApp({
             name: formula,
             version,
@@ -527,9 +544,10 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
             // 298 filas iban al ranking de publishers como si Homebrew
             // publicara el software que instala.
             publisher: undefined,
-            installLocation: `${cellar}/${formula}/${version}`,
+            installLocation: keg,
             packageFamilyName: formula,
-            source: "homebrew"
+            source: "homebrew",
+            installedOn: installedOnFromDate(kegBirth) ?? null
           });
           if (normalized && normalized.name) {
             results.push(normalized as SoftwareApplication);
@@ -588,6 +606,7 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
         location: string | null;
         volume: string | null;
         version: string | null;
+        installTime: string | null;
         installLocationExists: boolean;
       };
 
@@ -602,6 +621,9 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
           let location: string | null = null;
           let volume: string | null = null;
           let version: string | null = null;
+          // `install-time: 1693512345` — segundos desde epoch. Ya venía en
+          // esta misma salida; sólo no se leía.
+          let installTime: string | null = null;
 
           for (const line of info.split("\n")) {
             const m = line.match(/^([a-z-]+):\s*(.*)$/i);
@@ -613,6 +635,7 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
             if (k === "location") location = v;
             else if (k === "volume") volume = v;
             else if (k === "version") version = v;
+            else if (k === "install-time") installTime = v;
           }
 
           // Resolve absolute install path. `volume` is often "/" and
@@ -635,6 +658,7 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
             location,
             volume,
             version,
+            installTime,
             installLocationExists
           };
         } catch {
@@ -693,7 +717,8 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
           publisher: undefined,
           installLocation: rec.location || "/",
           packageFamilyName: canonical,
-          source: "pkgutil"
+          source: "pkgutil",
+          installedOn: installedOnFromEpochSeconds(rec.installTime) ?? null
         });
 
         if (normalized && normalized.name) {
