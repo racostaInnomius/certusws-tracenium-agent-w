@@ -45,7 +45,8 @@ vi.mock("systeminformation", () => {
     networkInterfaces: vi.fn(async () => [] as any[]),
     networkInterfaceDefault: vi.fn(async () => null as any),
     users: vi.fn(async () => [] as any[]),
-    fsSize: vi.fn(async () => [{ fs: "/", type: "ext4", size: 512_000_000_000, used: 100, mount: "/" }])
+    fsSize: vi.fn(async () => [{ fs: "/", type: "ext4", size: 512_000_000_000, used: 100, mount: "/" }]),
+    battery: vi.fn(async () => ({ hasBattery: true, percent: 64, isCharging: false, acConnected: false }))
   };
   return { ...stub, default: stub };
 });
@@ -243,6 +244,19 @@ describe("buildDeviceFacts — amp.geo / amp.geoStatus passthrough", () => {
       uptimeSeconds: 33120,
       memoryBytes: 34_359_738_368
     });
+  });
+
+  it("⭐ la batería viaja en runtime (nunca se mandaba: 0 de 83 equipos en prod)", async () => {
+    const out: any = await buildDeviceFacts(makeCtx(), {
+      amp: {
+        hardware: { static: {} as any, runtime: {} as any },
+        security: { status: "unknown" } as any,
+        software: { count: 0, delta: null, items: [], hasChanges: false }
+      } as any
+    });
+    expect(out.namespaces.amp.hardware.runtime.battery).toEqual({ present: true, percent: 64, isCharging: false, acConnected: false });
+    // Y NO en static: el backend deduplica por el hash de static.
+    expect(out.namespaces.amp.hardware.static).not.toHaveProperty("battery");
   });
 
   it("no inventa el arranque si el proveedor no lo leyó, pero pasa un null explícito", async () => {

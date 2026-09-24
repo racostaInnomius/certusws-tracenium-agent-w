@@ -108,6 +108,13 @@ export type HardwareRuntime = {
   isVirtualMachine?: boolean;
 
   /**
+   * La batería: presencia, carga y alimentación. En `runtime` porque la carga
+   * cambia cada minuto y `static` es lo que el backend hashea para deduplicar.
+   * Ausente = no se pudo leer. Ver domain/battery.ts.
+   */
+  battery?: import("./battery").BatteryRuntime;
+
+  /**
    * Cuándo arrancó el sistema operativo (ISO 8601 UTC, redondeado al minuto),
    * y el contador crudo de segundos encendido.
    *

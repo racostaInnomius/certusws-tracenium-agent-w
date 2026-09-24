@@ -26,6 +26,7 @@ import {
   normalizeMemLayout,
   normalizeDiskLayout
 } from "./normalize-hardware";
+import { normalizeBattery } from "./battery";
 
 const execFileAsync = promisify(execFile);
 
@@ -368,7 +369,8 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
     net,
     defaultNetworkInterface,
     users,
-    fsSize
+    fsSize,
+    battery
   ] = await Promise.all([
     si.osInfo(),
     si.system(),
@@ -383,7 +385,12 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
     si.networkInterfaces().catch(() => [] as any[]),
     si.networkInterfaceDefault().catch(() => null as any),
     si.users().catch(() => [] as any[]),
-    si.fsSize()
+    si.fsSize(),
+    // Con su propio catch: no poder leer la batería no puede tumbar el
+    // inventario entero (antes ni se pedía).
+    Promise.resolve()
+      .then(() => si.battery())
+      .catch(() => null as any)
   ]);
 
   const isVirtual =
@@ -488,7 +495,9 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
         }))
       : undefined,
 
-    isVirtualMachine: isVirtual
+    isVirtualMachine: isVirtual,
+
+    battery: normalizeBattery(battery)
   };
 
   return {
