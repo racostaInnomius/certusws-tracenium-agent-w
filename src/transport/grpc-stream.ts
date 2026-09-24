@@ -1674,6 +1674,9 @@ export function startGrpcStream(ctx: AgentContext) {
       // and writes to the gRPC stream.
       const variants: Array<[string, string]> = [
         ["remoteSessionAnswer", "grpc.send.remoteSessionAnswer"],
+        // ⚠️ Sin esta línea el mensaje muere en el `unknown message shape` de
+        // abajo, en silencio: la tabla es la ÚNICA forma de salir de aquí.
+        ["remoteSessionConnected", "grpc.send.remoteSessionConnected"],
         ["remoteSessionIce", "grpc.send.remoteSessionIce"],
         ["remoteSessionClose", "grpc.send.remoteSessionClose"],
         ["remoteSessionError", "grpc.send.remoteSessionError"],

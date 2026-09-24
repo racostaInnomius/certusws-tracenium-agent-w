@@ -1584,6 +1584,28 @@ export async function handleRemoteSessionAnswer(req: PrivSvcRequest): Promise<Pr
   return success(req.id, { ok: true });
 }
 
+/**
+ * El DataChannel se abrió. Lo manda el plugin de RCP en cuanto hay canal, y
+ * es lo único que prueba que existe un camino hasta el operador: la answer
+ * sólo dice que llegó la oferta.
+ */
+export async function handleRemoteSessionConnected(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const sessionId = String(req.params?.sessionId || "");
+  if (!sessionId) return fail(req.id, "bad_request", "sessionId required");
+  try {
+    await write({
+      traceId: remoteSessionTraceId(),
+      remoteSessionConnected: {
+        sessionId,
+        setupMs: Number(req.params?.setupMs ?? 0),
+      },
+    });
+  } catch (err: any) {
+    logger.warn("remote_session_connected_skipped", { sessionId, error: err?.message || String(err) });
+  }
+  return success(req.id, { ok: true });
+}
+
 export async function handleRemoteSessionIce(req: PrivSvcRequest): Promise<PrivSvcResponse> {
   const sessionId = String(req.params?.sessionId || "");
   if (!sessionId) return fail(req.id, "bad_request", "sessionId required");

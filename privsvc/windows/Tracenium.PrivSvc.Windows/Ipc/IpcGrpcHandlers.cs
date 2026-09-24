@@ -805,6 +805,28 @@ public static class IpcGrpcHandlers
         }
     }
 
+    public static async Task<PrivSvcResponse> HandleRemoteSessionConnected(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId = GetString(p, "sessionId");
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new Exception("sessionId required");
+            // Mismo camino que `sdpMLineIndex` unas líneas más abajo: los
+            // números llegan como texto por el IPC, y un valor ausente vale 0
+            // («no medido»), no rompe el aviso.
+            var setupMsStr = GetString(p, "setupMs");
+            int setupMs = 0;
+            if (!string.IsNullOrWhiteSpace(setupMsStr)) int.TryParse(setupMsStr, out setupMs);
+            await GrpcBridgeSingleton.Instance.SendRemoteSessionConnected(sessionId, setupMs);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_connected_error", ex.Message);
+        }
+    }
+
     public static async Task<PrivSvcResponse> HandleRemoteSessionIce(PrivSvcRequest req)
     {
         try

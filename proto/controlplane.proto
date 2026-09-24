@@ -228,6 +228,22 @@ message RemoteSessionAnswer {
   string sdp = 2;
 }
 
+// agent -> server. El DataChannel se ABRIÓ: hay camino entre el
+// navegador del operador y el equipo, y por él ya cabe tráfico.
+//
+// ⚠️ Existe porque RemoteSessionAnswer NO significa eso. La answer dice
+// que el agente recibió la oferta y contestó; después de ella todavía
+// tienen que cuadrar los candidatos ICE, y ahí es donde fallan los
+// equipos con UDP cerrado. El expediente marcaba `connected` con la
+// answer, así que una sesión que nunca llegó a abrirse aparecía como
+// conectada un segundo antes de morir (T111, MSIG-DOMAIN, 24-sep-2026).
+message RemoteSessionConnected {
+  string sessionId = 1;
+  // Milisegundos entre la oferta y la apertura del canal, medidos por el
+  // agente: el coste real de negociar ICE en esa red.
+  int32 setupMs = 2;
+}
+
 // Bidirectional. ICE candidates discovered by either side after the
 // initial offer/answer. The candidate string is the standard SDP
 // "candidate:" line; sdpMid and sdpMLineIndex identify which media
@@ -520,5 +536,9 @@ message ControlMessage {
     CatalogResponse catalogResponse       = 31; // server -> agent
     SelfInstallRequest selfInstallRequest = 32; // agent -> server
     SelfInstallAck selfInstallAck         = 33; // server -> agent
+
+    // El bloque 20-29 de RCP está lleno, así que este sigue por el 34.
+    // Añadir un campo al oneof es compatible en las dos direcciones.
+    RemoteSessionConnected remoteSessionConnected = 34; // agent -> server
   }
 }

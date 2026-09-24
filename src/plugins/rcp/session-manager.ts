@@ -397,6 +397,7 @@ export class SessionManager {
       sendScreenAudit: (audit) =>
         this.sendScreenAudit(sessionId, audit),
       sendRecordingReady: (r) => this.sendRecordingReady(r),
+      onConnected: () => this.sendConnected(sessionId),
       onTeardown: (reason) => {
         this.sessions.delete(sessionId);
         this.consentGranted.delete(sessionId);
@@ -570,6 +571,31 @@ export class SessionManager {
     });
     this.ctx.sendControl?.({
       remoteSessionAnswer: { sessionId, sdp }
+    });
+  }
+
+  /**
+   * El canal se ABRIÓ: hay camino hasta el navegador del operador.
+   *
+   * ⚠️ Lo manda el agente y no el control plane porque el control plane no
+   * puede saberlo: él sólo ve pasar la answer, y entre la answer y que haya
+   * camino está toda la negociación ICE — que es justo donde fallan los
+   * equipos con UDP cerrado. Marcar `connected` con la answer hacía que una
+   * sesión que nunca llegó a abrirse apareciera como conectada un segundo
+   * antes de morir (T111, MSIG-DOMAIN, 24-sep-2026).
+   *
+   * `setupMs` es lo que costó negociar ICE en esa red. Sin él, «tardó nueve
+   * segundos» y «no conectó» se parecen demasiado en los agregados.
+   */
+  private sendConnected(sessionId: string): void {
+    const startedAt = this.sessionStartedAt.get(sessionId);
+    const setupMs = startedAt ? Math.max(0, Date.now() - startedAt) : 0;
+    this.ctx.logger?.info?.("[rcp] data channel open, reporting connected", {
+      sid: sessionId.slice(-8),
+      setupMs
+    });
+    this.ctx.sendControl?.({
+      remoteSessionConnected: { sessionId, setupMs }
     });
   }
 

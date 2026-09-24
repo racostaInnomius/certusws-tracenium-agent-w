@@ -90,6 +90,9 @@ export type PrivSvcMethod =
   | "crypto.gwkey.ensure"
   | "crypto.gwkey.destroy"
   // gRPC bridge (PrivSvc owns mTLS private key + channel)
+  // RCP — el agente avisa de que el DataChannel se abrió. Va por el mismo
+  // camino que los demás: PrivSvc es el único dueño de la conexión gRPC.
+  | "grpc.send.remoteSessionConnected"
   | "grpc.connect"
   | "grpc.facts.send"
   | "grpc.facts.chunk"

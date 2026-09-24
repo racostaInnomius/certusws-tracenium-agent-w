@@ -2220,6 +2220,31 @@ private const int MaxPendingPushEvents = 50;
         catch (Exception ex) { Log($"SendRemoteSessionAnswer error sessionId={sessionId} {ex}"); }
     }
 
+    /// <summary>
+    /// El DataChannel se abrió: hay camino hasta el navegador del operador.
+    /// La answer NO significa eso — entre ella y esto está toda la
+    /// negociación ICE, que es donde se quedan los equipos con UDP cerrado.
+    /// </summary>
+    public async Task SendRemoteSessionConnected(string sessionId, int setupMs, CancellationToken ct = default)
+    {
+        if (_call is null) { Log($"SendRemoteSessionConnected skipped: no active call sessionId={sessionId}"); return; }
+        if (string.IsNullOrWhiteSpace(sessionId)) { Log("SendRemoteSessionConnected skipped: empty sessionId"); return; }
+        try
+        {
+            await WriteSerializedAsync(new ControlMessage
+            {
+                RemoteSessionConnected = new RemoteSessionConnected
+                {
+                    SessionId = sessionId,
+                    SetupMs = setupMs < 0 ? 0 : setupMs
+                }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+            Log($"RemoteSessionConnected sent sessionId={sessionId} setupMs={setupMs}");
+        }
+        catch (Exception ex) { Log($"SendRemoteSessionConnected error sessionId={sessionId} {ex}"); }
+    }
+
     public async Task SendRemoteSessionIce(string sessionId, string candidate, string sdpMid, int sdpMLineIndex, CancellationToken ct = default)
     {
         if (_call is null) { Log($"SendRemoteSessionIce skipped: no active call sessionId={sessionId}"); return; }

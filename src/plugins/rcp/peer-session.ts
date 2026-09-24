@@ -87,6 +87,11 @@ type PeerSessionArgs = {
   // VÍDEO no va por aquí: sube al blob aparte, para que quien obtenga el
   // almacenamiento no obtenga también con qué descifrarlo.
   sendRecordingReady?: (r: RecordingReadyPayload) => void;
+  /**
+   * El DataChannel se abrió. Es el ÚNICO momento en que se sabe que hay
+   * camino hasta el operador: la answer sólo dice que se recibió la oferta.
+   */
+  onConnected?: () => void;
   onTeardown: (reason: string) => void;
   sessionTimeoutSeconds: number;
 };
@@ -242,6 +247,19 @@ export class PeerSession {
         capability: cap,
         label: dc.getLabel?.()
       });
+
+      // Antes de montar nada encima: avisar de que hay camino. Si el arranque
+      // de la capacidad falla —un PTY que no abre, por ejemplo— el expediente
+      // tiene que poder distinguir «no se conectó» de «se conectó y lo de
+      // dentro falló», que llevan a sitios distintos.
+      try {
+        args.onConnected?.();
+      } catch (err: any) {
+        ctx.logger?.warn?.("[rcp] onConnected failed", {
+          sessionId,
+          err: err?.message || String(err)
+        });
+      }
 
       // ── rcp.shell — PTY + transcript (M1.S2 / M1.S3) ────────────
       if (cap === "rcp.shell") {

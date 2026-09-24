@@ -20,6 +20,7 @@ import {
   handleCatalogRequest,
   handleSelfInstallRequest,
   handleRemoteSessionAnswer,
+  handleRemoteSessionConnected,
   handleRemoteSessionIce,
   handleRemoteSessionClose,
   handleRemoteSessionError,
@@ -247,6 +248,11 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     // Router.cs:109-118.
     case "grpc.send.remoteSessionAnswer":
       return handleRemoteSessionAnswer(req);
+
+    // El canal se abrió: hay camino. La answer NO lo dice — entre ella y
+    // esto está toda la negociación ICE.
+    case "grpc.send.remoteSessionConnected":
+      return handleRemoteSessionConnected(req);
 
     case "grpc.send.remoteSessionIce":
       return handleRemoteSessionIce(req);

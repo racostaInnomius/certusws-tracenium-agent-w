@@ -258,6 +258,9 @@ public sealed class Router
             // Node.js plugin sends these when the WebRTC peer
             // generates an answer / discovers a candidate / closes.
             "grpc.send.remoteSessionAnswer" => IpcGrpcHandlers.HandleRemoteSessionAnswer(req),
+            // El canal se abrió: hay camino. Mantener en paralelo con los
+            // routers de linux y macOS (privsvc/*/src/router.ts).
+            "grpc.send.remoteSessionConnected" => IpcGrpcHandlers.HandleRemoteSessionConnected(req),
             "grpc.send.remoteSessionIce" => IpcGrpcHandlers.HandleRemoteSessionIce(req),
             "grpc.send.remoteSessionClose" => IpcGrpcHandlers.HandleRemoteSessionClose(req),
             "grpc.send.remoteSessionError" => IpcGrpcHandlers.HandleRemoteSessionError(req),
