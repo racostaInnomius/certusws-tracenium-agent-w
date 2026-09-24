@@ -969,7 +969,10 @@ public static class Sdp
         // como SYSTEM en la sesión 0: su ventana no la ve nadie y el job agota
         // el timeout. Si el fabricante documenta el modificador (WinRAR `/S`…),
         // se usa. Ver KnownSilentUninstall.
-        quiet ??= KnownSilentUninstall.For(uninstallString);
+        // Primero la tabla de fabricantes; si no está, se mira el BINARIO (la
+        // cola larga son NSIS, que aceptan `/S`). Lo que no se reconozca se
+        // ejecuta como venga, igual que antes.
+        quiet ??= KnownSilentUninstall.For(uninstallString) ?? UninstallerProbe.SilentCommandFor(uninstallString);
         // Prefer the vendor-provided silent uninstall string; else fall back to
         // the plain string + operator-supplied silentUninstallArgs.
         if (!string.IsNullOrWhiteSpace(quiet))

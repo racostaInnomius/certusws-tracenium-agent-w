@@ -128,7 +128,11 @@ internal static class UserScopedUninstall
         {
             var label = AccountLabel(e.Sid);
             var choice = UserUninstallShape.ChooseCommand(e);
-            if (choice.CommandLine == null)
+            // Sin silencioso conocido, queda mirar el BINARIO: la cola larga de
+            // desinstaladores por usuario es NSIS, que acepta `/S`. Ver
+            // UninstallerProbe — se lee el fichero, no se adivina por el nombre.
+            var commandLine = choice.CommandLine ?? UninstallerProbe.SilentCommandFor(e.UninstallString);
+            if (commandLine == null)
             {
                 results.Add(new(label, UserUninstallShape.ProfileStatus.NoSilentUninstall, null));
                 continue;
@@ -142,7 +146,7 @@ internal static class UserScopedUninstall
             var remaining = deadline - DateTime.UtcNow;
             if (remaining <= TimeSpan.Zero) throw new TimeoutException($"uninstall timed out after {timeoutSeconds}s");
 
-            var exit = await Task.Run(() => RunAsUser(session, choice.CommandLine, remaining));
+            var exit = await Task.Run(() => RunAsUser(session, commandLine, remaining));
             var status = UserUninstallShape.ClassifyExit(exit);
             if (status == UserUninstallShape.ProfileStatus.Removed)
             {

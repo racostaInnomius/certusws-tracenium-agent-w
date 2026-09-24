@@ -43,6 +43,15 @@ public static class KnownSilentUninstall
                 : cmd + " --force-uninstall";
         }
 
+        // Edge: el MISMO instalador de Chromium, mismo modificador. 102 filas de
+        // «setup.exe» en T111 son suyas.
+        if (Edge.IsMatch(cmd))
+        {
+            return cmd.Contains("--force-uninstall", StringComparison.OrdinalIgnoreCase)
+                ? cmd
+                : cmd + " --force-uninstall";
+        }
+
         // 🔴 WinRAR (campo 24-sep, T111): registra `C:\Program Files\WinRAR\
         // uninstall.exe` SIN comillas y SIN forma silenciosa. Su desinstalador
         // acepta `/S`, y sin él se abriría una ventana en la sesión 0 que no ve
@@ -54,6 +63,10 @@ public static class KnownSilentUninstall
 
         return null;
     }
+
+    private static readonly System.Text.RegularExpressions.Regex Edge = new(
+        @"\\Microsoft\\Edge[^\\]*\\Application\\[\d.]+\\Installer\\setup\.exe""?\s.*--uninstall\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     private static readonly System.Text.RegularExpressions.Regex WinRar = new(
         @"\\WinRAR\\uninstall\.exe""?",

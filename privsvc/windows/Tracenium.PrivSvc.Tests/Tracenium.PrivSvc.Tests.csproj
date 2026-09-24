@@ -115,6 +115,10 @@
          decision se prueba aqui con la existencia inyectada. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UninstallCommandParse.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\KnownSilentUninstall.cs" />
+    <!-- Reconocer NSIS por la FIRMA del binario, no por el nombre: «uninstall.exe»
+         lo usan NSIS, InstallShield y cualquiera, y un /S a ciegas abre ventana
+         en la sesion 0, donde no la ve nadie y el job se cuelga. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\InstallerKind.cs" />
     <!-- Impresoras de red por usuario. El recorrido de HKEY_USERS se queda
          fuera (Microsoft.Win32); aqui entra la forma pura: decodificar
          `,,SRV,Cola` a UNC y fundir sin duplicar. Un nombre mal decodificado
