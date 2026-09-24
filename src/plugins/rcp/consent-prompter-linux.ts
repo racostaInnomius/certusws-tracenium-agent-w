@@ -32,7 +32,7 @@ import { recordingEnabled } from "./recording-policy";
 export function createLinuxConsentPrompter(ctx: AgentContext): ConsentPrompter {
   return {
     available(): boolean {
-      return typeof (ctx.priv as any)?.call === "function";
+      return typeof ctx.priv?.call === "function";
     },
 
     async request(req: ConsentRequest): Promise<ConsentDecision> {
@@ -40,7 +40,7 @@ export function createLinuxConsentPrompter(ctx: AgentContext): ConsentPrompter {
       const buttons = consentButtons(kind);
 
       try {
-        const res: any = await (ctx.priv as any).call({
+        const res: any = await ctx.priv.call({
           v: 1,
           id: `rcp.consent.${req.sessionId}.${kind}`,
           method: "rcp.consent.request",

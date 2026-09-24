@@ -836,7 +836,7 @@ export class ScreenSession {
     // Keyboard
     if ("code" in msg)   params.code   = String(msg.code);
 
-    (ctx.priv as any)
+    ctx.priv
       .call({
         v: 1,
         id: `input.inject.${Date.now()}`,
@@ -964,7 +964,7 @@ export class ScreenSession {
       const now = Date.now();
       const wantKeyframe = now - this.lastKeyframeAtMs >= KEYFRAME_INTERVAL_MS;
 
-      const result = await (ctx.priv as any).call({
+      const result = await ctx.priv.call({
         v: 1,
         id: `screen.capture.${now}`,
         method: "screen.capture",

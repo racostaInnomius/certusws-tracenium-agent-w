@@ -61,7 +61,7 @@ export class LinuxPrivilegedPtySession {
     const { ctx, sessionId } = this.args;
 
     try {
-      const res: any = await (ctx.priv as any).call({
+      const res: any = await ctx.priv.call({
         v: 1,
         id: `rcp.pty.open.${sessionId}`,
         method: "rcp.pty.open",
@@ -207,7 +207,7 @@ export class LinuxPrivilegedPtySession {
 
   private async closeRemote(): Promise<void> {
     try {
-      await (this.args.ctx.priv as any).call({
+      await this.args.ctx.priv.call({
         v: 1,
         id: `rcp.pty.close.${this.args.sessionId}`,
         method: "rcp.pty.close",

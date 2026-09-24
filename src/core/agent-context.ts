@@ -6,9 +6,25 @@ import { PolicyStore } from "./policy-store";
 import { PolicyRuntime } from "./policy-runtime";
 import { PluginManager } from "./plugin-manager";
 import { TrayStatusStore } from "../status/tray-status-store";
+import type { PrivSvcRequest } from "../priv/ipc-types";
 
 export interface IPrivSvcClient {
-  call(req: any): Promise<any>;
+  /**
+   * ⚠️ Tipado a propósito, y esta es la historia de por qué.
+   *
+   * Estuvo como `call(req: any)`. `PrivSvcRequest` declara `v: 1` obligatorio,
+   * pero el `any` lo borraba — y lo PRIMERO que hace el router del PrivSvc,
+   * antes de mirar el método, es `if (req.v !== 1) return fail(…,
+   * "bad_version")`. El 30-ago se añadió la puerta del indicador de pantalla
+   * en Linux con la llamada sin `v`, compiló, y **ningún equipo Linux pudo
+   * compartir pantalla durante 24 días**. Falla cerrado, así que no parecía un
+   * error: parecía una negativa razonable. Se descubrió porque alguien lo
+   * intentó.
+   *
+   * Con el tipo puesto, olvidar `v` —o escribir un método que el router no
+   * conoce— es un error de compilación y no un fallo de campo silencioso.
+   */
+  call(req: PrivSvcRequest): Promise<any>;
   close(): void;
   on?(event: string, cb: (...args: any[]) => void): void;
 }

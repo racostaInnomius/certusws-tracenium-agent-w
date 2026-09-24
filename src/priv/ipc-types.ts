@@ -53,6 +53,26 @@ export type PrivSvcMethod =
   // no borrar: en Windows se anade a `Disallowed`, en macOS es un trust
   // setting de denegacion. Ver CdpAnchorDistrust.cs.
   | "cdp.anchor.distrust"
+  // ── Los que faltaban, añadidos el 2026-09-24 ───────────────────────
+  //
+  // ⚠️ No se añadieron para callar al compilador: se comprobó uno por uno
+  // que el router del PrivSvc los acepta, y en qué plataformas. Un método
+  // que NO estuviera enrutado sería un fallo de campo esperando —como el
+  // del indicador de Linux— y meterlo en la unión lo escondería.
+  //
+  // Enrutados en las tres (`privsvc/{linux,macos}/src/router.ts` y
+  // `windows/…/Ipc/Router.cs`):
+  | "cdp.anchor.state"
+  | "cdp.csr.generate"
+  | "cdp.cert.install"
+  | "cdp.key.list"
+  | "cdp.key.destroy"
+  | "crypto.cert.renew"
+  // Solo Windows: ADCS es un servicio de Active Directory.
+  | "cdp.adcs.read"
+  // ⚠️ Estos seis heredan el presupuesto por defecto (8 s) porque no están
+  // en `getTimeoutForMethod` de ningún cliente. Queda dicho, no tocado:
+  // subir un techo tiene consecuencias en campo y esto es cosa de CDP.
   | "crypto.csr.generate" // enrollment CSR generation
   | "crypto.cert.stage" // ADR-0015 pto.10: deja el bundle de CA en espera, en su propio mensaje
   | "crypto.cert.install" // install client cert (bind to existing key)
@@ -97,6 +117,32 @@ export type PrivSvcMethod =
   //     to the Windows trust store + revocation. Returns { trusted,
   //     reason }. Gate before install when the package requires signing.
   | "sdp.verifySignature"
+  // Enrutados en las tres. `sdp.uninstall` (ADR-0019) y el prefetch del
+  // Distribution Point.
+  | "sdp.uninstall"
+  | "sdp.dp.prefetch"
+  // Solo Linux, y a propósito: la auto-actualización por paquete del SO
+  // (deb/rpm). En Windows y macOS el camino es otro.
+  | "agent.install"
+  // ── RCP, solo Linux ────────────────────────────────────────────────
+  //
+  // Los cuatro son de Linux: en Windows y macOS el aviso vive en la bandeja
+  // y el pty lo abre otro camino.
+  //
+  // ⚠️ Faltaban los cuatro, y no daban error de compilación porque sus
+  // llamadas iban con `(ctx.priv as any).call(...)`. Un cast es un agujero
+  // del mismo tamaño que el `any` que acaba de cerrarse: con él, a
+  // `rcp.indicator.show` le habría pasado igual aunque el tipo existiera.
+  | "rcp.indicator.show"
+  | "rcp.indicator.hide"
+  | "rcp.consent.request"
+  | "rcp.pty.open"
+  | "rcp.pty.close"
+  // Los dos que mueven la pantalla, también escondidos tras un cast.
+  // `screen.capture` está en las tres; `input.inject` no en Linux, donde
+  // el control remoto de teclado y ratón todavía no existe.
+  | "screen.capture"
+  | "input.inject"
   // Infrastructure Gateway — vCenter credential custody. PrivSvc runs as
   // SYSTEM/root and already owns the mTLS private key, so it is the only
   // component that can open a credential envelope sealed against this

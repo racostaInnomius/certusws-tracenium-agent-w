@@ -13,6 +13,7 @@
 // no impide las otras.
 
 import type { IPrivSvcClient } from "../../../core/agent-context";
+import type { PrivSvcMethod } from "../../../priv/ipc-types";
 import {
   CHROMIUM_BROWSERS,
   POLICY_LISTS,
@@ -39,8 +40,29 @@ export type OwnedStore = {
   save(browser: ChromiumBrowser, list: PolicyListKind, owned: string[], nowUtc: string): void;
 };
 
-async function call(priv: IPrivSvcClient, method: string, params: Record<string, unknown>): Promise<any> {
-  const resp = await priv.call({ method, params });
+/**
+ * ⚠️ `v` e `id` iban sin poner, y esto NO se cayó por un detalle del otro lado.
+ *
+ * El DTO de C# declara `public int Version { get; set; } = 1`, así que en
+ * Windows una petición sin `v` se acepta con el valor por defecto. Los routers
+ * de Linux y macOS son TypeScript y comparan `req.v !== 1` contra un
+ * `undefined`: la rechazan con `bad_version`. Este enforcer solo corre en
+ * Windows (`amp/providers/windows.ts`), que es la única razón por la que
+ * funciona — 108 acuses en T111 lo confirman.
+ *
+ * O sea: un latente, no un fallo vivo. Pero el día que esto se llame desde
+ * macOS o Linux dejaría de aplicar la política **en silencio**, porque el
+ * llamador captura la excepción y solo deja un `warn` en el equipo. Es
+ * exactamente cómo se perdió el indicador de pantalla de Linux durante 24 días.
+ *
+ * `id` lo rellena el cliente si falta; `v` no lo rellena nadie.
+ */
+async function call(
+  priv: IPrivSvcClient,
+  method: Extract<PrivSvcMethod, `browser.policy_list.${string}`>,
+  params: Record<string, unknown>
+): Promise<any> {
+  const resp = await priv.call({ v: 1, id: `${method}.${Date.now()}`, method, params });
   if (!resp?.ok) throw new Error(resp?.error?.code ? `${resp.error.code}: ${resp.error.message ?? ""}`.trim() : "privsvc call failed");
   return resp.result;
 }
