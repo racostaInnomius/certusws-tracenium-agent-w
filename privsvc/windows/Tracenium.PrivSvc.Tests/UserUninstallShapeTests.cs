@@ -162,21 +162,21 @@ public class KnownSilentUninstallTests
 
     [Fact]
     public void OneDrive_desinstala_en_silencio_tal_cual() =>
-        Assert.Equal(OneDrive.Trim(), UserUninstallShape.KnownSilentUninstall(OneDrive));
+        Assert.Equal(OneDrive.Trim(), KnownSilentUninstall.For(OneDrive));
 
     [Fact]
     public void Zoom_desinstala_en_silencio_tal_cual() =>
-        Assert.Equal(Zoom, UserUninstallShape.KnownSilentUninstall(Zoom));
+        Assert.Equal(Zoom, KnownSilentUninstall.For(Zoom));
 
     [Fact]
     public void Chrome_por_usuario_gana_force_uninstall_para_no_preguntar() =>
-        Assert.Equal(Chrome + " --force-uninstall", UserUninstallShape.KnownSilentUninstall(Chrome));
+        Assert.Equal(Chrome + " --force-uninstall", KnownSilentUninstall.For(Chrome));
 
     [Fact]
     public void Chrome_que_ya_lo_trae_no_lo_repite()
     {
         var ya = Chrome + " --force-uninstall";
-        Assert.Equal(ya, UserUninstallShape.KnownSilentUninstall(ya));
+        Assert.Equal(ya, KnownSilentUninstall.For(ya));
     }
 
     [Theory]
@@ -191,7 +191,7 @@ public class KnownSilentUninstallTests
     [InlineData("")]
     [InlineData(null)]
     public void Lo_que_no_esta_documentado_sigue_sin_forma_silenciosa(string? cmd) =>
-        Assert.Null(UserUninstallShape.KnownSilentUninstall(cmd));
+        Assert.Null(KnownSilentUninstall.For(cmd));
 
     [Fact]
     public void ChooseCommand_usa_la_tabla_cuando_no_hay_QuietUninstallString()

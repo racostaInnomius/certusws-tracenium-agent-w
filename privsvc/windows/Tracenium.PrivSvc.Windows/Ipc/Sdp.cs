@@ -935,7 +935,7 @@ public static class Sdp
         if (!string.IsNullOrWhiteSpace(productCode))
         {
             var argList = new List<string> { "/x", productCode!, "/qn", "/norestart" };
-            if (!string.IsNullOrWhiteSpace(args)) argList.AddRange(SplitArgs(args!));
+            if (!string.IsNullOrWhiteSpace(args)) argList.AddRange(UninstallCommandParse.SplitArgs(args!));
             return await RunInstallerProcess("msiexec.exe", argList, timeoutSeconds);
         }
 
@@ -947,7 +947,7 @@ public static class Sdp
             throw new UninstallIdentityException(
                 "msi uninstall needs a productCode or a resolvable UninstallString");
         }
-        var (file, uninstArgs) = ParseUninstallCommand(chosen!);
+        var (file, uninstArgs) = UninstallCommandParse.Split(chosen!);
         // Force silent when we fell back to the non-quiet string.
         if (quiet == null)
         {
@@ -965,11 +965,16 @@ public static class Sdp
         PrivSvcRequest req)
     {
         var (uninstallString, quiet) = FindUninstallEntry(displayNameLike);
+        // 🔴 SIN FORMA SILENCIOSA, UN DESINSTALADOR DE MÁQUINA SE CUELGA. Corre
+        // como SYSTEM en la sesión 0: su ventana no la ve nadie y el job agota
+        // el timeout. Si el fabricante documenta el modificador (WinRAR `/S`…),
+        // se usa. Ver KnownSilentUninstall.
+        quiet ??= KnownSilentUninstall.For(uninstallString);
         // Prefer the vendor-provided silent uninstall string; else fall back to
         // the plain string + operator-supplied silentUninstallArgs.
         if (!string.IsNullOrWhiteSpace(quiet))
         {
-            var (qfile, qargs) = ParseUninstallCommand(quiet!);
+            var (qfile, qargs) = UninstallCommandParse.Split(quiet!);
             return await RunInstallerProcess(qfile, qargs, timeoutSeconds);
         }
         if (string.IsNullOrWhiteSpace(uninstallString))
@@ -977,8 +982,8 @@ public static class Sdp
             throw new UninstallIdentityException(
                 "exe uninstall needs a resolvable UninstallString (registry_uninstall rule)");
         }
-        var (file, uArgs) = ParseUninstallCommand(uninstallString!);
-        if (!string.IsNullOrWhiteSpace(args)) uArgs.AddRange(SplitArgs(args!));
+        var (file, uArgs) = UninstallCommandParse.Split(uninstallString!);
+        if (!string.IsNullOrWhiteSpace(args)) uArgs.AddRange(UninstallCommandParse.SplitArgs(args!));
         return await RunInstallerProcess(file, uArgs, timeoutSeconds);
     }
 
@@ -1014,30 +1019,6 @@ public static class Sdp
             }
         }
         return (null, null);
-    }
-
-    /// <summary>
-    /// Split an UninstallString like `"C:\App\uninst.exe" /S` or
-    /// `MsiExec.exe /X{GUID}` into an executable + argument list.
-    /// </summary>
-    private static (string file, List<string> args) ParseUninstallCommand(string command)
-    {
-        var trimmed = command.Trim();
-        string file;
-        string rest;
-        if (trimmed.StartsWith("\""))
-        {
-            var end = trimmed.IndexOf('"', 1);
-            if (end < 0) { file = trimmed.Trim('"'); rest = ""; }
-            else { file = trimmed.Substring(1, end - 1); rest = trimmed.Substring(end + 1).Trim(); }
-        }
-        else
-        {
-            var sp = trimmed.IndexOf(' ');
-            if (sp < 0) { file = trimmed; rest = ""; }
-            else { file = trimmed.Substring(0, sp); rest = trimmed.Substring(sp + 1).Trim(); }
-        }
-        return (file, rest.Length > 0 ? SplitArgs(rest) : new List<string>());
     }
 
     // ── Detection runners ─────────────────────────────────────────
@@ -1353,7 +1334,7 @@ public static class Sdp
         // unattended install.
         var argList = string.IsNullOrWhiteSpace(args)
             ? new List<string> { "/i", stagingPath, "/qn", "/norestart" }
-            : new List<string> { "/i", stagingPath }.Concat(SplitArgs(args!)).ToList();
+            : new List<string> { "/i", stagingPath }.Concat(UninstallCommandParse.SplitArgs(args!)).ToList();
 
         // El log SIEMPRE, salvo que el operador ya haya puesto el suyo: dos
         // `/l` en la misma línea es una pelea por el mismo fichero, y el que
@@ -1468,7 +1449,7 @@ public static class Sdp
             throw new InvalidOperationException(
                 "exe installer requires explicit silentInstallArgs in catalog");
         }
-        var argList = SplitArgs(args);
+        var argList = UninstallCommandParse.SplitArgs(args);
         return await RunInstallerProcess(stagingPath, argList, timeoutSeconds);
     }
 
@@ -1623,33 +1604,6 @@ public static class Sdp
     /// `/qn /norestart`-style flags; we don't try to be a full shell
     /// quoter — just split on whitespace, respecting double quotes.
     /// </summary>
-    private static List<string> SplitArgs(string raw)
-    {
-        var result = new List<string>();
-        var current = new System.Text.StringBuilder();
-        bool inQuotes = false;
-        foreach (var ch in raw)
-        {
-            if (ch == '"')
-            {
-                inQuotes = !inQuotes;
-                continue;
-            }
-            if (!inQuotes && char.IsWhiteSpace(ch))
-            {
-                if (current.Length > 0)
-                {
-                    result.Add(current.ToString());
-                    current.Clear();
-                }
-                continue;
-            }
-            current.Append(ch);
-        }
-        if (current.Length > 0) result.Add(current.ToString());
-        return result;
-    }
-
     /// <summary>
     /// Pull the rule object out of req.Params["rule"] and flatten its
     /// fields into a string→string dict the detection runners can read.

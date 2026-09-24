@@ -109,6 +109,12 @@
          recorrido de HKEY_USERS y el lanzamiento con el token del usuario
          (UserScopedUninstall.cs) son Win32 y se quedan fuera. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UserUninstallShape.cs" />
+    <!-- 🔴 Campo 24-sep: TODAS las desinstalaciones de WinRAR en T111 murieron
+         con «no se puede iniciar el proceso C:\Program» — una ruta sin comillas
+         cortada por el primer espacio. El corte real lo decide el disco, y esa
+         decision se prueba aqui con la existencia inyectada. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UninstallCommandParse.cs" />
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\KnownSilentUninstall.cs" />
     <!-- Impresoras de red por usuario. El recorrido de HKEY_USERS se queda
          fuera (Microsoft.Win32); aqui entra la forma pura: decodificar
          `,,SRV,Cola` a UNC y fundir sin duplicar. Un nombre mal decodificado
