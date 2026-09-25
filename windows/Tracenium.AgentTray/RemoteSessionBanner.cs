@@ -66,6 +66,28 @@ internal sealed class RemoteSessionBanner : Form
     private readonly Panel _accentBar;
     private string _sessionId = "";
 
+    /// 🔴 Marca de «ya están todos los hijos».
+    ///
+    /// Reporte de campo del 25-sep-2026: la bandeja de Windows dejó de salir
+    /// tras el update, y el reinicio no la traía. En tray-crash.log, siempre
+    /// la misma traza:
+    ///
+    ///   RemoteSessionBanner.LayoutChildren()
+    ///     ← OnResize ← set_Height ← RemoteSessionBanner..ctor()
+    ///
+    /// `Height = BannerHeight` dentro del constructor levanta `OnResize`, que
+    /// llama a `LayoutChildren`, que toca `_logo`, `_text`, `_stopButton`…
+    /// todavía sin asignar. NullReferenceException sobre un objeto a medio
+    /// construir. Y como este `new` era un INICIALIZADOR DE CAMPO de
+    /// TrayApplicationContext, se llevaba por delante el proceso entero antes
+    /// de que existiera el `NotifyIcon`: bandeja invisible, determinista,
+    /// inmune al reinicio.
+    ///
+    /// El constructor ya no toca `Height` antes de tiempo, pero la marca se
+    /// queda: `OnResize` lo puede levantar el sistema por muchos motivos (DPI,
+    /// resolución, tema) y ninguno espera a que terminemos de construir.
+    private readonly bool _built;
+
     // Cromo de marca. Fijo, no adaptativo al tema del sistema: la franja se ve
     // igual en las capturas de un incidente independientemente de cómo tuviera
     // el equipo la persona.
@@ -84,8 +106,10 @@ internal sealed class RemoteSessionBanner : Form
         ShowInTaskbar = false;
         TopMost = true;
         BackColor = ChromeViewing;
-        Height = BannerHeight;
         DoubleBuffered = true;
+        // ⚠️ `Height` NO se toca aquí: asignarlo levanta OnResize →
+        // LayoutChildren sobre los hijos que todavía no existen. Se pone al
+        // final, con todo montado. Ver el comentario de `_built`.
 
         _logo = new PictureBox
         {
@@ -157,6 +181,10 @@ internal sealed class RemoteSessionBanner : Form
         Controls.Add(_divider);
         Controls.Add(_stopButton);
         Controls.Add(_accentBar);
+
+        // A partir de aquí ya hay a quién colocar.
+        _built = true;
+        Height = BannerHeight;
     }
 
     /// <summary>
@@ -274,6 +302,10 @@ internal sealed class RemoteSessionBanner : Form
     /// </summary>
     private void LayoutChildren()
     {
+        // Sin hijos no hay nada que colocar. Esta línea es la que separa «la
+        // franja no se dibuja bien» de «no hay bandeja en todo el equipo».
+        if (!_built) return;
+
         const int pad = 14;
         var midY = (Height - 2) / 2; // -2: la barra de acento de abajo
 
