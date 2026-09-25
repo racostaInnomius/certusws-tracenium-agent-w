@@ -6,13 +6,32 @@ namespace Tracenium.AgentTray;
 internal sealed class TrayApplicationContext : ApplicationContext
 {
     private readonly StatusReader _reader = new();
-    private readonly StatusForm _statusForm = new();
+
+    // ⚠️ Estos TRES ya no son inicializadores de campo, y el motivo es un fallo
+    // de campo (25-sep-2026: «después del update el icono de la bandeja se
+    // murió; reinicié y sigue sin salir, los dos servicios corren»).
+    //
+    // Los inicializadores de campo corren ANTES del cuerpo del constructor, o
+    // sea antes de que exista `_notifyIcon`. Cualquier excepción construyendo
+    // una ventana —la franja, el flyout, el formulario de estado— tiraba el
+    // constructor entero, `Application.Run` no llegaba a arrancar y el proceso
+    // moría SIN haber puesto nunca el icono. Determinista: el reinicio lo
+    // reproduce igual, que es justo lo que se vio.
+    //
+    // Ahora el icono se crea primero y estas tres van después, dentro de un
+    // try. Una ventana rota degrada la bandeja; ya no la borra.
+    private StatusForm? _statusForm;
     // NOT readonly: see the disposed-instance recovery in RefreshStatus().
-    private DeviceInfoFlyout _deviceFlyout = new();
-    private readonly RemoteSessionBanner _remoteBanner = new();
+    private DeviceInfoFlyout? _deviceFlyout;
+    private RemoteSessionBanner? _remoteBanner;
     private readonly NotifyIcon _notifyIcon;
-    private readonly System.Windows.Forms.Timer _timer;
+    private System.Windows.Forms.Timer? _timer;
     private readonly Icon _trayIcon;
+
+    /// Se montó el icono pero no el resto. El menú sigue respondiendo
+    /// («Exit Tray», «Open Agent Data Folder») y el fallo está en
+    /// tray-crash.log; lo que NO puede pasar es que no haya icono.
+    private bool _degraded;
 
     // Vigilancia del fichero de estado, SOLO por el indicador de sesión remota.
     //
@@ -51,40 +70,61 @@ internal sealed class TrayApplicationContext : ApplicationContext
             ContextMenuStrip = menu
         };
         _notifyIcon.DoubleClick += (_, _) => ShowStatus();
-        _statusForm.Icon = _trayIcon;
 
-        _statusForm.FormClosing += (_, e) =>
-        {
-            if (e.CloseReason == CloseReason.UserClosing)
-            {
-                e.Cancel = true;
-                _statusForm.Hide();
-            }
-        };
-        _statusForm.VisibleChanged += (_, _) =>
-        {
-            if (_statusForm.Visible)
-            {
-                RefreshStatus();
-            }
-        };
-
-        _timer = new System.Windows.Forms.Timer
-        {
-            Interval = 5000
-        };
-        _timer.Tick += (_, _) => RefreshStatus();
-        _timer.Start();
-
+        // ── A partir de aquí el icono YA está puesto ──────────────────
+        //
+        // Todo lo que sigue construye ventanas, y una ventana puede fallar por
+        // motivos que no controlamos: un assembly que el single-file aún no
+        // había cargado cuando el MSI reemplazó el .exe, una fuente del sistema
+        // sin la variante que pedimos, un tema raro. Antes cualquiera de esos
+        // se llevaba por delante el icono. Ahora se anota y la bandeja sigue.
         _watchDebounce = new System.Windows.Forms.Timer { Interval = 150 };
-        _watchDebounce.Tick += (_, _) =>
+        try
         {
-            _watchDebounce.Stop();
-            RefreshStatus();
-        };
-        StartStatusWatch();
+            _statusForm = new StatusForm { Icon = _trayIcon };
+            _deviceFlyout = new DeviceInfoFlyout();
+            _remoteBanner = new RemoteSessionBanner();
 
-        RefreshStatus();
+            _statusForm.FormClosing += (_, e) =>
+            {
+                if (e.CloseReason == CloseReason.UserClosing)
+                {
+                    e.Cancel = true;
+                    _statusForm.Hide();
+                }
+            };
+            _statusForm.VisibleChanged += (_, _) =>
+            {
+                if (_statusForm is { Visible: true })
+                {
+                    RefreshStatus();
+                }
+            };
+
+            _timer = new System.Windows.Forms.Timer
+            {
+                Interval = 5000
+            };
+            _timer.Tick += (_, _) => RefreshStatus();
+            _timer.Start();
+
+            _watchDebounce.Tick += (_, _) =>
+            {
+                _watchDebounce.Stop();
+                RefreshStatus();
+            };
+            StartStatusWatch();
+
+            RefreshStatus();
+        }
+        catch (Exception ex)
+        {
+            // Se anota con el mismo detalle que un fallo mortal: atrapar sin
+            // dejar rastro convertiría esto en un misterio permanente.
+            TrayLog.Write("tray degraded at startup", ex);
+            _degraded = true;
+            _notifyIcon.Text = "Tracenium Agent (limited)";
+        }
     }
 
     /// <summary>
@@ -110,7 +150,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
             // descartaría en silencio hasta que el usuario abriera la ventana
             // de estado — justo lo que nadie hace mientras le comparten la
             // pantalla. Tocar .Handle crea la ventana sin mostrarla.
-            _ = _statusForm.Handle;
+            // `StartStatusWatch` solo se llama desde el try del constructor,
+            // con `_statusForm` ya construido; el `?.` es para el compilador,
+            // no para un caso real.
+            _ = _statusForm?.Handle;
 
             // ⚠️ SIN filtro de nombre: se vigila el DIRECTORIO entero.
             //
@@ -137,7 +180,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             {
                 try
                 {
-                    if (_statusForm.IsHandleCreated)
+                    if (_statusForm is { IsHandleCreated: true })
                     {
                         _statusForm.BeginInvoke(() =>
                         {
@@ -166,7 +209,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     protected override void ExitThreadCore()
     {
-        _timer.Stop();
+        _timer?.Stop();
         // Cortar el watcher ANTES de destruir los forms: un evento en vuelo que
         // llegue después no tiene a quién marshalarse.
         if (_statusWatcher is not null)
@@ -180,10 +223,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
         _trayIcon.Dispose();
-        _timer.Dispose();
-        _statusForm.Dispose();
-        _deviceFlyout.Dispose();
-        _remoteBanner.Dispose();
+        _timer?.Dispose();
+        // Pueden no existir si el arranque quedó degradado.
+        _statusForm?.Dispose();
+        _deviceFlyout?.Dispose();
+        _remoteBanner?.Dispose();
         base.ExitThreadCore();
     }
 
@@ -203,6 +247,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
         // recreate rather than let one bad tick crash (and, per
         // Program.cs's restart-once guard, potentially permanently kill)
         // the whole tray.
+        // Arranque degradado: no hay ventanas que refrescar y el icono ya está
+        // puesto. Salir en silencio evita convertir un fallo de construcción en
+        // una excepción cada 5 segundos.
+        if (_degraded || _statusForm is null || _deviceFlyout is null || _remoteBanner is null)
+        {
+            return;
+        }
+
         if (_deviceFlyout.IsDisposed)
         {
             _deviceFlyout = new DeviceInfoFlyout();
@@ -264,7 +316,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void ShowStatus()
     {
-        if (_statusForm.IsDisposed)
+        // Sin ventana (arranque degradado) el menú no puede reventar: sería
+        // volver a matar la bandeja por el mismo camino que veníamos a cerrar.
+        if (_statusForm is null || _statusForm.IsDisposed)
         {
             return;
         }
