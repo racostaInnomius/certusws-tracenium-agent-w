@@ -68,6 +68,22 @@ for console_uid in $(/usr/bin/dscl . -list /Users UniqueID 2>/dev/null | /usr/bi
   /bin/launchctl bootout "gui/$console_uid/com.certusws.tracenium.agentstatus" >/dev/null 2>&1 || true
 done
 
+#     ⚠️ Y AHORA las que launchd no conoce.
+#
+#     `bootout` solo alcanza el trabajo gestionado por launchd. La instancia
+#     que lanzaba el `open --args --setup` de este mismo script NO lo es: es un
+#     proceso suelto, nadie la reinicia y nadie la para. Comprobado en un Mac
+#     con el problema (25-sep-2026): `launchctl print` reconocia un unico PID y
+#     el otro seguia vivo con su propio icono en la barra.
+#
+#     Sin esta linea, un equipo que ya arrastre el icono duplicado se actualiza
+#     y SIGUE con dos: el nuevo binario sabe arbitrar entre instancias, pero la
+#     vieja ya estaba corriendo y no se entera. Solo se iba cerrando sesion.
+#
+#     Va DESPUES del bootout a proposito: con el trabajo aun cargado, KeepAlive
+#     relanzaria lo que acabamos de matar.
+/usr/bin/pkill -f "Tracenium Agent Status.app/Contents/MacOS/TraceniumAgentStatus" >/dev/null 2>&1 || true
+
 # (b) Sanea daemons del sistema antes del replace de archivos por
 #     PackageKit. Aunque PackageKit puede sobrescribir mientras corre,
 #     en algunos macOS Tahoe (15+) hemos visto que el `bootout` posterior
