@@ -151,7 +151,7 @@ public sealed class Router
             "ping" => Task.FromResult(PrivSvcResponse.Success(req.Id, new
             {
                 service = "TraceniumPrivSvc",
-                version = "1.1.82",
+                version = "1.1.83",
                 utc = DateTime.UtcNow.ToString("O")
             })),
 
@@ -216,6 +216,10 @@ public sealed class Router
             // CryptoCertInstall, que escribe en Root y es fontaneria de
             // enrolamiento.
             "cdp.cert.install" => CdpCertInstall.Handle(req),
+            // ADR-0033 F2b — publicar/retirar el desafío HTTP-01 en el webroot.
+            // Fichero con nombre y contenido de forma fija, sólo bajo raíces
+            // permitidas y sin seguir enlaces. Ver AcmeHttp01Shape.
+            "cdp.acme.http01" => AcmeHttp01.Handle(req),
 
             // ADR-0011 fase 0, paso 1 — el estado del pin de anclas.
             // ⚠️ NO es un job: lo pide el ciclo de facts, no el control
