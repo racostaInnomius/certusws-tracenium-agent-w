@@ -525,8 +525,8 @@ PY
       security find-identity -v -p codesigning 2>/dev/null | sed 's/^/         /' >&2
       echo "" >&2
       echo "       Hints:" >&2
-      echo "         * El placeholder 'Developer ID Application: CertusWS Inc. (TEAMID)' es literal —" >&2
-      echo "           reemplázalo con uno de los strings exactos arriba." >&2
+      echo "         * El default es '$DEFAULT_CODESIGN_IDENTITY' — si no sale en la" >&2
+      echo "           lista de arriba, este Mac no tiene ese cert: usa uno de los strings exactos." >&2
       echo "         * Para skipear codesigning en builds locales:  unset TRACENIUM_CODESIGN_IDENTITY" >&2
       echo "         * O explícito sin warning:                      export TRACENIUM_CODESIGN_IDENTITY=skip" >&2
       exit 1
