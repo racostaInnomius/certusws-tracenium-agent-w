@@ -64,6 +64,16 @@ final class PermissionsWindow: NSObject {
     var locationState: (() -> State)?
 
     private static let width: CGFloat = 520
+
+    /// Alto de la banda de marca.
+    ///
+    /// No es una decisión estética: los botones de la ventana viven en los
+    /// ~28 pt superiores (`titlebarHeight`) y, con `fullSizeContentView`, se
+    /// pintan sobre nuestro contenido. La banda tiene que ser lo bastante alta
+    /// para que el logo y los textos quepan POR DEBAJO de ellos.
+    static let headerHeight: CGFloat = 74
+    /// Franja de arriba reservada al sistema. Nada nuestro entra aquí.
+    static let titlebarReserved: CGFloat = 28
     private static let chrome = NSColor(srgbRed: 0x22/255.0, green: 0x28/255.0, blue: 0x31/255.0, alpha: 1)
     private static let cyan = NSColor(srgbRed: 0x8F/255.0, green: 0xFD/255.0, blue: 0xFF/255.0, alpha: 1)
     private static let teal = NSColor(srgbRed: 0x3C/255.0, green: 0x7C/255.0, blue: 0x7C/255.0, alpha: 1)
@@ -124,12 +134,37 @@ final class PermissionsWindow: NSObject {
         return granted ? .granted : .missing
     }
 
-    /// Dónde vive el helper de captura. Junto al PrivSvc, como lo instala el
-    /// paquete; `nil` cuando el .app se ejecuta suelto (desarrollo).
+    /// Dónde vive el helper de captura.
+    ///
+    /// ⚠️ El paquete lo instala bajo `PrivSvc/macos/`, no bajo `PrivSvc/`:
+    /// `build-macos-pkg.sh` lo monta en `$BUILD_DIR/PrivSvc/macos/Tracenium
+    /// Screen Helper.app` y el PrivSvc lo resuelve como hermano de su propio
+    /// `dist/`, que vive en esa misma carpeta. La primera versión de esta
+    /// ventana escribió la ruta un nivel más arriba, así que en un Mac
+    /// instalado el fichero no existía, el estado caía a `.unknown` y el botón
+    /// "Allow…" salía DESACTIVADO: el permiso quedaba inalcanzable justo desde
+    /// la ventana que existe para concederlo.
+    ///
+    /// Por eso los candidatos van en una lista y no en un literal: la ruta
+    /// vieja se queda como reserva para un Mac que aún tenga el paquete
+    /// anterior, igual que hace `privsvc/macos/src/screen-capture.ts`.
+    static let helperCandidates = [
+        "/Library/Application Support/Tracenium/PrivSvc/macos/"
+            + "Tracenium Screen Helper.app/Contents/MacOS/tracenium-screencap",
+        "/Library/Application Support/Tracenium/PrivSvc/"
+            + "Tracenium Screen Helper.app/Contents/MacOS/tracenium-screencap",
+    ]
+
+    /// `nil` cuando el .app se ejecuta suelto (desarrollo).
     private static func helperURL() -> URL? {
-        let path = "/Library/Application Support/Tracenium/PrivSvc/"
-            + "Tracenium Screen Helper.app/Contents/MacOS/tracenium-screencap"
-        return FileManager.default.isExecutableFile(atPath: path) ? URL(fileURLWithPath: path) : nil
+        if let override = ProcessInfo.processInfo.environment["TRACENIUM_SCREENCAP_HELPER"],
+           !override.trimmingCharacters(in: .whitespaces).isEmpty {
+            return URL(fileURLWithPath: override.trimmingCharacters(in: .whitespaces))
+        }
+        for path in helperCandidates where FileManager.default.isExecutableFile(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        return nil
     }
 
     @discardableResult
@@ -275,15 +310,21 @@ final class PermissionsWindow: NSObject {
 
         bar.addSubview(logo); bar.addSubview(name); bar.addSubview(slogan)
         NSLayoutConstraint.activate([
-            bar.heightAnchor.constraint(equalToConstant: 46),
+            bar.heightAnchor.constraint(equalToConstant: Self.headerHeight),
             logo.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 18),
-            logo.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            // ⚠️ Anclado ABAJO, no al centro. Esta ventana es `.titled` y
+            // `.fullSizeContentView`, así que los tres botones del sistema se
+            // dibujan ENCIMA de la banda, en los ~28 pt de arriba. Con la barra
+            // de 46 pt y el contenido centrado, el logo caía justo debajo del
+            // botón rojo: parecía decoración y era el botón de cerrar. Bajando
+            // el bloque por debajo de esa franja, el logo vuelve a ser logo.
+            logo.bottomAnchor.constraint(equalTo: bar.bottomAnchor, constant: -13),
             logo.widthAnchor.constraint(equalToConstant: 22),
             logo.heightAnchor.constraint(equalToConstant: 22),
             name.leadingAnchor.constraint(equalTo: logo.trailingAnchor, constant: 10),
-            name.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            name.centerYAnchor.constraint(equalTo: logo.centerYAnchor),
             slogan.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -18),
-            slogan.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            slogan.centerYAnchor.constraint(equalTo: logo.centerYAnchor),
         ])
         return bar
     }

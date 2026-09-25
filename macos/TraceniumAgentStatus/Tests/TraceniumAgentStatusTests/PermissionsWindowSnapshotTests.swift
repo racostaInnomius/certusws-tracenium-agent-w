@@ -60,4 +60,40 @@ final class PermissionsWindowSnapshotTests: XCTestCase {
         XCTAssertTrue(chips.contains("Unknown"), "el estado desconocido se dice, no se disfraza")
         XCTAssertFalse(chips.contains("Granted"), "y desde luego no se pinta como concedido")
     }
+
+    /// 🔴 Los botones de la ventana tapaban el logo.
+    ///
+    /// Captura del usuario, 25-sep-2026: con `fullSizeContentView` el sistema
+    /// pinta cerrar/minimizar/zoom SOBRE nuestra banda, y con la banda de 46 pt
+    /// y el contenido centrado el logo caía justo bajo el botón rojo. Quien
+    /// fuera a tocar el logo cerraba la ventana — es decir, el sitio más obvio
+    /// para pulsar era el que hacía desaparecer la pantalla que pide el
+    /// permiso.
+    ///
+    /// La invariante no es «la barra mide X»: es que **nada nuestro entra en la
+    /// franja del sistema**. Así aguanta aunque cambien las alturas.
+    func testNothingOfOursSitsUnderTheWindowButtons() throws {
+        let w = PermissionsWindow()
+        w.locationState = { .granted }
+        guard let content = w.contentViewForTests else { throw XCTSkip("sin contenido") }
+        content.layoutSubtreeIfNeeded()
+
+        func deep(_ v: NSView) -> [NSView] { v.subviews + v.subviews.flatMap(deep) }
+        // La banda es la única vista con el cromo oscuro de marca.
+        let reserved = PermissionsWindow.titlebarReserved
+
+        // Coordenadas de la ventana: y=0 abajo. La franja del sistema es la
+        // cinta de `reserved` puntos pegada ARRIBA del contenido.
+        let topEdge = content.bounds.maxY
+        var offenders: [String] = []
+        for v in deep(content) where (v is NSImageView) || (v is NSTextField) {
+            let f = v.convert(v.bounds, to: content)
+            if f.maxY > topEdge - reserved {
+                let kind = (v as? NSTextField)?.stringValue ?? "logo"
+                offenders.append("\(kind) llega a y=\(Int(topEdge - f.maxY)) pt del borde")
+            }
+        }
+        XCTAssertTrue(offenders.isEmpty,
+                      "esto queda debajo de los botones del sistema: \(offenders.joined(separator: ", "))")
+    }
 }

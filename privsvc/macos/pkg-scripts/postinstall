@@ -309,7 +309,14 @@ if [ -n "$SETUP_USER" ] && [ "$SETUP_USER" != "root" ]; then
 fi
 
 if [ -n "$SETUP_UID" ] && [ -x "/Applications/Tracenium Agent Status.app/Contents/MacOS/TraceniumAgentStatus" ]; then
-  /bin/launchctl asuser "$SETUP_UID" /usr/bin/open -a "/Applications/Tracenium Agent Status.app" --args --setup >/dev/null 2>&1 || true
+  # ⚠️ `-n` (nueva instancia) a proposito, aunque el LaunchAgent acabe de
+  # arrancar una. Sin `-n`, cuando LaunchServices ya tiene registrada la
+  # instancia del kickstart, `open` se limita a ACTIVARLA y los `--args` se
+  # tiran: la ventana de permisos no se abriria nunca. Con `-n` siempre hay un
+  # proceso que recibe el `--setup`; si resulta sobrar, entrega el encargo a la
+  # instancia viva y se apaga solo (ver SingleInstance.swift). Antes de ese
+  # arbitraje esto dejaba DOS iconos en la barra de menus.
+  /bin/launchctl asuser "$SETUP_UID" /usr/bin/open -n -a "/Applications/Tracenium Agent Status.app" --args --setup >/dev/null 2>&1 || true
   echo "Permissions window requested for console uid $SETUP_UID"
 else
   # Sin sesion grafica no hay a quien preguntarle. No es un fallo: el boton
