@@ -155,6 +155,37 @@ describe("runUpdateTask outcome contract", () => {
     });
   });
 
+  // W11_JPR_LAB acked `update_started` four times with no task ever running.
+  // The runner already said when schtasks refused the task; this layer ignored
+  // it. With the task now built from XML, a rejected definition must fail the
+  // job, not look like an install in progress.
+  it("reports `failed` when the task scheduler refused the task", async () => {
+    metadataOffering("1.1.82");
+    performWindowsMsiUpdate.mockResolvedValue({
+      started: false,
+      command: "schtasks.exe",
+      args: ["/create"],
+      error: "schtasks_failed_rc_1",
+    });
+
+    const outcome = await runUpdateTask(ctx, { force: true, targetVersion: "1.1.82" });
+
+    expect(outcome).toEqual({ status: "failed", error: "schtasks_failed_rc_1" });
+  });
+
+  it("the payload-override path reports the refusal too", async () => {
+    performWindowsMsiUpdate.mockResolvedValue({ started: false, command: "schtasks.exe", args: [] });
+
+    const outcome = await runUpdateTask(ctx, {
+      force: true,
+      targetVersion: "1.1.82",
+      downloadUrl: "https://example.test/agent.msi",
+      expectedHash: "b".repeat(64),
+    });
+
+    expect(outcome).toEqual({ status: "failed", error: "installer_not_launched" });
+  });
+
   it("distinguishes a legitimate no-op from a failure", async () => {
     fetchAgentMetadata.mockResolvedValue({});
     checkForAvailableUpdate.mockReturnValue({

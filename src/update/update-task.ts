@@ -93,6 +93,25 @@ function servedTier(): string {
   }
 }
 
+/**
+ * The installer was not launched (today: Windows, schtasks refused the task).
+ *
+ * The per-OS updater already returned `started: false` with the reason, and
+ * this used to ack `update_started` anyway — the same silence that kept
+ * W11_JPR_LAB on 1.1.77, one layer up. Moving the task to XML makes a
+ * rejected definition possible, so the refusal has to reach the job.
+ */
+function installerNotLaunched(
+  run: { started?: boolean; error?: string },
+  logger?: { error?: (...args: any[]) => void }
+): UpdateOutcome | null {
+  if (run?.started !== false) return null;
+  const error = run.error || "installer_not_launched";
+  markUpdateFailed(error);
+  logger?.error?.("[update] installer was not launched", { error });
+  return { status: "failed", error };
+}
+
 function nowMs() {
   return Date.now();
 }
@@ -314,6 +333,9 @@ export async function runUpdateTask(
         ? await performWindowsMsiUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride, dpBaseUrls)
         : await performLinuxUpdate(ctx, targetVersion, expectedHashOverride, downloadUrlOverride, dpBaseUrls);
 
+    const notLaunched = installerNotLaunched(run, logger);
+    if (notLaunched) return notLaunched;
+
     logger?.warn?.("[update] update started (payload override)", {
       targetVersion,
       format: isMacos ? "pkg" : isWindows ? "msi" : "deb-or-rpm",
@@ -435,6 +457,9 @@ export async function runUpdateTask(
       : isWindows
         ? await performWindowsMsiUpdate(ctx, effectiveVersion, expectedHash, undefined, dpBaseUrls)
         : await performLinuxUpdate(ctx, effectiveVersion, expectedHash, undefined, dpBaseUrls);
+
+    const notLaunched = installerNotLaunched(run, logger);
+    if (notLaunched) return notLaunched;
 
     logger?.warn?.("[update] update started", {
       latestVersion: effectiveVersion,

@@ -60,4 +60,6 @@ export interface RunUpdateResult {
   started: boolean;
   command: string;
   args: string[];
+  /** Why the installer was not launched, when `started` is false. */
+  error?: string;
 }

@@ -343,7 +343,7 @@ export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
         command: "schtasks.exe",
         args: schArgs,
         error: `schtasks_failed_rc_${code}`
-      } as any;
+      };
     }
 
     console.log("[update] scheduled msiexec via Task Scheduler", {
