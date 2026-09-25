@@ -7,7 +7,21 @@
   <license file="license.html" />
   <conclusion file="conclusion.html" />
 
+  <!--
+    El fondo cubre TODA la ventana, no sólo la banda izquierda: el divisor
+    cyan de la imagen coincide con la separación de paneles del Installer.
+    La lista de pasos (Introduction / Read Me / License / …) la dibuja el
+    SISTEMA encima, con los colores de etiqueta del tema activo — nosotros
+    no podemos teñirla. Por eso hacen falta las dos variantes:
+
+      claro  → banda blanca  (el sistema pinta las etiquetas oscuras)
+      oscuro → banda navy    (el sistema pinta las etiquetas claras)
+
+    Con una sola imagen, el tema contrario queda ilegible. Si algún día se
+    toca una, hay que tocar la otra.
+  -->
   <background file="tracenium_pgk.png" alignment="center" scaling="proportional" />
+  <background-darkAqua file="tracenium_pgk_dark.png" alignment="center" scaling="proportional" />
 
   <!--
     hostArchitectures: declarando arm64+x86_64 explícitamente, macOS

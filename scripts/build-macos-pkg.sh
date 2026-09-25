@@ -912,10 +912,14 @@ else
   echo "→ node-datachannel OK (carga + PeerConnection)"
 fi
 
-if [ ! -f "$RESOURCES_DIR/tracenium_pgk.png" ]; then
-  echo "Missing installer background: $RESOURCES_DIR/tracenium_pgk.png" >&2
-  exit 1
-fi
+for bg in tracenium_pgk.png tracenium_pgk_dark.png; do
+  if [ ! -f "$RESOURCES_DIR/$bg" ]; then
+    echo "Missing installer background: $RESOURCES_DIR/$bg" >&2
+    echo "       Distribution.xml declara las dos variantes (claro/oscuro);" >&2
+    echo "       sin una de ellas la lista de pasos queda ilegible en ese tema." >&2
+    exit 1
+  fi
+done
 
 if [ ! -f "$ICON_PNG" ]; then
   echo "Missing installer icon source: $ICON_PNG" >&2
