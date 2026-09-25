@@ -26,7 +26,7 @@
 
 import tls from "tls";
 import os from "os";
-import { STARTTLS_PORTS, StartTlsError, connectWithStartTls } from "../starttls";
+import { STARTTLS_PORTS, StartTlsError, connectWithStartTls, type StartTlsProtocol } from "../starttls";
 import type { AgentContext } from "../../../core/agent-context";
 import type { CdpCertItem, CdpStoreInfo } from "../../../domain/cdp-types";
 import { parseCertToItem } from "../parse-cert";
@@ -134,13 +134,24 @@ type EndpointProbe = {
  * sondeo de loopback y el rol Probe: lo unico que cambia es a quien se
  * conecta y que SNI se manda. Nunca rechaza.
  */
-type ProbeOutcome = { ok: true; probe: EndpointProbe } | { ok: false; code: string };
+export type ProbeOutcome = { ok: true; probe: EndpointProbe } | { ok: false; code: string };
+
+/**
+ * Lo que se le puede pedir de mas a una sonda.
+ *
+ * `startTls` FUERZA el preambulo en un puerto que no esta en la tabla
+ * (un SMTP en 2525, un LDAP en 1389). Sin el, la sonda solo sabe hablar
+ * StartTLS en los puertos de siempre, y un servicio mudado de puerto
+ * quedaria como «no contesta» cuando en realidad esta esperando su
+ * EHLO. Ausente = se decide por puerto, como siempre.
+ */
+export type ProbeExtra = { ecdhCurve?: string; startTls?: StartTlsProtocol };
 
 export function probeTlsEndpoint(
   host: string,
   port: number,
   servername: string,
-  extra: { ecdhCurve?: string } = {}
+  extra: ProbeExtra = {}
 ): Promise<EndpointProbe | null> {
   return probeTlsEndpointDetailed(host, port, servername, extra).then((o) => (o.ok ? o.probe : null));
 }
@@ -155,8 +166,9 @@ export function probeTlsEndpointDetailed(
   host: string,
   port: number,
   servername: string,
-  extra: { ecdhCurve?: string } = {}
+  extra: ProbeExtra = {}
 ): Promise<ProbeOutcome> {
+  const { startTls: startTlsForzado, ...tlsExtra } = extra;
   return new Promise((resolve) => {
     let settled = false;
     let socket: tls.TLSSocket | null = null;
@@ -171,7 +183,9 @@ export function probeTlsEndpointDetailed(
       resolve(value);
     };
 
-    const startTls = STARTTLS_PORTS[port];
+    // Lo que pide el llamante manda sobre la tabla de puertos; sin
+    // peticion, la tabla de siempre.
+    const startTls = startTlsForzado ?? STARTTLS_PORTS[port];
     const onSecure = () => {
           const s = socket!;
           const peer = s.getPeerCertificate(true) as any;
@@ -210,7 +224,10 @@ export function probeTlsEndpointDetailed(
       rejectUnauthorized: false,
       servername,
       checkServerIdentity: () => undefined,
-      ...extra
+      // ⚠️ `startTls` NO entra aqui: es nuestro, no de tls.connect. Un
+      // `ConnectionOptions` con una clave desconocida no falla, se
+      // ignora — y el preambulo no habria ocurrido.
+      ...tlsExtra
     };
 
     try {
@@ -257,22 +274,48 @@ const HANDSHAKE_REJECTED = /HANDSHAKE_FAILURE|NO_SHARED_GROUP|NO_SHARED_CIPHER|I
 export async function probeTlsWithKem(
   host: string,
   port: number,
-  servername: string
+  servername: string,
+  extra: { startTls?: StartTlsProtocol } = {}
 ): Promise<TlsProbeResult | null> {
-  const first = await probeTlsEndpoint(host, port, servername);
-  if (!first) return null;
+  const o = await probeTlsWithKemDetailed(host, port, servername, extra);
+  return o.ok ? o.probe : null;
+}
 
-  const out: TlsProbeResult = { ...first };
-  if (first.kexGroup && /MLKEM/i.test(first.kexGroup)) {
+/** Igual que probeTlsWithKem, pero conserva el POR QUE de un fallo. */
+export type KemProbeOutcome = { ok: true; probe: TlsProbeResult } | { ok: false; code: string };
+
+/**
+ * ⚠️ Existe porque `null` no es una respuesta que se pueda reportar.
+ * Para el inventario basta con «ese puerto no dio certificado»; para la
+ * sonda de verificacion de ADR-0033 D4, NO: ahi hay que distinguir «no
+ * contesta» (que no es un desajuste) de «contesta con otro
+ * certificado» (que si lo es). Un `null` mudo convierte lo primero en
+ * lo segundo, que es exactamente el falso rojo —o el falso verde, segun
+ * quien lo lea— que la decision D4 existe para impedir.
+ */
+export async function probeTlsWithKemDetailed(
+  host: string,
+  port: number,
+  servername: string,
+  extra: { startTls?: StartTlsProtocol } = {}
+): Promise<KemProbeOutcome> {
+  const first = await probeTlsEndpointDetailed(host, port, servername, extra);
+  if (!first.ok) return first;
+
+  const out: TlsProbeResult = { ...first.probe };
+  if (out.kexGroup && /MLKEM/i.test(out.kexGroup)) {
     out.kemHybrid = true;
-    return out;
+    return { ok: true, probe: out };
   }
   if (!kemProbeSupported()) {
     out.kemHybrid = null;
     out.kemProbeError = "client_openssl_lacks_group";
-    return out;
+    return { ok: true, probe: out };
   }
-  const forced = await probeTlsEndpointDetailed(host, port, servername, { ecdhCurve: HYBRID_KEM_GROUP });
+  const forced = await probeTlsEndpointDetailed(host, port, servername, {
+    ...extra,
+    ecdhCurve: HYBRID_KEM_GROUP
+  });
   if (forced.ok) {
     out.kemHybrid = true;
   } else if (HANDSHAKE_REJECTED.test(forced.code)) {
@@ -282,7 +325,7 @@ export async function probeTlsWithKem(
     out.kemHybrid = null;
     out.kemProbeError = forced.code;
   }
-  return out;
+  return { ok: true, probe: out };
 }
 
 /**

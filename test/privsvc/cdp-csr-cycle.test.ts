@@ -162,13 +162,85 @@ describe("cdp.csr.generate — Linux (openssl real)", () => {
       req("cdp.csr.generate", { keyId: "x1", subject: "CN=x", eku: "codeSigning" })
     );
     expect(eku.ok).toBe(false);
-    const alg: any = await lin.handleCdpCsrGenerate(
-      req("cdp.csr.generate", { keyId: "x2", subject: "CN=x", keyAlgorithm: "ECDSA_P256" })
-    );
-    expect(alg.ok).toBe(false);
-    // Ninguno de los dos llegó a crear clave.
+    // ⚠️ ADR-0033 F1 cambió lo que se admite: ECDSA_P256 ya NO se
+    // rechaza (antes sí, y este mismo test lo afirmaba). Lo que no puede
+    // cambiar es que lo DESCONOCIDO se rechace en vez de caer a algo más
+    // débil — P-521 no está en F1 y RSA_1024 no estará nunca.
+    for (const [keyId, keyAlgorithm] of [["x2", "ECDSA_P521"], ["x3", "RSA_1024"], ["x4", "ED25519"]]) {
+      const alg: any = await lin.handleCdpCsrGenerate(
+        req("cdp.csr.generate", { keyId, subject: "CN=x", keyAlgorithm })
+      );
+      expect(alg.ok, `${keyAlgorithm} debería rechazarse`).toBe(false);
+      expect(alg.error.message).toMatch(/no soportado/);
+      expect(fs.existsSync(lin.cdpKeyPath(keyId))).toBe(false);
+    }
+    // Y el eku tampoco llegó a crear clave.
     expect(fs.existsSync(lin.cdpKeyPath("x1"))).toBe(false);
-    expect(fs.existsSync(lin.cdpKeyPath("x2"))).toBe(false);
+  });
+
+  // ── ADR-0033 F1 — los cinco algoritmos, con openssl de juez ────────
+  //
+  // Se comprueba el TIPO de clave y el algoritmo de FIRMA que salen del
+  // CSR, no que la llamada devolviera ok. Un `-pkeyopt` mal escrito no
+  // falla: openssl coge su valor por defecto y emite un CSR perfecto con
+  // una clave que no es la pedida — y el inventario diría lo que se
+  // pidió, no lo que hay.
+  it.each([
+    ["RSA_3072", /Public-Key:\s*\(3072 bit\)/, /sha256WithRSAEncryption/],
+    ["RSA_4096", /Public-Key:\s*\(4096 bit\)/, /sha256WithRSAEncryption/],
+    ["ECDSA_P256", /NIST CURVE:\s*P-256|prime256v1/i, /ecdsa-with-SHA256/],
+    // El hash acompaña a la curva: P-384 se firma con SHA-384.
+    ["ECDSA_P384", /NIST CURVE:\s*P-384|secp384r1/i, /ecdsa-with-SHA384/]
+  ])("emite %s de verdad, y openssl lo confirma", async (keyAlgorithm, clave, firma) => {
+    const id = keyAlgorithm.toLowerCase().replace(/_/g, "-");
+    const r: any = await lin.handleCdpCsrGenerate(
+      req("cdp.csr.generate", {
+        keyId: id,
+        subject: "CN=web01.corp,O=Acme",
+        dnsNames: ["web01.corp"],
+        eku: "serverAuth",
+        keyAlgorithm
+      })
+    );
+    expect(r.ok).toBe(true);
+    // Se devuelve el que se USÓ. Si esto fuera un literal, un cambio de
+    // algoritmo pasaría desapercibido en el inventario.
+    expect(r.result.keyAlgorithm).toBe(keyAlgorithm);
+
+    const v = verificaCsr(r.result.csrPem, raiz);
+    expect(v.status).toBe(0);
+    expect(v.salida).toMatch(/verify OK/i);
+    expect(v.texto).toMatch(clave);
+    expect(v.texto).toMatch(firma);
+    // El SAN pedido sigue viajando: los algoritmos no lo tocan.
+    expect(v.texto).toContain("DNS:web01.corp");
+  }, 60_000);
+
+  it("sin keyAlgorithm sigue saliendo RSA-2048", async () => {
+    // Un control plane que todavía no manda el campo tiene que emitir
+    // exactamente lo de antes de ADR-0033.
+    const r: any = await lin.handleCdpCsrGenerate(
+      req("cdp.csr.generate", { keyId: "por-defecto", subject: "CN=x" })
+    );
+    expect(r.ok).toBe(true);
+    expect(r.result.keyAlgorithm).toBe("RSA_2048");
+    expect(verificaCsr(r.result.csrPem, raiz).texto).toMatch(/Public-Key:\s*\(2048 bit\)/);
+  }, 60_000);
+
+  it("⭐ la curva viaja como NOMBRE, no con los parámetros explícitos", () => {
+    // Sin `ec_param_enc:named_curve` openssl escribe los coeficientes de
+    // la curva dentro de la clave y del CSR. Verifica igual, y una CA
+    // seria lo rechaza: los perfiles públicos exigen curva con nombre.
+    // Se mira el fichero de clave, que es donde el defecto nacería.
+    const pem = fs.readFileSync(lin.cdpKeyPath("ecdsa-p384"), "utf8");
+    const texto = execFileSync("/usr/bin/openssl", ["pkey", "-in", lin.cdpKeyPath("ecdsa-p384"), "-noout", "-text"], {
+      encoding: "utf8"
+    });
+    expect(pem).toContain("PRIVATE KEY");
+    expect(texto).toMatch(/NIST CURVE:\s*P-384|secp384r1/i);
+    // Los parámetros explícitos se delatan imprimiendo el primo y las
+    // constantes A/B de la curva.
+    expect(texto).not.toMatch(/\bPrime:|\bA:\s*$/m);
   });
 });
 
@@ -310,6 +382,53 @@ describe.runIf(enMac && haySwift)("cdp.csr.generate — macOS (llavero real)", (
     // por el ACL con «User canceled», que no es lo mismo.
     expect(`${r.stdout}${r.stderr}`).toMatch(/cannot be retrieved/i);
   });
+
+  // ── ADR-0033 F1 en el llavero ──────────────────────────────────────
+  //
+  // El PKCS#10 se codifica a mano en el helper (la clave no sale, así que
+  // `openssl req` no puede firmarla), y en ECDSA cambian TRES cosas a la
+  // vez: el AlgorithmIdentifier de la SPKI lleva la curva, el de la firma
+  // NO lleva parámetros —ni NULL— y el digest es SHA-384 en P-384.
+  // Equivocarse en cualquiera de las tres produce un DER que `toContain`
+  // daría por bueno y que la CA rechaza. Juzga openssl.
+  it.each([
+    ["ECDSA_P256", /NIST CURVE:\s*P-256|prime256v1/i, /ecdsa-with-SHA256/],
+    ["ECDSA_P384", /NIST CURVE:\s*P-384|secp384r1/i, /ecdsa-with-SHA384/],
+    ["RSA_3072", /Public-Key:\s*\(3072 bit\)/, /sha256WithRSAEncryption/]
+  ])("emite %s desde el llavero y openssl lo verifica", async (keyAlgorithm, clave, firma) => {
+    const keyId = `ec-${keyAlgorithm.toLowerCase().replace(/_/g, "-")}`;
+    const r: any = await mac.handleCdpCsrGenerate(
+      req("cdp.csr.generate", {
+        keyId,
+        subject: "CN=web02.corp,O=Acme",
+        dnsNames: ["web02.corp"],
+        eku: "serverAuth",
+        keyAlgorithm
+      })
+    );
+    expect(r.ok).toBe(true);
+    expect(r.result.keyAlgorithm).toBe(keyAlgorithm);
+    expect(r.result.keyStore).toBe("keychain-nonextractable");
+
+    const v = verificaCsr(r.result.csrPem, dir);
+    expect(v.status).toBe(0);
+    expect(v.salida).toMatch(/verify OK/i);
+    expect(v.texto).toMatch(clave);
+    expect(v.texto).toMatch(firma);
+    expect(v.texto).toContain("DNS:web02.corp");
+
+    await mac.handleCdpKeyDestroy(req("cdp.key.destroy", { keyId }));
+  }, 60_000);
+
+  it("el llavero también rechaza lo desconocido, sin crear nada", async () => {
+    const r: any = await mac.handleCdpCsrGenerate(
+      req("cdp.csr.generate", { keyId: "no-existe", subject: "CN=x", keyAlgorithm: "ECDSA_P521" })
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error.message).toMatch(/no soportado/);
+    const lista: any = await mac.handleCdpKeyList(req("cdp.key.list", {}));
+    expect(lista.result.keys.some((k: any) => k.keyId === "no-existe")).toBe(false);
+  }, 30_000);
 
   it("9.d — sale como huérfana con su solicitud, y destruir la quita", async () => {
     const lista: any = await mac.handleCdpKeyList(req("cdp.key.list", {}));

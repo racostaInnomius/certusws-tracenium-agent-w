@@ -145,6 +145,12 @@
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\CertIssuedBy.cs" />
     <!-- Ola 1.3b — proveedor → almacenamiento y política de exportación (lógica pura). -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\CdpKeyInfoShape.cs" />
+    <!-- ADR-0033 F1 — qué algoritmos admite `cdp.csr.generate`. La tabla
+         se escribió aparte de CdpKeys.cs (CNG + ACLs, `net8.0-windows`)
+         justamente para poder probarse aquí: lo que hay que garantizar es
+         que un algoritmo desconocido se RECHACE y no caiga en silencio a
+         uno más débil, y eso es una decisión de tabla. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\CdpKeyAlgorithm.cs" />
     <!-- A qué peers sirve un Distribution Point: el conjunto de CAs emisoras
          aceptadas y la criba de las que entrega el control plane. Puro
          (encima de CertIssuedBy); la lectura de almacenes y del fichero se

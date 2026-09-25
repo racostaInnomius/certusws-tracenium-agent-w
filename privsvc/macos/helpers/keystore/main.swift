@@ -57,7 +57,8 @@
 //
 // ── Contrato (una linea JSON en stdout, nada mas) ───────────────────
 //
-//   create  --label L [--bits N]     -> {"ok":true,"label":L,"created":true}
+//   create  --label L [--alg A] [--bits N]
+//                                    -> {"ok":true,"label":L,"created":true}
 //   csr     --label L --subject "CN=a,O=b,OU=c"
 //           [--dns d]... [--uri u]... [--eku clientAuth|serverAuth]
 //                                    -> {"ok":true,"csrPem":"..."}
@@ -131,6 +132,15 @@ enum OID {
   static let ou: [UInt8] = [0x55, 0x04, 0x0B]
   static let rsaEncryption: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01]
   static let sha256WithRSA: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B]
+  // ADR-0033 F1 — ECDSA. `ecPublicKey` con la curva como PARAMETRO del
+  // AlgorithmIdentifier; la firma, en cambio, no lleva parametros (ni
+  // siquiera NULL: en ecdsa-with-SHAx tienen que estar AUSENTES, y un
+  // NULL de mas hace que algunas CAs rechacen el PKCS#10).
+  static let ecPublicKey: [UInt8] = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01]
+  static let prime256v1: [UInt8] = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07]
+  static let secp384r1: [UInt8] = [0x2B, 0x81, 0x04, 0x00, 0x22]
+  static let ecdsaWithSHA256: [UInt8] = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02]
+  static let ecdsaWithSHA384: [UInt8] = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x03]
   static let extensionRequest: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x09, 0x0E]
   static let keyUsage: [UInt8] = [0x55, 0x1D, 0x0F]
   static let extKeyUsage: [UInt8] = [0x55, 0x1D, 0x25]
@@ -175,14 +185,46 @@ func findKey(_ kc: SecKeychain, _ label: String, priv: Bool) -> SecKey? {
 
 // ──────────────────────────── comandos ─────────────────────────────
 
-func cmdCreate(kc: SecKeychain, label: String, bits: Int) -> Never {
+// ── Algoritmos admitidos (ADR-0033 F1) ─────────────────────────────
+//
+// Gemelo de la tabla de `CdpKeyAlgorithm.cs` y de las de
+// `privsvc/{macos,linux}/src/cdp-keys.ts`. Los cuatro tienen que
+// admitir y rechazar EXACTAMENTE lo mismo: la misma peticion no puede
+// producir certificados distintos segun el sistema operativo.
+//
+// ⚠️ Lo desconocido se RECHAZA. Caer a RSA-2048 daria una clave mas
+// debil que la pedida y un CSR que el inventario declararia como lo
+// pedido — un falso verde que solo se ve auditando la CA.
+
+struct KeyAlg {
+  let name: String
+  let isEC: Bool
+  let bits: Int
+}
+
+let SUPPORTED_ALGS: [String: KeyAlg] = [
+  "RSA_2048": KeyAlg(name: "RSA_2048", isEC: false, bits: 2048),
+  "RSA_3072": KeyAlg(name: "RSA_3072", isEC: false, bits: 3072),
+  "RSA_4096": KeyAlg(name: "RSA_4096", isEC: false, bits: 4096),
+  "ECDSA_P256": KeyAlg(name: "ECDSA_P256", isEC: true, bits: 256),
+  "ECDSA_P384": KeyAlg(name: "ECDSA_P384", isEC: true, bits: 384)
+]
+
+/// `nil`/vacio → RSA_2048, que es lo que emitia antes de ADR-0033.
+func resolveAlg(_ raw: String?) -> KeyAlg? {
+  let pedido = (raw ?? "").trimmingCharacters(in: .whitespaces).uppercased()
+  if pedido.isEmpty { return SUPPORTED_ALGS["RSA_2048"] }
+  return SUPPORTED_ALGS[pedido]
+}
+
+func cmdCreate(kc: SecKeychain, label: String, alg: KeyAlg) -> Never {
   if findKey(kc, label, priv: true) != nil {
     emit(["ok": true, "label": label, "created": false])
   }
   var err: Unmanaged<CFError>?
   let attrs: [String: Any] = [
-    kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
-    kSecAttrKeySizeInBits as String: bits,
+    kSecAttrKeyType as String: alg.isEC ? kSecAttrKeyTypeECSECPrimeRandom : kSecAttrKeyTypeRSA,
+    kSecAttrKeySizeInBits as String: alg.bits,
     kSecAttrIsPermanent as String: true,
     // La linea entera de este fichero. Sin ella la clave es exportable
     // y esto no seria mejor que el PEM en disco que viene a sustituir.
@@ -194,7 +236,7 @@ func cmdCreate(kc: SecKeychain, label: String, bits: Int) -> Never {
   guard SecKeyCreateRandomKey(attrs as CFDictionary, &err) != nil else {
     die("key_create_failed", String(describing: err!.takeRetainedValue()))
   }
-  emit(["ok": true, "label": label, "created": true, "bits": bits])
+  emit(["ok": true, "label": label, "created": true, "bits": alg.bits, "keyAlgorithm": alg.name])
 }
 
 /// Enumera las claves del almacen bajo un prefijo.
@@ -392,19 +434,39 @@ func cmdDelete(kc: SecKeychain, label: String) -> Never {
 
 // ─────────────────────────── CSR (PKCS#10) ─────────────────────────
 
+/// La forma de la clave, LEIDA DE LA CLAVE.
+///
+/// ⚠️ No se toma del argumento `--alg`. El CSR se firma despues de crear
+/// la clave, a veces en otra invocacion del helper, y un desajuste entre
+/// lo que se pide y lo que hay produciria un PKCS#10 con un
+/// AlgorithmIdentifier que no corresponde a la clave — firmado y todo,
+/// asi que la CA lo rechaza o, peor, lo firma y nada lo valida despues.
+/// La clave sabe lo que es; se le pregunta a ella.
+func keyShape(_ key: SecKey) -> (isEC: Bool, bits: Int) {
+  guard let attrs = SecKeyCopyAttributes(key) as? [String: Any] else {
+    die("key_attrs_unavailable", "no se pudieron leer los atributos de la clave")
+  }
+  let tipo = attrs[kSecAttrKeyType as String] as? String
+  let esEC = tipo == (kSecAttrKeyTypeECSECPrimeRandom as String)
+  let bits = (attrs[kSecAttrKeySizeInBits as String] as? Int) ?? (esEC ? 256 : 2048)
+  return (esEC, bits)
+}
+
 /// SubjectPublicKeyInfo a partir de la clave publica.
 ///
-/// La publica SI es extraible —lo es por definicion, no es un descuido—
-/// y sale en formato PKCS#1, que es justo el contenido del BIT STRING.
-func spki(_ pub: SecKey) -> [UInt8] {
+/// La publica SI es extraible —lo es por definicion, no es un descuido—.
+/// En RSA sale en PKCS#1 y en EC como punto sin comprimir (04‖X‖Y); en
+/// los dos casos es justo el contenido del BIT STRING, y lo unico que
+/// cambia es el AlgorithmIdentifier que lo precede.
+func spki(_ pub: SecKey, isEC: Bool, bits: Int) -> [UInt8] {
   var err: Unmanaged<CFError>?
   guard let raw = SecKeyCopyExternalRepresentation(pub, &err) as Data? else {
     die("public_key_unavailable", String(describing: err!.takeRetainedValue()))
   }
-  return DER.sequence([
-    DER.sequence([DER.oid(OID.rsaEncryption), DER.null()]),
-    DER.bits([UInt8](raw))
-  ])
+  let algId: [UInt8] = isEC
+    ? DER.sequence([DER.oid(OID.ecPublicKey), DER.oid(bits >= 384 ? OID.secp384r1 : OID.prime256v1)])
+    : DER.sequence([DER.oid(OID.rsaEncryption), DER.null()])
+  return DER.sequence([algId, DER.bits([UInt8](raw))])
 }
 
 /// Name a partir de "CN=a,O=b,OU=c".
@@ -468,25 +530,40 @@ func cmdCsr(kc: SecKeychain, label: String, subject: String, dns: [String], uri:
     die("public_key_unavailable", "no se pudo derivar la clave publica")
   }
 
+  let forma = keyShape(priv)
+
   let cri = DER.sequence([
     DER.integer(0),
     name(subject),
-    spki(pub),
+    spki(pub, isEC: forma.isEC, bits: forma.bits),
     // attributes es [0] IMPLICIT SET OF Attribute. Va SIEMPRE, aunque
     // sea vacio: es obligatorio en la estructura, no opcional.
     DER.context(0, constructed: true, extensionsAttribute(dns: dns, uri: uri, eku: eku))
   ])
 
+  // El hash acompaña a la curva: SHA-384 para P-384, SHA-256 para el
+  // resto. Firmar P-384 con SHA-256 es legal y desperdicia la curva que
+  // alguien eligio a proposito.
+  let usaSha384 = forma.isEC && forma.bits >= 384
+  let algoritmoFirma: SecKeyAlgorithm = forma.isEC
+    ? (usaSha384 ? .ecdsaSignatureMessageX962SHA384 : .ecdsaSignatureMessageX962SHA256)
+    : .rsaSignatureMessagePKCS1v15SHA256
+  // ⚠️ En ECDSA el AlgorithmIdentifier va SIN parametros; en RSA lleva
+  // NULL. No es intercambiable.
+  let algIdFirma: [UInt8] = forma.isEC
+    ? DER.sequence([DER.oid(usaSha384 ? OID.ecdsaWithSHA384 : OID.ecdsaWithSHA256)])
+    : DER.sequence([DER.oid(OID.sha256WithRSA), DER.null()])
+
   var err: Unmanaged<CFError>?
   guard let firma = SecKeyCreateSignature(
-    priv, .rsaSignatureMessagePKCS1v15SHA256, Data(cri) as CFData, &err
+    priv, algoritmoFirma, Data(cri) as CFData, &err
   ) as Data? else {
     die("sign_failed", String(describing: err!.takeRetainedValue()))
   }
 
   let csr = DER.sequence([
     cri,
-    DER.sequence([DER.oid(OID.sha256WithRSA), DER.null()]),
+    algIdFirma,
     DER.bits([UInt8](firma))
   ])
 
@@ -542,7 +619,21 @@ guard let label = opt("label") else { die("usage", "--label es obligatorio") }
 
 switch comando {
 case "create":
-  cmdCreate(kc: keychain, label: label, bits: Int(opt("bits") ?? "2048") ?? 2048)
+  // `--alg` manda. `--bits` se sigue honrando SOLO cuando no hay `--alg`
+  // y describe un RSA conocido: es como llamaba el envoltorio antes de
+  // ADR-0033 y un helper nuevo con un PrivSvc viejo tiene que seguir
+  // creando lo mismo.
+  if let pedido = opt("alg") {
+    guard let alg = resolveAlg(pedido) else {
+      die("bad_request", "keyAlgorithm no soportado: \(pedido) (RSA_2048|RSA_3072|RSA_4096|ECDSA_P256|ECDSA_P384)")
+    }
+    cmdCreate(kc: keychain, label: label, alg: alg)
+  }
+  let bits = Int(opt("bits") ?? "2048") ?? 2048
+  guard let alg = resolveAlg("RSA_\(bits)") else {
+    die("bad_request", "bits no soportado: \(bits) (2048|3072|4096)")
+  }
+  cmdCreate(kc: keychain, label: label, alg: alg)
 case "info":
   cmdInfo(kc: keychain, label: label)
 case "delete":

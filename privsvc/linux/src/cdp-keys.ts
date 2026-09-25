@@ -31,6 +31,11 @@ import { CERT_DIR, certPaths } from "./paths";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
+import {
+  cdpKeyAlgorithmError,
+  resolveCdpKeyAlgorithm,
+  type CdpKeyAlgorithmSpec
+} from "../../shared/cdp-key-algorithm";
 
 const execFileAsync = promisify(execFile);
 const OPENSSL_BIN = process.env.OPENSSL_BIN || "/usr/bin/openssl";
@@ -225,6 +230,28 @@ export function toOpensslSubject(subject: string): string {
  * `-addext` verificado en LibreSSL 3.3.6 y OpenSSL 3.6.3, que son los
  * dos extremos del rango que se va a encontrar en campo.
  */
+/**
+ * Los argumentos de `openssl genpkey` para el algoritmo pedido.
+ *
+ * ⚠️ `ec_param_enc:named_curve` no es opcional. Sin el, OpenSSL escribe
+ * los parametros de la curva EXPLICITOS dentro de la clave y del CSR
+ * —todos los coeficientes, en vez del OID—, y una CA seria rechaza ese
+ * PKCS#10: los perfiles publicos exigen curva con nombre. Medido: el CSR
+ * sale, openssl lo verifica, y la CA lo tira.
+ */
+export function buildGenPkeyArgs(alg: CdpKeyAlgorithmSpec, keyPath: string): string[] {
+  if (alg.kind === "ecdsa") {
+    return [
+      "genpkey",
+      "-algorithm", "EC",
+      "-pkeyopt", `ec_paramgen_curve:${alg.curve}`,
+      "-pkeyopt", "ec_param_enc:named_curve",
+      "-out", keyPath
+    ];
+  }
+  return ["genpkey", "-algorithm", "RSA", "-pkeyopt", `rsa_keygen_bits:${alg.bits}`, "-out", keyPath];
+}
+
 export function buildCsrExtArgs(dnsNames: string[], uris: string[], eku: string): string[] {
   const args = [
     "-addext", "keyUsage=critical,digitalSignature",
@@ -275,9 +302,12 @@ export async function handleCdpCsrGenerate(req: PrivSvcRequest): Promise<PrivSvc
   const eku = EKUS[ekuIn];
   if (!eku) return fail(req.id, "bad_request", `eku no soportado: ${ekuIn} (clientAuth|serverAuth)`);
 
-  const keyAlgorithm = String(p.keyAlgorithm || "RSA_2048").toUpperCase();
-  if (keyAlgorithm !== "RSA_2048") {
-    return fail(req.id, "bad_request", `keyAlgorithm no soportado: ${keyAlgorithm}`);
+  // ADR-0033 F1 — RSA 2048/3072/4096 y ECDSA P-256/P-384. La tabla es la
+  // MISMA que la de macOS (privsvc/shared) y gemela de la de Windows: lo
+  // desconocido se rechaza y nunca cae a un algoritmo mas debil.
+  const alg = resolveCdpKeyAlgorithm(p.keyAlgorithm);
+  if (!alg) {
+    return fail(req.id, "bad_request", cdpKeyAlgorithmError(p.keyAlgorithm));
   }
 
   // Se recorta ANTES de filtrar. Un nombre que solo tiene espacios es
@@ -313,18 +343,16 @@ export async function handleCdpCsrGenerate(req: PrivSvcRequest): Promise<PrivSvc
   let claveCreada = false;
 
   try {
-    await execFileAsync(
-      OPENSSL_BIN,
-      ["genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", keyPath],
-      { timeout: OPENSSL_TIMEOUT_MS }
-    );
+    await execFileAsync(OPENSSL_BIN, buildGenPkeyArgs(alg, keyPath), { timeout: OPENSSL_TIMEOUT_MS });
     fs.chmodSync(keyPath, 0o600);
     claveCreada = true;
 
     await execFileAsync(
       OPENSSL_BIN,
       [
-        "req", "-new", "-sha256",
+        // El digest acompaña al algoritmo: SHA-384 para P-384. Firmar
+        // una curva grande con SHA-256 es legal y la desperdicia.
+        "req", "-new", `-${alg.digest}`,
         "-key", keyPath,
         "-subj", subj,
         ...buildCsrExtArgs(dns, uris, eku),
@@ -338,7 +366,8 @@ export async function handleCdpCsrGenerate(req: PrivSvcRequest): Promise<PrivSvc
     return success(req.id, {
       keyId,
       csrPem,
-      keyAlgorithm: "RSA_2048",
+      // El que se USO, no el que se pidio.
+      keyAlgorithm: alg.name,
       // Se DECLARA lo que es, sin adornarlo. En Linux la clave es un
       // fichero 0600 en directorio 0700 — es lo que la decision 9.b
       // acepta aqui, y llamarlo de otra forma seria mentir en el

@@ -50,8 +50,6 @@ public static class CdpKeys
     /// <summary>Prefijo reservado. El enrolamiento usa `tracenium-{deviceId}`, sin `cdp-`.</summary>
     private const string KeyPrefix = "tracenium-cdp-";
 
-    private const int RsaKeyBits = 2048;
-
     /// <summary>
     /// `keyId` aceptable. Identico al de macOS y Linux a proposito.
     ///
@@ -256,7 +254,20 @@ public static class CdpKeys
         CngKey.Exists(keyName, CngProvider.MicrosoftSoftwareKeyStorageProvider, CngKeyOpenOptions.MachineKey);
 
     /// <summary>
-    /// Crea la clave, NO exportable.
+    /// Los parametros comunes de creacion. Iguales para RSA y ECDSA: lo
+    /// unico que cambia entre las dos ramas es el algoritmo CNG y si hay
+    /// que decirle el tamaño.
+    /// </summary>
+    private static CngKeyCreationParameters MachineKeyParams() => new()
+    {
+        Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider,
+        ExportPolicy = CngExportPolicies.None,
+        KeyUsage = CngKeyUsages.Signing,
+        KeyCreationOptions = CngKeyCreationOptions.MachineKey
+    };
+
+    /// <summary>
+    /// Crea la clave RSA, NO exportable.
     ///
     /// `ExportPolicy = None` es la propiedad entera de la decision 9.b:
     /// si la clave no se puede extraer, una huerfana es un hueco
@@ -268,18 +279,28 @@ public static class CdpKeys
     /// clave nueva, y «abrir la que ya habia» seria firmar un CSR con
     /// material de otra peticion.
     /// </summary>
-    private static RSA CreateMachineRsaKey(string keyName)
+    private static RSA CreateMachineRsaKey(string keyName, int bits)
     {
-        var creationParams = new CngKeyCreationParameters
-        {
-            Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider,
-            ExportPolicy = CngExportPolicies.None,
-            KeyUsage = CngKeyUsages.Signing,
-            KeyCreationOptions = CngKeyCreationOptions.MachineKey
-        };
+        var creationParams = MachineKeyParams();
         creationParams.Parameters.Add(
-            new CngProperty("Length", BitConverter.GetBytes(RsaKeyBits), CngPropertyOptions.None));
+            new CngProperty("Length", BitConverter.GetBytes(bits), CngPropertyOptions.None));
         return new RSACng(CngKey.Create(CngAlgorithm.Rsa, keyName, creationParams));
+    }
+
+    /// <summary>
+    /// Crea la clave ECDSA, NO exportable. Mismas guardas que la de RSA
+    /// —mismo KSP de software, misma politica de exportacion, misma
+    /// clave de maquina—; lo unico distinto es la curva.
+    ///
+    /// ⚠️ La curva va en el ALGORITMO (`ECDSA_P256` / `ECDSA_P384`), no
+    /// en una propiedad `Length`. Añadirla ademas como `Length` hace que
+    /// `CngKey.Create` falle con NTE_INVALID_PARAMETER, porque para estos
+    /// algoritmos el tamaño ya esta fijado por el nombre.
+    /// </summary>
+    private static ECDsa CreateMachineEcdsaKey(string keyName, int bits)
+    {
+        var algoritmo = bits == 384 ? CngAlgorithm.ECDsaP384 : CngAlgorithm.ECDsaP256;
+        return new ECDsaCng(CngKey.Create(algoritmo, keyName, MachineKeyParams()));
     }
 
     private static bool DeleteMachineKey(string keyName)
@@ -341,10 +362,12 @@ public static class CdpKeys
             return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request",
                 $"eku no soportado: {ekuIn} (clientAuth|serverAuth)"));
 
-        var keyAlgorithm = (GetString(p, "keyAlgorithm") ?? "RSA_2048").ToUpperInvariant();
-        if (keyAlgorithm != "RSA_2048")
-            return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request",
-                $"keyAlgorithm no soportado: {keyAlgorithm}"));
+        // ADR-0033 F1 — RSA 2048/3072/4096 y ECDSA P-256/P-384. La tabla
+        // vive en CdpKeyAlgorithm.cs, que es puro y SI se prueba; lo que
+        // no esta en ella se rechaza y jamas cae a un algoritmo mas
+        // debil.
+        if (!CdpKeyAlgorithm.TryResolve(GetString(p, "keyAlgorithm"), out var alg, out var algError))
+            return Task.FromResult(PrivSvcResponse.Fail(req.Id, "bad_request", algError));
 
         var dnsNames = GetStringList(p, "dnsNames");
         var uris = GetStringList(p, "uris");
@@ -377,18 +400,31 @@ public static class CdpKeys
             certInstalledAt = null
         });
 
-        RSA? rsa = null;
+        AsymmetricAlgorithm? clave = null;
         var creada = false;
         try
         {
-            rsa = CreateMachineRsaKey(keyName);
-            creada = true;
+            var dn = new X500DistinguishedName(subject);
+            var hash = new HashAlgorithmName(alg.HashName);
 
-            var csr = new CertificateRequest(
-                new X500DistinguishedName(subject),
-                rsa,
-                HashAlgorithmName.SHA256,
-                RSASignaturePadding.Pkcs1);
+            CertificateRequest csr;
+            if (alg.Kind == CdpKeyKind.Rsa)
+            {
+                var rsa = CreateMachineRsaKey(keyName, alg.Bits);
+                clave = rsa;
+                creada = true;
+                csr = new CertificateRequest(dn, rsa, hash, RSASignaturePadding.Pkcs1);
+            }
+            else
+            {
+                var ec = CreateMachineEcdsaKey(keyName, alg.Bits);
+                clave = ec;
+                creada = true;
+                // Sin padding: en ECDSA no hay tal cosa, y el hash es el
+                // que la curva pide (SHA-256 para P-256, SHA-384 para
+                // P-384). Ver la tabla.
+                csr = new CertificateRequest(dn, ec, hash);
+            }
 
             csr.CertificateExtensions.Add(
                 new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, critical: true));
@@ -410,7 +446,10 @@ public static class CdpKeys
             {
                 keyId,
                 csrPem,
-                keyAlgorithm = "RSA_2048",
+                // El que se USO, no el que se pidio: si algun dia la
+                // resolucion cambiara de opinion, el inventario tiene que
+                // enterarse por aqui y no por una sorpresa en la CA.
+                keyAlgorithm = alg.Name,
                 // Se DECLARA el almacen. Es lo que permite comprobar que
                 // la clave no es exportable sin creerse la documentacion.
                 keyStore = "cng-nonexportable"
@@ -424,7 +463,7 @@ public static class CdpKeys
         }
         finally
         {
-            rsa?.Dispose();
+            clave?.Dispose();
         }
     }
 

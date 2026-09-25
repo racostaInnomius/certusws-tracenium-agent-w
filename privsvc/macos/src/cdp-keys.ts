@@ -42,6 +42,7 @@ import { createKey, deleteKey, generateCsr, listKeys, SYSTEM_KEYCHAIN } from "./
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
+import { cdpKeyAlgorithmError, resolveCdpKeyAlgorithm } from "../../shared/cdp-key-algorithm";
 
 /**
  * El prefijo reservado. Ninguna clave de enrolamiento lo lleva ni puede
@@ -199,12 +200,16 @@ export async function handleCdpCsrGenerate(req: PrivSvcRequest): Promise<PrivSvc
     return fail(req.id, "bad_request", `eku no soportado: ${eku} (clientAuth|serverAuth)`);
   }
 
-  const keyAlgorithm = String(p.keyAlgorithm || "RSA_2048").toUpperCase();
-  if (keyAlgorithm !== "RSA_2048") {
-    // Se falla RUIDOSAMENTE, como ya hace el de enrolamiento. Ahi la
-    // razon esta escrita: un desajuste de algoritmo silencioso rompio el
-    // enrolamiento de Windows una vez.
-    return fail(req.id, "bad_request", `keyAlgorithm no soportado: ${keyAlgorithm}`);
+  // ADR-0033 F1 — RSA 2048/3072/4096 y ECDSA P-256/P-384. La tabla es
+  // compartida con Linux (privsvc/shared) y gemela de las de Windows y
+  // del helper Swift.
+  //
+  // Se falla RUIDOSAMENTE ante lo desconocido, como ya hace el de
+  // enrolamiento. Ahi la razon esta escrita: un desajuste de algoritmo
+  // silencioso rompio el enrolamiento de Windows una vez.
+  const alg = resolveCdpKeyAlgorithm(p.keyAlgorithm);
+  if (!alg) {
+    return fail(req.id, "bad_request", cdpKeyAlgorithmError(p.keyAlgorithm));
   }
 
   // Se recorta ANTES de filtrar. Un nombre que solo tiene espacios es
@@ -245,7 +250,11 @@ export async function handleCdpCsrGenerate(req: PrivSvcRequest): Promise<PrivSvc
     certInstalledAt: null
   });
 
-  const creada = await createKey(label, { keychain: SYSTEM_KEYCHAIN });
+  // El helper crea la clave del tipo pedido y luego DERIVA de la propia
+  // clave con que algoritmo firmar el CSR: preguntarselo a la clave, y
+  // no al parametro, es lo que impide un PKCS#10 cuyo
+  // AlgorithmIdentifier no corresponda al material que lo firma.
+  const creada = await createKey(label, { alg: alg.name, keychain: SYSTEM_KEYCHAIN });
   if (!creada.ok) {
     forgetKey(keyId);
     return fail(req.id, creada.code || "key_create_failed", creada.message || "no se pudo crear la clave");
@@ -270,7 +279,10 @@ export async function handleCdpCsrGenerate(req: PrivSvcRequest): Promise<PrivSvc
     return success(req.id, {
       keyId,
       csrPem: csr.csrPem,
-      keyAlgorithm: "RSA_2048",
+      // El que se USO, no el que se pidio: si la resolucion cambiara de
+      // opinion, el inventario tiene que enterarse por aqui y no por una
+      // sorpresa en la CA.
+      keyAlgorithm: alg.name,
       // El almacen se DECLARA. Es lo que permite a un operador —y a un
       // pliego— comprobar que la clave no es extraible sin creerse la
       // documentacion.

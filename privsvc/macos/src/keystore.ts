@@ -121,10 +121,16 @@ function baseArgs(label: string, keychain?: string): string[] {
  * etiqueta se devuelve `created:false` y NO se regenera — regenerar en
  * silencio invalidaria el certificado que ya la esta usando.
  */
-export function createKey(label: string, opts?: { bits?: number; keychain?: string }) {
+export function createKey(label: string, opts?: { alg?: string; bits?: number; keychain?: string }) {
   return run([
     "create",
     ...baseArgs(label, opts?.keychain),
+    // ADR-0033 F1 — `--alg` es el que manda (RSA_2048|RSA_3072|RSA_4096|
+    // ECDSA_P256|ECDSA_P384). `--bits` se conserva porque es como se
+    // llamaba antes y el helper lo sigue honrando cuando no hay `--alg`:
+    // un PrivSvc viejo con un helper nuevo tiene que crear lo mismo que
+    // creaba.
+    ...(opts?.alg ? ["--alg", opts.alg] : []),
     ...(opts?.bits ? ["--bits", String(opts.bits)] : [])
   ]);
 }

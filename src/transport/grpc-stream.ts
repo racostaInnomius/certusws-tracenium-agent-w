@@ -8,6 +8,7 @@ import { AD_DISCOVERY_JOB_TYPE, runAdDiscoveryJob } from "../plugins/amp/ad-disc
 import { LIVE_QUERY_JOB_TYPE, runLiveQueryJob } from "../plugins/live-query/live-query-job";
 import { defaultProbeDeps } from "../plugins/live-query/probes";
 import { resolveListenerOwners } from "../plugins/cdp/process-owner";
+import { CDP_VERIFY_SERVING_JOB_TYPE, runVerifyServingJob } from "../plugins/cdp/verify-serving";
 import { PolicyStore } from "../core/policy-store";
 import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { Namespaces, DeviceFacts } from "../domain/device-facts";
@@ -810,6 +811,33 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       }).catch((err) => ctx.logger?.warn?.("envio del resultado de instalacion fallo", { err }));
 
       return { status: 0, message: `cert_installed: ${resp.result?.subject || keyId}` };
+    }
+
+    // ADR-0033 F1, decision D4 — la verificacion es una SONDA.
+    //
+    // Se sondea el puerto y se dice que certificado presenta de verdad;
+    // el control plane compara contra el que acaba de firmar y decide si
+    // la renovacion queda `installed_not_serving`. Sin esto, «el agente
+    // dijo que instalo» era todo lo que habia, y un servicio que nadie
+    // recargo sigue sirviendo el viejo sin que nada lo note.
+    //
+    // ⚠️ NO pasa por el PrivSvc: abrir un socket TCP y leer un
+    // certificado publico no necesita privilegio, y meterlo en el
+    // servicio privilegiado seria ampliarle la superficie por nada.
+    // Tampoco pasa por `collectFactsSnapshot`: su enfriamiento descarta
+    // una segunda recogida de CDP seguida, que es exactamente lo que es
+    // una verificacion hecha segundos despues de instalar.
+    case CDP_VERIFY_SERVING_JOB_TYPE: {
+      if (!ctx.policyRuntime.pluginEnabled("cdp")) {
+        return { status: 2, message: "cdp_verify_serving rejected: cdp plugin disabled by policy" };
+      }
+      return runVerifyServingJob(
+        {
+          enqueue: (p) => outbox.enqueue({ type: "FACTS_SNAPSHOT", payload: p }),
+          logger: ctx.logger
+        },
+        { jobId, payload }
+      );
     }
 
     // ADR-0011 decisiones 9.c y 9.d. Los metodos existian en los tres
