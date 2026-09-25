@@ -53,6 +53,13 @@ vi.mock("../../src/plugins/sdp/state", () => ({
   isInstallInProgress: () => softwareInstallInFlight
 }));
 
+// The real reader asks the machine running the tests; the decision is real.
+let battery: any = undefined;
+vi.mock("../../src/update/battery-gate", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/update/battery-gate")>()),
+  readBatteryForUpdate: async () => battery
+}));
+
 import {
   runUpdateTask,
   privilegedOperationInFlight,
@@ -80,6 +87,7 @@ beforeEach(() => {
   });
   remediateInFlight = false;
   softwareInstallInFlight = false;
+  battery = undefined;
   fetchAgentMetadata.mockReset();
 });
 
@@ -142,11 +150,52 @@ describe("runUpdateTask yields to a privileged operation", () => {
   });
 });
 
+describe("runUpdateTask and the battery", () => {
+  const unplugged = (percent: number) => ({ present: true, percent, isCharging: false, acConnected: false });
+
+  it("⭐ on battery at 41 % it goes ahead (the laptop stuck on 1.1.77)", async () => {
+    battery = unplugged(41);
+    fetchAgentMetadata.mockRejectedValue(new Error("network down in this test"));
+
+    const outcome = await runUpdateTask(makeCtx(), { targetVersion: "1.1.82", force: true });
+
+    expect(outcome.status).not.toBe("skipped");
+    expect(fetchAgentMetadata).toHaveBeenCalled();
+  });
+
+  it("below 10 % and unplugged it defers before the download, saying why", async () => {
+    battery = unplugged(7);
+    const ctx = makeCtx();
+
+    const outcome = await runUpdateTask(ctx, { targetVersion: "1.1.82", force: true, logger: ctx.logger });
+
+    expect(outcome).toEqual({ status: "skipped", reason: "battery_low:7%" });
+    expect(fetchAgentMetadata).not.toHaveBeenCalled();
+    expect(ctx.logger.warn).toHaveBeenCalledWith(expect.stringContaining("battery too low"), { percent: 7 });
+  });
+
+  it("an unreadable battery never blocks the update", async () => {
+    battery = undefined;
+    fetchAgentMetadata.mockRejectedValue(new Error("network down in this test"));
+
+    await runUpdateTask(makeCtx(), { targetVersion: "1.1.82", force: true });
+
+    expect(fetchAgentMetadata).toHaveBeenCalled();
+  });
+});
+
 describe("ackForUpdateOutcome — one mapping for the job and the push path", () => {
   it("a deferred update is ACK_RETRY, so the backend re-sends it later", () => {
     expect(
       ackForUpdateOutcome({ status: "skipped", reason: `${UPDATE_DEFERRED_PREFIX}patch_install` })
     ).toEqual({ status: 1, message: "agent_update retry: privileged_operation_in_progress:patch_install" });
+  });
+
+  it("so is one deferred for low battery: the job must not close as done", () => {
+    expect(ackForUpdateOutcome({ status: "skipped", reason: "battery_low:7%" })).toEqual({
+      status: 1,
+      message: "agent_update retry: battery_low:7%"
+    });
   });
 
   it("every other skip still closes the job as done", () => {

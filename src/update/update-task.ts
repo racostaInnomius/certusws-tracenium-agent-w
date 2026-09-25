@@ -20,9 +20,17 @@ import { resolveOsArch } from "../domain/os-arch";
 import { isRemediateInFlight } from "../plugins/pmp/state";
 import { isInstallInProgress as isSoftwareInstallInProgress } from "../plugins/sdp/state";
 import { aspRunInFlight } from "../plugins/asp/runner";
+import {
+  batteryBlocksUpdate,
+  readBatteryForUpdate,
+  UPDATE_BATTERY_DEFERRED_PREFIX
+} from "./battery-gate";
 
 /** Prefix of the `skipped` reason when the update yielded to a privileged operation. */
 export const UPDATE_DEFERRED_PREFIX = "privileged_operation_in_progress:";
+
+/** Skips that mean "not now, send it again", as opposed to "nothing to do". */
+const RETRY_LATER_PREFIXES = [UPDATE_DEFERRED_PREFIX, UPDATE_BATTERY_DEFERRED_PREFIX];
 
 /**
  * Which privileged operation, if any, the privsvc is running for this
@@ -46,16 +54,17 @@ export function privilegedOperationInFlight(
  * paths so they cannot drift. `status` follows the ack contract: 0 done,
  * 1 retry later (the backend re-dispatches with backoff), 2 failed.
  *
- * A deferred update is the one `skipped` that must NOT close the job: the
- * version was never installed, and acking 0 would have the backend record
- * the update as done on a host still running the old build.
+ * A deferred update (privileged operation in flight, battery too low) is the
+ * `skipped` that must NOT close the job: the version was never installed, and
+ * acking 0 would have the backend record the update as done on a host still
+ * running the old build.
  */
 export function ackForUpdateOutcome(outcome: UpdateOutcome): { status: 0 | 1 | 2; message: string } {
   if (outcome.status === "failed") {
     return { status: 2, message: `update_failed: ${outcome.error}` };
   }
   if (outcome.status === "skipped") {
-    if (outcome.reason.startsWith(UPDATE_DEFERRED_PREFIX)) {
+    if (RETRY_LATER_PREFIXES.some((p) => outcome.reason.startsWith(p))) {
       return { status: 1, message: `agent_update retry: ${outcome.reason}` };
     }
     return { status: 0, message: `update_skipped: ${outcome.reason}` };
@@ -259,6 +268,21 @@ export async function runUpdateTask(
 
   if (!force && !shouldCheckNow(intervalMs)) {
     return { status: "skipped", reason: "check_interval_not_elapsed" };
+  }
+
+  // ── Battery: only a nearly flat one holds the update back ────────
+  //
+  // Running on battery is fine — see battery-gate.ts for the laptop that sat
+  // on 1.1.77 because the scheduled task refused to start unplugged. Dying
+  // halfway through the installer is not: the services are stopped and the
+  // binaries half-replaced. Checked before the download so a flat laptop does
+  // not spend what it has left on 170 MB, and acked as a retry like the
+  // privileged-operation guard, so the job comes back instead of closing as
+  // done.
+  const lowBattery = batteryBlocksUpdate(await readBatteryForUpdate());
+  if (lowBattery !== null) {
+    logger?.warn?.("[update] deferring: battery too low to install", { percent: lowBattery });
+    return { status: "skipped", reason: `${UPDATE_BATTERY_DEFERRED_PREFIX}${lowBattery}%` };
   }
 
   // ── Fast-path: job payload override ───────────────────────────────

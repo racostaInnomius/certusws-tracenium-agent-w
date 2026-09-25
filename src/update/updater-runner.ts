@@ -12,6 +12,140 @@ import { agentDataDir } from "../bootstrap/paths";
 const SHIM_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * How long a task that could not start keeps trying. After that it expires
+ * and Task Scheduler deletes it (DeleteExpiredTaskAfter): a missed update is
+ * retried by the agent with a fresh task, never by a stale one days later.
+ */
+const TASK_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** `2026-09-25T11:10:16` in the machine's local time — what StartBoundary expects. */
+export function localIsoSeconds(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` +
+    `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  );
+}
+
+const xmlText = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/**
+ * The update task, as Task Scheduler XML.
+ *
+ * 🔴 W11_JPR_LAB (Latitude 5400) sat on 1.1.77 through four update jobs
+ * (2026-09-24/25). The agent created every task and acked `update_started`,
+ * and none of them ever ran: `schtasks /query` showed Last Run Time
+ * 11/30/1999, Last Result 267011 (SCHED_S_TASK_HAS_NOT_RUN), Power
+ * Management "Stop On Battery Mode, No Start On Batteries". That is what
+ * `schtasks /create /sc ONCE` gives a task by default, and there is no
+ * command-line flag to change it — hence the XML. Older tasks on the same
+ * host had ended in 0x800710E0, the scheduler refusing to start them.
+ *
+ * What each setting is for:
+ *  - DisallowStartIfOnBatteries=false: a laptop on battery updates. A battery
+ *    that is nearly flat is caught before this, in battery-gate.ts, where the
+ *    deferral can be reported.
+ *  - StopIfGoingOnBatteries=false: unplugging mid-install used to KILL the
+ *    task — msiexec with the services stopped and the files half-replaced.
+ *  - StartWhenAvailable=true: a start missed while asleep runs on wake.
+ *  - EndBoundary + DeleteExpiredTaskAfter: a task that never ran cleans
+ *    itself up. The same host had 27 of them, back to May.
+ *  - S-1-5-18 + HighestAvailable: LocalSystem, as `/ru SYSTEM /rl HIGHEST`.
+ */
+export function buildUpdateTaskXml(opts: { shimPath: string; startAt: Date; endAt: Date }): string {
+  return [
+    `<?xml version="1.0" encoding="UTF-16"?>`,
+    `<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">`,
+    `  <RegistrationInfo>`,
+    `    <Description>Tracenium agent self-update (one-shot).</Description>`,
+    `  </RegistrationInfo>`,
+    `  <Triggers>`,
+    `    <TimeTrigger>`,
+    `      <StartBoundary>${localIsoSeconds(opts.startAt)}</StartBoundary>`,
+    `      <EndBoundary>${localIsoSeconds(opts.endAt)}</EndBoundary>`,
+    `      <Enabled>true</Enabled>`,
+    `    </TimeTrigger>`,
+    `  </Triggers>`,
+    `  <Principals>`,
+    `    <Principal id="Author">`,
+    `      <UserId>S-1-5-18</UserId>`,
+    `      <RunLevel>HighestAvailable</RunLevel>`,
+    `    </Principal>`,
+    `  </Principals>`,
+    `  <Settings>`,
+    `    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>`,
+    `    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>`,
+    `    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>`,
+    `    <AllowHardTerminate>true</AllowHardTerminate>`,
+    `    <StartWhenAvailable>true</StartWhenAvailable>`,
+    `    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>`,
+    `    <IdleSettings>`,
+    `      <StopOnIdleEnd>false</StopOnIdleEnd>`,
+    `      <RestartOnIdle>false</RestartOnIdle>`,
+    `    </IdleSettings>`,
+    `    <AllowStartOnDemand>true</AllowStartOnDemand>`,
+    `    <Enabled>true</Enabled>`,
+    `    <Hidden>false</Hidden>`,
+    `    <RunOnlyIfIdle>false</RunOnlyIfIdle>`,
+    `    <WakeToRun>false</WakeToRun>`,
+    `    <DeleteExpiredTaskAfter>PT1H</DeleteExpiredTaskAfter>`,
+    `    <Priority>7</Priority>`,
+    `  </Settings>`,
+    `  <Actions Context="Author">`,
+    `    <Exec>`,
+    `      <Command>${xmlText(opts.shimPath)}</Command>`,
+    `    </Exec>`,
+    `  </Actions>`,
+    `</Task>`
+  ].join("\r\n");
+}
+
+/**
+ * UTF-16LE with a BOM. schtasks /xml rejects a UTF-8 file as malformed on
+ * some Windows builds; UTF-16 is what Task Scheduler itself exports.
+ */
+export function encodeTaskXml(xml: string): Buffer {
+  return Buffer.from("﻿" + xml, "utf16le");
+}
+
+/** Every `TraceniumAgentUpdate_<ms>` in a `schtasks /query /fo csv /nh` listing. */
+export function updateTaskNamesIn(listing: string): string[] {
+  const names = new Set<string>();
+  for (const m of listing.matchAll(/\\(TraceniumAgentUpdate_\d+)"/g)) names.add(m[1]);
+  return [...names];
+}
+
+/**
+ * Delete the update tasks earlier attempts left registered.
+ *
+ * Only a task that ran to the end removes itself (the shim does it after
+ * msiexec); one that never started stayed forever, and with StartWhenAvailable
+ * it could now fire later next to the new one — two msiexec, one of them 1618.
+ * Best-effort, like purgeOldShims: litter is not a reason to abandon an update.
+ */
+function purgeOldUpdateTasks(): void {
+  let listing: string;
+  try {
+    const res = spawnSync("schtasks.exe", ["/query", "/fo", "csv", "/nh"], {
+      windowsHide: true,
+      encoding: "utf8"
+    });
+    if (res.error || res.status !== 0) return;
+    listing = String(res.stdout || "");
+  } catch {
+    return;
+  }
+  for (const name of updateTaskNamesIn(listing)) {
+    try {
+      spawnSync("schtasks.exe", ["/delete", "/tn", name, "/f"], { windowsHide: true });
+    } catch {
+      // Not ours to fight over. Leave it.
+    }
+  }
+}
+
+/**
  * Delete update shims left by earlier runs.
  *
  * Best-effort by design: a shim we cannot remove is litter in %TEMP%, not a
@@ -65,17 +199,18 @@ export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
   // Object. We give it a small delay so the agent has time to
   // gracefully exit before msiexec starts hammering the install dir.
   //
-  // schtasks is part of Windows since Vista. The /f flag overwrites
-  // any prior task with the same name (e.g. from a previous failed
-  // attempt). /ru SYSTEM grants the task LocalSystem privileges
-  // without needing a password. Task auto-deletes after running via
-  // /z + /sd /ed combo (we set ed = now + 1 hour as the cutoff).
+  // The task is registered from XML (buildUpdateTaskXml), not from
+  // `schtasks /sc ONCE /st`: the command-line form gives the task the
+  // Task Scheduler defaults, and those refuse to start on battery.
 
   // Shims from previous updates. They used to delete themselves, which is
   // exactly what broke the exit code (see the shim below), so cleanup moved
   // here: the NEXT update sweeps the last one's leftovers, and nothing has to
   // delete a file it is currently executing.
   purgeOldShims();
+  // Same for the tasks: one that never ran is still registered, and would
+  // fire alongside this one if its trigger ever came round.
+  purgeOldUpdateTasks();
 
   // 1. Write a tiny .cmd shim that:
   //    - waits 10 seconds (gives the agent time to be stopped cleanly)
@@ -96,22 +231,12 @@ export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
   const msiLogPath = path.join(agentDataDir(), `update-msi-${msiStem}.log`);
   const resultPath = path.join(agentDataDir(), "update-result.json");
 
-  // Hora de arranque para `schtasks /st HH:MM`.
-  //
-  // ⚠️ 90 segundos, no 60, y NO es una holgura arbitraria.
-  //
-  // schtasks solo acepta HH:mm, así que truncar pierde hasta 59 segundos. Con
-  // +60s la espera real quedaba entre 1 y 60 segundos: cuando cae en el
-  // extremo bajo, el minuto objetivo ya ha pasado para cuando la tarea se
-  // registra, y `/sc ONCE` con una hora pasada la programa para MAÑANA. El
-  // agente da el update por lanzado, la marca caduca, reintenta, y se repite —
-  // que es exactamente el bucle que se vio en campo.
-  //
-  // Con +90s la espera real queda entre 31 y 90 segundos: nunca en el pasado.
-  const startAt = new Date(Date.now() + 90_000);
-  const hh = String(startAt.getHours()).padStart(2, "0");
-  const mm = String(startAt.getMinutes()).padStart(2, "0");
-  const startTime = `${hh}:${mm}`;
+  // Arranque en 30 segundos exactos. Con `/st HH:MM` había que truncar al
+  // minuto y hacía falta un margen de 90 s para no caer nunca en el pasado
+  // (una hora pasada con `/sc ONCE` no se ejecutaba jamás); el XML lleva
+  // segundos, y además StartWhenAvailable recoge un arranque perdido.
+  const startAt = new Date(Date.now() + 30_000);
+  const startTime = localIsoSeconds(startAt);
 
   // Named before the shim is written: the shim deletes this task by name.
   const taskName = `TraceniumAgentUpdate_${Date.now()}`;
@@ -158,16 +283,22 @@ export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
   } catch (err: any) {
     throw new Error(`update_shim_write_failed: ${err?.message || err}`);
   }
-  const schArgs = [
-    "/create",
-    "/tn", taskName,
-    "/tr", shimPath,
-    "/sc", "ONCE",
-    "/st", startTime,
-    "/ru", "SYSTEM",
-    "/rl", "HIGHEST",
-    "/f"
-  ];
+  // The definition goes through a file because that is the only way schtasks
+  // takes XML. It is copied into the task store on /create, so it is deleted
+  // as soon as schtasks returns.
+  const xmlPath = shimPath.replace(/\.cmd$/i, ".xml");
+  try {
+    fs.writeFileSync(
+      xmlPath,
+      encodeTaskXml(
+        buildUpdateTaskXml({ shimPath, startAt, endAt: new Date(startAt.getTime() + TASK_WINDOW_MS) })
+      )
+    );
+  } catch (err: any) {
+    try { fs.unlinkSync(shimPath); } catch {}
+    throw new Error(`update_task_xml_write_failed: ${err?.message || err}`);
+  }
+  const schArgs = ["/create", "/tn", taskName, "/xml", xmlPath, "/f"];
 
   try {
     // ⚠️ Se ESPERA a schtasks y se mira su código de salida.
@@ -237,6 +368,8 @@ export function runWindowsMsiUpdate(msiPath: string): RunUpdateResult {
     // Don't leave a leaked shim file behind.
     try { fs.unlinkSync(shimPath); } catch {}
     throw err;
+  } finally {
+    try { fs.unlinkSync(xmlPath); } catch {}
   }
 }
 

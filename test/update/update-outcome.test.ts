@@ -43,6 +43,13 @@ vi.mock("../../src/update/update-service", () => ({
   performLinuxUpdate: vi.fn(),
 }));
 
+// The battery gate would read the machine running the tests; here it reads
+// nothing, which never blocks the update.
+vi.mock("../../src/update/battery-gate", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/update/battery-gate")>()),
+  readBatteryForUpdate: async () => undefined,
+}));
+
 import { runUpdateTask } from "../../src/update/update-task";
 
 const ctx: any = {
