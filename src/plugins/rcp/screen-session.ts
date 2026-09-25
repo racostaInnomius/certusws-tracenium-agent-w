@@ -33,6 +33,7 @@
 //     { op: "keyDown",    code }                     // JS KeyboardEvent.code
 //     { op: "keyUp",      code }
 //     { op: "releaseAll" }                           // emergency release
+//     { op: "controlReleased" }                      // soltó el control (Esc / toggle)
 //
 // cursorX/Y are -1 when PrivSvc couldn't read the position (rare:
 // lock screen, RDP detach). The browser hides the overlay in that case.
@@ -115,7 +116,11 @@ export type RecordingReadyPayload = {
   sha256: string;
 };
 
-const DEFAULT_FPS = 5;
+// 8, medido en campo el 25-sep: es donde el cursor se sigue con la vista sin
+// saltos. A 5 el puntero "teletransporta" lo justo para que cueste apuntar a
+// un botón, y subir de 8 paga ancho de banda y CPU del equipo ajeno por una
+// fluidez que ya nadie nota.
+const DEFAULT_FPS = 8;
 const DEFAULT_QUALITY = 60;
 const MIN_FPS = 1;
 const MAX_FPS = 15;
@@ -785,6 +790,27 @@ export class ScreenSession {
       case "keyUp":
       case "releaseAll":
         this.forwardInput(op, msg);
+        break;
+
+      // El operador SOLTÓ el control (Esc o el interruptor del visor).
+      //
+      // ⚠️ Mensaje propio y no `releaseAll`, que también llega al perder el
+      // foco con el control todavía puesto. Sin esto, la franja se quedaba
+      // diciendo «viendo y controlando» para siempre: la primera vez que
+      // alguien tocaba el ratón subía el aviso y ya no bajaba nunca, así que
+      // la persona seguía creyendo que le manejaban el equipo cuando ya no.
+      // Un aviso que no sabe bajar es un aviso que se aprende a ignorar.
+      //
+      // NO toca el consentimiento: quien dijo que sí sigue habiendo dicho que
+      // sí mientras dure la sesión. Lo que cambia es lo que se le cuenta.
+      case "controlReleased":
+        if (this.inputSeen) {
+          this.inputSeen = false;
+          this.publishIndicator();
+          this.args.ctx.logger?.info?.("[rcp.screen] el operador soltó el control", {
+            sessionId: this.args.sessionId
+          });
+        }
         break;
     }
   }

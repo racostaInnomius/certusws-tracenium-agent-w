@@ -1715,7 +1715,19 @@ export function startGrpcStream(ctx: AgentContext) {
         // sessions. The actual I/O flows P2P; these messages carry only
         // session lifecycle metadata for backend audit rows.
         ["remoteFileTransferAudit", "grpc.send.remoteFileTransferAudit"],
-        ["remoteScreenAudit",       "grpc.send.remoteScreenAudit"]
+        ["remoteScreenAudit",       "grpc.send.remoteScreenAudit"],
+        // ⚠️ ADR-0012 — la clave de la grabación. FALTABA, y por eso el portal
+        // no tenía ni una sola grabación de pantalla: el agente grababa el
+        // vídeo, lo cifraba, y el mensaje con la clave moría en el
+        // «unknown message shape» de abajo. 81 sesiones de pantalla en T1 con
+        // `remoteRecordScreen` encendido y `remote_session_recordings` vacía.
+        //
+        // El backend lleva el otro extremo implementado desde el principio
+        // (controlplane.ts, `msg.remoteRecordingReady`): sólo faltaba salir de
+        // aquí. Y como la franja del equipo dice «this session is being
+        // recorded», lo que había no era una función a medias: era una promesa
+        // incumplida a la persona a la que se estaba mirando.
+        ["remoteRecordingReady",    "grpc.send.remoteRecordingReady"]
       ];
       for (const [field, method] of variants) {
         if (msg && msg[field]) {

@@ -43,6 +43,7 @@ import {
   handleRemoteSessionError,
   handleRemoteSessionTranscript,
   handleRemoteFileTransferAudit,
+  handleRemoteRecordingReady,
   handleRemoteScreenAudit,
   renewCertOverGrpc,
   invalidateBridgeForNewIdentity,
@@ -276,6 +277,10 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
       return handleRemoteFileTransferAudit(req);
 
     // RCP M3.S1 — screen share audit (agent → server).
+    // ADR-0012 — la clave de la grabación. Sin ella el vídeo no lo abre nadie.
+    case "grpc.send.remoteRecordingReady":
+      return handleRemoteRecordingReady(req);
+
     case "grpc.send.remoteScreenAudit":
       return handleRemoteScreenAudit(req);
 

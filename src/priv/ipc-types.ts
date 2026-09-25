@@ -93,6 +93,9 @@ export type PrivSvcMethod =
   // RCP — el agente avisa de que el DataChannel se abrió. Va por el mismo
   // camino que los demás: PrivSvc es el único dueño de la conexión gRPC.
   | "grpc.send.remoteSessionConnected"
+  // ADR-0012 — la clave con la que se descifra la grabación de una sesión de
+  // pantalla. Sin ella el vídeo es ilegible para siempre.
+  | "grpc.send.remoteRecordingReady"
   | "grpc.connect"
   | "grpc.facts.send"
   | "grpc.facts.chunk"

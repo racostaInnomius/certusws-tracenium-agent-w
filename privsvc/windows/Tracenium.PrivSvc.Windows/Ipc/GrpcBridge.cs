@@ -2366,6 +2366,45 @@ private const int MaxPendingPushEvents = 50;
     }
 
     // M3.S1 — screen share audit (agent → server).
+    /// <summary>
+    /// ADR-0012 — la clave con la que se descifra la grabación de la sesión.
+    /// ⚠️ Sin este mensaje el vídeo es ilegible para siempre: la clave no se
+    /// persiste en el equipo. `keyBase64` vacío es legítimo ("ya te la di,
+    /// dame otro destino" tras un reinicio del agente); lo decide el servidor.
+    /// </summary>
+    public async Task SendRemoteRecordingReady(
+        string sessionId, string keyBase64,
+        long bytes, int frames, int width, int height,
+        long durationMs, bool truncated, string stopReason, string sha256,
+        CancellationToken ct = default)
+    {
+        if (_call is null) { Log($"SendRemoteRecordingReady skipped: no active call sessionId={sessionId}"); return; }
+        if (string.IsNullOrWhiteSpace(sessionId)) return;
+        try
+        {
+            await WriteSerializedAsync(new ControlMessage
+            {
+                RemoteRecordingReady = new RemoteRecordingReady
+                {
+                    SessionId  = sessionId,
+                    KeyBase64  = keyBase64 ?? string.Empty,
+                    Bytes      = bytes,
+                    Frames     = frames,
+                    Width      = width,
+                    Height     = height,
+                    DurationMs = durationMs,
+                    Truncated  = truncated,
+                    StopReason = stopReason ?? string.Empty,
+                    Sha256     = sha256 ?? string.Empty
+                }
+            });
+            _lastSendUtc = DateTime.UtcNow;
+            // La clave NO se registra. Lo que interesa del log es que salió.
+            Log($"RemoteRecordingReady sent sessionId={sessionId} bytes={bytes} frames={frames} truncated={truncated} stop={stopReason}");
+        }
+        catch (Exception ex) { Log($"SendRemoteRecordingReady error sessionId={sessionId} {ex}"); }
+    }
+
     public async Task SendRemoteScreenAudit(
         string sessionId, string evt,
         int width, int height, int fps,

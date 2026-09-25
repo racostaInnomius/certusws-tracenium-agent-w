@@ -1675,6 +1675,43 @@ export async function handleRemoteFileTransferAudit(req: PrivSvcRequest): Promis
 // M3.S1 — screen share audit (agent → server). Lifecycle metadata
 // only (started/stopped/error); frame bytes flow P2P over the
 // DataChannel and never reach the backend.
+/**
+ * ADR-0012 — la clave con la que se descifra la grabación de una sesión.
+ *
+ * ⚠️ Sin este mensaje el vídeo es ilegible PARA SIEMPRE: la clave no se
+ * persiste en el equipo. Faltaba el enrutado, así que el portal llevaba 81
+ * sesiones de pantalla sin una sola grabación mientras la franja le decía a
+ * la persona que la estaban grabando.
+ *
+ * `keyBase64` vacío es legítimo: significa «ya te la di, dame otro destino»
+ * tras un reinicio del agente. No se valida aquí — lo decide el servidor,
+ * que es quien sabe si ya tiene una clave para esa sesión.
+ */
+export async function handleRemoteRecordingReady(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const sessionId = String(req.params?.sessionId || "");
+  if (!sessionId) return fail(req.id, "bad_request", "sessionId required");
+  try {
+    await write({
+      traceId: remoteSessionTraceId(),
+      remoteRecordingReady: {
+        sessionId,
+        keyBase64: String(req.params?.keyBase64 || ""),
+        bytes: Number(req.params?.bytes ?? 0),
+        frames: Number(req.params?.frames ?? 0),
+        width: Number(req.params?.width ?? 0),
+        height: Number(req.params?.height ?? 0),
+        durationMs: Number(req.params?.durationMs ?? 0),
+        truncated: Boolean(req.params?.truncated),
+        stopReason: String(req.params?.stopReason || ""),
+        sha256: String(req.params?.sha256 || ""),
+      },
+    });
+  } catch (err: any) {
+    logger.warn("remote_recording_ready_skipped", { sessionId, error: err?.message || String(err) });
+  }
+  return success(req.id, { ok: true });
+}
+
 export async function handleRemoteScreenAudit(req: PrivSvcRequest): Promise<PrivSvcResponse> {
   const sessionId = String(req.params?.sessionId || "");
   if (!sessionId) return fail(req.id, "bad_request", "sessionId required");

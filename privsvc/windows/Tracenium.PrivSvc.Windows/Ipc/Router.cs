@@ -269,6 +269,10 @@ public sealed class Router
             // RCP M2.S1 — file transfer audit (agent → server).
             "grpc.send.remoteFileTransferAudit" => IpcGrpcHandlers.HandleRemoteFileTransferAudit(req),
             // RCP M3.S1 — screen share audit (agent → server).
+            // ADR-0012 — la clave de la grabación. Sin ella el vídeo no lo
+            // abre nadie, y la franja le está diciendo a la persona que se
+            // la está grabando.
+            "grpc.send.remoteRecordingReady" => IpcGrpcHandlers.HandleRemoteRecordingReady(req),
             "grpc.send.remoteScreenAudit" => IpcGrpcHandlers.HandleRemoteScreenAudit(req),
             // RCP M3.S1 — screen capture IPC (Node.js → PrivSvc).
             // PrivSvc owns the GDI+ BitBlt call; result is base64 JPEG.

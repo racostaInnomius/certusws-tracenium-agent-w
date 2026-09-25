@@ -545,3 +545,57 @@ describe("puerta de control en la sesión", () => {
     session.dispose("test");
   });
 });
+
+describe("⚠️ el indicador BAJA cuando el operador suelta el control", () => {
+  // De dónde viene (prueba de campo, 25-sep): al pulsar Esc el operador deja
+  // de controlar el equipo, pero la franja seguía diciendo «viendo y
+  // controlando». La persona seguía creyendo que le manejaban el ratón — que
+  // es justo el miedo que la franja existe para calmar. Un aviso que no sabe
+  // bajar es un aviso que se aprende a ignorar.
+  it("vuelve a 'viendo' tras `controlReleased`", async () => {
+    const { dc, published, session } = makeSession();
+    dc.emit({ op: "mouseDown", button: 0, x: 5, y: 5 });
+    await waitFor(() => published.length >= 2);
+    expect(published[published.length - 1].controlling).toBe(true);
+
+    dc.emit({ op: "controlReleased" });
+    await waitFor(() => published.length >= 3);
+
+    const last = published[published.length - 1];
+    expect(last.controlling).toBe(false);
+    // Sigue viendo: soltar el control no es cerrar la sesión.
+    expect(last.active).toBe(true);
+    session.dispose("test");
+  });
+
+  it("⚠️ `releaseAll` NO baja el indicador: también llega al perder el foco", async () => {
+    // Si se usara `releaseAll` para esto, cambiar de ventana en el navegador
+    // del operador apagaría el aviso mientras el control sigue puesto —
+    // mentir en la dirección contraria, y la peligrosa.
+    const { dc, published, session } = makeSession();
+    dc.emit({ op: "mouseDown", button: 0, x: 5, y: 5 });
+    await waitFor(() => published.length >= 2);
+    const antes = published.length;
+
+    dc.emit({ op: "releaseAll" });
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(published.length).toBe(antes);
+    expect(published[published.length - 1].controlling).toBe(true);
+    session.dispose("test");
+  });
+
+  it("soltar dos veces no republica de más", async () => {
+    const { dc, published, session } = makeSession();
+    dc.emit({ op: "mouseDown", button: 0, x: 5, y: 5 });
+    await waitFor(() => published.length >= 2);
+    dc.emit({ op: "controlReleased" });
+    await waitFor(() => published.length >= 3);
+    const tras = published.length;
+
+    dc.emit({ op: "controlReleased" });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(published.length).toBe(tras);
+    session.dispose("test");
+  });
+});

@@ -944,6 +944,44 @@ public static class IpcGrpcHandlers
 
     // ── M3.S1 — screen share audit ─────────────────────────────────────────────
 
+    public static async Task<PrivSvcResponse> HandleRemoteRecordingReady(PrivSvcRequest req)
+    {
+        try
+        {
+            var p = req.Params ?? new Dictionary<string, object>();
+            var sessionId  = GetString(p, "sessionId") ?? throw new Exception("sessionId required");
+            // Vacío es legítimo: "ya te la di, dame otro destino".
+            var keyBase64  = GetString(p, "keyBase64")  ?? "";
+            var stopReason = GetString(p, "stopReason") ?? "";
+            var sha256     = GetString(p, "sha256")     ?? "";
+
+            // Los números llegan como texto por el IPC, igual que en
+            // HandleRemoteScreenAudit.
+            long bytes = 0, durationMs = 0;
+            int frames = 0, width = 0, height = 0;
+            var bStr = GetString(p, "bytes");      var fStr = GetString(p, "frames");
+            var wStr = GetString(p, "width");      var hStr = GetString(p, "height");
+            var dStr = GetString(p, "durationMs");
+            if (!string.IsNullOrWhiteSpace(bStr)) long.TryParse(bStr, out bytes);
+            if (!string.IsNullOrWhiteSpace(fStr)) int.TryParse(fStr, out frames);
+            if (!string.IsNullOrWhiteSpace(wStr)) int.TryParse(wStr, out width);
+            if (!string.IsNullOrWhiteSpace(hStr)) int.TryParse(hStr, out height);
+            if (!string.IsNullOrWhiteSpace(dStr)) long.TryParse(dStr, out durationMs);
+
+            var truncStr = GetString(p, "truncated");
+            bool truncated = string.Equals(truncStr, "true", StringComparison.OrdinalIgnoreCase);
+
+            await GrpcBridgeSingleton.Instance.SendRemoteRecordingReady(
+                sessionId, keyBase64, bytes, frames, width, height,
+                durationMs, truncated, stopReason, sha256);
+            return PrivSvcResponse.Success(req.Id, new { ok = true });
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "grpc_remote_recording_error", ex.Message);
+        }
+    }
+
     public static async Task<PrivSvcResponse> HandleRemoteScreenAudit(PrivSvcRequest req)
     {
         try
