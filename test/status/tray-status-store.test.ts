@@ -276,3 +276,61 @@ describe("TrayStatusStore — estado de conexión idempotente", () => {
     expect(otro.load()?.grpc?.lastConnectedAtUtc).toBe(marca);
   });
 });
+
+describe("⚠️ el arranque no puede borrar lo que no sabe recuperar", () => {
+  // De dónde viene (este Mac, 25-sep-2026): la pestaña Catalog decía "Nothing
+  // available right now" con DOS paquetes de autoservicio publicados en T1. El
+  // log del agente tenía `catalogResponse applied { itemCount: 1 }` y el
+  // fichero `"catalog": null`.
+  //
+  // `writeStartupSnapshot` es el único escritor que construye el snapshot
+  // desde cero en vez de partir del actual, así que borraba el catálogo en
+  // cada arranque. Y el catálogo sólo se pide una vez por conexión, de modo
+  // que un reinicio después de recibirlo dejaba la pestaña vacía hasta la
+  // siguiente reconexión — en un equipo estable, mañana.
+
+  /** Un contexto mínimo: writeStartupSnapshot sólo lee estos cuatro sitios. */
+  const ctx = {
+    config: { agentVersion: "1.1.80", coreVersion: "1.1.80" },
+    enrollment: { deviceId: "dev-1", tenantId: "1" },
+    policy: { getVersion: () => "v1", getHash: () => "h1" },
+    policyRuntime: { snapshot: () => ({ plugins: ["amp"], modules: [], features: {} }) },
+  } as any;
+
+  it("el catálogo sobrevive al reinicio", () => {
+    const store = new TrayStatusStore();
+    store.updateCatalog(
+      [{ id: "pkg-1", name: "Paquete", version: "1.0", vendor: "ACME" } as any],
+      "ver-1"
+    );
+
+    const afterRestart = store.writeStartupSnapshot(ctx);
+
+    expect(afterRestart.catalog?.items).toHaveLength(1);
+    expect(afterRestart.catalog?.catalogVersion).toBe("ver-1");
+  });
+
+  it("⚠️ la sesión remota NO sobrevive: ninguna aguanta un reinicio", () => {
+    // Arrastrarla dejaría la franja encendida diciendo que alguien mira una
+    // pantalla que ya no mira nadie. Una alarma falsa entrena a la persona a
+    // ignorar la siguiente, que sí será real.
+    const store = new TrayStatusStore();
+    store.setRemoteSession({
+      active: true,
+      sessionId: "sess-1",
+      capability: "rcp.screen",
+      controlling: false,
+      recording: true,
+    } as any);
+
+    const afterRestart = store.writeStartupSnapshot(ctx);
+
+    expect(afterRestart.remoteSession).toBeUndefined();
+  });
+
+  it("y sin nada previo no inventa un catálogo", () => {
+    const store = new TrayStatusStore();
+    const snapshot = store.writeStartupSnapshot(ctx);
+    expect(snapshot.catalog).toBeUndefined();
+  });
+});

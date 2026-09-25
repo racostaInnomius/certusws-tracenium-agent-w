@@ -223,14 +223,21 @@ final class StatusPopoverViewController: NSViewController {
             // la etiqueta es quien realmente decide el ancho de cada estado.
             badgeContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
             badgeContainer.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            badgeContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 52),
+            badgeContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 62),
             badgeContainer.heightAnchor.constraint(equalToConstant: 22),
 
-            // Texto centrado en AMBOS ejes dentro de la pastilla
-            badgeLabel.centerXAnchor.constraint(equalTo: badgeContainer.centerXAnchor),
+            // ⚠️ El ancho lo fija el TEXTO, no el solver.
+            //
+            // Antes la etiqueta iba centrada con dos desigualdades (`>= +6`,
+            // `<= -6`) y la pastilla sólo tenía un suelo de ancho. Eso deja el
+            // ancho AMBIGUO: cualquier valor por encima del suelo satisface
+            // las restricciones, y Auto Layout resolvía con una pastilla
+            // enorme — "ONLINE" flotando en medio de una barra verde de un
+            // tercio de la cabecera. Con las dos igualdades, el ancho es
+            // exactamente el del texto más su aire.
             badgeLabel.centerYAnchor.constraint(equalTo: badgeContainer.centerYAnchor),
-            badgeLabel.leadingAnchor.constraint(greaterThanOrEqualTo: badgeContainer.leadingAnchor, constant: 6),
-            badgeLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeContainer.trailingAnchor, constant: -6)
+            badgeLabel.leadingAnchor.constraint(equalTo: badgeContainer.leadingAnchor, constant: 10),
+            badgeLabel.trailingAnchor.constraint(equalTo: badgeContainer.trailingAnchor, constant: -10)
         ])
 
         view.addSubview(headerView)
@@ -273,6 +280,16 @@ final class StatusPopoverViewController: NSViewController {
         ))
         strip.autoresizingMask = [.width, .minYMargin]
 
+        // Aspecto de macOS actual: control de tamaño normal y el azul del
+        // sistema sustituido por el teal de marca en el segmento activo. El
+        // `.roundRect` heredado se veía de otra década, y el azul era el único
+        // color de la ventana que no es nuestro.
+        tabControl.segmentStyle = .automatic
+        tabControl.controlSize = .regular
+        tabControl.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        tabControl.segmentDistribution = .fit
+        tabControl.selectedSegmentBezelColor = NSColor(srgbRed: 0x3C/255.0, green: 0x7C/255.0,
+                                                      blue: 0x7C/255.0, alpha: 1)
         tabControl.selectedSegment = 0 // Device Info primero — es el caso de soporte
         tabControl.target = self
         tabControl.action = #selector(tabChanged(_:))
@@ -284,9 +301,12 @@ final class StatusPopoverViewController: NSViewController {
         // .mini is the closest native macOS equivalent to that compact
         // footprint; the font size is Apple's own HIG-prescribed size for
         // that control size rather than a guessed constant.
+        // Mismo tamaño de control que las pestañas: `.mini` lo dejaba como un
+        // botón de juguete al lado de una tira de pestañas normal, y la
+        // diferencia de alto hacía que la fila no leyera como una fila.
         copyButton.bezelStyle = .rounded
-        copyButton.controlSize = .mini
-        copyButton.font = NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .mini))
+        copyButton.controlSize = .regular
+        copyButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         copyButton.target = self
         copyButton.action = #selector(copyAllPressed(_:))
         copyButton.translatesAutoresizingMaskIntoConstraints = false
@@ -310,6 +330,8 @@ final class StatusPopoverViewController: NSViewController {
             tabControl.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
             copyButton.trailingAnchor.constraint(equalTo: strip.trailingAnchor, constant: -Self.bodyPadding),
             copyButton.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
+            // Mismo alto que la tira de pestañas: la fila se lee como una.
+            copyButton.heightAnchor.constraint(equalTo: tabControl.heightAnchor),
             locationButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -8),
             locationButton.centerYAnchor.constraint(equalTo: strip.centerYAnchor)
         ])
@@ -472,7 +494,13 @@ final class StatusPopoverViewController: NSViewController {
         grid.rowSpacing = 6
         grid.rowAlignment = .firstBaseline
 
-        let documentView = NSView()
+        // ⚠️ VOLTEADO. El origen de AppKit está abajo a la izquierda, así que un
+        // document view normal ancla su contenido al FONDO del scroll: cuando
+        // la pestaña tiene menos filas que alto disponible —que es casi
+        // siempre— el contenido aparecía hundido, con un palmo de vacío encima
+        // y el título de la primera sección a media pantalla. Con `isFlipped`
+        // el contenido empieza arriba, que es donde se lee.
+        let documentView = FlippedView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
         documentView.addSubview(grid)
         NSLayoutConstraint.activate([
@@ -487,6 +515,14 @@ final class StatusPopoverViewController: NSViewController {
         // sin esto NSScrollView deja que el document tome ancho
         // intrínseco (causa scroll horizontal y colapso visual).
         documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor).isActive = true
+    }
+
+    /// Cambia de pestaña como lo haría un clic. Sólo para tests: recorrer las
+    /// pestañas es la única forma de comprobar la invariante de que queda UNA
+    /// visible, y esa invariante se rompió en campo.
+    func selectTabForTests(_ index: Int) {
+        tabControl.selectedSegment = index
+        tabChanged(tabControl)
     }
 
     @objc private func tabChanged(_ sender: NSSegmentedControl) {
@@ -967,4 +1003,14 @@ final class StatusPopoverViewController: NSViewController {
         }
         return status
     }
+}
+
+/// Un `NSView` cuyo origen está ARRIBA a la izquierda.
+///
+/// Es lo que hace que el contenido de un `NSScrollView` empiece por arriba en
+/// vez de quedar pegado al fondo cuando no llena el alto. Sin esto, cada
+/// pestaña del popover dejaba un hueco en blanco proporcional a lo POCO que
+/// tuviera que contar — justo al revés de lo razonable.
+final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }

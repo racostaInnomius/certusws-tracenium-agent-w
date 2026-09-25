@@ -152,16 +152,32 @@ internal sealed class StatusForm : Form
         // en el Resize evita tener que suponerlos.
         header.Resize += (_, _) =>
         {
+            // ⚠️ El logo mide lo que mide EL BLOQUE DE TEXTO, igual que en
+            // macOS (`logoView.top == titleLabel.top`,
+            // `logoView.bottom == subtitleLabel.bottom`).
+            //
+            // Antes era un cuadrado fijo de 34 px centrado en el header por su
+            // cuenta, con el título en y=14 y el eslogan en y=48 puestos a
+            // mano: tres alturas independientes que no cuadraban entre sí, y
+            // el logo quedaba flotando a una altura distinta de las dos líneas
+            // que acompaña. Aquí el bloque de texto se mide primero y el logo
+            // se ajusta a él, así que la proporción es la misma en las dos
+            // plataformas venga el texto que venga.
+            const int gap = 2;                 // aire entre título y eslogan
+            var blockHeight = headerTitle.Height + gap + _headerSubtitle.Height;
+            var blockTop = (header.Height - blockHeight) / 2;
+
             var textLeft = 20;
             if (logoImage is not null)
             {
-                logo.Location = new Point(18, (header.Height - logo.Height) / 2);
+                logo.Size = new Size(blockHeight, blockHeight);
+                logo.Location = new Point(18, blockTop);
                 textLeft = logo.Right + 10;
             }
 
-            headerTitle.Location = new Point(textLeft, 14);
+            headerTitle.Location = new Point(textLeft, blockTop);
 
-            var sloganY = 48;
+            var sloganY = blockTop + headerTitle.Height + gap;
             _headerSubtitle.Location = new Point(textLeft, sloganY);
             sloganAccent.Location = new Point(_headerSubtitle.Right, sloganY);
             sloganRight.Location = new Point(sloganAccent.Right, sloganY);

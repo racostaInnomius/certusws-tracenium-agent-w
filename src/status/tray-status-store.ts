@@ -199,6 +199,20 @@ export class TrayStatusStore {
     const patchState = loadPmpState();
     const policySnapshot = ctx.policyRuntime.snapshot();
 
+    // ⚠️ Este es el ÚNICO escritor que construye el snapshot desde cero en vez
+    // de partir del actual, y por eso borraba el catálogo en cada arranque.
+    //
+    // El catálogo llega una vez por conexión (CatalogResponse en el READY) y
+    // no se vuelve a pedir hasta la siguiente. Si el agente se reinicia
+    // después de recibirlo, esto lo dejaba a cero y la pestaña Catalog decía
+    // "Nothing available right now" hasta la próxima reconexión — que en un
+    // equipo estable puede ser mañana. Encontrado en este Mac el 25-sep:
+    // `catalogResponse applied { itemCount: 1 }` en el log, `"catalog": null`
+    // en el fichero, y T1 con dos paquetes de autoservicio publicados.
+    //
+    // Se conserva lo que NO es del arranque y no se puede recuperar solo.
+    const previous = this.load();
+
     const snapshot: TrayStatusSnapshot = {
       updatedAtUtc: new Date().toISOString(),
       agentVersion: ctx.config.agentVersion,
@@ -233,6 +247,19 @@ export class TrayStatusStore {
         lastError: patchState.lastError
       }
     };
+
+    // El catálogo sobrevive al reinicio: es información del servidor, no del
+    // proceso, y volver a pedirla tarda lo que tarde la próxima reconexión.
+    if (previous?.catalog) snapshot.catalog = previous.catalog;
+    // La identidad del equipo también: `collectDeviceIdentity` la recompone
+    // un par de segundos después, y sin esto la bandeja enseña "—" en ese
+    // hueco cada vez que el servicio arranca.
+    if (previous?.device) snapshot.device = previous.device;
+
+    // ⚠️ `remoteSession` NO se conserva, y es deliberado: ninguna sesión
+    // remota sobrevive a un reinicio del agente. Arrastrarla dejaría la franja
+    // encendida diciendo que alguien mira una pantalla que ya no mira nadie —
+    // una alarma falsa que entrena a la persona a ignorar la siguiente.
 
     this.save(snapshot);
     return snapshot;
