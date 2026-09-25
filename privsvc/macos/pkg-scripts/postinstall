@@ -324,7 +324,23 @@ if [ -n "$SETUP_USER" ] && [ "$SETUP_USER" != "root" ]; then
   SETUP_UID="$(/usr/bin/id -u "$SETUP_USER" 2>/dev/null || true)"
 fi
 
-if [ -n "$SETUP_UID" ] && [ -x "/Applications/Tracenium Agent Status.app/Contents/MacOS/TraceniumAgentStatus" ]; then
+# ⚠️ UNA sola vez por equipo, no en cada actualizacion.
+#
+# El agente se auto-actualiza, asi que este script corre cada vez que sale una
+# version. Abrir la ventana de permisos en todas ellas convierte una pregunta
+# razonable en un incordio recurrente — reportado tras el update a 1.1.82 — y
+# lo peor de un incordio recurrente es que ensena a cerrar sin leer, que es
+# justo lo contrario de lo que esta ventana viene a conseguir.
+#
+# La marca vive fuera del directorio Agent/ (que es 700 y se borra en algunas
+# rutas de desinstalacion) y sobrevive a las actualizaciones. Quien quiera
+# volver a verla tiene el boton "Permissions..." del popover, que abre la
+# MISMA ventana.
+SETUP_MARKER="/Library/Application Support/Tracenium/.permissions-prompted"
+
+if [ -f "$SETUP_MARKER" ]; then
+  echo "Permissions window already offered on this Mac; not asking again"
+elif [ -n "$SETUP_UID" ] && [ -x "/Applications/Tracenium Agent Status.app/Contents/MacOS/TraceniumAgentStatus" ]; then
   # ⚠️ `-n` (nueva instancia) a proposito, aunque el LaunchAgent acabe de
   # arrancar una. Sin `-n`, cuando LaunchServices ya tiene registrada la
   # instancia del kickstart, `open` se limita a ACTIVARLA y los `--args` se
@@ -333,6 +349,11 @@ if [ -n "$SETUP_UID" ] && [ -x "/Applications/Tracenium Agent Status.app/Content
   # instancia viva y se apaga solo (ver SingleInstance.swift). Antes de ese
   # arbitraje esto dejaba DOS iconos en la barra de menus.
   /bin/launchctl asuser "$SETUP_UID" /usr/bin/open -n -a "/Applications/Tracenium Agent Status.app" --args --setup >/dev/null 2>&1 || true
+  # La marca se pone por haberla OFRECIDO, no por haberla aceptado: quien
+  # cierra con "Not now" ya ha contestado, y volver a preguntar en la siguiente
+  # version es no haber escuchado.
+  /usr/bin/touch "$SETUP_MARKER" 2>/dev/null || true
+  /bin/chmod 644 "$SETUP_MARKER" 2>/dev/null || true
   echo "Permissions window requested for console uid $SETUP_UID"
 else
   # Sin sesion grafica no hay a quien preguntarle. No es un fallo: el boton

@@ -240,6 +240,19 @@ private func reexecDisclaimed() {
 //
 // Apple no permite conceder la Grabación de Pantalla por MDM, así que esta
 // es la única vía que existe. Ver el ADR de instalación.
+// ⚠️ `--out <ruta>` escribe el MISMO JSON a un fichero, además de a stdout.
+//
+// No es una comodidad: es la única forma de que quien pregunta obtenga la
+// respuesta sin ser quien lanza el proceso. TCC no atribuye el permiso al
+// binario que corre, sino a su **responsible process**: un helper lanzado
+// directamente por la app de estado cuenta como esa app. El 25-sep-2026 eso se
+// vio en un Mac real — «Tracenium Agent Status» apareció en Ajustes ›
+// Grabación de pantalla, y el estado del helper (que SÍ tenía el permiso) se
+// leía como «Not granted», porque la respuesta era la de la app de estado.
+//
+// La salida es lanzar el helper por LaunchServices, que lo deja como su propio
+// responsible process. Pero entonces stdout se pierde, así que el resultado
+// tiene que viajar por fichero.
 if CommandLine.arguments.contains("--tcc-status") ||
    CommandLine.arguments.contains("--tcc-request") {
     let request = CommandLine.arguments.contains("--tcc-request")
@@ -254,6 +267,17 @@ if CommandLine.arguments.contains("--tcc-status") ||
                   "\"accessibility\":\(accessibility)," +
                   "\"prompted\":\(request && !before)}"
     print(payload)
+
+    if let i = CommandLine.arguments.firstIndex(of: "--out"),
+       i + 1 < CommandLine.arguments.count {
+        // Temp + move: quien lee sondea, y no puede toparse con medio fichero.
+        let dest = CommandLine.arguments[i + 1]
+        let tmp = dest + ".tmp"
+        if (try? payload.write(toFile: tmp, atomically: false, encoding: .utf8)) != nil {
+            try? FileManager.default.removeItem(atPath: dest)
+            try? FileManager.default.moveItem(atPath: tmp, toPath: dest)
+        }
+    }
     exit(0)
 }
 

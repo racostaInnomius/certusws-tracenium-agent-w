@@ -72,4 +72,37 @@ describe("postinstall de macOS: no deja bandejas huérfanas", () => {
       "sin `-n`, open activa la instancia existente y descarta los --args",
     ).toMatch(/open\s+-n\s+-a/);
   });
+
+  /**
+   * ⚠️ El agente se auto-actualiza, así que este script corre en cada versión.
+   * Tras el update a 1.1.82 la ventana de permisos volvió a salir, y eso no es
+   * un detalle de estilo: un aviso que reaparece en cada actualización enseña
+   * a cerrarlo sin leer, que es lo contrario de lo que esta ventana persigue.
+   */
+  describe("la ventana de permisos se ofrece UNA vez, no en cada update", () => {
+    const MARKER = "/Library/Application Support/Tracenium/.permissions-prompted";
+
+    it("se salta el lanzamiento si ya se ofreció", () => {
+      expect(text).toContain(MARKER);
+      expect(
+        text,
+        "sin la comprobación, cada auto-update reabre la ventana",
+      ).toMatch(/if \[ -f "\$SETUP_MARKER" \]/);
+    });
+
+    it("deja la marca al ofrecerla, no al aceptarla", () => {
+      const open = text.indexOf("--args --setup");
+      const touch = text.indexOf('touch "$SETUP_MARKER"');
+      expect(touch, "no se deja marca: volvería a preguntar en la próxima versión")
+        .toBeGreaterThan(-1);
+      expect(
+        touch,
+        "la marca va DESPUÉS de abrir la ventana, en la misma rama",
+      ).toBeGreaterThan(open);
+    });
+
+    it("la marca vive fuera de Agent/, que es 700 y se borra", () => {
+      expect(MARKER).not.toContain("/Agent/");
+    });
+  });
 });

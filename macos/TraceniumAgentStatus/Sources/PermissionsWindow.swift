@@ -104,7 +104,14 @@ final class PermissionsWindow: NSObject {
         // El estado cambia FUERA de esta app: la persona puede concederlo en
         // Ajustes, en otra ventana. Sin mirar cada poco, la ventana enseñaría
         // "no concedido" para siempre sobre un permiso que acaban de dar.
-        let t = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in self?.refresh() }
+        //
+        // ⚠️ El sondeo va a 3 s, no a 1,5: cada uno lanza un proceso por
+        // LaunchServices, y encadenarlos más rápido de lo que tardan en
+        // contestar solo apila helpers.
+        Self.probeScreenRecording(request: false) { [weak self] _ in self?.refresh() }
+        let t = Timer(timeInterval: 3.0, repeats: true) { [weak self] _ in
+            Self.probeScreenRecording(request: false) { _ in self?.refresh() }
+        }
         RunLoop.main.add(t, forMode: .common)
         pollTimer = t
     }
@@ -120,18 +127,86 @@ final class PermissionsWindow: NSObject {
 
     // MARK: - Estado
 
-    /// ¿Está concedida la Grabación de Pantalla PARA EL HELPER?
+    /// Último estado conocido de la Grabación de Pantalla DEL HELPER.
     ///
-    /// Se pregunta al propio helper (`--tcc-status`), que solo consulta y no
-    /// abre ningún diálogo. Preguntárselo a esta app daría el permiso de esta
-    /// app, que no es el que hace falta (regla 1).
-    static func screenRecordingState() -> State {
-        guard let helper = helperURL() else { return .unknown }
-        let out = run(helper, ["--tcc-status"])
-        guard let data = out?.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let granted = json["screenRecording"] as? Bool else { return .unknown }
-        return granted ? .granted : .missing
+    /// Se cachea porque averiguarlo ya no es instantáneo: hay que lanzar el
+    /// helper por LaunchServices y esperar su respuesta en un fichero. Ver
+    /// `probeScreenRecording`.
+    private static var lastKnownScreenState: State = .unknown
+
+    static func screenRecordingState() -> State { lastKnownScreenState }
+
+    /// Pregunta —o pide— el permiso, con la atribución correcta.
+    ///
+    /// ── 🔴 Por qué no se puede lanzar el helper y leer su stdout ────────
+    ///
+    /// TCC no atribuye el permiso al binario que corre, sino a su
+    /// **responsible process**. Un helper lanzado con `Process()` desde esta
+    /// app tiene a esta app como responsable, así que:
+    ///
+    ///   * `--tcc-request` registraba **Tracenium Agent Status** en Ajustes ›
+    ///     Grabación de pantalla, no «Tracenium Screen Helper». Visto en un Mac
+    ///     real el 25-sep-2026, con las DOS entradas en la lista.
+    ///   * `--tcc-status` devolvía el permiso de la app de estado, así que un
+    ///     helper que YA tenía el permiso concedido se pintaba «Not granted» —
+    ///     y pulsar «Allow…» pedía el permiso equivocado, otra vez.
+    ///
+    /// Lanzarlo por LaunchServices (`NSWorkspace.openApplication`) lo deja como
+    /// su propio responsable, que es como lo lanza el PrivSvc en el camino de
+    /// captura de verdad (`launchctl asuser`) — de ahí que la entrada correcta
+    /// sí existiera. El precio es que se pierde stdout, y por eso el helper
+    /// aprendió `--out`.
+    static func probeScreenRecording(request: Bool,
+                                     completion: @escaping (State) -> Void) {
+        guard let app = helperAppURL() else {
+            lastKnownScreenState = .unknown
+            completion(.unknown)
+            return
+        }
+        let out = NSTemporaryDirectory() + "tracenium-tcc-\(UUID().uuidString).json"
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.arguments = [request ? "--tcc-request" : "--tcc-status", "--out", out]
+        cfg.activates = request          // el diálogo del sistema necesita foco
+        cfg.createsNewApplicationInstance = true   // el helper es de un solo uso
+        cfg.hides = !request
+
+        NSWorkspace.shared.openApplication(at: app, configuration: cfg) { _, error in
+            if let error {
+                Logger.shared.warn("No se pudo lanzar el helper de pantalla: \(error)")
+                DispatchQueue.main.async { completion(Self.lastKnownScreenState) }
+                return
+            }
+            // El helper es one-shot y escribe al salir. Se sondea un rato
+            // corto; si no aparece, se conserva lo último que se supo en vez de
+            // pintar «no concedido» sobre un permiso que quizá esté.
+            DispatchQueue.global(qos: .utility).async {
+                var state: State? = nil
+                for _ in 0..<30 {   // ~3 s
+                    if let data = FileManager.default.contents(atPath: out),
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let granted = json["screenRecording"] as? Bool {
+                        state = granted ? .granted : .missing
+                        break
+                    }
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+                try? FileManager.default.removeItem(atPath: out)
+                DispatchQueue.main.async {
+                    if let state { Self.lastKnownScreenState = state }
+                    completion(Self.lastKnownScreenState)
+                }
+            }
+        }
+    }
+
+    /// El BUNDLE del helper, que es lo que LaunchServices sabe abrir.
+    static func helperAppURL() -> URL? {
+        guard let exe = helperURL() else { return nil }
+        // …/Tracenium Screen Helper.app/Contents/MacOS/tracenium-screencap
+        let app = exe.deletingLastPathComponent()   // MacOS
+            .deletingLastPathComponent()            // Contents
+            .deletingLastPathComponent()            // .app
+        return app.pathExtension == "app" ? app : nil
     }
 
     /// Dónde vive el helper de captura.
@@ -167,19 +242,11 @@ final class PermissionsWindow: NSObject {
         return nil
     }
 
-    @discardableResult
-    private static func run(_ url: URL, _ args: [String]) -> String? {
-        let p = Process()
-        p.executableURL = url
-        p.arguments = args
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        p.standardError = Pipe()
-        do { try p.run() } catch { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        return String(data: data, encoding: .utf8)
-    }
+    // ⚠️ Aquí había un `run()` que lanzaba el helper con `Process()` y leía su
+    // stdout. Se ha ido, y no debe volver: un helper lanzado así tiene a esta
+    // app como responsible process, y TCC le cuelga a ELLA el permiso de
+    // pantalla. Fue exactamente el fallo del 25-sep. Todo lo que hable con el
+    // helper para asuntos de permisos pasa por `probeScreenRecording`.
 
     private func refresh() {
         let loc = locationState?() ?? .unknown
@@ -225,9 +292,10 @@ final class PermissionsWindow: NSObject {
     }
 
     @objc private func screenTapped() {
-        guard let helper = Self.helperURL() else { return }
-        // Pedir DE VERDAD: es lo único que registra la entrada en Ajustes.
-        Self.run(helper, ["--tcc-request"])
+        // Pedir DE VERDAD: es lo único que registra la entrada en Ajustes. Y
+        // por LaunchServices, para que la entrada que se registre sea la del
+        // HELPER y no la de esta app (ver probeScreenRecording).
+        Self.probeScreenRecording(request: true) { [weak self] _ in self?.refresh() }
         openSettings("com.apple.preference.security?Privacy_ScreenCapture")
     }
 

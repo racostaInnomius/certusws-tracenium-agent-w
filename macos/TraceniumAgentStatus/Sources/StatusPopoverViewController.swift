@@ -314,12 +314,15 @@ final class StatusPopoverViewController: NSViewController {
         copyButton.action = #selector(copyAllPressed(_:))
         copyButton.translatesAutoresizingMaskIntoConstraints = false
 
-        // Same size as copyButton — they share the tab strip, so a
-        // mismatched size between the two would look worse than either
-        // alone.
+        // ⚠️ El comentario decía «mismo tamaño que copyButton» y el código
+        // ponía `.mini` mientras copyButton era `.regular`: en la fila se veía
+        // un botón de juguete al lado de otro normal. Un comentario no iguala
+        // nada; los valores, sí — y ahora el alto lo ata una constraint contra
+        // las pestañas, igual que copyButton, para que no puedan separarse
+        // otra vez.
         locationButton.bezelStyle = .rounded
-        locationButton.controlSize = .mini
-        locationButton.font = NSFont.systemFont(ofSize: NSFont.systemFontSize(for: .mini))
+        locationButton.controlSize = .regular
+        locationButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         locationButton.target = self
         locationButton.action = #selector(enableLocationPressed(_:))
         locationButton.translatesAutoresizingMaskIntoConstraints = false
@@ -336,7 +339,8 @@ final class StatusPopoverViewController: NSViewController {
             // Mismo alto que la tira de pestañas: la fila se lee como una.
             copyButton.heightAnchor.constraint(equalTo: tabControl.heightAnchor),
             locationButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -8),
-            locationButton.centerYAnchor.constraint(equalTo: strip.centerYAnchor)
+            locationButton.centerYAnchor.constraint(equalTo: strip.centerYAnchor),
+            locationButton.heightAnchor.constraint(equalTo: copyButton.heightAnchor)
         ])
         view.addSubview(strip)
 

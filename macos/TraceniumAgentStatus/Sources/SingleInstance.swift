@@ -40,12 +40,29 @@ enum SingleInstance {
     /// soltarlo se liberaría el cerrojo y otra instancia podría colarse.
     private static var lockFD: Int32 = -1
 
-    private static var lockPath: String {
+    /// ⚠️ Solo para pruebas: un cerrojo propio.
+    ///
+    /// Sin esto, la prueba compite con la bandeja DE VERDAD. En cuanto el
+    /// agente arreglado corre en el Mac de quien desarrolla, el tray tiene el
+    /// cerrojo cogido y `claimPrimary()` devuelve `false` — la prueba se
+    /// pondría roja por estar el producto funcionando, que es la peor clase de
+    /// falso negativo: enseña a ignorarla.
+    static var lockPathForTests: String?
+
+    static var lockPath: String {
+        if let override = lockPathForTests { return override }
         let base = (NSHomeDirectory() as NSString)
             .appendingPathComponent("Library/Application Support/Tracenium")
         try? FileManager.default.createDirectory(
             atPath: base, withIntermediateDirectories: true)
         return (base as NSString).appendingPathComponent("agentstatus.lock")
+    }
+
+    /// Suelta el cerrojo. Solo para que cada prueba empiece limpia; en
+    /// producción nadie lo llama, porque soltarlo dejaría entrar a otra
+    /// instancia.
+    static func releaseForTests() {
+        if lockFD >= 0 { close(lockFD); lockFD = -1 }
     }
 
     /// ¿Es esta la instancia que se queda?

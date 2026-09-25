@@ -171,11 +171,19 @@ final class StatusBarController {
         // El estado de la pantalla se cachea: leerlo lanza el helper, y
         // hacerlo en cada tic de 5 s serían 17.000 procesos al día por un dato
         // que cambia cuando alguien va a Ajustes.
+        //
+        // ⚠️ La consulta es ASÍNCRONA desde que el helper se lanza por
+        // LaunchServices: es la única forma de que TCC atribuya el permiso al
+        // helper y no a esta app. `screenRecordingState()` devuelve lo último
+        // que se supo; quien lo actualiza es el sondeo.
         let now = Date()
         if now.timeIntervalSince(lastScreenCheck) > 60 {
             lastScreenCheck = now
-            cachedScreenState = PermissionsWindow.screenRecordingState()
+            PermissionsWindow.probeScreenRecording(request: false) { [weak self] state in
+                self?.cachedScreenState = state
+            }
         }
+        cachedScreenState = PermissionsWindow.screenRecordingState()
         contentController.setLocationPromptVisible(
             locationProvider.needsUserConsent || cachedScreenState == .missing
         )
