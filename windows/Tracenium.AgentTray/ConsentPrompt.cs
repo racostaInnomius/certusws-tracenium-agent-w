@@ -121,26 +121,19 @@ internal static class ConsentPrompt
 
     private static void Present(ConsentRequest request)
     {
-        var body = string.Join(Environment.NewLine, request.Lines);
-
-        // ⚠️ El botón por defecto es el SEGUNDO (DefaultDesktopOnly + Button2),
-        // o sea "No" ⇒ denegar. El botón por defecto se activa con Return y es
-        // donde va la mano: en un diálogo que concede acceso a la pantalla de
-        // alguien, la opción de reposo no puede ser la que concede. Un Return
-        // distraído no debe regalar el control del equipo.
+        // ⚠️ El botón por defecto es el de DENEGAR, y Escape también deniega
+        // (ver ConsentWindow): el botón por defecto se activa con Return y es
+        // donde va la mano. En un diálogo que concede acceso a la pantalla de
+        // alguien, la opción de reposo no puede ser la que concede.
         //
-        // MessageBox y no un Form propio: sale por encima de todo sin depender
-        // de que la bandeja tenga el foco, y es la ventana que Windows ya sabe
-        // colocar bien en cualquier DPI y cualquier tema.
-        var result = MessageBox.Show(
-            $"{body}{Environment.NewLine}{Environment.NewLine}" +
-            $"{request.AllowLabel}?",
-            request.Title,
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Warning,
-            MessageBoxDefaultButton.Button2);
+        // Ventana propia y ya no un MessageBox: el aviso tiene que
+        // reconocerse como de Tracenium de un vistazo, porque un cuadro
+        // anónimo que pide tu pantalla es indistinguible de una estafa. El
+        // porqué completo, en ConsentWindow.
+        using var dialog = new ConsentWindow(request);
+        dialog.ShowDialog();
 
-        Write(request.RequestId, result == DialogResult.Yes);
+        Write(request.RequestId, dialog.Approved);
     }
 
     private static void Write(string requestId, bool approved)

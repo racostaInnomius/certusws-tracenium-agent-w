@@ -169,6 +169,17 @@ export async function showIndicator(args: {
   sessionId: string;
   text: string;
   button: string;
+  /**
+   * La sesión no solo MIRA: además controla el equipo. Cambia el acento de la
+   * franja a ámbar y rellena el botón.
+   *
+   * ⚠️ Se decide al MOSTRAR. El helper de X11 se lanza una vez por sesión y no
+   * escucha actualizaciones, así que una sesión que escala a control después
+   * de abrirse mantiene el acento con el que nació. En Windows y macOS la
+   * franja sí se repinta. Cerrarlo aquí pide un canal de actualización hacia
+   * el helper, que es trabajo aparte.
+   */
+  controlling?: boolean;
 }): Promise<ShowResult> {
   hideIndicator();
 
@@ -224,7 +235,8 @@ export async function showIndicator(args: {
       helper,
       "--session-id", args.sessionId,
       "--text", args.text,
-      "--button", args.button
+      "--button", args.button,
+      ...(args.controlling ? ["--controlling"] : [])
     ],
     extraEnv
   );
@@ -371,7 +383,8 @@ export async function handleIndicatorShow(req: PrivSvcRequest): Promise<PrivSvcR
   const r = await showIndicator({
     sessionId,
     text: String(req.params?.text || "A remote operator is viewing this screen"),
-    button: String(req.params?.button || "Stop sharing")
+    button: String(req.params?.button || "Stop sharing"),
+    controlling: Boolean(req.params?.controlling)
   });
 
   if (!r.ok) {

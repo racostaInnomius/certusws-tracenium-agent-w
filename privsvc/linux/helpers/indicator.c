@@ -64,24 +64,49 @@
 #include <time.h>
 #include <unistd.h>
 
-#define BANNER_HEIGHT 34
-#define BANNER_MAX_WIDTH 720
-#define BUTTON_PAD_X 12
+#define BANNER_HEIGHT 52
+#define BANNER_MAX_WIDTH 760
+#define BUTTON_PAD_X 14
 #define BUTTON_MARGIN 8
+#define ACCENT_BAR_H 2
 
-/* Ámbar de aviso, el mismo par que la bandeja de Windows y la banda de macOS.
- * Ámbar y no rojo: el rojo dice "error" y esto no lo es — es una sesión
- * legítima que la persona debe poder ver. El rojo se guarda para cuando algo
- * va mal de verdad. */
-#define COLOR_BG   "#FFF4D6"
-#define COLOR_FG   "#8B6404"
-#define COLOR_BTN  "#FFFFFF"
+/* Cromo de marca, el mismo que la bandeja de Windows y la banda de macOS
+ * (rediseño 25-sep-2026).
+ *
+ * Antes la franja era una banda ámbar plana con aspecto de aviso del sistema.
+ * Ahora es cromo oscuro con la marca delante: se lee como una pieza de
+ * Tracenium, y eso es lo que la hace creíble — un aviso que podría ser de
+ * cualquiera se ignora como se ignora cualquiera.
+ *
+ * El ámbar deja de ser el fondo para ser el ACENTO DEL ESTADO:
+ *   viendo      → cian  (#8FFDFF)
+ *   controlando → ámbar (#F4D37D)
+ * Los dos se distinguen también por claridad, no solo por tono, así que el
+ * cambio se ve aunque no se distingan los colores. Ámbar y no rojo, como
+ * antes: el rojo dice "error" y esto no lo es.
+ *
+ * ⚠️ Lo que NO se puede hacer aquí y sí en las otras dos: esquinas
+ * redondeadas. Necesitan XShape, y este helper enlaza sólo -lX11 a propósito
+ * (ver build-linux-binaries.sh: no arrastrar dependencias al .deb por dibujar
+ * dos líneas de texto). Tampoco hay logo en PNG — decodificarlo pediría otra
+ * biblioteca—, así que la marca se dibuja con rectángulos: una "T" con el
+ * travesaño en el cian del logo. */
+#define COLOR_BG        "#222831"
+#define COLOR_BG_CTRL   "#2A2620"
+#define COLOR_FG        "#F2F4F7"
+#define COLOR_FG_CTRL   "#FBEFD2"
+#define COLOR_ACCENT    "#8FFDFF"
+#define COLOR_ACCENT_CTRL "#F4D37D"
+#define COLOR_BTN       "#222831"
+#define COLOR_MUTED     "#8A929C"
 
 static Display *dpy = NULL;
 static Window win = 0;
 static GC gc = 0;
 static XFontStruct *font = NULL;
-static unsigned long col_bg, col_fg, col_btn;
+static unsigned long col_bg, col_fg, col_btn, col_accent, col_muted;
+/* 1 = la sesión está CONTROLANDO, no sólo viendo. Lo manda el agente. */
+static int controlling = 0;
 static int win_w = BANNER_MAX_WIDTH;
 static int btn_x = 0, btn_w = 0;
 
@@ -156,36 +181,79 @@ static int text_width(const char *s) {
     return XTextWidth(font, s, (int)strlen(s));
 }
 
+/* La marca, dibujada con rectángulos: una "T" con el travesaño en cian.
+ *
+ * No es el logo — decodificar un PNG pediría otra biblioteca en el .deb — pero
+ * sí es reconocible junto al nombre, y reconocerlo es TODO el punto: un aviso
+ * anónimo que dice que te están mirando la pantalla se ignora. */
+static void draw_mark(Drawable d, int x, int y, int size) {
+    int bar_h = size / 5;
+    if (bar_h < 3) bar_h = 3;
+    int stem_w = bar_h;
+    XSetForeground(dpy, gc, col_fg);
+    XFillRectangle(dpy, d, gc, x, y, (unsigned)size, (unsigned)bar_h);
+    XFillRectangle(dpy, d, gc, x + (size - stem_w) / 2, y, (unsigned)stem_w, (unsigned)size);
+    XSetForeground(dpy, gc, col_accent);
+    XFillRectangle(dpy, d, gc, x + (size - stem_w) / 2 + 1, y + bar_h + 1,
+                   (unsigned)(stem_w - 2), (unsigned)(size - bar_h - 2));
+}
+
 static void draw(void) {
     if (!dpy || !win) return;
 
     XSetForeground(dpy, gc, col_bg);
     XFillRectangle(dpy, win, gc, 0, 0, (unsigned)win_w, BANNER_HEIGHT);
 
-    /* Botón, anclado a la derecha. */
+    /* Barra de acento abajo: es la que dice de un vistazo si sólo miran o
+     * además controlan, sin tener que leer la frase. */
+    XSetForeground(dpy, gc, col_accent);
+    XFillRectangle(dpy, win, gc, 0, BANNER_HEIGHT - ACCENT_BAR_H,
+                   (unsigned)win_w, ACCENT_BAR_H);
+
+    int mid = (BANNER_HEIGHT - ACCENT_BAR_H) / 2;
+
+    draw_mark(win, BUTTON_PAD_X, mid - 11, 22);
+
+    /* Punto de estado, en el acento. */
+    XSetForeground(dpy, gc, col_accent);
+    XFillArc(dpy, win, gc, BUTTON_PAD_X + 34, mid - 5, 9, 9, 0, 360 * 64);
+
+    /* Botón, anclado a la derecha y DENTRO de la franja: el corte tiene que
+     * estar donde está el aviso, no en otro sitio que haya que buscar. */
     const char *label = stopping ? "Stopping..." : button_buf;
     int lw = text_width(label);
     btn_w = lw + BUTTON_PAD_X * 2;
     btn_x = win_w - btn_w - BUTTON_MARGIN;
-    int btn_y = (BANNER_HEIGHT - 22) / 2;
+    int btn_h = 30;
+    int btn_y = mid - btn_h / 2;
 
-    XSetForeground(dpy, gc, col_btn);
-    XFillRectangle(dpy, win, gc, btn_x, btn_y, (unsigned)btn_w, 22);
-    XSetForeground(dpy, gc, col_fg);
-    XDrawRectangle(dpy, win, gc, btn_x, btn_y, (unsigned)btn_w, 22);
+    /* Controlando: botón relleno en ámbar. Viendo: contorno sobre el cromo.
+     * La diferencia de PESO, no sólo de color, es lo que hace que el estado
+     * escalado se note sin mirarlo fijamente. */
+    if (controlling) {
+        XSetForeground(dpy, gc, col_accent);
+        XFillRectangle(dpy, win, gc, btn_x, btn_y, (unsigned)btn_w, (unsigned)btn_h);
+    } else {
+        XSetForeground(dpy, gc, col_muted);
+        XDrawRectangle(dpy, win, gc, btn_x, btn_y, (unsigned)btn_w, (unsigned)btn_h);
+    }
 
-    int baseline = font ? (BANNER_HEIGHT + font->ascent - font->descent) / 2 : BANNER_HEIGHT / 2;
+    int baseline = font ? (BANNER_HEIGHT - ACCENT_BAR_H + font->ascent - font->descent) / 2
+                        : BANNER_HEIGHT / 2;
     if (font) {
+        /* El texto del botón en ámbar va en tinta oscura: sobre el relleno
+         * claro, el blanco no se lee. */
+        XSetForeground(dpy, gc, controlling ? col_bg : col_fg);
         XDrawString(dpy, win, gc, btn_x + BUTTON_PAD_X, baseline, label, (int)strlen(label));
     }
 
-    /* Texto, centrado en el hueco que queda a la izquierda del botón. Si no
-     * cabe se dibuja desde el margen y X lo recorta: preferimos un texto
-     * cortado a no decir nada. */
+    /* Texto, alineado a la IZQUIERDA tras la marca y no centrado: centrado se
+     * movía de sitio cada vez que cambiaba la frase o el ancho del botón, y un
+     * aviso que baila se lee como una ventana nueva cada vez. Si no cabe, X lo
+     * recorta: preferimos un texto cortado a no decir nada. */
     if (font) {
-        int avail = btn_x - BUTTON_MARGIN * 2;
-        int tw = text_width(text_buf);
-        int tx = (tw < avail) ? (avail - tw) / 2 + BUTTON_MARGIN : BUTTON_MARGIN;
+        XSetForeground(dpy, gc, col_fg);
+        int tx = BUTTON_PAD_X + 34 + 9 + 10;
         XDrawString(dpy, win, gc, tx, baseline, text_buf, (int)strlen(text_buf));
     }
 
@@ -390,6 +458,10 @@ int main(int argc, char **argv) {
             snprintf(text_buf, sizeof(text_buf), "%s", argv[++i]);
         } else if (!strcmp(argv[i], "--button") && i + 1 < argc) {
             snprintf(button_buf, sizeof(button_buf), "%s", argv[++i]);
+        } else if (!strcmp(argv[i], "--controlling")) {
+            /* El acento pasa a ámbar y el botón a relleno. Sin la bandera, la
+             * franja se queda en "viendo", que es la suposición segura. */
+            controlling = 1;
         } else if (!strcmp(argv[i], "--consent")) {
             consent_mode = 1;
         } else if (!strcmp(argv[i], "--allow") && i + 1 < argc) {
@@ -418,9 +490,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    col_bg = alloc_color(COLOR_BG, WhitePixel(dpy, screen));
-    col_fg = alloc_color(COLOR_FG, BlackPixel(dpy, screen));
-    col_btn = alloc_color(COLOR_BTN, WhitePixel(dpy, screen));
+    /* El cromo y el acento dependen del estado: ver o controlar. */
+    col_bg = alloc_color(controlling ? COLOR_BG_CTRL : COLOR_BG, BlackPixel(dpy, screen));
+    col_fg = alloc_color(controlling ? COLOR_FG_CTRL : COLOR_FG, WhitePixel(dpy, screen));
+    col_accent = alloc_color(controlling ? COLOR_ACCENT_CTRL : COLOR_ACCENT,
+                             WhitePixel(dpy, screen));
+    col_btn = alloc_color(COLOR_BTN, BlackPixel(dpy, screen));
+    col_muted = alloc_color(COLOR_MUTED, WhitePixel(dpy, screen));
 
     if (consent_mode) {
         dlg_split_text(text_buf);

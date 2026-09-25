@@ -85,28 +85,8 @@ enum ConsentPrompt {
     private static func present(_ request: ConsentRequest) {
         defer { showing = false }
 
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = request.title
-        alert.informativeText = request.lines.joined(separator: "\n")
-
-        // El icono de la app. El texto lo puede copiar cualquiera; el icono
-        // que macOS asocia al bundle firmado, no. Es la única parte del
-        // diálogo que la persona puede comparar con lo que ve en su barra de
-        // menús para convencerse de que se lo pide el software que cree.
-        if let url = Bundle.main.url(forResource: "Tracenium_tryicon", withExtension: "png"),
-           let icon = NSImage(contentsOf: url) {
-            icon.size = NSSize(width: 64, height: 64)
-            alert.icon = icon
-        }
-
-        // ⚠️ El PRIMER botón de un NSAlert es el de por defecto: se activa con
-        // Return y es donde va la mano. Aquí el primero es DENEGAR a
-        // propósito. En un diálogo que concede acceso a la pantalla de alguien,
-        // la opción de reposo no puede ser la que concede — un Return
-        // distraído no debe regalar el control del equipo.
-        alert.addButton(withTitle: request.denyLabel)
-        alert.addButton(withTitle: request.allowLabel)
+        let control = request.kind == "control"
+        let window = ConsentWindow(request: request, control: control)
 
         // La app es .accessory (sin Dock): sin activar, el diálogo puede salir
         // detrás de la ventana en la que la persona está trabajando, y un aviso
@@ -115,8 +95,7 @@ enum ConsentPrompt {
         // está pidiendo una decisión.
         NSApp.activate(ignoringOtherApps: true)
 
-        let response = alert.runModal()
-        let approved = (response == .alertSecondButtonReturn)
+        let approved = window.runModal()
 
         write(requestId: request.requestId, approved: approved)
         Logger.shared.info("Consent \(approved ? "approved" : "denied") for \(request.kind) session")

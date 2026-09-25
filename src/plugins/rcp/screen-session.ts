@@ -378,7 +378,13 @@ export class ScreenSession {
           params: {
             sessionId: this.args.sessionId,
             text: `${who} is viewing this screen`,
-            button: "Stop sharing"
+            button: "Stop sharing",
+            // El acento de la franja. Al abrir siempre es "viendo": el
+            // control se consiente aparte y después. ⚠️ En Linux el helper se
+            // lanza una vez y no escucha actualizaciones, así que la escalada
+            // posterior no repinta la franja — en Windows y macOS sí. Queda
+            // dicho en showIndicator.
+            controlling: false
           }
         });
       } catch (err: any) {

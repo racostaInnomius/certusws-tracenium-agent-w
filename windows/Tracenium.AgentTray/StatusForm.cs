@@ -107,10 +107,18 @@ internal sealed class StatusForm : Form
         //
         // Son tres etiquetas y no una porque WinForms no sabe pintar parte de
         // un Label en otro color, y el "&" va en el cian de marca.
+        // ⚠️ UseMnemonic = false, y no es cosmético: en WinForms el "&" de un
+        // Label es el prefijo de TECLA DE ACCESO. Con el valor por defecto
+        // (true), un Label cuyo texto es exactamente "&" no pinta nada — se lo
+        // come el parser de mnemónicos—, así que el eslogan llevaba desde
+        // siempre leyéndose "Endpoint Intelligence  Compliance Platform", con
+        // dos espacios y sin el "&" en cian que era justo el detalle de marca.
+        // Lo llevan los tres porque el que mañana contenga un "&" no se sabe.
         _headerSubtitle = new Label
         {
             Text = BrandAssets.SloganLeft,
             AutoSize = true,
+            UseMnemonic = false,
             ForeColor = BrandAssets.HeaderText,
             Location = new Point(0, 0)
         };
@@ -118,6 +126,7 @@ internal sealed class StatusForm : Form
         {
             Text = BrandAssets.SloganAccent,
             AutoSize = true,
+            UseMnemonic = false,
             ForeColor = BrandAssets.AccentCyan,
             Font = new Font(Font.FontFamily, Font.Size, FontStyle.Bold),
             Location = new Point(0, 0)
@@ -126,6 +135,7 @@ internal sealed class StatusForm : Form
         {
             Text = BrandAssets.SloganRight,
             AutoSize = true,
+            UseMnemonic = false,
             ForeColor = BrandAssets.HeaderText,
             Location = new Point(0, 0)
         };
