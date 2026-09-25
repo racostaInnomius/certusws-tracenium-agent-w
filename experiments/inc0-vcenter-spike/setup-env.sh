@@ -39,4 +39,3 @@ unset VC_PASS
 echo
 echo "✅ .env written (chmod 600, git-ignored)."
 echo "   SPIKE_CREATE=false → the first run is READ-ONLY (inventory only)."
-echo "   Tell Claude it's ready; no need to share the password."
