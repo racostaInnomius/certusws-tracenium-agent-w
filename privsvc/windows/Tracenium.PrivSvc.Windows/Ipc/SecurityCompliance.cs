@@ -439,54 +439,74 @@ public static class SecurityCompliance
         }
     }
 
+    // 🔴 Hasta el 25-sep esto leía `Enabled` con bool.TryParse sobre un enum
+    // que PowerShell 5.1 serializa como número: toda la flota Windows salía
+    // con el firewall apagado. La lectura vive ahora en FirewallStatusShape,
+    // con sus pruebas; aquí sólo se lanza el script y se lee el registro.
     private static object GetFirewallStatus()
     {
         try
         {
-            var output = RunPs(
-                "Get-NetFirewallProfile | Select-Object Name, Enabled | ConvertTo-Json -Depth 3"
-            );
-
-            if (string.IsNullOrWhiteSpace(output))
-                return new { status = "unknown" };
-
-            List<Dictionary<string, object>>? arr;
-
-            if (output.TrimStart().StartsWith("["))
-            {
-                arr = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(output);
-            }
-            else
-            {
-                var single = JsonSerializer.Deserialize<Dictionary<string, object>>(output);
-                arr = single != null ? new List<Dictionary<string, object>> { single } : null;
-            }
-
-            if (arr == null || arr.Count == 0)
-                return new { status = "unknown" };
-
-            var profiles = arr.ToDictionary(
-                p => p.ContainsKey("Name") ? p["Name"]?.ToString()?.ToLowerInvariant() ?? "unknown" : "unknown",
-                p =>
-                {
-                    if (p.TryGetValue("Enabled", out var v) &&
-                        bool.TryParse(v?.ToString(), out var b))
-                        return b;
-
-                    return false;
-                });
-
-            var anyEnabled = profiles.Values.Any(v => v);
-
-            return new
-            {
-                status = anyEnabled ? "enabled" : "disabled",
-                profiles
-            };
+            var output = RunPs(FirewallStatusShape.Script);
+            var shaped = FirewallStatusShape.FromScriptOutput(output, ReadFirewallGpo(), ReadFirewallRules());
+            return (object?)shaped ?? new { status = "unknown" };
         }
         catch
         {
             return new { status = "unknown" };
+        }
+    }
+
+    private const string FirewallPolicyKey = @"SOFTWARE\Policies\Microsoft\WindowsFirewall";
+    private const string FirewallLocalRulesKey = @"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules";
+
+    /// <summary>
+    /// La directiva de grupo del firewall por perfil. Un perfil sin clave de
+    /// directiva no aparece. Nunca lanza: sin directiva legible, el bloque
+    /// viaja sin `gpoEnabled` y nadie afirma que lo gestione una GPO.
+    /// </summary>
+    private static Dictionary<string, FirewallStatusShape.GpoProfile>? ReadFirewallGpo()
+    {
+        try
+        {
+            var out_ = new Dictionary<string, FirewallStatusShape.GpoProfile>();
+            using var baseKey = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64);
+            foreach (var (name, sub) in new[] { ("domain", "DomainProfile"), ("private", "PrivateProfile"), ("public", "PublicProfile") })
+            {
+                using var k = baseKey.OpenSubKey($@"{FirewallPolicyKey}\{sub}");
+                if (k is null) continue;
+                bool? enable = k.GetValue("EnableFirewall") is int v ? v != 0 : null;
+                out_[name] = new FirewallStatusShape.GpoProfile { EnableFirewall = enable, AnyValue = k.ValueCount > 0 || k.SubKeyCount > 0 };
+            }
+            return out_;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Resumen de las reglas de entrada (locales y de GPO), leídas del registro.</summary>
+    private static Dictionary<string, object?>? ReadFirewallRules()
+    {
+        try
+        {
+            var raws = new List<(string, string)>();
+            using var baseKey = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64);
+            foreach (var (source, path) in new[] { ("local", FirewallLocalRulesKey), ("gpo", $@"{FirewallPolicyKey}\FirewallRules") })
+            {
+                using var k = baseKey.OpenSubKey(path);
+                if (k is null) continue;
+                foreach (var valueName in k.GetValueNames())
+                {
+                    if (k.GetValue(valueName) is string s) raws.Add((source, s));
+                }
+            }
+            return FirewallStatusShape.SummarizeRules(raws);
+        }
+        catch
+        {
+            return null;
         }
     }
 

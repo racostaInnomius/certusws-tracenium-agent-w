@@ -74,6 +74,34 @@ public class GenericWriteShapeTests
         Assert.Contains("guarded", w.Rejected[0]);
     }
 
+    // ADR-0035 D1 — encender el firewall o cambiar qué entra no sale de un
+    // hallazgo: sin plan por equipo, "fallan cosas". El logging, al lado, sí.
+    [Theory]
+    [InlineData("SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\PublicProfile", "EnableFirewall")]
+    [InlineData("SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\DomainProfile", "DefaultInboundAction")]
+    [InlineData("software\\policies\\microsoft\\windowsfirewall\\privateprofile", "defaultoutboundaction")]
+    [InlineData("SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\PublicProfile", "AllowLocalPolicyMerge")]
+    [InlineData("SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\StandardProfile", "DoNotAllowExceptions")]
+    [InlineData("SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\FirewallRules", "{GUID}")]
+    [InlineData("SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\PublicProfile", "EnableFirewall")]
+    public void Firewall_enabling_writes_are_refused(string keyPath, string valueName)
+    {
+        var w = GenericWriteShape.FromParams(Params(
+            "[{\"kind\":\"registry\",\"hive\":\"HKLM\",\"keyPath\":\"" + keyPath.Replace("\\", "\\\\") + "\",\"valueName\":\"" + valueName + "\",\"valueType\":\"dword\",\"value\":1}]"));
+        Assert.Empty(w.Registry);
+        Assert.Contains("guarded", w.Rejected[0]);
+        Assert.Contains("ADR-0035", w.Rejected[0]);
+    }
+
+    [Theory]
+    [InlineData("SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\DomainProfile\\Logging", "LogDroppedPackets")]
+    [InlineData("SOFTWARE\\Policies\\Microsoft\\WindowsFirewall\\PublicProfile", "DisableNotifications")]
+    public void Firewall_logging_and_notifications_stay_automatic(string keyPath, string valueName)
+    {
+        Assert.Null(GenericWriteShape.GuardReasonForKey(keyPath));
+        Assert.Null(GenericWriteShape.GuardReasonForValue(keyPath, valueName));
+    }
+
     [Fact]
     public void Unguarded_policy_keys_pass()
     {

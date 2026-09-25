@@ -54,6 +54,13 @@
          las escrituras, las guardas y la plantilla .inf son puros
          (System.Text.Json); la escritura real queda en PmpRemediation.cs. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\GenericWriteShape.cs" />
+    <!-- ADR-0035 F0 — el bloque `firewall`: leer el script (enum como número
+         O como texto; lo que no se entiende no es «apagado»), el firewall de
+         terceros y las reglas del registro. Puro (System.Text.Json); lanzar
+         PowerShell y abrir el registro se quedan en SecurityCompliance.cs.
+         🔴 El bug que lo motivó daba a TODA la flota Windows con el firewall
+         apagado. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\FirewallStatusShape.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\BrowserPolicyListShape.cs" />
     <!-- Historial de Windows Update (Confidence Score de parches, F0): las tres
          listas que imprime el script de GetInstalledSecurityPatches. Puro

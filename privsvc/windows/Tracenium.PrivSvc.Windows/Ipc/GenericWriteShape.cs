@@ -19,8 +19,8 @@
 // (hive, ruta sin "..", tipo del valor acorde a valueType, tamaños) y
 // contra la MISMA lista de guardas del backend. Una guarda aquí es
 // defensa en profundidad: un payload manipulado que llegara al PrivSvc no
-// puede tocar LSA, RDP, WinRM, Netlogon, la firma SMB, UAC ni renombrar
-// cuentas aunque el backend lo pidiera.
+// puede tocar LSA, RDP, WinRM, Netlogon, la firma SMB, UAC, renombrar
+// cuentas ni encender el firewall (ADR-0035) aunque el backend lo pidiera.
 
 using System.Text.Json;
 
@@ -123,7 +123,40 @@ public static class GenericWriteShape
         (@"SYSTEM\CurrentControlSet\Services\LanmanWorkstation", "SMB client signing/encryption can cut access to file servers"),
         (@"SYSTEM\CurrentControlSet\Services\LanmanServer", "SMB server signing/encryption can cut clients off"),
         (@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "UAC and logon settings can break interactive and elevated logons"),
+        // ADR-0035 D1 — reglas del firewall y su configuración local. Una
+        // regla escrita a ciegas abre o cierra tráfico; eso se planifica por
+        // equipo, no se aplica desde un hallazgo.
+        (@"SOFTWARE\Policies\Microsoft\WindowsFirewall\FirewallRules", FirewallGuardReason),
+        (@"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy", FirewallGuardReason),
     };
+
+    // ⚠️ Mismo texto que FIREWALL_GUARD en desired-state.ts del backend.
+    public const string FirewallGuardReason =
+        "turns on or reshapes the firewall — inbound connections no rule allows stop working; plan it per device first (ADR-0035)";
+
+    /// <summary>
+    /// ADR-0035 D1 — valores concretos de la directiva del firewall que
+    /// ENCIENDEN o cambian qué entra. Guardados por valor y no por clave: el
+    /// logging (`\Logging\LogDroppedPackets`…) vive al lado, no cambia el
+    /// tráfico y el proceso de ADR-0035 lo necesita encendido.
+    /// </summary>
+    private static readonly HashSet<string> FirewallProfileKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        @"SOFTWARE\Policies\Microsoft\WindowsFirewall\DomainProfile",
+        @"SOFTWARE\Policies\Microsoft\WindowsFirewall\PrivateProfile",
+        @"SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile",
+        @"SOFTWARE\Policies\Microsoft\WindowsFirewall\StandardProfile",
+    };
+
+    private static readonly HashSet<string> FirewallGuardedValues = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "EnableFirewall", "DefaultInboundAction", "DefaultOutboundAction", "AllowLocalPolicyMerge", "DoNotAllowExceptions",
+    };
+
+    public static string? GuardReasonForValue(string subKey, string valueName) =>
+        FirewallProfileKeys.Contains(NormalizeSubKey(subKey)) && FirewallGuardedValues.Contains(valueName)
+            ? FirewallGuardReason
+            : null;
 
     private static readonly Dictionary<string, string> GuardedSeceditKeys = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -223,7 +256,7 @@ public static class GenericWriteShape
             out_.Rejected.Add($"valueName invalid under {subKey}");
             return;
         }
-        var guard = GuardReasonForKey(subKey);
+        var guard = GuardReasonForKey(subKey) ?? GuardReasonForValue(subKey, valueName);
         if (guard is not null)
         {
             out_.Rejected.Add($"guarded: {(hiveKind == RegistryHiveKind.Users ? "HKU\\*" : "HKLM")}\\{subKey} — {guard}");
