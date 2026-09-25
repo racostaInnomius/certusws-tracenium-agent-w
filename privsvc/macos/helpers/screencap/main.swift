@@ -215,6 +215,48 @@ let quality = parseQuality()
 // del privsvc y este no nota la diferencia.
 private func reexecDisclaimed() {
 
+// ── Modo permisos (TCC) ──────────────────────────────────────────────
+//
+// ⚠️ TCC va por BINARIO, no por producto. Ni la bandeja ni el demonio pueden
+// pedir la Grabación de Pantalla en nombre de este helper: el permiso que
+// concedería la persona sería el de OTRA cosa, y la captura seguiría sin
+// poder. Por eso el diálogo lo tiene que abrir este ejecutable, que es el que
+// captura — y por eso existe este modo.
+//
+// Dos verbos, y la diferencia importa:
+//
+//   --tcc-status   Solo CONSULTA (`CGPreflightScreenCaptureAccess`). No abre
+//                  diálogo y no registra nada. Es lo que la ventana de
+//                  bienvenida usa para pintar el estado sin molestar.
+//   --tcc-request  PIDE (`CGRequestScreenCaptureAccess`). Abre el diálogo del
+//                  sistema y —esto es lo que no se puede conseguir de otra
+//                  forma— REGISTRA la entrada en Ajustes › Privacidad y
+//                  seguridad › Grabación de pantalla. Sin haber pedido alguna
+//                  vez, la entrada no existe y la persona no puede
+//                  autorizarla ni a mano.
+//
+// La petición NO espera a que decidan: devuelve el estado de AHORA, casi
+// siempre `false` la primera vez, con el diálogo todavía abierto.
+//
+// Apple no permite conceder la Grabación de Pantalla por MDM, así que esta
+// es la única vía que existe. Ver el ADR de instalación.
+if CommandLine.arguments.contains("--tcc-status") ||
+   CommandLine.arguments.contains("--tcc-request") {
+    let request = CommandLine.arguments.contains("--tcc-request")
+    let before = CGPreflightScreenCaptureAccess()
+    var granted = before
+    if request && !before {
+        granted = CGRequestScreenCaptureAccess()
+    }
+    let accessibility = ensureAccessibility(requestIfNeeded: request)
+    // Una línea JSON, igual que el resto de modos del helper.
+    let payload = "{\"ok\":true,\"screenRecording\":\(granted)," +
+                  "\"accessibility\":\(accessibility)," +
+                  "\"prompted\":\(request && !before)}"
+    print(payload)
+    exit(0)
+}
+
 // ── Modo inyección de entrada ────────────────────────────────────────
 // Proceso de VIDA LARGA, a diferencia de la captura (que es one-shot por
 // fotograma). Un proceso por evento sería inviable: el operador genera

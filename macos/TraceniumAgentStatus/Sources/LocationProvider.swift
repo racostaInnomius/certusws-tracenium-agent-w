@@ -82,6 +82,16 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
     }
 
     /// True while a click on "Allow location…" would accomplish something.
+    /// El estado del permiso, para pintarlo. Sin efectos: consultar
+    /// `authorizationStatus` no abre ningún diálogo ni registra nada.
+    var permissionState: PermissionsWindow.State {
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse: return .granted
+        case .notDetermined, .denied, .restricted: return .missing
+        @unknown default: return .unknown
+        }
+    }
+
     var needsUserConsent: Bool {
         enabled && manager.authorizationStatus == .notDetermined
     }

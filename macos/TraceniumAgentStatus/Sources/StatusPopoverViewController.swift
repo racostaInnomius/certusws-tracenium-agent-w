@@ -68,7 +68,10 @@ final class StatusPopoverViewController: NSViewController {
     /// registered it may never offer again. A button the person CLICKS sidesteps
     /// that entirely — the app is unambiguously frontmost at that instant,
     /// which is exactly the condition the alert needs.
-    private let locationButton = NSButton(title: "Allow location…", target: nil, action: nil)
+    // Abre la ventana de permisos, que explica ANTES de pedir. Pedir a
+    // bocajarro deja a la persona decidiendo sobre un diálogo del sistema
+    // sin saber para qué, y lo sano ante eso es decir que no.
+    private let locationButton = NSButton(title: "Permissions…", target: nil, action: nil)
 
     /// Set by the controller so the button can reach the provider.
     var onEnableLocation: (() -> Void)?

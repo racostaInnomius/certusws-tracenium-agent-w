@@ -281,6 +281,42 @@ for uid in $(/usr/bin/dscl . -list /Users UniqueID 2>/dev/null | /usr/bin/awk '$
   fi
 done
 
+# ── Los dos permisos que macOS no deja conceder a nadie más ──────────
+#
+# Ubicacion y Grabacion de Pantalla no se pueden activar desde un instalador,
+# ni por MDM en el caso de la pantalla: Apple exige que lo diga una persona en
+# ese Mac. Lo unico que se puede elegir es CUANDO se lo preguntamos.
+#
+# Hasta ahora era la primera vez que hacian falta: un operador abria una sesion
+# de pantalla para resolver una incidencia y la sesion moria mientras, en el
+# Mac, salia un dialogo del sistema sin contexto delante de alguien que no
+# habia pedido nada. Lo normal ante eso es decir que no.
+#
+# Ahora se pregunta AQUI, recien instalado, con la persona todavia esperando
+# pasos de configuracion y con una ventana que explica para que sirve cada uno.
+# Nada depende de que diga que si: el agente inventaria, parchea y cumple igual.
+#
+# `|| true` por lo mismo que el kickstart de arriba: que no se abra una ventana
+# no puede tumbar una instalacion.
+# El uid se resuelve AQUI y no se reutiliza el de la funcion del token: esa
+# solo corre cuando hay que pedir el token a mano, asi que en una instalacion
+# desatendida —la normal en una flota— la variable venia vacia y la ventana no
+# se habria abierto nunca.
+SETUP_USER="$(/usr/bin/stat -f %Su /dev/console 2>/dev/null || true)"
+SETUP_UID=""
+if [ -n "$SETUP_USER" ] && [ "$SETUP_USER" != "root" ]; then
+  SETUP_UID="$(/usr/bin/id -u "$SETUP_USER" 2>/dev/null || true)"
+fi
+
+if [ -n "$SETUP_UID" ] && [ -x "/Applications/Tracenium Agent Status.app/Contents/MacOS/TraceniumAgentStatus" ]; then
+  /bin/launchctl asuser "$SETUP_UID" /usr/bin/open -a "/Applications/Tracenium Agent Status.app" --args --setup >/dev/null 2>&1 || true
+  echo "Permissions window requested for console uid $SETUP_UID"
+else
+  # Sin sesion grafica no hay a quien preguntarle. No es un fallo: el boton
+  # "Permissions…" del popover abre la misma ventana cuando alguien entre.
+  echo "No console session; permissions window skipped (reachable from the tray popover)"
+fi
+
 if [ "$RESTORED_AGENTS" -gt 0 ]; then
   echo "Agent status LaunchAgent restored for $RESTORED_AGENTS graphical session(s)"
 else

@@ -14,6 +14,24 @@ final class StatusBarController {
     /// CoreLocation can only be reached from this process (signed bundle, user
     /// session) — never from the root daemon. See LocationProvider.
     private let locationProvider = LocationProvider()
+
+    /// La ventana de permisos (ADR de instalación). Se guarda para que no la
+    /// recoja ARC mientras está abierta y para poder reabrirla desde el menú.
+    private lazy var permissionsWindow: PermissionsWindow = {
+        let w = PermissionsWindow()
+        w.locationState = { [weak self] in self?.locationProvider.permissionState ?? .unknown }
+        w.onRequestLocation = { [weak self] in self?.locationProvider.requestConsentFromUser() }
+        return w
+    }()
+
+    /// Abre la ventana de permisos. La llama el arranque con `--setup` (desde
+    /// el postinstall, con la persona todavía delante) y la entrada del menú.
+    private var cachedScreenState: PermissionsWindow.State = .unknown
+    private var lastScreenCheck = Date.distantPast
+
+    func showPermissions() {
+        permissionsWindow.present()
+    }
     private var lastPresenceState: Bool?
     private var lastConnectivityState: Bool?
     private var lastJobBadgeState: Bool?
@@ -52,7 +70,7 @@ final class StatusBarController {
         popover.behavior = .transient
         popover.contentViewController = contentController
         contentController.onEnableLocation = { [weak self] in
-            self?.locationProvider.requestConsentFromUser()
+            self?.showPermissions()
         }
         contentController.onInstallRequested = { packageId in
             CatalogInstallSink.write(packageId: packageId)
@@ -145,7 +163,22 @@ final class StatusBarController {
         // Surface the manual path exactly while it would help: the automatic
         // prompt is unreliable for a menubar app, so the person needs a way to
         // ask for it themselves.
-        contentController.setLocationPromptVisible(locationProvider.needsUserConsent)
+        // El botón sale si falta CUALQUIERA de los dos permisos, no sólo la
+        // ubicación: los dos se conceden en la misma ventana y esconder el
+        // acceso cuando falta el de pantalla dejaba sin camino al único
+        // permiso que Apple no deja preautorizar por MDM.
+        //
+        // El estado de la pantalla se cachea: leerlo lanza el helper, y
+        // hacerlo en cada tic de 5 s serían 17.000 procesos al día por un dato
+        // que cambia cuando alguien va a Ajustes.
+        let now = Date()
+        if now.timeIntervalSince(lastScreenCheck) > 60 {
+            lastScreenCheck = now
+            cachedScreenState = PermissionsWindow.screenRecordingState()
+        }
+        contentController.setLocationPromptVisible(
+            locationProvider.needsUserConsent || cachedScreenState == .missing
+        )
 
         let hasSnapshot = status != nil
         if lastPresenceState != hasSnapshot {
