@@ -80,8 +80,13 @@ export function controlGate(
  * exactamente lo que la puerta existe para impedir. El silencio no es un sí.
  */
 export function stateAfterDecision(
-  decision: "approved" | "denied" | "timeout"
+  decision: "approved" | "denied" | "timeout" | "unavailable"
 ): ControlConsentState {
+  // ⚠️ `unavailable` («no hay nadie a quien preguntar») cae del lado de
+  // denegado, como todo lo que no es un sí explícito. Aquí, dentro de una
+  // sesión de pantalla ya abierta, no debería darse —si hay sesión hubo quien
+  // aceptó—, pero la unión lo permite y fallar hacia el "no" es la dirección
+  // correcta en una puerta de consentimiento.
   return decision === "approved" ? "granted" : "denied";
 }
 

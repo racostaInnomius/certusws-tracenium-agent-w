@@ -273,6 +273,32 @@ export function createTrayConsentPrompter(ctx: AgentContext): ConsentPrompter {
     },
 
     async request(req: ConsentRequest): Promise<ConsentDecision> {
+      // 🔴 ¿Hay ALGUIEN a quien preguntar?
+      //
+      // Sin esto, un equipo sin sesión interactiva —un servidor, típicamente—
+      // recibía la petición, nadie la leía, y a los 61 s la sesión moría con
+      // `consent_timeout`. El operador leía «el aviso apareció y expiró, puede
+      // que estén lejos del equipo», que afirma dos cosas falsas: ni apareció,
+      // ni hay nadie que se haya ido. Medido en TNS-OPER-SNOC04 (T1,
+      // 25-sep-2026): cuatro intentos, cuatro timeouts de 61 s, y el equipo sin
+      // usuario de consola mientras el resto de Windows del tenant sí lo
+      // reportaban. La búsqueda se fue a la política de aprobación, que no
+      // tenía nada que ver.
+      //
+      // La bandeja vive en la sesión del usuario: sin usuario no hay bandeja, y
+      // sin bandeja el aviso no tiene dónde salir. Se dice en el acto en vez de
+      // hacer esperar un minuto a una respuesta que no puede llegar.
+      const consoleUser = await getInteractiveUserFromOs()
+        .then((u) => u?.user ?? null)
+        .catch(() => null);
+      if (!consoleUser) {
+        ctx.logger?.info?.(
+          "[rcp] consent: no interactive user on this host; cannot prompt",
+          { sessionId: req.sessionId, capability: req.capability }
+        );
+        return "unavailable";
+      }
+
       const kind = kindForCapability(req.capability);
       const buttons = consentButtons(kind);
       const requestId = `${req.sessionId}.${kind}.${Date.now()}`;

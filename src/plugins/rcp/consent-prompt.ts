@@ -48,7 +48,24 @@ export const MAX_CONSENT_TIMEOUT_S = Math.max(
   CONTROL_CONSENT_TIMEOUT_S
 );
 
-export type ConsentDecision = "approved" | "denied" | "timeout";
+/**
+ * `unavailable` = no había NADIE a quien preguntar.
+ *
+ * 🔴 De dónde sale (25-sep-2026, TNS-OPER-SNOC04, T1): cuatro intentos de
+ * `rcp.screen` contra un Windows Server, los cuatro muertos a los 61 s con
+ * `consent_timeout`. El portal decía «The prompt appeared and expired with no
+ * answer. They may be away from the machine» — y eso AFIRMA que el aviso
+ * apareció, que es justo lo que no sabíamos. Ese servidor no tiene usuario en
+ * consola (`last_logon_user` vacío, mientras los otros Windows del tenant sí
+ * lo reportan): el aviso no apareció nunca porque no hay bandeja donde
+ * aparecer. El mensaje mandó a buscar el fallo en la política de aprobación,
+ * que no tenía nada que ver.
+ *
+ * Distinguirlo cuesta una variante y ahorra la búsqueda: el backend ya conoce
+ * `consent_required` (`rcp-metrics.ts`) y la UI ya tiene el texto correcto
+ * («This device can't ask for consent… nobody is logged in»).
+ */
+export type ConsentDecision = "approved" | "denied" | "timeout" | "unavailable";
 
 export interface ConsentRequest {
   sessionId: string;
@@ -81,5 +98,9 @@ export const failClosedConsentPrompter: ConsentPrompter = {
 export function consentCloseReason(decision: ConsentDecision): string | null {
   if (decision === "denied") return "consent_denied";
   if (decision === "timeout") return "consent_timeout";
+  // ⚠️ NO es un timeout: nadie dejó pasar el plazo porque no había nadie. El
+  // operador tiene que leer «este equipo no puede preguntar», no «no te
+  // contestaron», que sugiere que alguien decidió ignorarte.
+  if (decision === "unavailable") return "consent_required";
   return null; // approved
 }
