@@ -19,6 +19,7 @@ import type { PmpNamespace } from "./pmp-types";
 import type { CdpNamespace } from "./cdp-types";
 import { readOsRelease, isUnknown } from "./os-release";
 import { detectOsArch, reportedOsArch } from "./os-arch";
+import { readOsRevision, composeFullVersion } from "./os-revision";
 
 import {
   normalizeCpu,
@@ -404,6 +405,15 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
   // Read once per snapshot; only consulted when si could not identify the OS.
   const osRelease = readOsRelease();
 
+  // La revisión de Windows, una vez por snapshot. `si` no la trae: su `release`
+  // se corta en la build. Es una lectura de `reg.exe` de milisegundos y sólo
+  // corre en Windows — fuera devuelve null sin intentar nada.
+  const osRevision = readOsRevision();
+  const effectiveRelease = isUnknown(osInfo.release)
+    ? osRelease.release ?? osInfo.release
+    : osInfo.release;
+  const fullRelease = composeFullVersion(effectiveRelease, osRevision.revision);
+
   const staticPart: HardwareStatic = {
     system: {
       manufacturer: system.manufacturer,
@@ -428,7 +438,10 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
       // is a plain file read — no shell, no PATH, no privileges. si still
       // wins whenever it answers, so working machines are unaffected.
       distro: isUnknown(osInfo.distro) ? osRelease.distro ?? osInfo.distro : osInfo.distro,
-      release: isUnknown(osInfo.release) ? osRelease.release ?? osInfo.release : osInfo.release,
+      // Misma degradación de siempre, ya resuelta arriba en `effectiveRelease`
+      // porque `releaseFull` la necesita igual: dos copias de esta expresión se
+      // separarían la primera vez que alguien tocara una.
+      release: effectiveRelease,
       kernel: osInfo.kernel,
       // ⚠️ NO DE `osInfo.arch`, Y POR EL MISMO MOTIVO QUE distro/release de
       // arriba: lo que si obtiene lanzando un proceso vuelve vacío en máquinas
@@ -453,7 +466,16 @@ async function buildHardwareNamespace(): Promise<{ static: HardwareStatic; runti
       // las dos cifras de boot-time.ts. Nadie río abajo la lee todavía; vive en
       // el `hardware_payload` crudo para que una siguiente investigación no
       // tenga que ir al equipo a preguntárselo.
-      processArch: os.arch()
+      processArch: os.arch(),
+      // La revisión de Windows (UBR). `release` de arriba se queda en
+      // `10.0.20348` —la build, cortada antes de la cifra que dice si el equipo
+      // está parcheado—, así que esto va al lado, nunca en su lugar. Ver
+      // domain/os-revision.ts.
+      ...(osRevision.revision !== null ? { revision: osRevision.revision } : {}),
+      ...(fullRelease ? { releaseFull: fullRelease } : {}),
+      // El motivo, cuando falta. Aquí no hay logger, así que el payload es el
+      // único sitio donde puede quedar — y tiene que quedar en alguno.
+      ...(osRevision.detail ? { revisionDetail: osRevision.detail } : {})
     },
     uuid: system.uuid,
     versions: {

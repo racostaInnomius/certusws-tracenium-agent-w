@@ -145,3 +145,51 @@ describe("readRegistryValueInView · parseo", () => {
     expect(r.detail).toMatch(/unparseable|empty/);
   });
 });
+
+describe("parseRegQueryValue · valores numéricos", () => {
+  const NUM = (name: string, type: string, value: string) =>
+    `\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\r\n    ${name}    ${type}    ${value}\r\n\r\n`;
+
+  // ⚠️ EL CASO QUE MOTIVA ESTO. `UBR` es la revisión de Windows: el número que
+  // separa un equipo parcheado de uno que no lo está. Es REG_DWORD, y mientras
+  // sólo se admitían REG_SZ/REG_EXPAND_SZ este módulo era incapaz de leerlo —
+  // devolvía null con «unparseable», que se lee como «la llave no está».
+  it("lee un REG_DWORD y lo devuelve en decimal", () => {
+    expect(parseRegQueryValue("UBR", NUM("UBR", "REG_DWORD", "0x15f6"))).toBe("5622");
+  });
+
+  it("acepta mayúsculas en el hexadecimal", () => {
+    expect(parseRegQueryValue("UBR", NUM("UBR", "REG_DWORD", "0x15F6"))).toBe("5622");
+  });
+
+  it("acepta un decimal por si reg.exe lo imprime así", () => {
+    expect(parseRegQueryValue("UBR", NUM("UBR", "REG_DWORD", "5622"))).toBe("5622");
+  });
+
+  // Un QWORD pasa de MAX_SAFE_INTEGER; con Number se redondearía sin avisar.
+  it("no redondea un REG_QWORD grande", () => {
+    expect(parseRegQueryValue("Big", NUM("Big", "REG_QWORD", "0x20000000000001"))).toBe(
+      "9007199254740993"
+    );
+  });
+
+  it("devuelve null ante un numérico ilegible en vez de la cadena cruda", () => {
+    expect(parseRegQueryValue("UBR", NUM("UBR", "REG_DWORD", "no-es-un-numero"))).toBeNull();
+  });
+
+  // La razón de leer el tipo en un grupo aparte es no cambiar lo que ya
+  // funcionaba: una cadena sigue saliendo tal cual, sin pasar por el decimal.
+  it("no toca los valores de cadena", () => {
+    expect(parseRegQueryValue("Path", NUM("Path", "REG_SZ", "0x15f6"))).toBe("0x15f6");
+    expect(parseRegQueryValue("V", NUM("V", "REG_EXPAND_SZ", "%SystemRoot%\\x"))).toBe(
+      "%SystemRoot%\\x"
+    );
+  });
+
+  // Un tipo que no se sabe interpretar (binario, multi-cadena) sigue siendo un
+  // null honesto: media lectura de un REG_BINARY no es un valor.
+  it("sigue ignorando los tipos que no sabe leer", () => {
+    expect(parseRegQueryValue("B", NUM("B", "REG_BINARY", "deadbeef"))).toBeNull();
+    expect(parseRegQueryValue("M", NUM("M", "REG_MULTI_SZ", "a\\0b"))).toBeNull();
+  });
+});

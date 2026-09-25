@@ -59,12 +59,36 @@ export function parseRegQueryValue(name: string, stdout: unknown): string | null
 
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   // El dato es el resto del renglón: un REG_SZ puede contener espacios.
-  const re = new RegExp(`^\\s*${escaped}\\s+REG_(?:SZ|EXPAND_SZ)\\s+(.+)$`, "im");
+  //
+  // ⚠️ REG_DWORD Y REG_QWORD ESTÁN EN LA LISTA, Y NO ES UNA AMPLIACIÓN
+  // ESPECULATIVA. Antes sólo se admitían los dos tipos de cadena, así que un
+  // valor numérico —`UBR`, que es el que distingue un Windows parcheado de uno
+  // sin parchear— no casaba siquiera con esta expresión: las dos vistas
+  // devolvían null con el detail «unparseable», es decir, el mismo fallo MUDO
+  // que este módulo entero existe para no repetir, sólo que disfrazado de «la
+  // llave no está». La llave estaba.
+  const re = new RegExp(`^\\s*${escaped}\\s+REG_(SZ|EXPAND_SZ|DWORD|QWORD)\\s+(.+)$`, "im");
   const m = re.exec(stdout);
   if (!m) return null;
 
-  const value = m[1].trim();
-  return value.length > 0 ? value : null;
+  const type = m[1].toUpperCase();
+  const value = m[2].trim();
+  if (value.length === 0) return null;
+
+  if (type === "DWORD" || type === "QWORD") {
+    // reg.exe imprime estos en hexadecimal (`0x15f6`). Se devuelve el decimal
+    // porque es lo que quien llama va a comparar: el registro ENSEÑA 5622 y
+    // nadie coteja builds en base 16. Se acepta también el decimal por si otra
+    // versión de reg.exe lo imprime así; lo que no se hace es devolver la
+    // cadena cruda, que compararía mal y en silencio.
+    //
+    // BigInt y no Number: un QWORD cabe por encima de MAX_SAFE_INTEGER y ahí
+    // `Number` redondea sin avisar.
+    if (!/^(0x[0-9a-f]+|\d+)$/i.test(value)) return null;
+    return BigInt(value).toString(10);
+  }
+
+  return value;
 }
 
 /**

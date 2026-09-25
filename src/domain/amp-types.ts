@@ -33,6 +33,32 @@ export type HardwareStatic = {
      * de diagnóstico, no una contradicción.
      */
     processArch?: string;
+    /**
+     * Windows: la REVISIÓN (UBR). `release` se queda en `10.0.20348`, que es
+     * Windows Server 2022 y no dice nada sobre parches; lo dice `.5622`. Ver
+     * domain/os-revision.ts para el caso de campo que lo motiva.
+     *
+     * Ausente en macOS y Linux: allí no existe el concepto.
+     */
+    revision?: number;
+    /**
+     * `release` + `revision` ya compuesto (`10.0.20348.5622`), sólo cuando se
+     * pudo leer la revisión. Viaja resuelto para que nadie río abajo tenga que
+     * concatenar —y equivocarse cuando falte una de las dos mitades—, y APARTE
+     * de `release`, que no se toca: alargar `release` partiría los grupos de
+     * activos en tantos trozos como revisiones haya en la flota.
+     */
+    releaseFull?: string;
+    /**
+     * Por qué no se pudo leer la revisión, cuando no se pudo.
+     *
+     * ⚠️ Viaja en el payload porque este bloque se construye sin logger, y
+     * `bootstrap/registry.ts` exige que el motivo se registre en algún sitio:
+     * un `catch` mudo es lo que hizo que DanielA-PC pasara semanas roto sin una
+     * línea que lo dijera. Fuera de Windows dice «not windows», que no es una
+     * avería.
+     */
+    revisionDetail?: string;
   };
 
   uuid?: string;
