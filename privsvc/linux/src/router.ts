@@ -70,6 +70,7 @@ import {
   handleCdpKeyList
 } from "./cdp-keys";
 import { handleCdpCertInstall } from "./cdp-cert-install";
+import { handleCdpAcmeHttp01 } from "./cdp-acme-http01";
 import { handleCdpAnchorState } from "./cdp-anchor-state";
 import { handleCdpAnchorDistrust } from "./cdp-anchor-distrust";
 
@@ -185,6 +186,11 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     // store LOCAL.
     case "cdp.cert.install":
       return handleCdpCertInstall(req);
+
+    // ADR-0033 F2b — el desafío HTTP-01 en el webroot. Nombre y contenido de
+    // forma fija, sólo bajo raíces permitidas y sin seguir enlaces.
+    case "cdp.acme.http01":
+      return handleCdpAcmeHttp01(req);
 
     // ADR-0011 fase 0, paso 1. En Linux responde «no aplica» con su
     // motivo: callarse haria indistinguible una decision de diseno
