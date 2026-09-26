@@ -32,6 +32,29 @@ describe("asp-ad-collector.ps1 — reglas estáticas", () => {
     }
   });
 
+  it("🔴 nada de no-ASCII en el CÓDIGO: PowerShell 5.1 lee un .ps1 sin BOM como ANSI", () => {
+    // El 26-sep un script de diagnóstico murió sin dejar ni fichero ni mensaje
+    // por esto: llevaba una `ñ` en un nombre de propiedad y no llevaba BOM. PS
+    // 5.1 lo decodificó como ANSI, la `ñ` se partió en dos caracteres y el
+    // segundo no vale en un identificador -> error de SINTAXIS, y un script que
+    // no parsea no llega a ejecutar su propio manejo de errores.
+    //
+    // En un comentario el mismo destrozo es inofensivo, y los comentarios de
+    // estos ficheros están en castellano a propósito. Así que la regla no es
+    // «sin acentos»: es «sin acentos donde el parser mira».
+    const sinBom = !src.startsWith("\uFEFF");
+    const ofensores: string[] = [];
+    src.split("\n").forEach((linea, i) => {
+      const soloCodigo = linea.split("#")[0];
+      for (const ch of soloCodigo) {
+        if (ch.codePointAt(0)! > 127) ofensores.push(`linea ${i + 1}: ${JSON.stringify(ch)} en ${linea.trim().slice(0, 60)}`);
+      }
+    });
+    // Con BOM, 5.1 lo decodifica bien y da igual. Sin BOM, el código tiene que
+    // ser ASCII puro.
+    expect(sinBom && ofensores.length > 0 ? ofensores : []).toEqual([]);
+  });
+
   it("⭐ sólo lectura: nada que escriba en AD ni en el registro", () => {
     for (const banned of [/\.CommitChanges\(/i, /\.SetInfo\(/i, /\.Put\(/i, /\.DeleteTree\(/i, /\.Rename\(/i, /\.MoveTo\(/i, /\b(Set|New|Remove|Move|Rename|Add)-AD\w+/i, /\bSet-ItemProperty\b/i, /\bNew-ItemProperty\b/i, /\bRemove-ItemProperty\b/i, /\bNew-Item\b/i, /\bRemove-Item\b/i, /\bSet-Acl\b/i, /\bSetAccessRule/i, /\bAddAccessRule/i]) {
       expect(code, String(banned)).not.toMatch(banned);
