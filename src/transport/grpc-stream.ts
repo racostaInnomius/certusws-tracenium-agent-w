@@ -759,6 +759,42 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       return { status: 0, message: "csr_generated" };
     }
 
+    // ADR-0033 F2b — publicar o retirar el desafío HTTP-01 en el webroot que
+    // declaró el operador. Escribe como root/SYSTEM, así que va al PrivSvc,
+    // que repite TODAS las reglas (nombre, contenido, raíces, enlaces): lo de
+    // aquí es sólo un rechazo temprano con un mensaje útil. El resultado es el
+    // ACK: el control plane mira el estado del job, no necesita más.
+    case "cdp_acme_http01": {
+      if (!ctx.policyRuntime.pluginEnabled("cdp")) {
+        return { status: 2, message: "cdp_acme_http01 rejected: cdp plugin disabled by policy" };
+      }
+      const action = String(payload?.action || "");
+      const webroot = String(payload?.webroot || "");
+      const token = String(payload?.token || "");
+      if ((action !== "publish" && action !== "remove") || !webroot || !token) {
+        return { status: 2, message: "cdp_acme_http01 rejected: action, webroot y token son obligatorios" };
+      }
+      const resp = await ctx.priv.call({
+        v: 1,
+        id: `cdpacme_${Date.now()}`,
+        method: "cdp.acme.http01",
+        params: {
+          action,
+          webroot,
+          token,
+          ...(action === "publish" ? { keyAuthorization: String(payload?.keyAuthorization || "") } : {})
+        },
+        meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId }
+      });
+      if (!resp?.ok) {
+        return {
+          status: 2,
+          message: `cdp_acme_http01 failed: ${resp?.error?.code || "unknown"} ${resp?.error?.message || ""}`.trim()
+        };
+      }
+      return { status: 0, message: action === "publish" ? "http01_published" : "http01_removed" };
+    }
+
     case "cdp_cert_install": {
       if (!ctx.policyRuntime.pluginEnabled("cdp")) {
         return { status: 2, message: "cdp_cert_install rejected: cdp plugin disabled by policy" };

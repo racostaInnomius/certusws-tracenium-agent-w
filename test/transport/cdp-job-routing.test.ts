@@ -38,6 +38,9 @@ describe("enrutado de jobs de CDP en el agente", () => {
     ["cdp_cert_install", "cdp.cert.install"],
     ["cdp_key_list", "cdp.key.list"],
     ["cdp_key_destroy", "cdp.key.destroy"],
+    // ADR-0033 F2b: si no se enruta, la renovación por HTTP-01 se queda
+    // esperando un fichero que nadie publica.
+    ["cdp_acme_http01", "cdp.acme.http01"],
     // El que ya estaba, como control: si este cayera, el test estaría
     // midiendo otra cosa.
     ["cdp_anchor_distrust", "cdp.anchor.distrust"]

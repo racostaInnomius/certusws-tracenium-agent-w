@@ -65,6 +65,8 @@ export type PrivSvcMethod =
   | "cdp.anchor.state"
   | "cdp.csr.generate"
   | "cdp.cert.install"
+  // ADR-0033 F2b — desafío HTTP-01 en el webroot.
+  | "cdp.acme.http01"
   | "cdp.key.list"
   | "cdp.key.destroy"
   | "crypto.cert.renew"
