@@ -232,6 +232,14 @@ internal static class SessionScreenCapture
 
                 return (line, null);
             }
+            catch (NoInteractiveUserException ex)
+            {
+                // Mismo código que el guardia de `0xFFFFFFFF`: para quien mira
+                // el portal las dos cosas son «aquí no hay nadie», y darles
+                // códigos distintos sólo reparte la misma causa en dos sitios.
+                StopHelperLocked();
+                return (null, PrivSvcResponse.Fail(reqId, "no_interactive_desktop", ex.Message));
+            }
             catch (Exception ex)
             {
                 StopHelperLocked();
@@ -294,6 +302,18 @@ internal static class SessionScreenCapture
         return PrivSvcResponse.Success(reqId, payload);
     }
 
+    /// <summary>
+    /// La sesión de consola existe pero no tiene usuario dentro.
+    ///
+    /// Se distingue de un fallo de verdad para que el operador lea «no hay
+    /// nadie conectado» y no un error de configuración: son acciones
+    /// completamente distintas.
+    /// </summary>
+    internal sealed class NoInteractiveUserException : Exception
+    {
+        public NoInteractiveUserException(string message) : base(message) { }
+    }
+
     // ── Arranque del helper en la sesión del usuario ──────────────────────
 
     private static void StartHelperLocked(uint session)
@@ -308,9 +328,49 @@ internal static class SessionScreenCapture
         if (!NativeMethods.WTSQueryUserToken(session, out var userToken))
         {
             var err = Marshal.GetLastWin32Error();
+
+            // 🔴 El mensaje culpaba a la cuenta del servicio para CUALQUIER
+            // error, y en el caso más común eso es falso.
+            //
+            // Visto en TNS-OPER-SNOC04 (Windows Server 2022, 26-sep-2026): el
+            // operador leyó «The PrivSvc must run as LocalSystem to hold
+            // SE_TCB_NAME» y se fue a mirar la cuenta del servicio, que estaba
+            // perfecta. El código era 1008.
+            //
+            //   1008 ERROR_NO_TOKEN         → la sesión EXISTE pero no hay
+            //                                 nadie dentro. Es la pantalla de
+            //                                 inicio de sesión: no hay usuario
+            //                                 a quien pedirle el token, y por
+            //                                 tanto no hay escritorio suyo que
+            //                                 capturar. No es un fallo de
+            //                                 configuración.
+            //   1314 ERROR_PRIVILEGE_NOT_HELD → ESE sí es el caso del mensaje
+            //                                 original: sin SE_TCB_NAME.
+            //
+            // El guardia de arriba sólo cubre `0xFFFFFFFF` («no hay sesión de
+            // consola»). Aquí hay sesión —la 1— y está vacía, que es el estado
+            // normal de un servidor sin monitor. Es la tercera vez que un
+            // mensaje nuestro afirma una causa en vez de leer el código y manda
+            // a buscar el fallo donde no está.
+            const int ERROR_NO_TOKEN = 1008;
+            const int ERROR_PRIVILEGE_NOT_HELD = 1314;
+
+            if (err == ERROR_NO_TOKEN)
+            {
+                throw new NoInteractiveUserException(
+                    $"Nobody is signed in on this device (console session {session} has no user). " +
+                    "Screen sharing shows a signed-in user's desktop, so there is nothing to show " +
+                    "yet. Sign in — locally or over RDP — and try again, or use a Shell session, " +
+                    "which does not need a desktop.");
+            }
+            if (err == ERROR_PRIVILEGE_NOT_HELD)
+            {
+                throw new InvalidOperationException(
+                    $"WTSQueryUserToken was denied for session {session} (Win32 {err}). " +
+                    "The PrivSvc must run as LocalSystem to hold SE_TCB_NAME.");
+            }
             throw new InvalidOperationException(
-                $"WTSQueryUserToken failed for session {session} (Win32 {err}). " +
-                "The PrivSvc must run as LocalSystem to hold SE_TCB_NAME.");
+                $"WTSQueryUserToken failed for session {session} (Win32 {err}).");
         }
 
         IntPtr primaryToken = IntPtr.Zero;
