@@ -330,6 +330,27 @@ describe("catálogo 1.5.0 — ADCS rehecho: explotabilidad y ceguera declarada",
     expect((r.evidence as any).objectsScanned).toBe(38);
   });
 
+  it("⭐ un ESC4 dice a cuántas ediciones está de ser ESC1 — el caso real de PRTG_WebServer", () => {
+    // En MSIG-DOMAIN01 (27-sep) la plantilla cumple ya 3 de las 4 condiciones de
+    // ESC1 —sujeto a elección, sin aprobación, sin firmas— y sólo le falta una
+    // EKU de autenticación, que la puede añadir justo quien tiene WriteDacl
+    // sobre ella. Sin ese dato el hallazgo se lee como administrativo, y no lo es.
+    const r = evaluateIndicator(
+      ind150("ASP-AD-PKI-002"),
+      { ok: true, data: { found: true, count: 1, caCount: 1, objectsScanned: 38, publishedDeclared: 16, publishedResolved: 16, unreadable: 0,
+        sample: [{ template: "PRTG_WebServer", published: true, grantedTo: "S-1-5-21-1-1300", grantedRights: "WriteDacl, WriteOwner",
+          nameFlag: 1, enrollFlag: 0, raSignature: 0, eku: ["1.3.6.1.5.5.7.3.1"], esc1ConditionsMet: 3, esc1Missing: ["authEku"] }] } },
+      DC,
+      opts
+    );
+    expect(r.status).toBe("needs_review");
+    const hit = (r.evidence as any).sample[0];
+    expect(hit.esc1ConditionsMet).toBe(3);
+    expect(hit.esc1Missing).toEqual(["authEku"]);
+    // Y quién, con qué derecho: sin esto un hallazgo no se puede auditar.
+    expect(hit.grantedRights).toContain("WriteDacl");
+  });
+
   it("⚠️ sin ninguna CA en el bosque es «no aplica», nunca «cumple»", () => {
     const r = evaluateIndicator(ind150("ASP-AD-PKI-005"), { ok: true, data: { found: false, caCount: 0 } }, DC, opts);
     expect(r.status).toBe("not_applicable");

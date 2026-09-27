@@ -634,6 +634,20 @@ function AspAdcsTemplates($query, $ctx, [int]$limit) {
           enrollFlag = $enrollFlag
           raSignature = $ra
           eku = @($ekus.Keys)
+          # ⚠️ A CUANTAS condiciones de ESC1 esta la plantilla. Un ESC4 no es
+          # "alguien tiene permisos de mas": es "alguien esta a N ediciones de
+          # poder pedir un certificado como cualquiera". En MSIG-DOMAIN01
+          # (27-sep) PRTG_WebServer cumple 3 de 4 -- sujeto a eleccion, sin
+          # aprobacion, sin firmas -- y solo le falta una EKU de autenticacion,
+          # que la puede anadir justo quien tiene WriteDacl sobre ella. Sin este
+          # dato el hallazgo se lee como administrativo, y no lo es.
+          esc1ConditionsMet = @($flags.enrolleeSuppliesSubject, $flags.noManagerApproval, $flags.noSignatures, $flags.authEku | Where-Object { $_ }).Count
+          esc1Missing = @(
+            $(if (-not $flags.enrolleeSuppliesSubject) { 'enrolleeSuppliesSubject' })
+            $(if (-not $flags.noManagerApproval) { 'managerApprovalRequired' })
+            $(if (-not $flags.noSignatures) { 'signaturesRequired' })
+            $(if (-not $flags.authEku) { 'authEku' })
+          | Where-Object { $_ })
         })
     }
   }
