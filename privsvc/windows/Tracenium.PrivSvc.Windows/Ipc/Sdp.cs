@@ -855,6 +855,15 @@ public static class Sdp
                         $"format {format} not supported for uninstall on windows");
                 }
             }
+            catch (NoSilentUninstallException silentEx)
+            {
+                // 🔴 Negativa, no fallo: reintentar daría exactamente lo mismo.
+                // El agente ya trata `no_silent_uninstall` como permanente
+                // (PERMANENT_UNINSTALL_ERRORS en src/plugins/sdp/mode.ts), así
+                // que esto cierra el job en `rejected` en segundos en vez de
+                // colgarse media hora cinco veces seguidas.
+                return PrivSvcResponse.Fail(req.Id, "no_silent_uninstall", silentEx.Message);
+            }
             catch (UninstallIdentityException idEx)
             {
                 return PrivSvcResponse.Fail(req.Id, "identity_not_found", idEx.Message);
@@ -900,6 +909,19 @@ public static class Sdp
     private sealed class UninstallIdentityException : Exception
     {
         public UninstallIdentityException(string message) : base(message) { }
+    }
+
+    /// <summary>
+    /// No hay forma de ejecutar este desinstalador sin abrir una ventana.
+    ///
+    /// 🔴 Se separó de <see cref="UninstallIdentityException"/> porque no es lo
+    /// mismo: ahí no encontramos QUÉ quitar; aquí lo encontramos y sabemos que
+    /// ejecutarlo colgaría el job. `identity_not_found` mandaría al operador a
+    /// revisar el nombre, que está bien.
+    /// </summary>
+    private sealed class NoSilentUninstallException : Exception
+    {
+        public NoSilentUninstallException(string message) : base(message) { }
     }
 
     /// <summary>
@@ -964,29 +986,31 @@ public static class Sdp
         int timeoutSeconds,
         PrivSvcRequest req)
     {
-        var (uninstallString, quiet) = FindUninstallEntry(displayNameLike);
-        // 🔴 SIN FORMA SILENCIOSA, UN DESINSTALADOR DE MÁQUINA SE CUELGA. Corre
-        // como SYSTEM en la sesión 0: su ventana no la ve nadie y el job agota
-        // el timeout. Si el fabricante documenta el modificador (WinRAR `/S`…),
-        // se usa. Ver KnownSilentUninstall.
-        // Primero la tabla de fabricantes; si no está, se mira el BINARIO (la
-        // cola larga son NSIS, que aceptan `/S`). Lo que no se reconozca se
-        // ejecuta como venga, igual que antes.
-        quiet ??= KnownSilentUninstall.For(uninstallString) ?? UninstallerProbe.SilentCommandFor(uninstallString);
-        // Prefer the vendor-provided silent uninstall string; else fall back to
-        // the plain string + operator-supplied silentUninstallArgs.
-        if (!string.IsNullOrWhiteSpace(quiet))
+        var (uninstallString, registryQuiet) = FindUninstallEntry(displayNameLike);
+        // La tabla de fabricantes primero; si no está, se mira el BINARIO (la
+        // cola larga son NSIS, que aceptan `/S`). Las dos son E/S, así que se
+        // resuelven aquí y la DECISIÓN la toma una función pura.
+        var probed = KnownSilentUninstall.For(uninstallString) ?? UninstallerProbe.SilentCommandFor(uninstallString);
+
+        var choice = MachineUninstallShape.ChooseCommand(uninstallString, registryQuiet, probed, args);
+
+        if (choice.ErrorCode == MachineUninstallShape.NoSilentUninstall)
         {
-            var (qfile, qargs) = UninstallCommandParse.Split(quiet!);
-            return await RunInstallerProcess(qfile, qargs, timeoutSeconds);
+            throw new NoSilentUninstallException(
+                $"«{displayNameLike}» registered no silent uninstaller ({uninstallString}); " +
+                "running it as SYSTEM would open a window in session 0 and hang until timeout");
         }
-        if (string.IsNullOrWhiteSpace(uninstallString))
+        if (string.IsNullOrWhiteSpace(choice.Command))
         {
             throw new UninstallIdentityException(
                 "exe uninstall needs a resolvable UninstallString (registry_uninstall rule)");
         }
-        var (file, uArgs) = UninstallCommandParse.Split(uninstallString!);
-        if (!string.IsNullOrWhiteSpace(args)) uArgs.AddRange(UninstallCommandParse.SplitArgs(args!));
+
+        var (file, uArgs) = UninstallCommandParse.Split(choice.Command!);
+        if (!string.IsNullOrWhiteSpace(choice.ExtraArgs))
+        {
+            uArgs.AddRange(UninstallCommandParse.SplitArgs(choice.ExtraArgs!));
+        }
         return await RunInstallerProcess(file, uArgs, timeoutSeconds);
     }
 

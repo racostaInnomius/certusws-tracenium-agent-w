@@ -124,6 +124,14 @@
          recorrido de HKEY_USERS y el lanzamiento con el token del usuario
          (UserScopedUninstall.cs) son Win32 y se quedan fuera. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UserUninstallShape.cs" />
+    <!-- 🔴 Campo 26-sep: la MISMA decision para las apps de MAQUINA no existia.
+         AnyDesk registro su desinstalador con el verbo `uninstall` y sin
+         QuietUninstallString, y Sdp.RunExeUninstaller ejecutaba la cadena
+         desnuda: ventana en la sesion 0, 1740 s colgado, cinco reintentos, y
+         AnyDesk seguia instalado. La decision se saco de ese metodo async
+         (registro y procesos, imposible de probar) a esta clase pura, que es
+         por lo que nadie habia visto el agujero. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\MachineUninstallShape.cs" />
     <!-- 🔴 Campo 24-sep: TODAS las desinstalaciones de WinRAR en T111 murieron
          con «no se puede iniciar el proceso C:\Program» — una ruta sin comillas
          cortada por el primer espacio. El corte real lo decide el disco, y esa
