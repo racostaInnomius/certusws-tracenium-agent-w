@@ -87,7 +87,7 @@ describe("asp-ad-collector.ps1 — reglas estáticas", () => {
 
   it("los tipos de consulta del script son exactamente los del catálogo", () => {
     const kinds = [...code.matchAll(/^\s*'([a-z_]+)'\s*\{\s*Asp/gm)].map((m) => m[1]).sort();
-    expect(kinds).toEqual(["acl", "acl_search", "group_members", "ldap_object", "ldap_search", "owner_search", "registry", "repl_metadata", "rootdse", "sysvol_files"]);
+    expect(kinds).toEqual(["acl", "acl_search", "adcs_templates", "group_members", "ldap_object", "ldap_search", "owner_search", "registry", "repl_metadata", "rootdse", "sysvol_files"]);
   });
 });
 

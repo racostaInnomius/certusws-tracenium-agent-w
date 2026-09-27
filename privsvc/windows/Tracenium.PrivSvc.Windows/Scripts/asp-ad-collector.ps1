@@ -470,6 +470,162 @@ function AspSysvolFiles($query, $ctx, [int]$limit) {
   return [ordered]@{ count = $count; sample = $hits.ToArray(); filesScanned = $files.Count; truncated = ($count -gt $hits.Count) }
 }
 
+# Plantillas de certificado de ADCS (ESC1/ESC2/ESC3/ESC4), en UNA vuelta de LDAP.
+#
+# ⚠️ POR QUE UN TIPO PROPIO Y NO UN FILTRO LDAP. El catalogo 1.3.0 hacia esto con
+# `ldap_search` y fallo en el DC real por DOS motivos a la vez (24 y 26-sep):
+#
+#  1) Un filtro LDAP NO PUEDE expresar "y alguien no privilegiado puede
+#     inscribirse", porque eso vive en el DACL de la plantilla, no en sus
+#     atributos. Sin esa condicion el indicador marcaba plantillas que ninguna CA
+#     publica -- y una plantilla que no publica ninguna CA no se puede pedir, o
+#     sea que no es explotable: 6 falsos positivos de 7.
+#  2) El colector corre como SYSTEM y solo veia 2 de las 38 plantillas. AD
+#     responde "el objeto no existe" a lo que no te deja leer, asi que el 0 se
+#     leia como `pass`.
+#
+# El oraculo para (2) es gratis y esta al lado: el atributo `certificateTemplates`
+# de cada CA lista las plantillas PUBLICADAS. Si no resolvemos todas las que las
+# CA declaran, estamos ciegos y lo decimos -- `unreadable` hace que el evaluador
+# saque not_assessed en vez de pass.
+#
+# Y sin CA en el bosque no hay nada que evaluar: `found = false`, que con
+# whenMissing: not_applicable es "no aplica", no "cumple".
+function AspAdcsTemplates($query, $ctx, [int]$limit) {
+  $ENROLL = '0e10c968-78fb-11d2-90d4-00c04f79dc55'
+  $AUTOENROLL = 'a05b8cc2-17bc-4802-a710-e7c15ab866a2'
+  $ALL_GUID = '00000000-0000-0000-0000-000000000000'
+  # EKU que permiten AUTENTICARSE como alguien: son las que convierten un
+  # certificado en credencial.
+  $AUTH_EKU = @{ '1.3.6.1.5.5.7.3.2' = $true; '1.3.6.1.5.2.3.4' = $true; '1.3.6.1.4.1.311.20.2.2' = $true; '2.5.29.37.0' = $true }
+  $ANY_OR_AGENT_EKU = @{ '2.5.29.37.0' = $true; '1.3.6.1.4.1.311.20.2.1' = $true }
+  $pksDn = "CN=Public Key Services,CN=Services,$($ctx.configDn)"
+
+  $privileged = @{}
+  foreach ($sid in @(AspProp $query 'privilegedSids')) { if ($sid) { $privileged[(AspExpand ([string]$sid) $ctx)] = $true } }
+  $require = @(AspProp $query 'require' | Where-Object { $_ } | ForEach-Object { [string]$_ })
+
+  # ── Las CA y lo que publican ────────────────────────────────────────────
+  $published = @{}
+  $caCount = 0
+  $caSearcher = New-Object System.DirectoryServices.DirectorySearcher
+  $caSearcher.SearchRoot = AspEntry "CN=Enrollment Services,$pksDn"
+  $caSearcher.Filter = '(objectClass=pKIEnrollmentService)'
+  $caSearcher.SearchScope = [System.DirectoryServices.SearchScope]::OneLevel
+  [void]$caSearcher.PropertiesToLoad.Add('cn')
+  [void]$caSearcher.PropertiesToLoad.Add('certificatetemplates')
+  try {
+    foreach ($ca in $caSearcher.FindAll()) {
+      $caCount++
+      if ($ca.Properties.Contains('certificatetemplates')) {
+        foreach ($t in $ca.Properties['certificatetemplates']) { $published[[string]$t] = $true }
+      }
+    }
+  } catch {
+    if (-not (AspIsNoSuchObject $_)) { throw }
+  }
+  if ($caCount -eq 0) {
+    # Sin autoridad de certificacion no hay ADCS que evaluar.
+    return [ordered]@{ found = $false; caCount = 0 }
+  }
+
+  # ── Las plantillas, con su DACL ─────────────────────────────────────────
+  $tplSearcher = New-Object System.DirectoryServices.DirectorySearcher
+  $tplSearcher.SearchRoot = AspEntry "CN=Certificate Templates,$pksDn"
+  $tplSearcher.Filter = '(objectClass=pKICertificateTemplate)'
+  $tplSearcher.SearchScope = [System.DirectoryServices.SearchScope]::OneLevel
+  $tplSearcher.PageSize = 500
+  $tplSearcher.SecurityMasks = [System.DirectoryServices.SecurityMasks]::Dacl
+  foreach ($a in @('cn', 'mspki-certificate-name-flag', 'mspki-enrollment-flag', 'mspki-ra-signature', 'pkiextendedkeyusage', 'mspki-certificate-application-policy', 'ntsecuritydescriptor')) {
+    [void]$tplSearcher.PropertiesToLoad.Add($a)
+  }
+  $inheritOnly = [int][System.Security.AccessControl.PropagationFlags]::InheritOnly
+  $MODIFY = @('GenericAll', 'WriteDacl', 'WriteOwner', 'WriteProperty')
+  $hits = New-Object System.Collections.Generic.List[object]
+  $count = 0
+  $seen = 0
+  $resolved = @{}
+
+  foreach ($r in $tplSearcher.FindAll()) {
+    $seen++
+    $cn = [string]$r.Properties['cn'][0]
+    if ($published.ContainsKey($cn)) { $resolved[$cn] = $true }
+    $nameFlag = 0; $enrollFlag = 0; $ra = 0
+    if ($r.Properties.Contains('mspki-certificate-name-flag')) { $nameFlag = [int]$r.Properties['mspki-certificate-name-flag'][0] }
+    if ($r.Properties.Contains('mspki-enrollment-flag')) { $enrollFlag = [int]$r.Properties['mspki-enrollment-flag'][0] }
+    if ($r.Properties.Contains('mspki-ra-signature')) { $ra = [int]$r.Properties['mspki-ra-signature'][0] }
+    $ekus = @{}
+    foreach ($a in @('pkiextendedkeyusage', 'mspki-certificate-application-policy')) {
+      if ($r.Properties.Contains($a)) { foreach ($e in $r.Properties[$a]) { $ekus[[string]$e] = $true } }
+    }
+
+    $lowEnroll = $null
+    $lowModify = $null
+    if ($r.Properties.Contains('ntsecuritydescriptor') -and $r.Properties['ntsecuritydescriptor'].Count -gt 0) {
+      $sd = New-Object System.DirectoryServices.ActiveDirectorySecurity
+      $sd.SetSecurityDescriptorBinaryForm([byte[]]$r.Properties['ntsecuritydescriptor'][0])
+      foreach ($ace in $sd.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+        if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+        if ((([int]$ace.PropagationFlags) -band $inheritOnly) -ne 0) { continue }
+        $sid = [string]$ace.IdentityReference.Value
+        if ($privileged.ContainsKey($sid)) { continue }
+        $type = ([string]$ace.ObjectType).ToLowerInvariant()
+        $rights = [int]$ace.ActiveDirectoryRights
+        # Inscribirse es un derecho EXTENDIDO concreto; "todos los extendidos"
+        # (ObjectType vacio) tambien lo concede.
+        if ((($rights -band 0x100) -ne 0) -and ($type -eq $ENROLL -or $type -eq $AUTOENROLL -or $type -eq $ALL_GUID)) {
+          if ($null -eq $lowEnroll) { $lowEnroll = $sid }
+        }
+        if (AspAceHit $rights $type $false $MODIFY @{} @{}) {
+          if ($null -eq $lowModify) { $lowModify = $sid }
+        }
+      }
+    }
+
+    $flags = @{
+      published = $published.ContainsKey($cn)
+      enrolleeSuppliesSubject = (($nameFlag -band 0x10001) -ne 0)
+      noManagerApproval = (($enrollFlag -band 2) -eq 0)
+      noSignatures = ($ra -eq 0)
+      # Sin ninguna EKU, el certificado vale para cualquier proposito.
+      authEku = ($ekus.Count -eq 0 -or @($ekus.Keys | Where-Object { $AUTH_EKU.ContainsKey($_) }).Count -gt 0)
+      anyPurposeOrEnrollmentAgentEku = (@($ekus.Keys | Where-Object { $ANY_OR_AGENT_EKU.ContainsKey($_) }).Count -gt 0)
+      lowPrivEnroll = ($null -ne $lowEnroll)
+      lowPrivCanModify = ($null -ne $lowModify)
+    }
+    $all = $true
+    foreach ($k in $require) { if (-not $flags[$k]) { $all = $false; break } }
+    if (-not $all) { continue }
+    $count++
+    if ($hits.Count -lt $limit) {
+      $hits.Add([ordered]@{
+          template = $cn
+          published = $flags.published
+          grantedTo = $(if ($require -contains 'lowPrivCanModify') { $lowModify } else { $lowEnroll })
+          nameFlag = $nameFlag
+          enrollFlag = $enrollFlag
+          raSignature = $ra
+          eku = @($ekus.Keys)
+        })
+    }
+  }
+
+  # El oraculo: lo que las CA dicen que publican contra lo que pudimos resolver.
+  $declared = $published.Count
+  $resolvedCount = $resolved.Count
+  return [ordered]@{
+    found = $true
+    count = $count
+    sample = $hits.ToArray()
+    truncated = ($count -gt $hits.Count)
+    caCount = $caCount
+    objectsScanned = $seen
+    publishedDeclared = $declared
+    publishedResolved = $resolvedCount
+    unreadable = [Math]::Max(0, $declared - $resolvedCount)
+  }
+}
+
 # Metadata de replicacion de AD. Responde "cambio hace poco?", que ningun otro
 # tipo de consulta nuestro puede preguntar, y lo hace por LDAP plano: son dos
 # atributos CONSTRUIDOS que hay que pedir por nombre.
@@ -699,6 +855,7 @@ foreach ($item in $request.queries) {
       'sysvol_files' { AspSysvolFiles $q $ctx $limit }
       'registry' { AspRegistry $q }
       'repl_metadata' { AspReplMetadata $q $ctx $limit }
+      'adcs_templates' { AspAdcsTemplates $q $ctx $limit }
       default { throw "unsupported query kind: $([string]$q.kind)" }
     }
     $output.results[$id] = [ordered]@{ ok = $true; data = $data; ms = $clock.ElapsedMilliseconds }

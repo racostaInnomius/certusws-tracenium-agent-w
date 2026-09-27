@@ -297,6 +297,57 @@ describe("catálogo 1.4.0 — «Recent changes» por metadata de replicación", 
   });
 });
 
+describe("catálogo 1.5.0 — ADCS rehecho: explotabilidad y ceguera declarada", () => {
+  const cat150 = require("./fixtures/asp-ad-1.5.0.json");
+  function ind150(id: string): AgentIndicator {
+    const i = (cat150.indicators as any[]).find((x) => x.controlId === id);
+    if (!i) throw new Error(id);
+    return { controlId: i.controlId, severity: i.severity, requires: i.requires, query: i.query, derive: i.derive ?? [], predicate: i.predicate, onFail: i.onFail, whenMissing: i.whenMissing ?? "not_assessed" };
+  }
+
+  it("🔴 el caso REAL del 26-sep: 2 plantillas resueltas de 16 publicadas → not_assessed, NO pass", () => {
+    // Como SYSTEM en MSIG-DOMAIN01 se veían 2 de 38 plantillas y la CA publica
+    // 16. El oráculo (lo que las CA dicen publicar vs lo que se resolvió) lo
+    // convierte en ceguera declarada en vez de un cero mentiroso.
+    const r = evaluateIndicator(
+      ind150("ASP-AD-PKI-001"),
+      { ok: true, data: { found: true, count: 0, sample: [], caCount: 1, objectsScanned: 2, publishedDeclared: 16, publishedResolved: 2, unreadable: 14 } },
+      DC,
+      opts
+    );
+    expect(r.status).toBe("not_assessed");
+    expect(r.reason).toBe("insufficient_read:14");
+  });
+
+  it("⭐ viéndolo todo y sin plantilla explotable → pass, con la prueba de que miró", () => {
+    const r = evaluateIndicator(
+      ind150("ASP-AD-PKI-001"),
+      { ok: true, data: { found: true, count: 0, sample: [], caCount: 1, objectsScanned: 38, publishedDeclared: 16, publishedResolved: 16, unreadable: 0 } },
+      DC,
+      opts
+    );
+    expect(r.status).toBe("pass");
+    expect((r.evidence as any).objectsScanned).toBe(38);
+  });
+
+  it("⚠️ sin ninguna CA en el bosque es «no aplica», nunca «cumple»", () => {
+    const r = evaluateIndicator(ind150("ASP-AD-PKI-005"), { ok: true, data: { found: false, caCount: 0 } }, DC, opts);
+    expect(r.status).toBe("not_applicable");
+  });
+
+  it("⭐ una plantilla publicada y explotable sale con quién puede inscribirse", () => {
+    const r = evaluateIndicator(
+      ind150("ASP-AD-PKI-001"),
+      { ok: true, data: { found: true, count: 1, caCount: 1, objectsScanned: 38, publishedDeclared: 16, publishedResolved: 16, unreadable: 0,
+        sample: [{ template: "UserAuth", published: true, grantedTo: "S-1-5-21-1-513", nameFlag: 1, enrollFlag: 0, raSignature: 0, eku: ["1.3.6.1.5.5.7.3.2"] }] } },
+      DC,
+      opts
+    );
+    expect(r).toMatchObject({ status: "needs_review", severity: "critical", affectedCount: 1 });
+    expect((r.evidence as any).sample[0]).toMatchObject({ template: "UserAuth", published: true, grantedTo: "S-1-5-21-1-513" });
+  });
+});
+
 describe("el dominio del spike (MSIG-TSPDC, ADR §Fase 0)", () => {
   const spike: Record<string, { data: any; expect: string }> = {
     "ASP-AD-KRB-002": { data: { count: 2, sample: ["CN=Administrator,CN=Users,DC=m", "CN=next gsys,OU=IT,DC=m"] }, expect: "fail" },
