@@ -11,6 +11,10 @@
 //   pmp.remediate        — apply the registry / powershell change.
 //                          Returns { exitCode, stderrExcerpt, durationMs,
 //                          requiresReboot, changesApplied[] }.
+//   pmp.revert           — deshacer un fix DEDICADO: volver al `state` que
+//                          leyó pmp.read_check_state antes (params.stateBefore).
+//                          Misma respuesta que pmp.remediate. Validación y
+//                          plan en RevertShape.cs; aquí sólo se ejecuta.
 //
 // Both gated by LocalSystem in Router.cs (`pmp.*` prefix joins the
 // existing `crypto.|grpc.|sdp.` check). Phase 1 ships 4 checkIds:
@@ -146,6 +150,67 @@ public static class PmpRemediation
         }
     }
 
+    /// <summary>
+    /// Deshace un fix dedicado. Los genéricos no entran: el backend los
+    /// revierte con otra escritura por pmp.remediate, que ya tiene guardas.
+    /// `timeoutSeconds` se acepta y no se usa: cada orden conserva su propio
+    /// tope, como en la ida (120 s la característica SMB1, 30 s el resto).
+    /// ⚠️ Igual que en la ida, no hay tope global: muchos recursos
+    /// compartidos lentos podrían pasar de los 540 s que manda el agente.
+    /// </summary>
+    public static async Task<PrivSvcResponse> HandleRevert(PrivSvcRequest req)
+    {
+        var checkId = GetString(req.Params, "checkId")?.Trim() ?? "";
+        if (string.IsNullOrEmpty(checkId))
+        {
+            return PrivSvcResponse.Fail(req.Id, "bad_request", "checkId required");
+        }
+        // Antes que el stateBefore: a un checkId sin revert se le contesta
+        // unsupported_check aunque el payload también venga mal, para que el
+        // agente lo marque como «rechazado» y no como «fallido».
+        if (!RevertShape.IsSupported(checkId))
+        {
+            return PrivSvcResponse.Fail(req.Id, "unsupported_check",
+                $"no revert handler for checkId {checkId} on windows");
+        }
+
+        var (stateBefore, stateErr) = RevertShape.StateBeforeFromParams(req.Params);
+        if (stateErr is not null)
+        {
+            return PrivSvcResponse.Fail(req.Id, "bad_request", stateErr);
+        }
+        // Toda la validación ocurre aquí, ANTES de tocar nada.
+        var (plan, planErr) = RevertShape.Plan(checkId, stateBefore!.Value);
+        if (planErr is not null || plan is null)
+        {
+            return PrivSvcResponse.Fail(req.Id, "bad_request", planErr ?? "no revert plan");
+        }
+
+        try
+        {
+            var result = checkId == RevertShape.SharesCheck
+                ? await RevertShares(plan)
+                : await ExecuteRevertPlan(plan);
+
+            return PrivSvcResponse.Success(req.Id, new
+            {
+                exitCode = result.ExitCode,
+                stderrExcerpt = result.StderrExcerpt,
+                durationMs = result.DurationMs,
+                requiresReboot = result.RequiresReboot,
+                changesApplied = result.ChangesApplied,
+            });
+        }
+        catch (TimeoutException tex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "revert_timeout", tex.Message);
+        }
+        catch (Exception ex)
+        {
+            return PrivSvcResponse.Fail(req.Id, "revert_failed", ex.Message);
+        }
+    }
+
     // ── Result types ──────────────────────────────────────────────
 
     private sealed class ReadResult
@@ -182,11 +247,12 @@ public static class PmpRemediation
     // values (TLS 1.0 server + client × Enabled + DisabledByDefault,
     // idem 1.1) to read as expected.
 
-    private const string TlsProtocolsRoot =
-        @"SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols";
+    // Las rutas y nombres viven en RevertShape: el revert (pmp.revert) tiene
+    // que escribir exactamente donde esta lectura mira.
+    private const string TlsProtocolsRoot = RevertShape.TlsProtocolsRoot;
 
-    private static readonly string[] LegacyTlsProtocols = { "TLS 1.0", "TLS 1.1" };
-    private static readonly string[] TlsRoles = { "Server", "Client" };
+    private static readonly string[] LegacyTlsProtocols = RevertShape.LegacyTlsProtocols;
+    private static readonly string[] TlsRoles = RevertShape.TlsRoles;
 
     private static ReadResult ReadLegacyTls()
     {
@@ -269,22 +335,11 @@ public static class PmpRemediation
     // (BEAST/Lucky13), DES, 3DES (SWEET32), and EXPORT. Each
     // sub-key name comes from Microsoft's Secure Channel docs.
 
-    private const string CiphersRoot =
-        @"SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers";
+    // Lista compartida con el revert (RevertShape.WeakCiphers): NULL, DES,
+    // RC2, RC4 y Triple DES 168 (SWEET32).
+    private const string CiphersRoot = RevertShape.CiphersRoot;
 
-    private static readonly string[] WeakCiphers =
-    {
-        "NULL",
-        "DES 56/56",
-        "RC2 40/128",
-        "RC2 56/128",
-        "RC2 128/128",
-        "RC4 40/128",
-        "RC4 56/128",
-        "RC4 64/128",
-        "RC4 128/128",
-        "Triple DES 168",  // SWEET32 (3DES)
-    };
+    private static readonly string[] WeakCiphers = RevertShape.WeakCiphers;
 
     private static ReadResult ReadWeakCiphers()
     {
@@ -350,8 +405,7 @@ public static class PmpRemediation
     // without a reboot for new connections, the optional feature
     // removal needs a reboot to fully unload the driver.
 
-    private const string LanmanServerParamsKey =
-        @"SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters";
+    private const string LanmanServerParamsKey = RevertShape.LanmanServerParamsKey;
 
     private static ReadResult ReadSmbV1()
     {
@@ -478,7 +532,7 @@ public static class PmpRemediation
     // each map to this single handler in Phase 1; if Phase 2 wants
     // per-profile granularity, split the dispatch table.
 
-    private static readonly string[] FirewallProfiles = { "Domain", "Private", "Public" };
+    private static readonly string[] FirewallProfiles = RevertShape.FirewallProfiles;
 
     private static ReadResult ReadFirewallProfiles()
     {
@@ -1199,6 +1253,220 @@ public static class PmpRemediation
             throw new TimeoutException($"{file} did not finish within {timeoutMs} ms");
         }
         return new ProcRun { ExitCode = proc.ExitCode, Stdout = stdout.Result, Stderr = stderr.Result };
+    }
+
+    // ── Revert: ejecutar el plan ──────────────────────────────────
+    //
+    // El plan ya está validado entero (RevertShape). Aquí no se decide nada
+    // que dependa del payload: las rutas, los nombres de valor y los perfiles
+    // salen de las listas fijas, y el único texto del payload que llega a
+    // PowerShell —el nombre de un recurso compartido— pasa antes por
+    // ShareNameError, tiene que existir HOY en Get-SmbShare y se usa el
+    // nombre que devuelve él, no el recibido.
+
+    private static async Task<RemediateResult> ExecuteRevertPlan(RevertPlan plan)
+    {
+        var sw = Stopwatch.StartNew();
+        var changes = new List<string>();
+        var stderrAccum = new StringBuilder();
+        var exitCode = 0;
+
+        foreach (var op in plan.Ops)
+        {
+            switch (op.Kind)
+            {
+                case RevertOpKind.RegistrySetDword:
+                {
+                    // CreateSubKey para escribir sí: antes del fix la clave
+                    // existía (tenía el valor), pero alguien pudo borrarla desde
+                    // entonces, y el estado de antes es «con el valor».
+                    using var key = Registry.LocalMachine.CreateSubKey(op.SubKey!, writable: true)
+                        ?? throw new InvalidOperationException($"could not create {op.SubKey}");
+                    key.SetValue(op.Name!, op.Dword, RegistryValueKind.DWord);
+                    changes.Add(op.Describe());
+                    break;
+                }
+                case RevertOpKind.RegistryDeleteValue:
+                {
+                    // ⚠️ OpenSubKey, NUNCA CreateSubKey: borrar no debe dejar una
+                    // clave creada de rebote. Sin clave o sin valor, ya está como
+                    // antes.
+                    using var key = Registry.LocalMachine.OpenSubKey(op.SubKey!, writable: true);
+                    var current = key?.GetValue(op.Name!);
+                    if (key is null || current is null)
+                    {
+                        changes.Add(op.Describe() + " — already absent");
+                        break;
+                    }
+                    // La lectura es `GetValue(..) as int?`: un valor que no es
+                    // DWORD ya se lee como null, que es el estado de antes. No lo
+                    // puso el fix (la ida escribe DWORD) y no es nuestro borrarlo.
+                    if (key.GetValueKind(op.Name!) != RegistryValueKind.DWord)
+                    {
+                        changes.Add($"{op.SubKey}\\{op.Name} left as {key.GetValueKind(op.Name!)} (not a DWORD; reads as absent)");
+                        break;
+                    }
+                    key.DeleteValue(op.Name!, throwOnMissingValue: false);
+                    changes.Add(op.Describe());
+                    break;
+                }
+                case RevertOpKind.EnableSmb1Feature:
+                {
+                    // Mismo patrón que la ida: -NoRestart y requiresReboot=true
+                    // para que el operador programe el reinicio. -All porque en
+                    // algunas ediciones SMB1Protocol depende de subcaracterísticas
+                    // (Client/Server) que la ida pudo dejar apagadas con ella.
+                    var run = await RunPowerShellAsync(
+                        "Enable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -NoRestart -All -ErrorAction Stop | Out-Null",
+                        120, "Enable-WindowsOptionalFeature SMB1Protocol");
+                    if (run.ExitCode != 0)
+                    {
+                        exitCode = run.ExitCode;
+                        stderrAccum.AppendLine("[SMB1Protocol] " + (CombinedExcerpt(run.Stdout, run.Stderr) ?? $"exit {run.ExitCode}"));
+                    }
+                    changes.Add(op.Describe());
+                    break;
+                }
+                case RevertOpKind.DisableFirewallProfile:
+                {
+                    // op.Name es uno de RevertShape.FirewallProfiles (lo garantiza
+                    // el plan), nunca una clave del payload interpolada a ciegas.
+                    if (!FirewallProfiles.Contains(op.Name ?? ""))
+                        throw new InvalidOperationException($"unexpected firewall profile {op.Name}");
+                    var run = await RunPowerShellAsync(
+                        $"Set-NetFirewallProfile -Profile {op.Name} -Enabled False -ErrorAction Stop",
+                        30, $"Set-NetFirewallProfile {op.Name}");
+                    if (run.ExitCode != 0)
+                    {
+                        exitCode = run.ExitCode;
+                        stderrAccum.AppendLine($"[{op.Name}] {run.Stderr.Trim()}");
+                    }
+                    changes.Add(op.Describe());
+                    break;
+                }
+                default:
+                    // Los recursos compartidos van por RevertShares: necesitan
+                    // mirar qué existe antes de conceder nada.
+                    throw new InvalidOperationException($"revert op {op.Kind} not handled here");
+            }
+        }
+
+        sw.Stop();
+        return new RemediateResult
+        {
+            ExitCode = exitCode,
+            StderrExcerpt = stderrAccum.Length == 0 ? null : Truncate(stderrAccum.ToString(), 1024),
+            DurationMs = sw.ElapsedMilliseconds,
+            RequiresReboot = plan.RequiresReboot,
+            ChangesApplied = changes,
+        };
+    }
+
+    private static async Task<RemediateResult> RevertShares(RevertPlan plan)
+    {
+        var sw = Stopwatch.StartNew();
+        var changes = new List<string>();
+        var stderrAccum = new StringBuilder();
+        var wanted = plan.Ops.Where(o => o.Kind == RevertOpKind.GrantShareEveryoneFull).Select(o => o.Name!).ToList();
+
+        // Antes no había ningún recurso con Everyone:Full: la ida no tocó nada
+        // y no hay nada que devolver.
+        if (wanted.Count == 0)
+        {
+            sw.Stop();
+            return new RemediateResult { ExitCode = 0, DurationMs = sw.ElapsedMilliseconds, RequiresReboot = false, ChangesApplied = changes };
+        }
+
+        // Los recursos de HOY. Mismo filtro que la lectura (sin los Special:
+        // C$, ADMIN$, IPC$), porque la ida nunca los tocó.
+        var list = await RunPowerShellAsync(
+            "@(Get-SmbShare -ErrorAction Stop | Where-Object { -not $_.Special } | ForEach-Object { $_.Name }) | ConvertTo-Json -Compress",
+            20, "Get-SmbShare");
+        var current = list.ExitCode == 0 ? RevertShape.ParseShareNames(list.Stdout) : null;
+        var (granted, grantedOk) = QuerySharesWithEveryoneFullControl();
+        if (current is null || !grantedOk)
+        {
+            // Sin saber qué existe no se concede nada: el nombre recibido sólo
+            // se usa si coincide con un recurso real.
+            sw.Stop();
+            return new RemediateResult
+            {
+                ExitCode = -1,
+                StderrExcerpt = "failed to enumerate SMB shares" + (CombinedExcerpt(null, list.Stderr) is { } e ? ": " + e : ""),
+                DurationMs = sw.ElapsedMilliseconds,
+                RequiresReboot = false,
+                ChangesApplied = changes,
+            };
+        }
+
+        var (toGrant, already, missing) = RevertShape.ResolveShares(wanted, current, granted);
+        foreach (var name in already)
+            changes.Add($"Grant-SmbShareAccess -Name '{name}' -AccountName Everyone -AccessRight Full — already granted");
+
+        var restored = already.Count;
+        var failureExit = 0;
+        foreach (var share in toGrant)
+        {
+            var escaped = RevertShape.EscapePsSingleQuoted(share);
+            var run = await RunPowerShellAsync(
+                $"Grant-SmbShareAccess -Name '{escaped}' -AccountName Everyone -AccessRight Full -Force -ErrorAction Stop | Out-Null",
+                30, $"Grant-SmbShareAccess on '{share}'");
+            if (run.ExitCode != 0)
+            {
+                failureExit = run.ExitCode;
+                stderrAccum.AppendLine($"[{share}] {run.Stderr.Trim()}");
+                continue;
+            }
+            restored++;
+            changes.Add($"Grant-SmbShareAccess -Name '{share}' -AccountName Everyone -AccessRight Full");
+        }
+        if (missing.Count > 0)
+        {
+            // Borrado desde el fix: no hay recurso al que devolverle el permiso.
+            // Se cuenta, pero sólo es fallo si no volvió NINGUNO.
+            stderrAccum.AppendLine("share no longer exists, not restored: " + string.Join(", ", missing));
+        }
+
+        sw.Stop();
+        return new RemediateResult
+        {
+            ExitCode = RevertShape.SharesExitCode(restored, missing.Count, failureExit),
+            StderrExcerpt = stderrAccum.Length == 0 ? null : Truncate(stderrAccum.ToString(), 1024),
+            DurationMs = sw.ElapsedMilliseconds,
+            RequiresReboot = false, // los ACL de recurso se aplican al momento
+            ChangesApplied = changes,
+        };
+    }
+
+    /// <summary>
+    /// powershell.exe -Command "…" con tope, asíncrono, como los handlers de
+    /// ida. El comando lo construye siempre este fichero con constantes (y, en
+    /// recursos, un nombre ya validado y escapado).
+    /// </summary>
+    private static async Task<ProcRun> RunPowerShellAsync(string command, int timeoutSeconds, string what)
+    {
+        var psi = new ProcessStartInfo("powershell.exe",
+            "-NoProfile -ExecutionPolicy Bypass -Command \"" + command + "\"")
+        {
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("Process.Start returned null");
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+        using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds)))
+        {
+            try { await proc.WaitForExitAsync(cts.Token); }
+            catch (OperationCanceledException)
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { }
+                throw new TimeoutException($"{what} timed out");
+            }
+        }
+        return new ProcRun { ExitCode = proc.ExitCode, Stdout = await stdoutTask, Stderr = await stderrTask };
     }
 
     // ── Helpers ───────────────────────────────────────────────────

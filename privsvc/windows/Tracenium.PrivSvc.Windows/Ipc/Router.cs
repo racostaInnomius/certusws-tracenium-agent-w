@@ -310,6 +310,9 @@ public sealed class Router
             // smbv1_disabled / firewall.profiles_enabled.
             "pmp.read_check_state" => PmpRemediation.HandleReadCheckState(req),
             "pmp.remediate" => PmpRemediation.HandleRemediate(req),
+            // Deshacer un fix dedicado al `state` leído antes de aplicarlo
+            // (params.stateBefore). Mismo gate LocalSystem por el prefijo pmp.
+            "pmp.revert" => PmpRemediation.HandleRevert(req),
 
             _ => Task.FromResult(PrivSvcResponse.Fail(req.Id, "not_supported", $"Unsupported method: {req.Method}"))
         };

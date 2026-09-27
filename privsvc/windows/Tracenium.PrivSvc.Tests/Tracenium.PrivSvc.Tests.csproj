@@ -54,6 +54,11 @@
          las escrituras, las guardas y la plantilla .inf son puros
          (System.Text.Json); la escritura real queda en PmpRemediation.cs. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\GenericWriteShape.cs" />
+    <!-- pmp.revert: validar el stateBefore (claves fijas, tipos JSON) y
+         decidir qué se escribe es puro; el registro y PowerShell se quedan
+         en PmpRemediation.cs. Un revert que valida mal escribe en el
+         registro lo que un payload manipulado quiera. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\RevertShape.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\AcmeHttp01Shape.cs" />
     <!-- El handler también se compila aquí: el proyecto de Windows necesita un protoc x64. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\AcmeHttp01.cs" />
