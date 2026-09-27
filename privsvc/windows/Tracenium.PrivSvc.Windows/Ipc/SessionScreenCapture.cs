@@ -76,6 +76,10 @@ internal static class SessionScreenCapture
     /// tiraría la sesión de login que la captura acaba de abrir.
     /// </summary>
     private static bool _serverConsoleAllowed;
+
+    /// Último resultado del sondeo de UAC, con su momento. Ver UacPromptActive.
+    private static DateTime _lastUacCheckUtc = DateTime.MinValue;
+    private static bool _uacActive;
     private static StreamReader? _stderr;
 
     /// <summary>
@@ -206,6 +210,12 @@ internal static class SessionScreenCapture
                 if (picked is not null)
                 {
                     session = picked.Value;
+                    // ⭐ UAC vive en el escritorio SEGURO. Mientras el aviso
+                    // esté abierto el helper tiene que estar allí, o el
+                    // operador ve negro justo cuando la máquina pide permiso.
+                    // Al contestarlo, `consent.exe` desaparece y la comparación
+                    // de abajo devuelve el helper al escritorio del usuario.
+                    logonDesktop = UacPromptActive(session);
                 }
                 else
                 {
@@ -376,6 +386,78 @@ internal static class SessionScreenCapture
     internal sealed class NoInteractiveUserException : Exception
     {
         public NoInteractiveUserException(string message) : base(message) { }
+    }
+
+    /// <summary>
+    /// ¿Hay un aviso de UAC en pantalla ahora mismo, en esta sesión?
+    ///
+    /// ── El problema ─────────────────────────────────────────────────
+    ///
+    /// UAC no dibuja sobre el escritorio del usuario: cambia al escritorio
+    /// SEGURO (`winsta0\winlogon`). El helper está adjunto a
+    /// `winsta0\default`, así que en cuanto sale el aviso DXGI pierde el
+    /// acceso y la reserva de GDI copia un escritorio que ya no se está
+    /// componiendo. El operador ve un fotograma negro o congelado justo cuando
+    /// la máquina le está pidiendo permiso para algo, y no puede ni leerlo ni
+    /// contestarlo.
+    ///
+    /// ── Por qué se busca `consent.exe` y no el escritorio ────────────
+    ///
+    /// Lo natural sería preguntar cuál es el escritorio de entrada. No se
+    /// puede desde aquí: este servicio vive en la sesión 0, cuya estación de
+    /// ventanas no es la del usuario. Y desde el helper tampoco, porque corre
+    /// como el usuario y el escritorio seguro sólo lo abre SYSTEM — el propio
+    /// fallo sería la señal, pero es la MISMA señal que da la pantalla de
+    /// bloqueo.
+    ///
+    /// Y esa diferencia importa mucho: la pantalla de bloqueo también vive en
+    /// el escritorio seguro. Saltar allí en cuanto se pierde el acceso
+    /// convertiría esto en «mirar a alguien teclear su contraseña al
+    /// desbloquear», que es exactamente lo que el consentimiento existe para
+    /// impedir. `consent.exe` sólo existe mientras hay un aviso de UAC
+    /// abierto: es la señal ESPECÍFICA, no la genérica.
+    ///
+    /// ⚠️ Con sondeo acotado a 500 ms. Esto se consulta en el camino de cada
+    /// fotograma —hasta treinta por segundo— y enumerar procesos en cada uno
+    /// sería un coste permanente por una condición que dura segundos. Medio
+    /// segundo de negro antes de saltar es un precio que se paga.
+    /// </summary>
+    private static bool UacPromptActive(uint session)
+    {
+        var now = DateTime.UtcNow;
+        if ((now - _lastUacCheckUtc).TotalMilliseconds < 500) return _uacActive;
+        _lastUacCheckUtc = now;
+
+        var found = false;
+        try
+        {
+            foreach (var proc in Process.GetProcessesByName("consent"))
+            {
+                try
+                {
+                    if ((uint)proc.SessionId == session) found = true;
+                }
+                catch
+                {
+                    // El proceso murió entre la enumeración y la consulta: es
+                    // justo lo que hace un aviso que se acaba de contestar.
+                }
+                finally
+                {
+                    proc.Dispose();
+                }
+                if (found) break;
+            }
+        }
+        catch
+        {
+            // Sin poder enumerar no se salta al escritorio seguro. Fallar hacia
+            // "no hay UAC" deja un fotograma negro; fallar al revés pondría al
+            // operador en el escritorio seguro sin motivo.
+            found = false;
+        }
+        _uacActive = found;
+        return found;
     }
 
     /// <summary>

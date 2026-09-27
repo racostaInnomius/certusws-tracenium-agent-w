@@ -310,3 +310,81 @@ describe("captura del escritorio de inicio de sesión (sólo servidores)", () =>
     expect(text).toContain("_serverConsoleAllowed = serverConsole;");
   });
 });
+
+/**
+ * ⭐ LOS AVISOS DE UAC DEJAN DE SALIR EN NEGRO.
+ *
+ * UAC no dibuja sobre el escritorio del usuario: cambia al escritorio SEGURO.
+ * El helper está en `winsta0\default`, así que el operador veía un fotograma
+ * negro o congelado justo cuando la máquina pedía permiso para algo — no podía
+ * ni leerlo ni contestarlo.
+ *
+ * ⚠️ Y lo que esta prueba protege sobre todo es la línea que NO se cruza: la
+ * PANTALLA DE BLOQUEO también vive en el escritorio seguro. Saltar allí en
+ * cuanto se pierde el acceso al escritorio convertiría esto en «mirar a
+ * alguien teclear su contraseña al desbloquear». Por eso la señal es
+ * `consent.exe` —que sólo existe mientras hay un aviso de UAC abierto— y no
+ * «se perdió el escritorio».
+ */
+describe("UAC: seguir el escritorio seguro, y sólo por UAC", () => {
+  function uac(): string {
+    const i = text.indexOf("private static bool UacPromptActive");
+    if (i < 0) return "";
+    return codeOnly(text.slice(i, text.indexOf("private static bool IsWindowsServerSku", i)));
+  }
+
+  it("⚠️ la señal es consent.exe, NO «perdí el escritorio»", () => {
+    const u = uac();
+    expect(u, "ya no existe la detección de UAC").not.toBe("");
+    expect(
+      u,
+      "sin la señal específica, la pantalla de BLOQUEO también nos llevaría al "
+        + "escritorio seguro: mirar a alguien teclear su contraseña",
+    ).toContain('GetProcessesByName("consent")');
+  });
+
+  it("y se comprueba que el aviso es de ESTA sesión", () => {
+    // En un servidor con varias sesiones, un UAC de otro usuario no puede
+    // arrastrar la captura a otro escritorio.
+    expect(uac()).toContain("proc.SessionId == session");
+  });
+
+  it("⚠️ si no se puede enumerar, NO se salta al escritorio seguro", () => {
+    const u = uac();
+    const cat = u.slice(u.lastIndexOf("catch"));
+    expect(
+      cat,
+      "fallar hacia «hay UAC» pondría al operador en el escritorio seguro sin motivo",
+    ).toContain("found = false;");
+  });
+
+  it("el sondeo está acotado: no enumera procesos en cada fotograma", () => {
+    // Hasta 30 capturas por segundo; enumerar en cada una sería un coste
+    // permanente por una condición que dura segundos.
+    expect(uac()).toContain("_lastUacCheckUtc");
+    expect(uac()).toContain("500");
+  });
+
+  it("mientras hay UAC el helper va al escritorio seguro, y vuelve al acabar", () => {
+    const i = text.indexOf("private static (string? line,");
+    const exchange = codeOnly(text.slice(i, text.indexOf("private static void StopHelperLocked", i)));
+    expect(exchange).toContain("logonDesktop = UacPromptActive(session);");
+    // La vuelta la da la misma comparación que ya suelta el login de servidor.
+    expect(exchange).toContain("_helperLogonDesktop != logonDesktop");
+  });
+
+  it("⚠️ UAC NO depende de que el equipo sea un servidor", () => {
+    // Es donde más falta hace: en el portátil de una persona, con su
+    // consentimiento ya dado para ver la pantalla.
+    const i = text.indexOf("private static (string? line,");
+    const exchange = codeOnly(text.slice(i, text.indexOf("private static void StopHelperLocked", i)));
+    const uacAt = exchange.indexOf("UacPromptActive(session)");
+    const serverGate = exchange.indexOf("!_serverConsoleAllowed");
+    expect(uacAt).toBeGreaterThan(-1);
+    expect(
+      uacAt,
+      "la detección de UAC quedó detrás de la puerta de servidores: en un "
+        + "endpoint los avisos seguirían saliendo en negro",
+    ).toBeLessThan(serverGate);
+  });
+});
