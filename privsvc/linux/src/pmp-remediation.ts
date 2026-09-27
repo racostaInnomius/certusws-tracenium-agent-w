@@ -13,6 +13,10 @@
 //   * pmp.remediate        → returns { exitCode, stderrExcerpt,
 //                                       durationMs, requiresReboot,
 //                                       changesApplied[] }
+//   * pmp.revert           → misma respuesta que pmp.remediate; deshace
+//                            el fix a partir del `state` que devolvió
+//                            pmp.read_check_state ANTES de aplicarlo
+//                            (ver el bloque «pmp.revert» al final).
 //
 // Design choices documented inline. Two patterns dominate this file
 // and are worth pulling out up here:
@@ -40,9 +44,9 @@
 //         `systemctl reload sshd`.
 //      h. If invalid: unlink pending, restore from backup if needed,
 //         return failure with sshd -t stderr as the reason.
-//    Steps (a)..(h) are not factored into a shared helper because
-//    the diff per checkId is small and inlining keeps the failure
-//    paths obvious to a code reader.
+//    Steps (d)..(h) viven en `commitSshdDropin`: el revert (quitar
+//    nuestra directiva, o borrar el drop-in entero) tiene que pasar
+//    por la MISMA validación que el fix, no por una copia que diverja.
 import { execFile } from "child_process";
 import fs from "fs";
 import path from "path";
@@ -246,7 +250,16 @@ async function editSshdDropin(
   if (oldContent === newContent) {
     return { changedFile: false, bytesBefore: oldContent.length, bytesAfter: newContent.length };
   }
+  return commitSshdDropin(oldContent, newContent);
+}
 
+// Pasos (d)..(h): backup, dejar en su sitio el contenido nuevo (o
+// quitar el fichero si `newContent` es null), `sshd -t`, y restaurar
+// si sshd lo rechaza. Lanza con `stderrExcerpt` si la validación falla.
+async function commitSshdDropin(
+  oldContent: string,
+  newContent: string | null
+): Promise<EditResult> {
   // Backup first (only if the original file existed — first-time
   // create has nothing to back up).
   let backupPath: string | undefined;
@@ -254,6 +267,22 @@ async function editSshdDropin(
     backupPath = `${SSHD_DROPIN_FILE}.tracenium.${backupTimestamp()}.bak`;
     fs.copyFileSync(SSHD_DROPIN_FILE, backupPath);
     fs.chmodSync(backupPath, 0o600);
+  }
+
+  if (newContent === null) {
+    // Revert que deja el drop-in sin directivas: se borra en vez de
+    // dejar un fichero vacío con nuestro nombre. Se valida igual —
+    // quitar un fichero también puede dejar la pila inválida (p. ej. un
+    // Match de otro drop-in que dependía del orden).
+    try { fs.unlinkSync(SSHD_DROPIN_FILE); } catch (err: any) { if (err?.code !== "ENOENT") throw err; }
+    const validate = await runCmd("/usr/sbin/sshd", ["-t"]);
+    if (validate.code !== 0) {
+      if (backupPath) fs.copyFileSync(backupPath, SSHD_DROPIN_FILE);
+      const err: any = new Error(`sshd -t rejected the config without the drop-in: ${validate.stderr.trim()}`);
+      err.stderrExcerpt = excerpt(validate.stderr);
+      throw err;
+    }
+    return { changedFile: true, bytesBefore: oldContent.length, bytesAfter: 0, backupPath };
   }
 
   // Write to .pending, validate, then atomic rename.
@@ -345,10 +374,17 @@ async function readSshDirective(
   };
 }
 
+// La lista `current` del estado de KEX. Compartida con el revert, que
+// compara contra ella: si cada uno la parsease a su manera, un revert
+// correcto podría dar post_state_mismatch.
+function kexListFromSshdT(rendered: string): string[] {
+  const current = readEffectiveSshd("kexalgorithms", rendered) || "";
+  return current.split(",").map(s => s.trim()).filter(Boolean);
+}
+
 async function readSshKex(): Promise<{ state: any; isCompliant: boolean }> {
   const sshd = await loadSshdEffective();
-  const current = readEffectiveSshd("kexalgorithms", sshd.rendered) || "";
-  const list = current.split(",").map(s => s.trim()).filter(Boolean);
+  const list = kexListFromSshdT(sshd.rendered);
   // Compliance: NO weak entries present. We don't require an exact
   // match to SAFE_SSH_KEX_ALGORITHMS (operators may have sane
   // additions of their own).
@@ -627,18 +663,417 @@ export async function handlePmpRemediate(req: PrivSvcRequest): Promise<PrivSvcRe
       exitCode: result.exitCode,
       changesApplied: result.changesApplied,
     });
-    return success(req.id, {
-      exitCode: result.exitCode,
-      stderrExcerpt: result.stderrExcerpt ?? null,
-      durationMs: result.durationMs,
-      requiresReboot: result.requiresReboot === true,
-      changesApplied: Array.isArray(result.changesApplied) ? result.changesApplied : [],
-    });
+    return success(req.id, outcomeToWire(result));
   } catch (err: any) {
     logger.error("pmp_remediate_failed", {
       checkId,
       error: err?.message || String(err),
     });
     return fail(req.id, "remediate_failed", err?.message || String(err));
+  }
+}
+
+// Una sola forma de respuesta para pmp.remediate y pmp.revert: el agente
+// las lee con el mismo código.
+function outcomeToWire(result: RemediateOutcome) {
+  return {
+    exitCode: result.exitCode,
+    stderrExcerpt: result.stderrExcerpt ?? null,
+    durationMs: result.durationMs,
+    requiresReboot: result.requiresReboot === true,
+    changesApplied: Array.isArray(result.changesApplied) ? result.changesApplied : [],
+  };
+}
+
+// ── pmp.revert ───────────────────────────────────────────────────
+//
+// Deshacer un fix = volver al `state` que leyó pmp.read_check_state
+// ANTES de aplicarlo (`params.stateBefore`). Tras la llamada el agente
+// relee el estado y exige que cada clave de stateBefore coincida
+// (listas como conjuntos); si no, reporta failed/post_state_mismatch.
+// Por eso cada revert restaura el valor EFECTIVO y lo comprueba él
+// mismo al final: su exitCode tiene que decir lo mismo que dirá el
+// agente.
+//
+// SSH: no se escribe el valor antiguo. Se QUITA nuestra directiva del
+// drop-in y el valor efectivo vuelve a ser el que dicte el resto de la
+// configuración — que es lo que había antes del fix, salvo que alguien
+// haya tocado sshd_config desde entonces. En ese caso NO se inventa un
+// valor: se deja quitada y se devuelve exitCode 1 con el porqué.
+// Escribir `PermitRootLogin yes` en nuestro fichero convertiría el
+// revert en una configuración que nadie pidió y de la que nadie es
+// dueño.
+//
+// Firewall: sólo se apaga si antes estaba apagado. Las reglas de SSH que
+// añade el fix (`ufw allow <puerto>/tcp`) se DEJAN: `ufw allow` es
+// idempotente y stateBefore no dice si la regla ya existía, así que
+// borrarla podría llevarse una del operador — y el día que vuelva a
+// activar ufw se quedaría sin SSH. Con ufw apagado una regla no filtra
+// nada: no cambia el estado efectivo ni lo que compara el agente.
+
+// Sin timeoutSeconds, 2 min: el peor caso SSH son ~6 comandos de ≤10 s.
+// Con él, se respeta dentro de [5, 600] s.
+const DEFAULT_REVERT_TIMEOUT_MS = 120_000;
+
+export type RevertCheck<T> = { ok: true; value: T } | { ok: false; message: string };
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === "object" && !Array.isArray(v);
+
+const isStringArray = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every(x => typeof x === "string");
+
+// Claves que no son del shape de read_check_state → bad_request. Un
+// stateBefore de otro checkId (o de otra plataforma) no debe llegar a
+// tocar nada.
+function unknownKeys(obj: Record<string, unknown>, allowed: string[]): string | null {
+  const extra = Object.keys(obj).filter(k => !allowed.includes(k));
+  return extra.length ? `stateBefore has unknown keys: ${extra.join(", ")}` : null;
+}
+
+/** Shape de `readSshDirective`: { directive, current, expected, sshdEffective }. */
+export function validateSshDirectiveBefore(
+  stateBefore: unknown,
+  directive: string
+): RevertCheck<{ current: string }> {
+  if (!isPlainObject(stateBefore)) return { ok: false, message: "stateBefore must be an object" };
+  const extra = unknownKeys(stateBefore, ["directive", "current", "expected", "sshdEffective"]);
+  if (extra) return { ok: false, message: extra };
+  const { directive: d, current, expected, sshdEffective } = stateBefore;
+  if (typeof d !== "string" || d.toLowerCase() !== directive.toLowerCase()) {
+    return { ok: false, message: `stateBefore.directive must be ${directive}` };
+  }
+  if (expected !== undefined && typeof expected !== "string") {
+    return { ok: false, message: "stateBefore.expected must be a string" };
+  }
+  if (sshdEffective !== undefined && typeof sshdEffective !== "boolean") {
+    return { ok: false, message: "stateBefore.sshdEffective must be a boolean" };
+  }
+  // Sin `sshd -T` válido antes del fix no hay valor que restaurar ni
+  // contra el que comprobar: cualquier cosa que hiciéramos sería a ciegas.
+  if (sshdEffective === false) {
+    return { ok: false, message: "stateBefore was read while sshd -T was failing; there is no value to restore" };
+  }
+  if (typeof current !== "string" || !current.trim() || /[\r\n]/.test(current)) {
+    return { ok: false, message: "stateBefore.current must be a non-empty single-line string" };
+  }
+  return { ok: true, value: { current } };
+}
+
+/** Shape de `readSshKex`: { current: string[], offenders: string[], expectedNoMatch }. */
+export function validateSshKexBefore(stateBefore: unknown): RevertCheck<{ current: string[] }> {
+  if (!isPlainObject(stateBefore)) return { ok: false, message: "stateBefore must be an object" };
+  const extra = unknownKeys(stateBefore, ["current", "offenders", "expectedNoMatch"]);
+  if (extra) return { ok: false, message: extra };
+  const { current, offenders, expectedNoMatch } = stateBefore;
+  // Lista vacía = `sshd -T` no respondió al leer (sshd siempre compila
+  // una lista de KEX). Mismo caso que sshdEffective:false arriba.
+  if (!isStringArray(current) || current.length === 0 || current.some(a => !a.trim())) {
+    return { ok: false, message: "stateBefore.current must be a non-empty array of algorithm names" };
+  }
+  if (offenders !== undefined && !isStringArray(offenders)) {
+    return { ok: false, message: "stateBefore.offenders must be an array of strings" };
+  }
+  if (expectedNoMatch !== undefined && typeof expectedNoMatch !== "string") {
+    return { ok: false, message: "stateBefore.expectedNoMatch must be a string" };
+  }
+  return { ok: true, value: { current } };
+}
+
+export type FirewallBefore =
+  | { impl: "ufw"; active: boolean }
+  | { impl: "firewalld"; running: boolean };
+
+/** Shape de `readFirewallEnabled`: { impl:"ufw", active } | { impl:"firewalld", running }. */
+export function validateFirewallBefore(stateBefore: unknown): RevertCheck<FirewallBefore> {
+  if (!isPlainObject(stateBefore)) return { ok: false, message: "stateBefore must be an object" };
+  const impl = stateBefore.impl;
+  if (impl === "ufw") {
+    const extra = unknownKeys(stateBefore, ["impl", "active"]);
+    if (extra) return { ok: false, message: extra };
+    if (typeof stateBefore.active !== "boolean") return { ok: false, message: "stateBefore.active must be a boolean" };
+    return { ok: true, value: { impl, active: stateBefore.active } };
+  }
+  if (impl === "firewalld") {
+    const extra = unknownKeys(stateBefore, ["impl", "running"]);
+    if (extra) return { ok: false, message: extra };
+    if (typeof stateBefore.running !== "boolean") return { ok: false, message: "stateBefore.running must be a boolean" };
+    return { ok: true, value: { impl, running: stateBefore.running } };
+  }
+  // impl:"unknown" (familia sin soporte): el fix no pudo aplicarse, así
+  // que tampoco hay nada que deshacer.
+  return { ok: false, message: `stateBefore.impl must be "ufw" or "firewalld" (got ${JSON.stringify(impl)})` };
+}
+
+/**
+ * Comandos para devolver el firewall a stateBefore. Pura. [] si ya
+ * estaba activo antes del fix (el fix no cambió nada que deshacer).
+ * El apagado replica al revés el mecanismo del fix: `ufw disable` frente
+ * a `ufw --force enable`; `systemctl disable --now` frente a `enable
+ * --now` (el estado anterior sólo dice «running», no si arrancaba con
+ * el equipo; lo normal es que ninguna de las dos, y quedarse en `stop`
+ * dejaría el firewall volviendo en el siguiente reinicio).
+ */
+export function planFirewallRevert(before: FirewallBefore, family: string): RevertCheck<UfwStep[]> {
+  if (before.impl === "ufw") {
+    if (family !== "debian") return { ok: false, message: `stateBefore is from ufw but this host is family=${family}` };
+    if (before.active) return { ok: true, value: [] };
+    return { ok: true, value: [{ bin: "/usr/sbin/ufw", args: ["disable"], change: "ufw-disabled" }] };
+  }
+  if (family !== "rhel") return { ok: false, message: `stateBefore is from firewalld but this host is family=${family}` };
+  if (before.running) return { ok: true, value: [] };
+  return {
+    ok: true,
+    value: [{ bin: "/usr/bin/systemctl", args: ["disable", "--now", "firewalld.service"], change: "firewalld-disabled-and-stopped" }],
+  };
+}
+
+// Clave de una línea de sshd_config, en minúsculas; null en blancos y
+// comentarios. OpenSSH admite `Clave valor` y `Clave=valor`.
+function directiveKey(line: string): string | null {
+  const t = line.trim();
+  if (!t || t.startsWith("#")) return null;
+  const m = t.match(/^([^\s=]+)(?:\s|=|$)/);
+  return m ? m[1].toLowerCase() : null;
+}
+
+export type SshRevertPlan =
+  | { action: "noop" }
+  | { action: "write"; content: string }
+  | { action: "remove" };
+
+/**
+ * Qué hacer con el drop-in para deshacer `directive`. Pura.
+ *   noop   — nuestro fichero no la tiene (nada nuestro que quitar).
+ *   write  — quitarla y dejar el resto de directivas.
+ *   remove — era la única: el fichero entero sobra.
+ */
+export function planSshRevert(content: string, directive: string): SshRevertPlan {
+  const lower = directive.toLowerCase();
+  const lines = String(content || "").split("\n");
+  if (!lines.some(l => directiveKey(l) === lower)) return { action: "noop" };
+  // Todas las apariciones: setDirective colapsa duplicados, pero un
+  // fichero editado a mano podría tener varias y bastaría una para que
+  // el revert no surtiera efecto.
+  const kept = lines.filter(l => directiveKey(l) !== lower);
+  if (!kept.some(l => directiveKey(l) !== null)) return { action: "remove" };
+  // setDirective separa con una línea en blanco; al quitar la directiva
+  // quedan blancos sueltos en los extremos.
+  while (kept.length && kept[0].trim() === "") kept.shift();
+  while (kept.length && kept[kept.length - 1].trim() === "") kept.pop();
+  return { action: "write", content: kept.join("\n") + "\n" };
+}
+
+// Igual que compara el agente (stateMatchesBefore): multiconjunto.
+function sameList(a: string[], b: string[]): boolean {
+  return JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+}
+
+type RevertMatch = (sshdT: string) => { ok: boolean; actual: string };
+
+async function revertSshDropinDirective(
+  directive: string,
+  matchesBefore: RevertMatch,
+  expectedDesc: string
+): Promise<RemediateOutcome> {
+  const t0 = Date.now();
+  const done = (exitCode: number, changesApplied: string[], stderr?: string): RemediateOutcome => ({
+    exitCode,
+    stderrExcerpt: stderr ? excerpt(stderr) : undefined,
+    durationMs: Date.now() - t0,
+    requiresReboot: false,
+    changesApplied,
+  });
+
+  // Ya está como antes: quitar la directiva ahora lo DESHARÍA (p. ej. el
+  // fix fue no-op porque un fix anterior ya la había escrito).
+  const pre = await loadSshdEffective();
+  if (pre.ok && matchesBefore(pre.rendered).ok) return done(0, []);
+
+  const oldContent = readFileSafe(SSHD_DROPIN_FILE);
+  const plan = planSshRevert(oldContent, directive);
+  if (plan.action === "noop") {
+    const actual = pre.ok ? matchesBefore(pre.rendered).actual : "unknown (sshd -T failed)";
+    return done(
+      1,
+      [],
+      `${directive} is not set by Tracenium in ${SSHD_DROPIN_FILE}; effective value is ${actual}, ` +
+        `expected ${expectedDesc}. It was changed outside Tracenium; not overwriting it.`
+    );
+  }
+
+  try {
+    await commitSshdDropin(oldContent, plan.action === "write" ? plan.content : null);
+  } catch (err: any) {
+    return done(1, [], err?.stderrExcerpt || err?.message || String(err));
+  }
+  const changes = [`${directive}-unset`];
+  if (plan.action === "remove") changes.push("dropin-removed");
+
+  const reload = await reloadSshd();
+  if (!reload.ok) {
+    logger.warn("sshd_reload_failed_post_revert", { directive, stderr: reload.stderr });
+    return done(1, [...changes, "config-staged-not-reloaded"], reload.stderr || "sshd reload failed");
+  }
+  changes.push("sshd-reloaded");
+
+  // Lo mismo que leerá el agente. Si no cuadra, la base cambió después
+  // del fix: se informa y se deja así (ver cabecera del bloque).
+  const post = await loadSshdEffective();
+  if (!post.ok) return done(1, changes, `sshd -T failed after revert: ${post.stderr}`);
+  const m = matchesBefore(post.rendered);
+  if (!m.ok) {
+    return done(
+      1,
+      changes,
+      `After removing the Tracenium ${directive} directive the effective value is ${m.actual}, ` +
+        `expected ${expectedDesc}. The base sshd configuration changed after the fix; not overwriting it.`
+    );
+  }
+  return done(0, changes);
+}
+
+function revertSshDirective(directive: string, current: string): Promise<RemediateOutcome> {
+  return revertSshDropinDirective(
+    directive,
+    rendered => {
+      const actual = readEffectiveSshd(directive, rendered);
+      return { ok: actual === current, actual: actual ?? "(unset)" };
+    },
+    current
+  );
+}
+
+function revertSshKex(current: string[]): Promise<RemediateOutcome> {
+  return revertSshDropinDirective(
+    "KexAlgorithms",
+    rendered => {
+      const list = kexListFromSshdT(rendered);
+      return { ok: sameList(list, current), actual: list.join(",") || "(unset)" };
+    },
+    current.join(",")
+  );
+}
+
+async function revertFirewall(before: FirewallBefore, steps: UfwStep[]): Promise<RemediateOutcome> {
+  const t0 = Date.now();
+  const done = (exitCode: number, changesApplied: string[], stderr?: string): RemediateOutcome => ({
+    exitCode,
+    stderrExcerpt: stderr ? excerpt(stderr) : undefined,
+    durationMs: Date.now() - t0,
+    requiresReboot: false,
+    changesApplied,
+  });
+  const wanted = before.impl === "ufw" ? before.active : before.running;
+  const isBack = (s: any) =>
+    s?.impl === before.impl && (before.impl === "ufw" ? s?.active : s?.running) === wanted;
+
+  // Estaba activo antes: el fix no cambió nada que deshacer.
+  if (!steps.length) return done(0, []);
+  // Ya apagado (alguien lo apagó a mano): no se repite el comando.
+  if (isBack((await readFirewallEnabled()).state)) return done(0, []);
+
+  const changes: string[] = [];
+  for (const step of steps) {
+    const r = await runCmd(step.bin, step.args);
+    if (r.code !== 0) return done(1, changes, `${step.args.join(" ")}: ${r.stderr || r.stdout}`);
+    if (step.change) changes.push(step.change);
+  }
+  const after = await readFirewallEnabled();
+  if (!isBack(after.state)) {
+    return done(1, changes, `firewall state after revert is ${JSON.stringify(after.state)}, expected ${JSON.stringify(before)}`);
+  }
+  return done(0, changes);
+}
+
+type RevertPlanner = (stateBefore: unknown) => RevertCheck<() => Promise<RemediateOutcome>>;
+
+function sshDirectivePlanner(directive: string): RevertPlanner {
+  return (stateBefore) => {
+    const v = validateSshDirectiveBefore(stateBefore, directive);
+    return v.ok ? { ok: true, value: () => revertSshDirective(directive, v.value.current) } : v;
+  };
+}
+
+// Validar y planificar ANTES de tocar nada: un bad_request no puede
+// dejar el equipo a medio revertir.
+const REVERT_PLANNERS: Record<string, RevertPlanner> = {
+  "linux.ssh.root_login_disabled": sshDirectivePlanner("PermitRootLogin"),
+  "linux.ssh.password_auth_disabled": sshDirectivePlanner("PasswordAuthentication"),
+  "linux.cryptography.weak_ssh_kex_disabled": (stateBefore) => {
+    const v = validateSshKexBefore(stateBefore);
+    return v.ok ? { ok: true, value: () => revertSshKex(v.value.current) } : v;
+  },
+  "linux.firewall.enabled": (stateBefore) => {
+    const v = validateFirewallBefore(stateBefore);
+    if (!v.ok) return v;
+    const p = planFirewallRevert(v.value, detectFamily().family);
+    return p.ok ? { ok: true, value: () => revertFirewall(v.value, p.value) } : p;
+  },
+};
+
+function revertTimeoutMs(raw: unknown): number {
+  const n = Number(raw);
+  if (raw === undefined || raw === null || !Number.isFinite(n) || n <= 0) return DEFAULT_REVERT_TIMEOUT_MS;
+  return Math.min(Math.max(n, 5), 600) * 1000;
+}
+
+export async function handlePmpRevert(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const checkId = String(req.params?.checkId || "").trim();
+  if (!checkId) return fail(req.id, "bad_request", "checkId required");
+
+  const planner = REVERT_PLANNERS[checkId];
+  if (!planner) {
+    logger.info("pmp_revert_unsupported", { checkId });
+    return fail(req.id, "unsupported_check", `no revert handler for checkId ${checkId} on linux`);
+  }
+
+  const stateBefore = req.params?.params?.stateBefore;
+  if (!isPlainObject(stateBefore)) {
+    return fail(req.id, "bad_request", "params.stateBefore (object) required");
+  }
+
+  let plan: RevertCheck<() => Promise<RemediateOutcome>>;
+  try {
+    plan = planner(stateBefore);
+  } catch (err: any) {
+    return fail(req.id, "revert_failed", err?.message || String(err));
+  }
+  if (!plan.ok) {
+    logger.info("pmp_revert_bad_state_before", { checkId, reason: plan.message });
+    return fail(req.id, "bad_request", plan.message);
+  }
+
+  // El timeout no cancela lo que esté corriendo (cada comando lleva su
+  // propio tope de HANDLER_TIMEOUT_MS), sólo deja de esperarlo: el
+  // agente lo reporta timed_out y la relectura dirá dónde quedó.
+  const timeoutMs = revertTimeoutMs(req.params?.timeoutSeconds);
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<"timeout">(resolve => {
+    timer = setTimeout(() => resolve("timeout"), timeoutMs);
+  });
+
+  try {
+    logger.info("pmp_revert_start", { checkId });
+    const work = plan.value();
+    // Si pierde la carrera y luego falla, que no sea un rechazo sin
+    // manejar: tumbaría el daemon entero.
+    work.catch(() => {});
+    const result = await Promise.race([work, timedOut]);
+    if (result === "timeout") {
+      logger.warn("pmp_revert_timeout", { checkId, timeoutMs });
+      return fail(req.id, "revert_timeout", `revert of ${checkId} did not finish within ${Math.round(timeoutMs / 1000)}s`);
+    }
+    logger.info("pmp_revert_complete", {
+      checkId,
+      exitCode: result.exitCode,
+      changesApplied: result.changesApplied,
+    });
+    return success(req.id, outcomeToWire(result));
+  } catch (err: any) {
+    logger.error("pmp_revert_failed", { checkId, error: err?.message || String(err) });
+    return fail(req.id, "revert_failed", err?.message || String(err));
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }

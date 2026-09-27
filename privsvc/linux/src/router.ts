@@ -8,6 +8,7 @@
 //   Phase 6 — patch.scan                                (patch-management.ts)
 //   Phase 7 — patch.install                             (patch-management.ts)
 //   Phase 8 — pmp.read_check_state / pmp.remediate     (pmp-remediation.ts)
+//             + pmp.revert (deshacer un fix con su stateBefore)
 //   Phase 9 — sdp.detect / sdp.download / sdp.install   (sdp.ts)
 //
 // Every privileged method is gated by `requiresRoot()` — the kernel
@@ -53,7 +54,7 @@ import { handleScreenCapture } from "./screen-capture";
 import { handleIndicatorShow, handleIndicatorHide } from "./remote-indicator";
 import { handleConsentRequest } from "./consent-dialog";
 import { handlePatchScan, handlePatchInstall } from "./patch-management";
-import { handlePmpReadCheckState, handlePmpRemediate } from "./pmp-remediation";
+import { handlePmpReadCheckState, handlePmpRemediate, handlePmpRevert } from "./pmp-remediation";
 import {
   handleSdpDetect,
   handleSdpDownload,
@@ -354,6 +355,8 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
       return handlePmpReadCheckState(req);
     case "pmp.remediate":
       return handlePmpRemediate(req);
+    case "pmp.revert":
+      return handlePmpRevert(req);
 
     // ── SDP — Software Delivery (Phase 9) ─────────────────────────
     // Three handlers: detect (rule evaluation), download (curl +
