@@ -87,7 +87,7 @@ describe("asp-ad-collector.ps1 — reglas estáticas", () => {
 
   it("los tipos de consulta del script son exactamente los del catálogo", () => {
     const kinds = [...code.matchAll(/^\s*'([a-z_]+)'\s*\{\s*Asp/gm)].map((m) => m[1]).sort();
-    expect(kinds).toEqual(["acl", "acl_search", "group_members", "ldap_object", "ldap_search", "owner_search", "registry", "rootdse", "sysvol_files"]);
+    expect(kinds).toEqual(["acl", "acl_search", "group_members", "ldap_object", "ldap_search", "owner_search", "registry", "repl_metadata", "rootdse", "sysvol_files"]);
   });
 });
 
@@ -131,6 +131,59 @@ describe.skipIf(!hasPwsh)("asp-ad-collector.ps1 — con pwsh", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe.skipIf(!hasPwsh)("asp-ad-collector.ps1 — AspReplTime (el FILETIME cero de AD)", () => {
+  // La metadata de replicación usa el FILETIME cero —1601-01-01— para decir
+  // «nunca». Si eso se leyera como una fecha, `ftimeDeleted` de un miembro VIVO
+  // parecería una baja antiquísima; y si se leyera como «hace mucho», una baja
+  // real de hace dos días se perdería. Distinguirlo es la diferencia entre
+  // «entró alguien» y «salió alguien».
+  function run(values: string[]): Array<string | null> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "asp-repl-"));
+    try {
+      // ⚠️ Los casos van como LITERALES en el runner, no por un JSON:
+      // `ConvertFrom-Json` convierte una cadena ISO-8601 en un `[DateTime]`, y
+      // entonces el test no probaría lo que llega de verdad (el TEXTO del XML de
+      // AD) sino un viaje DateTime -> cadena en la cultura local -> parse.
+      const literals = values.map((v) => `'${v.replace(/'/g, "''")}'`).join(", ");
+      const runner = path.join(dir, "run.ps1");
+      fs.writeFileSync(
+        runner,
+        [
+          `$t = $null; $e = $null`,
+          `$ast = [System.Management.Automation.Language.Parser]::ParseFile('${SCRIPT}', [ref]$t, [ref]$e)`,
+          `$fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'AspReplTime' }, $true) | Select-Object -First 1`,
+          `. ([scriptblock]::Create($fn.Extent.Text))`,
+          `$out = New-Object System.Collections.Generic.List[object]`,
+          `foreach ($v in @(${literals})) {`,
+          `  $r = AspReplTime $v`,
+          `  if ($null -eq $r) { $out.Add($null) } else { $out.Add($r.ToString('yyyy-MM-dd')) }`,
+          `}`,
+          `ConvertTo-Json -Compress -InputObject @($out.ToArray())`
+        ].join("\n")
+      );
+      const r = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", runner], { encoding: "utf8", timeout: 60_000 });
+      expect(r.status, r.stderr).toBe(0);
+      return JSON.parse(r.stdout) as Array<string | null>;
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("🔴 el FILETIME cero es «nunca», no una fecha de 1601", () => {
+    const out = run([
+      "1601-01-01T00:00:00Z",
+      "1601-01-01 00:00:00",
+      "",
+      "   ",
+      "no-es-una-fecha",
+      "2026-09-25T09:00:00Z"
+    ]);
+    expect(out.slice(0, 5)).toEqual([null, null, null, null, null]);
+    // Y una fecha de verdad sí se lee.
+    expect(out[5]).toBe("2026-09-25");
   });
 });
 

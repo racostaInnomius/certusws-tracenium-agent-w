@@ -470,6 +470,135 @@ function AspSysvolFiles($query, $ctx, [int]$limit) {
   return [ordered]@{ count = $count; sample = $hits.ToArray(); filesScanned = $files.Count; truncated = ($count -gt $hits.Count) }
 }
 
+# Metadata de replicacion de AD. Responde "cambio hace poco?", que ningun otro
+# tipo de consulta nuestro puede preguntar, y lo hace por LDAP plano: son dos
+# atributos CONSTRUIDOS que hay que pedir por nombre.
+#
+#   scope 'attribute' -> msDS-ReplAttributeMetaData: una entrada por atributo,
+#                        con la ultima escritura, su version y el DC de origen.
+#   scope 'value'     -> msDS-ReplValueMetaData: una entrada por VALOR de un
+#                        atributo enlazado (member), con cuando se anadio y
+#                        cuando se borro. Es lo que permite decir "quien entro
+#                        en Domain Admins esta semana" sin logs de eventos.
+#
+# ⚠️ El caso que importa no es el hallazgo: es el SILENCIO. Si el atributo no
+# vuelve, "no cambio nada" y "no puedo leer la metadata" son indistinguibles, y
+# el segundo se leeria como pass. Por eso cada objeto reporta `readable`, y el
+# recuento de ilegibles sube al resultado: el evaluador saca not_assessed, no
+# pass. Es la leccion del 26-sep con las plantillas de certificado.
+function AspReplMetadata($query, $ctx, [int]$limit) {
+  $attrName = if ([string]$query.scope -eq 'value') { 'msDS-ReplValueMetaData' } else { 'msDS-ReplAttributeMetaData' }
+  $wanted = @($query.attributes | ForEach-Object { ([string]$_).ToLowerInvariant() })
+  $cutoff = [DateTime]::UtcNow.AddDays(-1 * [double][int]$query.withinDays)
+  $hits = New-Object System.Collections.Generic.List[object]
+  $count = 0
+  $scanned = 0
+  # ⚠️ Dos ausencias que NO son lo mismo:
+  #   notFound   -> el objeto no esta aqui. Enterprise Admins y Schema Admins
+  #                 viven en la raiz del bosque, asi que en un dominio hijo no
+  #                 existen y eso es NORMAL.
+  #   unreadable -> el objeto se lee pero su metadata no vuelve. Eso SI es
+  #                 ceguera, y no puede leerse como "sin cambios".
+  $notFound = New-Object System.Collections.Generic.List[string]
+  $unreadable = New-Object System.Collections.Generic.List[string]
+
+  foreach ($rawDn in @($query.dns)) {
+    $dn = AspExpand ([string]$rawDn) $ctx
+    $searcher = New-Object System.DirectoryServices.DirectorySearcher
+    $searcher.SearchRoot = AspEntry $dn
+    $searcher.Filter = '(objectClass=*)'
+    $searcher.SearchScope = [System.DirectoryServices.SearchScope]::Base
+    [void]$searcher.PropertiesToLoad.Add($attrName)
+    $r = $null
+    try {
+      $r = $searcher.FindOne()
+    } catch {
+      if (AspIsNoSuchObject $_) { $notFound.Add([string]$rawDn); continue }
+      throw
+    }
+    if ($null -eq $r) { $notFound.Add([string]$rawDn); continue }
+    $scanned++
+    $key = $attrName.ToLowerInvariant()
+    if (-not $r.Properties.Contains($key) -or $r.Properties[$key].Count -eq 0) {
+      # El objeto se lee pero su metadata no viene: NO es "sin cambios".
+      $unreadable.Add([string]$rawDn)
+      continue
+    }
+    foreach ($xml in $r.Properties[$key]) {
+      $node = $null
+      try { $node = ([xml]([string]$xml)).DocumentElement } catch { continue }
+      if ($null -eq $node) { continue }
+      $name = ([string]$node.pszAttributeName).ToLowerInvariant()
+      if ($wanted -notcontains $name) { continue }
+      if ([string]$query.scope -eq 'value') {
+        # ftimeDeleted de un valor vivo es el FILETIME cero (1601-01-01): eso NO
+        # es una baja. Distinguirlo es la diferencia entre "entro alguien" y
+        # "salio alguien".
+        $created = AspReplTime $node.ftimeCreated
+        $deleted = AspReplTime $node.ftimeDeleted
+        $action = $null
+        $when = $null
+        if ($null -ne $deleted -and $deleted -gt $cutoff) { $action = 'removed'; $when = $deleted }
+        elseif ($null -ne $created -and $created -gt $cutoff) { $action = 'added'; $when = $created }
+        if ($null -eq $action) { continue }
+        $count++
+        if ($hits.Count -lt $limit) {
+          $hits.Add([ordered]@{
+              attribute = [string]$node.pszAttributeName
+              action = $action
+              changedAt = $when.ToString('o')
+              objectDn = [string]$node.pszObjectDn
+              originatingDc = (AspReplDsa $node.pszLastOriginatingDsaDN)
+            })
+        }
+      } else {
+        $when = AspReplTime $node.ftimeLastOriginatingChange
+        if ($null -eq $when -or $when -le $cutoff) { continue }
+        $count++
+        if ($hits.Count -lt $limit) {
+          $hits.Add([ordered]@{
+              attribute = [string]$node.pszAttributeName
+              action = 'written'
+              changedAt = $when.ToString('o')
+              objectDn = $dn
+              version = [int]$node.dwVersion
+              originatingDc = (AspReplDsa $node.pszLastOriginatingDsaDN)
+            })
+        }
+      }
+    }
+  }
+  return [ordered]@{
+    count = $count
+    sample = $hits.ToArray()
+    truncated = ($count -gt $hits.Count)
+    objectsScanned = $scanned
+    notFound = $notFound.Count
+    unreadable = $unreadable.Count
+    unreadableSample = @($unreadable | Select-Object -First 8)
+  }
+}
+
+# El FILETIME cero de AD llega como 1601-01-01 o como la cadena vacia: las dos
+# significan "nunca", no "hace mucho".
+function AspReplTime($raw) {
+  $text = [string]$raw
+  if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+  $parsed = [DateTime]::MinValue
+  if (-not [DateTime]::TryParse($text, [ref]$parsed)) { return $null }
+  $utc = $parsed.ToUniversalTime()
+  if ($utc.Year -le 1601) { return $null }
+  return $utc
+}
+
+# "CN=NTDS Settings,CN=MSIG-DOMAIN01,CN=Servers,..." -> "MSIG-DOMAIN01". Quien
+# escribio importa; el DN entero es ruido en una evidencia.
+function AspReplDsa($raw) {
+  $parts = ([string]$raw) -split ','
+  if ($parts.Count -ge 2) { return ($parts[1] -replace '^CN=', '') }
+  return [string]$raw
+}
+
 function AspRegistry($query) {
   $path = [string]$query.path
   if (-not $path.StartsWith('HKLM\')) { throw 'only HKLM is allowed' }
@@ -534,6 +663,7 @@ foreach ($item in $request.queries) {
       'rootdse' { AspRootDse $q }
       'sysvol_files' { AspSysvolFiles $q $ctx $limit }
       'registry' { AspRegistry $q }
+      'repl_metadata' { AspReplMetadata $q $ctx $limit }
       default { throw "unsupported query kind: $([string]$q.kind)" }
     }
     $output.results[$id] = [ordered]@{ ok = $true; data = $data; ms = $clock.ElapsedMilliseconds }

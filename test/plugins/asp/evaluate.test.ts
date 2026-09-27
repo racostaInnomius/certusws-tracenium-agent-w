@@ -195,6 +195,78 @@ describe("catálogo 1.2.0 — owner_search y el P1 de Purple Knight", () => {
   });
 });
 
+describe("catálogo 1.4.0 — «Recent changes» por metadata de replicación", () => {
+  const cat140 = require("./fixtures/asp-ad-1.4.0.json");
+  function ind140(id: string): AgentIndicator {
+    const i = (cat140.indicators as any[]).find((x) => x.controlId === id);
+    if (!i) throw new Error(id);
+    return { controlId: i.controlId, severity: i.severity, requires: i.requires, query: i.query, derive: i.derive ?? [], predicate: i.predicate, onFail: i.onFail, whenMissing: i.whenMissing ?? "not_assessed" };
+  }
+
+  it("⭐ un alta reciente en un grupo privilegiado es needs_review, no fail", () => {
+    const r = evaluateIndicator(
+      ind140("ASP-AD-CHG-001"),
+      { ok: true, data: { count: 1, sample: [{ attribute: "member", action: "added", changedAt: "2026-09-25T09:00:00.000Z", objectDn: "CN=tmpadm,OU=IT,DC=m", originatingDc: "MSIG-DOMAIN01" }], objectsScanned: 4, notFound: 0, unreadable: 0 } },
+      DC,
+      opts
+    );
+    // Un cambio reciente no es una configuración mala: es algo que mirar. Si
+    // fuera `fail`, un alta legítima bajaría el score y se aprendería a ignorarlo.
+    expect(r).toMatchObject({ status: "needs_review", severity: "high", affectedCount: 1 });
+    expect((r.evidence as any).sample[0]).toMatchObject({ action: "added", originatingDc: "MSIG-DOMAIN01" });
+  });
+
+  it("sin cambios en la ventana → pass", () => {
+    expect(evaluateIndicator(ind140("ASP-AD-CHG-001"), { ok: true, data: { count: 0, sample: [], objectsScanned: 4, notFound: 0, unreadable: 0 } }, DC, opts).status).toBe("pass");
+  });
+
+  it("🔴 si la metadata de ALGÚN objeto no se pudo leer, el 0 NO es pass: es not_assessed", () => {
+    const r = evaluateIndicator(
+      ind140("ASP-AD-CHG-001"),
+      { ok: true, data: { count: 0, sample: [], objectsScanned: 4, notFound: 0, unreadable: 2, unreadableSample: ["<SID=S-1-5-32-544>"] } },
+      DC,
+      opts
+    );
+    // AD responde «no existe» a lo que no te deja leer, así que un 0 significa a
+    // la vez «no hay nada» y «no pude mirar». Probado el 26-sep con las
+    // plantillas de certificado: como SYSTEM se veían 2 de 38.
+    expect(r.status).toBe("not_assessed");
+    expect(r.reason).toBe("insufficient_read:2");
+  });
+
+  it("⚠️ ciego a medias pero CON hallazgo: el hallazgo gana, no se tapa con not_assessed", () => {
+    const r = evaluateIndicator(
+      ind140("ASP-AD-CHG-001"),
+      { ok: true, data: { count: 1, sample: [{ attribute: "member", action: "removed", changedAt: "2026-09-26T10:00:00.000Z", objectDn: "CN=x,DC=m", originatingDc: "MSIG-DOMAIN01" }], objectsScanned: 4, notFound: 0, unreadable: 1 } },
+      DC,
+      opts
+    );
+    expect(r.status).toBe("needs_review");
+  });
+
+  it("⚠️ `notFound` NO es ceguera: Enterprise Admins no existe en un dominio hijo y eso es normal", () => {
+    const r = evaluateIndicator(
+      ind140("ASP-AD-CHG-001"),
+      { ok: true, data: { count: 0, sample: [], objectsScanned: 2, notFound: 2, unreadable: 0 } },
+      DC,
+      opts
+    );
+    expect(r.status).toBe("pass");
+  });
+
+  it("⭐ escribir en krbtgt o en el DACL del dominio es crítico", () => {
+    for (const id of ["ASP-AD-CHG-003", "ASP-AD-CHG-004"]) {
+      const r = evaluateIndicator(
+        ind140(id),
+        { ok: true, data: { count: 1, sample: [{ attribute: "nTSecurityDescriptor", action: "written", changedAt: "2026-09-20T08:00:00.000Z", objectDn: "DC=m", version: 7, originatingDc: "MSIG-DOMAIN01" }], objectsScanned: 1, notFound: 0, unreadable: 0 } },
+        DC,
+        opts
+      );
+      expect(r, id).toMatchObject({ status: "needs_review", severity: "critical", affectedCount: 1 });
+    }
+  });
+});
+
 describe("el dominio del spike (MSIG-TSPDC, ADR §Fase 0)", () => {
   const spike: Record<string, { data: any; expect: string }> = {
     "ASP-AD-KRB-002": { data: { count: 2, sample: ["CN=Administrator,CN=Users,DC=m", "CN=next gsys,OU=IT,DC=m"] }, expect: "fail" },

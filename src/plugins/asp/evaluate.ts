@@ -209,6 +209,19 @@ export function evaluateIndicator(
   const affectedCount = typeof evidence.count === "number" ? (evidence.count as number) : null;
   const outcome = evaluatePredicate(indicator.predicate, evidence);
 
+  // ⚠️ Un colector que no pudo leer parte de la población NO puede devolver
+  // `pass`. AD responde «el objeto no existe» a lo que no te deja leer (probado
+  // el 26-sep: como SYSTEM se veían 2 de 38 plantillas de certificado), así que
+  // un 0 significa a la vez «no hay nada» y «no pude mirar». `unreadable` es el
+  // contrato con el que el colector lo confiesa.
+  //
+  // Pero sólo se descarta el `pass`: si aun estando ciego a medias se encontró
+  // algo, eso es un hallazgo REAL y taparlo con `not_assessed` sería peor. La
+  // ceguera no fabrica un pass, y tampoco borra un hallazgo.
+  const unreadable = typeof (raw.data as any)?.unreadable === "number" ? ((raw.data as any).unreadable as number) : 0;
+  if (outcome.outcome === "true" && unreadable > 0) {
+    return { ...base, status: "not_assessed", affectedCount, evidence, reason: `insufficient_read:${unreadable}` };
+  }
   if (outcome.outcome === "true") {
     return { ...base, status: "pass", affectedCount, evidence, reason: null };
   }
