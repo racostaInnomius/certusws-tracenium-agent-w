@@ -278,6 +278,20 @@ export type RuntimePolicy = {
     // prompt). The backend fail-closes if the agent can't prompt (doesn't
     // advertise rcp.consent).
     remoteRequireConsent?: boolean;
+    /**
+     * ⭐ Este equipo es un SERVIDOR clasificado como tal (lo resuelve el
+     * control plane por equipo; un equipo sin clasificar NO la recibe).
+     *
+     * Habilita que, si no hay nadie dentro, la sesión de pantalla enseñe la
+     * pantalla de inicio de sesión del propio servidor para que el operador
+     * entre con credenciales DE ESA MÁQUINA. Windows es la puerta, y es la que
+     * sustituye al consentimiento donde no hay a quién preguntar.
+     *
+     * Aparte de `remoteRequireConsent` a propósito: el consentimiento también
+     * está apagado cuando el tenant lo apaga para toda la flota, y eso no
+     * puede encender esto en los portátiles de la gente.
+     */
+    remoteServerConsole?: boolean;
     // Grabación de sesiones de pantalla (ADR-0012, decisión 2).
     //
     // ⚠️ APAGADO por defecto y así debe quedarse. Un tenant que no ha decidido
@@ -333,6 +347,7 @@ export type RuntimePolicy = {
       remoteFile?: boolean;
       remoteScreen?: boolean;
       remoteRequireConsent?: boolean;
+      remoteServerConsole?: boolean;
       remoteRecordScreen?: boolean;
       selfUpdate?: boolean;
       deviceInfoWidget?: boolean;
@@ -817,6 +832,10 @@ const DEFAULT_POLICY: RuntimePolicy = {
     remoteFile:  false,
     remoteScreen: false,
     remoteRequireConsent: false,
+    // ⚠️ Fail closed: sin política legible NO se enseña la pantalla de login
+    // de nadie. Se enciende sólo cuando el control plane dice explícitamente
+    // que este equipo es un servidor.
+    remoteServerConsole: false,
     // Fail closed, y aquí "cerrado" es NO grabar: un agente que no puede leer
     // su política no debe empezar a guardar vídeo de la pantalla de nadie.
     remoteRecordScreen: false,

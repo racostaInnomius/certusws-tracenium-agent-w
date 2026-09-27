@@ -159,7 +159,24 @@ describe("elección de sesión: consola, y si no, RDP", () => {
       exchange,
       "volver a coger la consola sin comprobar usuario reabre el 1008 en cada servidor con RDP",
     ).toContain("PickInteractiveSession()");
-    expect(exchange).not.toContain("WTSGetActiveConsoleSessionId()");
+
+    // ⚠️ La consola SÍ se consulta, pero sólo dentro del camino de la pantalla
+    // de inicio de sesión — o sea después de haber comprobado que no hay nadie
+    // en ninguna sesión y que este equipo es un servidor. Lo que no puede
+    // volver es cogerla ANTES de preguntar por el usuario.
+    const pick = exchange.indexOf("PickInteractiveSession()");
+    const console = exchange.indexOf("WTSGetActiveConsoleSessionId()");
+    const guard = exchange.indexOf("!_serverConsoleAllowed");
+    if (console >= 0) {
+      expect(
+        console,
+        "la consola se consulta antes de mirar si hay alguien: eso es el 1008 de vuelta",
+      ).toBeGreaterThan(pick);
+      expect(
+        console,
+        "la consola se consulta fuera del camino de servidor",
+      ).toBeGreaterThan(guard);
+    }
   });
 
   it("prefiere la consola SÓLO si tiene usuario", () => {
@@ -197,5 +214,99 @@ describe("elección de sesión: consola, y si no, RDP", () => {
       text.slice(text.indexOf("private static bool HasUserToken"), text.indexOf("private static void StartHelperLocked"))
     );
     expect(has, "sondear sin cerrar el token filtra un handle por intento").toContain("CloseHandle");
+  });
+});
+
+/**
+ * ⭐ LA PANTALLA DE INICIO DE SESIÓN DE UN SERVIDOR.
+ *
+ * En un servidor sin nadie dentro no hay escritorio de usuario que capturar —
+ * pero sí hay uno: el de Winlogon. Enseñarlo deja que el operador entre con
+ * credenciales DE ESA MÁQUINA, y eso convierte la autenticación de Windows en
+ * la puerta que sustituye al consentimiento donde no hay a quién preguntar.
+ *
+ * Es una capacidad privilegiada —el helper corre como LocalSystem sobre el
+ * escritorio seguro—, así que lo que se prueba aquí es sobre todo que esté
+ * ACOTADA: las dos condiciones, el fallo cerrado, y que se suelte en cuanto
+ * alguien entra de verdad.
+ */
+describe("captura del escritorio de inicio de sesión (sólo servidores)", () => {
+  function exchange(): string {
+    const i = text.indexOf("private static (string? line,");
+    return codeOnly(text.slice(i, text.indexOf("private static void StopHelperLocked", i)));
+  }
+
+  it("exige las DOS condiciones: gobierno y SKU del sistema", () => {
+    const e = exchange();
+    expect(
+      e,
+      "sin la marca del control plane esto se encendería en cualquier equipo",
+    ).toContain("_serverConsoleAllowed");
+    expect(
+      e,
+      "sin la comprobación del SO, un error clasificando encendería el "
+        + "escritorio seguro en el portátil de una persona",
+    ).toContain("IsWindowsServerSku()");
+    // Y unidas por AND negado: basta que falte una para rendirse.
+    expect(e).toContain("!_serverConsoleAllowed || !IsWindowsServerSku()");
+  });
+
+  it("⚠️ la SKU se decide por el SO, no por nada editable desde el portal", () => {
+    const sku = codeOnly(
+      text.slice(text.indexOf("private static bool IsWindowsServerSku"),
+                 text.indexOf("private static uint? PickInteractiveSession"))
+    );
+    expect(sku).toContain("ProductOptions");
+    expect(sku).toContain("ServerNT");
+    expect(sku).toContain("LanmanNT");
+    // Ante la duda, NO: no se enciende una función privilegiada por no poder
+    // leer una cadena del registro.
+    expect(sku).toContain("catch");
+    expect(sku).toContain("return false;");
+  });
+
+  it("el helper va a winsta0\\winlogon SÓLO en ese caso", () => {
+    const start = codeOnly(
+      text.slice(text.indexOf("private static void StartHelperLocked"),
+                 text.indexOf("private static void StopHelperLocked"))
+    );
+    expect(start).toContain('logonDesktop ? @"winsta0\\winlogon" : @"winsta0\\default"');
+  });
+
+  it("usa el token del servicio y lo MUEVE a la sesión de consola", () => {
+    const start = codeOnly(
+      text.slice(text.indexOf("private static void StartHelperLocked"),
+                 text.indexOf("private static void StopHelperLocked"))
+    );
+    // Sin usuario no hay WTSQueryUserToken que valga: se parte del token
+    // propio (LocalSystem).
+    expect(start).toContain("OpenProcessToken");
+    // Y sin moverlo de sesión arrancaría en la 0, que no tiene escritorio.
+    expect(start).toContain("TokenSessionId");
+  });
+
+  it("⚠️ y NO busca token enlazado: sin usuario no hay elevación que pedir", () => {
+    const start = codeOnly(
+      text.slice(text.indexOf("private static void StartHelperLocked"),
+                 text.indexOf("private static void StopHelperLocked"))
+    );
+    expect(start).toContain("!logonDesktop && TryGetLinkedToken");
+  });
+
+  /**
+   * El caso que se escapa si sólo se compara el id de sesión: alguien se
+   * autentica EN LA CONSOLA. La sesión sigue siendo la misma, pero el
+   * escritorio activo pasa a ser el suyo — y un helper que siga en `winlogon`
+   * dibujaría un login que ya nadie mira.
+   */
+  it("suelta el escritorio de login en cuanto alguien entra", () => {
+    expect(exchange()).toContain("_helperLogonDesktop != logonDesktop");
+  });
+
+  it("la marca viaja en cada captura y se recuerda para la entrada", () => {
+    // `input.inject` no la trae: llega después de que la captura haya
+    // arrancado el helper. Sin recordarla, una pulsación tiraría la sesión de
+    // login que la captura acaba de abrir.
+    expect(text).toContain("_serverConsoleAllowed = serverConsole;");
   });
 });

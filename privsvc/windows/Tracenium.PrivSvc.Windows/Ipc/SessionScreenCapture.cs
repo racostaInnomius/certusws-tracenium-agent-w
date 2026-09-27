@@ -55,6 +55,27 @@ internal static class SessionScreenCapture
     private static StreamWriter? _stdin;
     private static StreamReader? _stdout;
     private static uint _helperSession = uint.MaxValue;
+
+    /// <summary>
+    /// El helper vivo está sobre `winsta0\winlogon` (pantalla de inicio de
+    /// sesión) y no sobre el escritorio de un usuario.
+    ///
+    /// Hay que recordarlo porque el id de sesión NO cambia cuando alguien
+    /// entra por la consola: sigue siendo la 1, pero el escritorio activo pasa
+    /// a ser el suyo. Sin esta marca el helper se quedaría dibujando un login
+    /// que ya nadie está mirando.
+    /// </summary>
+    private static bool _helperLogonDesktop;
+
+    /// <summary>
+    /// Lo último que dijo el control plane sobre si este equipo es un servidor
+    /// clasificado como tal (`features.remoteServerConsole`).
+    ///
+    /// Se recuerda porque `input.inject` no lo trae: la entrada llega DESPUÉS
+    /// de que la captura haya arrancado el helper, y sin esto una pulsación
+    /// tiraría la sesión de login que la captura acaba de abrir.
+    /// </summary>
+    private static bool _serverConsoleAllowed;
     private static StreamReader? _stderr;
 
     /// <summary>
@@ -62,8 +83,10 @@ internal static class SessionScreenCapture
     /// forma de respuesta que ScreenCaptureDxgi.Capture, para que el llamante
     /// no distinga de dónde vino.
     /// </summary>
-    public static PrivSvcResponse Capture(string reqId, int quality, bool forceFull)
+    public static PrivSvcResponse Capture(string reqId, int quality, bool forceFull,
+                                          bool serverConsole = false)
     {
+        _serverConsoleAllowed = serverConsole;
         var req = JsonSerializer.Serialize(new Dictionary<string, object?>
         {
             ["kind"] = "capture",
@@ -177,25 +200,65 @@ internal static class SessionScreenCapture
             try
             {
                 var picked = PickInteractiveSession();
-                if (picked is null)
+                uint session;
+                var logonDesktop = false;
+
+                if (picked is not null)
                 {
-                    return (null, PrivSvcResponse.Fail(reqId, "no_interactive_desktop",
-                        "Nobody is signed in to this device right now — not at the console " +
-                        "and not over RDP. Screen sharing shows a signed-in user's desktop, " +
-                        "so there is nothing to show yet. Sign in and try again, or use a " +
-                        "Shell session, which does not need a desktop."));
+                    session = picked.Value;
                 }
-                var session = picked.Value;
+                else
+                {
+                    // ⭐ Nadie dentro. En un SERVIDOR eso no es el final: se
+                    // enseña su propia pantalla de inicio de sesión para que el
+                    // operador entre con credenciales DE ESA MÁQUINA. Windows
+                    // es la puerta — la que sustituye al consentimiento en un
+                    // equipo donde no hay a quién preguntar.
+                    //
+                    // DOS condiciones, y hacen falta las dos:
+                    //
+                    //  · el control plane dice que este equipo es un servidor
+                    //    CLASIFICADO como tal (lista positiva; un equipo sin
+                    //    clasificar no la trae). Es la decisión de gobierno.
+                    //  · y el propio Windows dice que es una SKU de servidor.
+                    //    Es la salvaguarda técnica: un error clasificando no
+                    //    puede encender esto en el portátil de nadie.
+                    if (!_serverConsoleAllowed || !IsWindowsServerSku())
+                    {
+                        return (null, PrivSvcResponse.Fail(reqId, "no_interactive_desktop",
+                            "Nobody is signed in to this device right now — not at the console " +
+                            "and not over RDP. Screen sharing shows a signed-in user's desktop, " +
+                            "so there is nothing to show yet. Sign in and try again, or use a " +
+                            "Shell session, which does not need a desktop."));
+                    }
+
+                    var console = NativeMethods.WTSGetActiveConsoleSessionId();
+                    if (console == 0xFFFFFFFF || console == 0)
+                    {
+                        return (null, PrivSvcResponse.Fail(reqId, "no_interactive_desktop",
+                            "This server has no console session attached right now, so there is " +
+                            "no sign-in screen to show. Use a Shell session instead."));
+                    }
+                    session = console;
+                    logonDesktop = true;
+                }
 
                 // Si el usuario cerró sesión y entró otro, el helper viejo
                 // apunta a un escritorio que ya no existe.
-                if (_helper is { HasExited: false } && _helperSession != session)
+                //
+                // ⚠️ Y también al REVÉS, que es el caso nuevo: alguien acaba de
+                // autenticarse en la consola. El id de sesión no cambia —sigue
+                // siendo la 1— pero el escritorio activo pasa a ser el suyo, así
+                // que un helper que siga en `winlogon` dibujaría un login que ya
+                // nadie mira. Por eso se compara también el escritorio.
+                if (_helper is { HasExited: false } &&
+                    (_helperSession != session || _helperLogonDesktop != logonDesktop))
                 {
                     StopHelperLocked();
                 }
                 if (_helper is null || _helper.HasExited)
                 {
-                    StartHelperLocked(session);
+                    StartHelperLocked(session, logonDesktop);
                 }
 
                 _stdin!.Write(requestJson);
@@ -316,6 +379,41 @@ internal static class SessionScreenCapture
     }
 
     /// <summary>
+    /// ¿Windows dice que esto es un servidor?
+    ///
+    /// Salvaguarda TÉCNICA, aparte de la decisión de gobierno. Enseñar la
+    /// pantalla de inicio de sesión exige que el control plane haya
+    /// clasificado el equipo como servidor, pero una clasificación es un dato
+    /// editable: si alguien se equivoca —o la cambia a mano— eso no puede
+    /// acabar encendiendo el escritorio seguro en el portátil de una persona.
+    /// Aquí lo dice el propio sistema operativo, que nadie edita desde el
+    /// portal.
+    ///
+    /// `ProductType` del registro: `WinNT` = estación de trabajo,
+    /// `ServerNT` / `LanmanNT` = servidor. Se lee del registro y no por WMI
+    /// porque esto corre en el camino de cada fotograma fallido y una consulta
+    /// WMI cuesta órdenes de magnitud más.
+    ///
+    /// Ante la duda —clave ilegible— se responde NO: no encender una función
+    /// privilegiada por no haber podido leer una cadena.
+    /// </summary>
+    private static bool IsWindowsServerSku()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SYSTEM\CurrentControlSet\Control\ProductOptions");
+            var value = key?.GetValue("ProductType") as string;
+            return string.Equals(value, "ServerNT", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "LanmanNT", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Qué sesión se captura.
     ///
     /// 🔴 Antes era siempre `WTSGetActiveConsoleSessionId()`, y en un servidor
@@ -400,7 +498,7 @@ internal static class SessionScreenCapture
 
     // ── Arranque del helper en la sesión del usuario ──────────────────────
 
-    private static void StartHelperLocked(uint session)
+    private static void StartHelperLocked(uint session, bool logonDesktop = false)
     {
         var exe = ResolveHelperPath();
         if (exe is null)
@@ -409,7 +507,21 @@ internal static class SessionScreenCapture
                 "tracenium-screencap.exe not found next to the PrivSvc binary.");
         }
 
-        if (!NativeMethods.WTSQueryUserToken(session, out var userToken))
+        IntPtr userToken;
+        if (logonDesktop)
+        {
+            // No hay usuario al que pedirle token: se usa el del PROPIO
+            // servicio (LocalSystem) y más abajo se le mueve la sesión. Es
+            // cómo se llega al escritorio de inicio de sesión, que no
+            // pertenece a nadie.
+            if (!NativeMethods.OpenProcessToken(NativeMethods.GetCurrentProcess(),
+                    NativeMethods.TOKEN_ALL_ACCESS, out userToken))
+            {
+                throw new InvalidOperationException(
+                    $"OpenProcessToken failed (Win32 {Marshal.GetLastWin32Error()}).");
+            }
+        }
+        else if (!NativeMethods.WTSQueryUserToken(session, out userToken))
         {
             var err = Marshal.GetLastWin32Error();
 
@@ -484,7 +596,14 @@ internal static class SessionScreenCapture
             // tampoco hay ventanas elevadas que controlar. Cualquier fallo aquí
             // cae al camino de siempre; quedarse sin sesión por no poder elevar
             // sería peor que no poder controlar una ventana de servicios.
-            var sourceToken = TryGetLinkedToken(userToken, out var linkedToken)
+            // Sin usuario no hay token enlazado que buscar: el del servicio ya
+            // es LocalSystem, que está estrictamente por encima de cualquier
+            // elevación.
+            // ⚠️ Declarado fuera: con `&&` en cortocircuito, `linkedToken`
+            // quedaría sin asignar cuando el escritorio es el de login y el
+            // compilador —con razón— lo rechaza.
+            IntPtr linkedToken = IntPtr.Zero;
+            var sourceToken = !logonDesktop && TryGetLinkedToken(userToken, out linkedToken)
                 ? linkedToken
                 : userToken;
 
@@ -497,6 +616,25 @@ internal static class SessionScreenCapture
                 {
                     throw new InvalidOperationException(
                         $"DuplicateTokenEx failed (Win32 {Marshal.GetLastWin32Error()}).");
+                }
+
+                if (logonDesktop)
+                {
+                    // ⚠️ El token del servicio vive en la sesión 0, que no tiene
+                    // escritorio. Sin moverlo, el proceso arrancaría allí y no
+                    // vería la pantalla de inicio de sesión. Esto es lo que
+                    // exige SE_TCB_NAME, y por eso el PrivSvc corre como
+                    // LocalSystem — aquí el mensaje sobre SE_TCB_NAME sí es el
+                    // correcto.
+                    var target = session;
+                    if (!NativeMethods.SetTokenInformation(primaryToken,
+                            NativeMethods.TokenSessionId, ref target, sizeof(uint)))
+                    {
+                        throw new InvalidOperationException(
+                            "SetTokenInformation(TokenSessionId) failed " +
+                            $"(Win32 {Marshal.GetLastWin32Error()}). The PrivSvc must run as " +
+                            "LocalSystem to hold SE_TCB_NAME.");
+                    }
                 }
             }
             finally
@@ -538,7 +676,10 @@ internal static class SessionScreenCapture
             si.cb = Marshal.SizeOf<NativeMethods.STARTUPINFO>();
             // LA línea que da sentido a todo el fichero: el escritorio
             // interactivo de la ventana de estación del usuario.
-            si.lpDesktop = @"winsta0\default";
+            // ⭐ `winsta0\winlogon` es el escritorio SEGURO: la pantalla de
+            // inicio de sesión (y el de UAC). Es el único sitio donde se puede
+            // enseñar el login de un servidor sin nadie dentro.
+            si.lpDesktop = logonDesktop ? @"winsta0\winlogon" : @"winsta0\default";
             si.dwFlags = NativeMethods.STARTF_USESTDHANDLES;
             si.hStdInput = childStdinRead;
             si.hStdOutput = childStdoutWrite;
@@ -580,6 +721,7 @@ internal static class SessionScreenCapture
 
             _helper = Process.GetProcessById((int)pi.dwProcessId);
             _helperSession = session;
+            _helperLogonDesktop = logonDesktop;
             _stdin = new StreamWriter(
                 new FileStream(new Microsoft.Win32.SafeHandles.SafeFileHandle(
                     parentStdinWrite, true), FileAccess.Write),
@@ -682,6 +824,7 @@ internal static class SessionScreenCapture
         _stderr = null;
         _helper = null;
         _helperSession = uint.MaxValue;
+        _helperLogonDesktop = false;
     }
 
     // ── P/Invoke ──────────────────────────────────────────────────────────
@@ -724,6 +867,20 @@ internal static class SessionScreenCapture
 
         [DllImport("wtsapi32.dll", SetLastError = true)]
         public static extern bool WTSQueryUserToken(uint sessionId, out IntPtr phToken);
+
+        /// TOKEN_INFORMATION_CLASS.TokenSessionId
+        public const int TokenSessionId = 12;
+
+        [DllImport("kernel32.dll")]
+        public static extern IntPtr GetCurrentProcess();
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess,
+                                                   out IntPtr tokenHandle);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool SetTokenInformation(IntPtr tokenHandle, int tokenInformationClass,
+                                                      ref uint tokenInformation, int tokenInformationLength);
 
         [DllImport("advapi32.dll", SetLastError = true)]
         public static extern bool DuplicateTokenEx(

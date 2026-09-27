@@ -1000,7 +1000,26 @@ export class ScreenSession {
         v: 1,
         id: `screen.capture.${now}`,
         method: "screen.capture",
-        params: { quality: this.quality, forceFull: wantKeyframe }
+        params: {
+          quality: this.quality,
+          forceFull: wantKeyframe,
+          // ⭐ «Este equipo es un servidor clasificado como tal».
+          //
+          // Habilita, SÓLO en Windows y sólo si no hay nadie dentro, que el
+          // PrivSvc enseñe la pantalla de inicio de sesión del propio servidor
+          // en vez de rendirse con «no hay nadie conectado». El operador entra
+          // con credenciales DEL SERVIDOR: Windows es la puerta, y es la que
+          // sustituye al consentimiento en un equipo donde no hay a quién
+          // preguntar.
+          //
+          // Viaja en cada petición y no se cachea: la clase puede cambiar en el
+          // portal a mitad de una sesión, y la política efectiva llega ya
+          // resuelta (`features.remoteServerConsole`, puesta sólo para
+          // servidores conocidos).
+          serverConsole: Boolean(
+            this.args.ctx.policyRuntime?.isFeatureEnabled?.("remoteServerConsole")
+          )
+        }
       });
 
       if (!result?.ok) {

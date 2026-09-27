@@ -1042,7 +1042,16 @@ public static class IpcGrpcHandlers
                 // haya o no usuario conectado. Comprobado en campo con la
                 // sonda de ADR-0006 — el MISMO código captura desde la
                 // sesión 1 y falla desde la 0.
-                var viaSession = SessionScreenCapture.Capture(req.Id, quality, forceFull);
+                // ⚠️ Mismo cuidado con el booleano que `forceFull` de arriba:
+                // System.Text.Json serializa `true` en minúsculas pero un
+                // `ToString()` de .NET da "True". Se compara sin distinguir
+                // mayúsculas, o la marca no llegaría NUNCA y la pantalla de
+                // inicio de sesión no se enseñaría en ningún servidor.
+                var serverStr = GetString(p, "serverConsole");
+                var serverConsole =
+                    string.Equals(serverStr, "true", StringComparison.OrdinalIgnoreCase) ||
+                    serverStr == "1";
+                var viaSession = SessionScreenCapture.Capture(req.Id, quality, forceFull, serverConsole);
 
                 // Reserva para la ventana de despliegue: si el MSI todavía no
                 // trae tracenium-screencap.exe, seguimos por el camino viejo.

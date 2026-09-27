@@ -146,3 +146,55 @@ describe("cdp.fileDiscovery (ola 1.1) sobrevive a validatePolicy", () => {
     expect((await rtWith({ fileDiscovery: "everything" })).getCdpFileDiscovery()).toBe("configured");
   });
 });
+
+/**
+ * ⭐ `remoteServerConsole`: llega encendida, y por defecto está APAGADA.
+ *
+ * Es la bandera que el control plane pone SÓLO a los servidores clasificados
+ * como tales, y la que habilita enseñar la pantalla de inicio de sesión de un
+ * servidor sin nadie dentro.
+ *
+ * ⚠️ Matiz que comprobé antes de escribir esto, porque lo había supuesto al
+ * revés: `mergedFeatures` hace SPREAD de `policy.features`, así que una clave
+ * de feature nueva sobrevive aunque no se nombre. Lo que sí muere por no
+ * nombrarse son los BLOQUES de primer nivel —`sdp`, `remoteControl`, `asp`…—,
+ * que es como murieron `sdp.dpBaseUrls` y `remoteControl.maxUploadBytes`.
+ *
+ * Así que esta prueba cubre dos cosas distintas y las dos importan: que la
+ * bandera llegue (si alguien convierte `mergedFeatures` en un literal con
+ * claves nombradas, la función deja de encenderse en TODA la flota sin un solo
+ * error en el log) y que su defecto sea `false` — sin política legible no se
+ * enseña el login de nadie.
+ */
+describe("remoteServerConsole atraviesa el validador", () => {
+  function runtimeFor(features: Record<string, unknown>) {
+    const { store } = storeWith({
+      version: "v1",
+      plugins: ["rcp"],
+      features
+    });
+    const rt = new PolicyRuntime(store as any);
+    rt.init();
+    return rt;
+  }
+
+  it("llega encendida cuando el control plane la manda", () => {
+    const rt = runtimeFor({ remoteScreen: true, remoteServerConsole: true });
+    expect(
+      rt.isFeatureEnabled("remoteServerConsole"),
+      "el validador se la comió: la pantalla de login no se enseñaría en NINGÚN servidor",
+    ).toBe(true);
+  });
+
+  it("⚠️ y apagada por defecto: sin política legible no se enseña el login de nadie", () => {
+    const rt = runtimeFor({ remoteScreen: true });
+    expect(rt.isFeatureEnabled("remoteServerConsole")).toBe(false);
+  });
+
+  it("⚠️ es INDEPENDIENTE del consentimiento", () => {
+    // Un tenant que apaga el consentimiento para toda su flota no puede
+    // encender con eso el escritorio de login en los portátiles.
+    const rt = runtimeFor({ remoteScreen: true, remoteRequireConsent: false });
+    expect(rt.isFeatureEnabled("remoteServerConsole")).toBe(false);
+  });
+});
