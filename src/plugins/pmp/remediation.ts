@@ -254,6 +254,9 @@ export function encodeBatchAck(messages: string[], onTrim?: (len: number) => voi
   return `patch_remediate_batch:done;items=${b64}`;
 }
 
+/** Claves del estado que no son estado: se ignoran al comparar. */
+const IGNORED_STATE_KEYS: ReadonlySet<string> = new Set(["queryError", "raw"]);
+
 /** El `state` de una respuesta de pmp.read_check_state (con o sin sobre). */
 function stateOf(result: any): unknown {
   if (result && typeof result === "object") {
@@ -276,7 +279,9 @@ export function stateMatchesBefore(current: unknown, before: unknown): boolean {
   const norm = (v: unknown): string =>
     Array.isArray(v) ? JSON.stringify(v.map((x) => JSON.stringify(x ?? null)).sort()) : JSON.stringify(v ?? null);
   for (const [k, v] of Object.entries(before as Record<string, unknown>)) {
-    if (k === "queryError") continue;
+    // `raw` es la salida literal del comando que leyó el estado (macOS): es
+    // un rastro, no el estado — otra versión del sistema la redacta distinto.
+    if (IGNORED_STATE_KEYS.has(k)) continue;
     if (norm(v) !== norm((current as Record<string, unknown>)[k])) return false;
   }
   return true;

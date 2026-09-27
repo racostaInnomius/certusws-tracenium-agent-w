@@ -48,6 +48,10 @@
 //     touches user-domain prefs (need per-user iteration), and
 //     macOS's SMB stack already disables SMBv1 by default since
 //     macOS 12.
+//
+// pmp.revert: deshace un fix de los tres remediables devolviendo el
+// `state` que `pmp.read_check_state` leyó ANTES del fix. sip/filevault
+// no tienen revert (tampoco tienen fix).
 
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -139,6 +143,8 @@ async function remediateMacFirewall(): Promise<any> {
 // `spctl --master-enable` re-enables. `--master-disable` is the
 // inverse; we don't expose that direction (CIS / NIST want gatekeeper
 // ON, and an admin who explicitly needs it off can run it manually).
+// Excepción: `pmp.revert` sí lo usa, y sólo para devolver el estado
+// que `pmp.read_check_state` registró antes del fix (ver más abajo).
 
 async function readMacGatekeeper(): Promise<{ state: any; isCompliant: boolean }> {
   const r = await runCmd("/usr/sbin/spctl", ["--status"]);
@@ -298,6 +304,18 @@ export async function handlePmpReadCheckState(req: PrivSvcRequest): Promise<Priv
 
 // ── pmp.remediate ────────────────────────────────────────────────
 
+// Forma de respuesta compartida por remediate y revert: el agente Node
+// parsea ambas con el mismo código.
+function toRemediationResult(result: any) {
+  return {
+    exitCode: result.exitCode,
+    stderrExcerpt: result.stderrExcerpt ?? null,
+    durationMs: result.durationMs,
+    requiresReboot: result.requiresReboot === true,
+    changesApplied: Array.isArray(result.changesApplied) ? result.changesApplied : [],
+  };
+}
+
 export async function handlePmpRemediate(req: PrivSvcRequest): Promise<PrivSvcResponse> {
   const checkId = String(req.params?.checkId || "").trim();
   if (!checkId) {
@@ -312,13 +330,7 @@ export async function handlePmpRemediate(req: PrivSvcRequest): Promise<PrivSvcRe
 
   try {
     const result = await handler();
-    return success(req.id, {
-      exitCode: result.exitCode,
-      stderrExcerpt: result.stderrExcerpt ?? null,
-      durationMs: result.durationMs,
-      requiresReboot: result.requiresReboot === true,
-      changesApplied: Array.isArray(result.changesApplied) ? result.changesApplied : [],
-    });
+    return success(req.id, toRemediationResult(result));
   } catch (err: any) {
     if (err?.code === "remediate_timeout") {
       return fail(req.id, "remediate_timeout", err?.message || "remediate timed out");
@@ -328,5 +340,266 @@ export async function handlePmpRemediate(req: PrivSvcRequest): Promise<PrivSvcRe
       error: err?.message || String(err),
     });
     return fail(req.id, "remediate_failed", err?.message || String(err));
+  }
+}
+
+// ── pmp.revert ───────────────────────────────────────────────────
+//
+// Contrato: params = { checkId, params: { stateBefore }, timeoutSeconds? }.
+// `stateBefore` es EXACTAMENTE el `state` que devolvió read_check_state
+// antes del fix. Tras un revert con éxito, read_check_state tiene que
+// devolver ese mismo estado en cada clave: el agente Node lo verifica.
+// Por eso sólo se deshace lo que el fix cambia, con el comando espejo
+// del forward; si el estado previo ya era el que deja el fix, no-op.
+//
+// La planificación es pura (planMacRevert) para poder testear qué se
+// ejecutaría sin tocar el sistema; handlePmpRevert sólo la ejecuta.
+
+export type MacRevertStep = { bin: string; args: string[]; change: string };
+
+export type MacRevertPlan =
+  | {
+      commands: MacRevertStep[];
+      // Claves del state que read_check_state debe devolver tras los
+      // comandos. Se comprueban aquí mismo para no dar por bueno un
+      // comando que sale 0 sin aplicar (spctl en Sequoia, ver abajo).
+      expect: Record<string, unknown>;
+      // Aviso que se añade al stderrExcerpt si algo falla.
+      failureHint?: string;
+    }
+  | { error: { code: "unsupported_check" | "bad_request"; message: string } };
+
+// exitCode sintético cuando el comando sale 0 pero el estado no cambió.
+// Cualquier no-cero sirve: el agente trata el revert como fallido.
+const REVERT_POST_STATE_MISMATCH_EXIT = 1;
+
+// timeoutSeconds acota el revert entero. Tope para que un valor absurdo
+// del backend no deje un hijo colgado indefinidamente.
+const REVERT_MAX_TIMEOUT_MS = 300_000;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function badRequest(message: string): MacRevertPlan {
+  return { error: { code: "bad_request", message } };
+}
+
+// Validación estricta y común: sólo las claves que produce el read del
+// checkId, y `raw` (si viene) tiene que ser string. Una clave extraña
+// indica que el stateBefore no salió de este read → no adivinamos.
+function checkKnownKeys(s: Record<string, unknown>, allowed: string[]): string | null {
+  const extra = Object.keys(s).filter((k) => !allowed.includes(k));
+  if (extra.length > 0) return `unexpected key(s) in stateBefore: ${extra.join(", ")}`;
+  if ("raw" in s && typeof s.raw !== "string") return "stateBefore.raw must be a string";
+  return null;
+}
+
+// Firewall: el fix sólo hace `--setglobalstate on`; no toca stealth
+// mode ni block-all, y el state tampoco los registra (stateValue 2 ya
+// cuenta como enabled y el fix no corre). Sólo hay que apagar si antes
+// estaba apagado (State = 0).
+function planFirewallRevert(s: Record<string, unknown>): MacRevertPlan {
+  const keysErr = checkKnownKeys(s, ["enabled", "stateValue", "raw"]);
+  if (keysErr) return badRequest(keysErr);
+  if (typeof s.enabled !== "boolean") return badRequest("stateBefore.enabled must be a boolean");
+  if (!("stateValue" in s)) return badRequest("stateBefore.stateValue is required");
+  const sv = s.stateValue;
+  if (sv !== null && !(typeof sv === "number" && Number.isInteger(sv) && sv >= 0 && sv <= 2)) {
+    return badRequest("stateBefore.stateValue must be 0, 1, 2 or null");
+  }
+  // readMacFirewall deriva enabled de stateValue; si no cuadran, el
+  // objeto no es un state de ese read.
+  if (s.enabled !== (sv !== null && sv >= 1)) {
+    return badRequest("stateBefore.enabled does not match stateBefore.stateValue");
+  }
+  if (s.enabled) return { commands: [], expect: {} };
+  // stateValue null = el read no pudo parsear la salida: no sabemos a
+  // qué volver, y apagar dejaría stateValue 0 ≠ null de todos modos.
+  if (sv === null) {
+    return badRequest("stateBefore records an unknown firewall state (stateValue is null); nothing to restore to");
+  }
+  return {
+    commands: [{ bin: ALF_PATH, args: ["--setglobalstate", "off"], change: "alf:globalstate=off" }],
+    expect: { enabled: false, stateValue: 0 },
+  };
+}
+
+// Gatekeeper: espejo de `--master-enable`. En macOS 15+ `--master-disable`
+// ya no desactiva por sí solo: sólo hace visible la opción "Anywhere" y
+// pide confirmación en System Settings, y puede salir 0 sin cambiar nada.
+// De ahí la verificación del estado posterior en vez de fiarse del exit.
+const GATEKEEPER_DISABLE_HINT =
+  "On recent macOS versions `spctl --master-disable` may only reveal the \"Anywhere\" option " +
+  "and require the user to confirm it in System Settings > Privacy & Security.";
+
+function planGatekeeperRevert(s: Record<string, unknown>): MacRevertPlan {
+  const keysErr = checkKnownKeys(s, ["enabled", "raw"]);
+  if (keysErr) return badRequest(keysErr);
+  if (typeof s.enabled !== "boolean") return badRequest("stateBefore.enabled must be a boolean");
+  if (s.enabled) return { commands: [], expect: {} };
+  return {
+    commands: [{ bin: "/usr/sbin/spctl", args: ["--master-disable"], change: "spctl:--master-disable" }],
+    expect: { enabled: false },
+    failureHint: GATEKEEPER_DISABLE_HINT,
+  };
+}
+
+// Remote Login: espejo exacto del fix, incluido -f (sin él systemsetup
+// espera confirmación por stdin y el daemon se cuelga). Desde macOS 13
+// systemsetup exige Full Disk Access para esto, igual que el forward.
+function planRemoteLoginRevert(s: Record<string, unknown>): MacRevertPlan {
+  const keysErr = checkKnownKeys(s, ["enabled", "raw"]);
+  if (keysErr) return badRequest(keysErr);
+  if (s.enabled !== null && typeof s.enabled !== "boolean") {
+    return badRequest("stateBefore.enabled must be a boolean or null");
+  }
+  // null = el read no reconoció la salida: no hay estado al que volver.
+  if (s.enabled === null) {
+    return badRequest("stateBefore records an unknown Remote Login state (enabled is null); nothing to restore to");
+  }
+  if (!s.enabled) return { commands: [], expect: {} };
+  return {
+    commands: [{ bin: "/usr/sbin/systemsetup", args: ["-f", "-setremotelogin", "on"], change: "systemsetup:remotelogin=on" }],
+    expect: { enabled: true },
+    failureHint: "systemsetup needs Full Disk Access for the privileged service to change Remote Login.",
+  };
+}
+
+const REVERT_PLANNERS: Record<string, (s: Record<string, unknown>) => MacRevertPlan> = {
+  "macos.firewall.enabled":      planFirewallRevert,
+  "macos.gatekeeper.enabled":    planGatekeeperRevert,
+  "macos.remote_login.disabled": planRemoteLoginRevert,
+  // sip / filevault: sin fix no hay nada que deshacer.
+};
+
+export function planMacRevert(checkId: string, stateBefore: unknown): MacRevertPlan {
+  const planner = REVERT_PLANNERS[checkId];
+  if (!planner) {
+    const readOnly = checkId in READ_HANDLERS;
+    return {
+      error: {
+        code: "unsupported_check",
+        message: readOnly
+          ? `checkId ${checkId} is read-only on macOS; there is no fix to revert`
+          : `no revert handler for checkId ${checkId} on macOS`,
+      },
+    };
+  }
+  if (!isPlainObject(stateBefore)) return badRequest("params.stateBefore must be an object");
+  return planner(stateBefore);
+}
+
+function resolveRevertTimeoutMs(raw: unknown): number | null {
+  if (raw === undefined || raw === null) return HANDLER_TIMEOUT_MS;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return null;
+  return Math.min(Math.round(raw * 1000), REVERT_MAX_TIMEOUT_MS);
+}
+
+function revertTimeout(message: string): Error {
+  return Object.assign(new Error(message), { code: "revert_timeout" });
+}
+
+function withHint(text: string, hint?: string): string {
+  const base = text.trim();
+  if (!hint) return base;
+  return base ? `${base}\n${hint}` : hint;
+}
+
+async function executeMacRevert(
+  checkId: string,
+  plan: Extract<MacRevertPlan, { commands: MacRevertStep[] }>,
+  timeoutMs: number,
+): Promise<any> {
+  const start = Date.now();
+  const deadline = start + timeoutMs;
+  const changesApplied: string[] = [];
+  let lastOutput = "";
+
+  for (const step of plan.commands) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw revertTimeout(`revert of ${checkId} timed out before ${step.change}`);
+    const r = await runCmd(step.bin, step.args, remaining);
+    // runCmd marca con 124 al hijo matado por timeout.
+    if (r.code === 124) throw revertTimeout(`revert of ${checkId} timed out running ${step.change}`);
+    lastOutput = `${r.stderr}\n${r.stdout}`.trim();
+    if (r.code !== 0) {
+      return {
+        exitCode: r.code,
+        stderrExcerpt: excerpt(withHint(r.stderr || r.stdout, plan.failureHint)),
+        durationMs: Date.now() - start,
+        requiresReboot: false,
+        changesApplied,
+      };
+    }
+    changesApplied.push(step.change);
+  }
+
+  // No-op (el estado previo ya era el que deja el fix): nada que verificar.
+  if (plan.commands.length > 0) {
+    const after = await READ_HANDLERS[checkId]();
+    const mismatched = Object.entries(plan.expect)
+      .filter(([k, v]) => after.state?.[k] !== v)
+      .map(([k, v]) => `${k}: expected ${JSON.stringify(v)}, got ${JSON.stringify(after.state?.[k])}`);
+    if (mismatched.length > 0) {
+      return {
+        exitCode: REVERT_POST_STATE_MISMATCH_EXIT,
+        stderrExcerpt: excerpt(withHint(
+          `Command succeeded but the state was not restored (${mismatched.join("; ")}).` +
+            (lastOutput ? `\n${lastOutput}` : ""),
+          plan.failureHint,
+        )),
+        durationMs: Date.now() - start,
+        requiresReboot: false,
+        // No se anuncian cambios que el sistema no refleja.
+        changesApplied: [],
+      };
+    }
+  }
+
+  return {
+    exitCode: 0,
+    stderrExcerpt: undefined,
+    durationMs: Date.now() - start,
+    requiresReboot: false,
+    changesApplied,
+  };
+}
+
+export async function handlePmpRevert(req: PrivSvcRequest): Promise<PrivSvcResponse> {
+  const checkId = String(req.params?.checkId || "").trim();
+  if (!checkId) {
+    return fail(req.id, "bad_request", "checkId required");
+  }
+
+  const plan = planMacRevert(checkId, req.params?.params?.stateBefore);
+  if ("error" in plan) {
+    logger.info("pmp_revert_rejected", { checkId, code: plan.error.code, message: plan.error.message });
+    return fail(req.id, plan.error.code, plan.error.message);
+  }
+
+  const timeoutMs = resolveRevertTimeoutMs(req.params?.timeoutSeconds);
+  if (timeoutMs === null) {
+    return fail(req.id, "bad_request", "timeoutSeconds must be a positive number");
+  }
+
+  try {
+    const result = await executeMacRevert(checkId, plan, timeoutMs);
+    logger.info("pmp_revert_done", {
+      checkId,
+      exitCode: result.exitCode,
+      changesApplied: result.changesApplied,
+    });
+    return success(req.id, toRemediationResult(result));
+  } catch (err: any) {
+    if (err?.code === "revert_timeout") {
+      logger.warn("pmp_revert_timeout", { checkId, error: err?.message });
+      return fail(req.id, "revert_timeout", err?.message || "revert timed out");
+    }
+    logger.error("pmp_revert_failed", {
+      checkId,
+      error: err?.message || String(err),
+    });
+    return fail(req.id, "revert_failed", err?.message || String(err));
   }
 }

@@ -32,7 +32,7 @@ import {
   invalidateBridgeForNewIdentity,
 } from "./grpc-bridge";
 import { handlePatchInstall, handlePatchScan } from "./patch-management";
-import { handlePmpReadCheckState, handlePmpRemediate } from "./pmp-remediation";
+import { handlePmpReadCheckState, handlePmpRemediate, handlePmpRevert } from "./pmp-remediation";
 import { handleSecurityPosture } from "./security-posture";
 import { handleMdmEnrollmentState, handleMdmObserveSettings } from "./mdm-state";
 import { handleScreenCapture } from "./screen-capture";
@@ -353,6 +353,11 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
 
     case "pmp.remediate":
       return handlePmpRemediate(req);
+
+    // Deshace un fix devolviendo el state previo (stateBefore). Mismo
+    // gate de root que el resto de pmp.* (requiresRoot).
+    case "pmp.revert":
+      return handlePmpRevert(req);
 
     default:
       return fail(req.id, "not_supported", `Unsupported method: ${req.method}`);

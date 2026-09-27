@@ -114,6 +114,8 @@ describe("revert — deshacer un fix", () => {
     expect(stateMatchesBefore({ a: 1, b: ["x", "y"], extra: 9 }, { a: 1, b: ["y", "x"] })).toBe(true);
     expect(stateMatchesBefore({ a: 2 }, { a: 1 })).toBe(false);
     expect(stateMatchesBefore({ a: 1 }, { a: 1, queryError: true })).toBe(true);
+    // `raw` (salida literal del comando en macOS) no es estado.
+    expect(stateMatchesBefore({ enabled: false, raw: "Firewall is disabled. (State = 0)\n" }, { enabled: false, raw: "Firewall is disabled. (State = 0)" })).toBe(true);
     expect(stateMatchesBefore({ a: null }, { a: null })).toBe(true);
     expect(stateMatchesBefore(null, { a: 1 })).toBe(false);
   });
