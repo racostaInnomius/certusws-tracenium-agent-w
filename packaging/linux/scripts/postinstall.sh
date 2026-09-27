@@ -127,6 +127,38 @@ fi
 #
 # Opt-out REAL: borrar el fichero es lo unico que impide la carga en
 # boot, asi que eso es lo que hace la variable.
+#
+# ⚠️ Y por el mismo motivo, NINGUNA otra copia del perfil puede quedarse
+# en /etc/apparmor.d/. server.certusws.com (T1) se quedo en 1.1.80 desde
+# el 24-sep: alguien dejo ahi `usr.lib.tracenium.privsvc.bak-20260815`,
+# el perfil de la epoca 1.1.35 (enforce, sin systemd-run). En cada boot
+# apparmor.service cargaba los dos —`.bak-*` no esta entre los sufijos
+# que ignora (.dpkg-*, .orig, .rpmsave, ~...)— y el viejo, al ir detras
+# por orden alfabetico, sustituia al bueno. El update descargaba y moria
+# con `spawn /usr/bin/systemd-run EACCES` cada 6 h. Este mismo postinst
+# lo habria arreglado... si hubiera podido ejecutarse.
+#
+# Se buscan por CONTENIDO (quien define `profile tracenium-privsvc`), no
+# por nombre, y se MUEVEN a /var/backups en vez de borrarse: pueden ser
+# cambios de un operador, y lo que importa es que no se carguen.
+# >>> sweep-stale-apparmor-copies
+AA_DIR="${TRACENIUM_APPARMOR_DIR:-/etc/apparmor.d}"
+AA_BACKUP_DIR="${TRACENIUM_APPARMOR_BACKUP_DIR:-/var/backups/tracenium-apparmor}"
+if [ -d "$AA_DIR" ]; then
+    for f in "$AA_DIR"/*; do
+        [ -f "$f" ] || continue
+        [ "$f" = "$AA_DIR/usr.lib.tracenium.privsvc" ] && continue
+        if grep -Eq '^[[:space:]]*profile[[:space:]]+tracenium-privsvc([[:space:]]|$)' "$f" 2>/dev/null; then
+            mkdir -p "$AA_BACKUP_DIR"
+            if mv -f "$f" "$AA_BACKUP_DIR/" 2>/dev/null; then
+                echo "  AppArmor: copia vieja del perfil movida fuera de $AA_DIR -> $AA_BACKUP_DIR/$(basename "$f")"
+            else
+                echo "  WARNING: no se pudo mover $f; se cargara en el proximo boot y puede bloquear el auto-update"
+            fi
+        fi
+    done
+fi
+# <<< sweep-stale-apparmor-copies
 if [ "${TRACENIUM_SKIP_APPARMOR:-0}" = "1" ]; then
     rm -f /etc/apparmor.d/usr.lib.tracenium.privsvc
     echo "  AppArmor profile REMOVED (TRACENIUM_SKIP_APPARMOR=1) — no se cargara en boot"
