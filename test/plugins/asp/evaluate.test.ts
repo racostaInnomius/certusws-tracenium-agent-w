@@ -369,6 +369,38 @@ describe("catálogo 1.5.0 — ADCS rehecho: explotabilidad y ceguera declarada",
   });
 });
 
+describe("catálogo 1.6.0 — rutas de credencial", () => {
+  const cat160 = require("./fixtures/asp-ad-1.6.0.json");
+  function ind160(id: string): AgentIndicator {
+    const i = (cat160.indicators as any[]).find((x) => x.controlId === id);
+    if (!i) throw new Error(id);
+    return { controlId: i.controlId, severity: i.severity, requires: i.requires, query: i.query, derive: i.derive ?? [], predicate: i.predicate, onFail: i.onFail, whenMissing: i.whenMissing ?? "not_assessed" };
+  }
+
+  it("⚠️ un key credential en una cuenta privilegiada es needs_review: Windows Hello lo explica", () => {
+    const r = evaluateIndicator(
+      ind160("ASP-AD-CRD-001"),
+      { ok: true, data: { count: 2, sample: ["CN=Ivan Jimenez,OU=IT,DC=m", "CN=tmpadm,OU=IT,DC=m"] } },
+      DC,
+      opts
+    );
+    // Si esto fuera `fail`, un administrador con Windows Hello bajaría el score y
+    // se aprendería a ignorar el indicador — el ruido de ADCS otra vez.
+    expect(r).toMatchObject({ status: "needs_review", severity: "high", affectedCount: 2 });
+  });
+
+  it("🔴 en krbtgt sí es fail crítico: krbtgt no inicia sesión, así que no hay explicación", () => {
+    const r = evaluateIndicator(ind160("ASP-AD-CRD-003"), { ok: true, data: { count: 1, sample: ["CN=krbtgt,CN=Users,DC=m"] } }, DC, opts);
+    expect(r).toMatchObject({ status: "fail", severity: "critical", affectedCount: 1 });
+  });
+
+  it("sin key credentials ni mapeos explícitos, los tres pasan", () => {
+    for (const id of ["ASP-AD-CRD-001", "ASP-AD-CRD-002", "ASP-AD-CRD-003"]) {
+      expect(evaluateIndicator(ind160(id), { ok: true, data: { count: 0, sample: [] } }, DC, opts).status, id).toBe("pass");
+    }
+  });
+});
+
 describe("el dominio del spike (MSIG-TSPDC, ADR §Fase 0)", () => {
   const spike: Record<string, { data: any; expect: string }> = {
     "ASP-AD-KRB-002": { data: { count: 2, sample: ["CN=Administrator,CN=Users,DC=m", "CN=next gsys,OU=IT,DC=m"] }, expect: "fail" },
