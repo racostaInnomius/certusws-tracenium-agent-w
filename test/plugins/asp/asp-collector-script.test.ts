@@ -85,6 +85,19 @@ describe("asp-ad-collector.ps1 — reglas estáticas", () => {
     }
   });
 
+  it("🔴 `$MODIFY` de ADCS no puede incluir 'WriteProperty' a secas", () => {
+    // El test de semántica de abajo reconstruye la condición, así que no vería
+    // que alguien vuelva a meter 'WriteProperty' en la constante. Esto sí.
+    const m = /\$MODIFY = @\(([^)]*)\)/.exec(code);
+    expect(m, "no se encontró $MODIFY en el script").toBeTruthy();
+    const rights = m![1].split(",").map((x) => x.trim().replace(/'/g, ""));
+    expect(rights).toEqual(["GenericAll", "GenericWrite", "WriteDacl", "WriteOwner"]);
+    // Porque la máscara de WriteProperty (0x20) casa sin mirar el ObjectType:
+    // «escribir una propiedad» se leería como «reescribir la plantilla», y eso
+    // llevó ESC4 de 1 a 10 en el DC real el 27-sep.
+    expect(rights).not.toContain("WriteProperty");
+  });
+
   it("los tipos de consulta del script son exactamente los del catálogo", () => {
     const kinds = [...code.matchAll(/^\s*'([a-z_]+)'\s*\{\s*Asp/gm)].map((m) => m[1]).sort();
     expect(kinds).toEqual(["acl", "acl_search", "adcs_templates", "group_members", "ldap_object", "ldap_search", "owner_search", "registry", "repl_metadata", "rootdse", "sysvol_files"]);
@@ -131,6 +144,78 @@ describe.skipIf(!hasPwsh)("asp-ad-collector.ps1 — con pwsh", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe.skipIf(!hasPwsh)("asp-ad-collector.ps1 — ESC4: qué es «puede reescribir la plantilla»", () => {
+  // El 27-sep en MSIG-DOMAIN01 ESC4 pasó de 1 a 10 al arreglar la ceguera, y las
+  // 9 nuevas eran falsas: ACE por PROPIEDAD CONCRETA de las plantillas
+  // predeterminadas (Enterprise Domain Controllers en 4, Domain Users en `User`,
+  // RAS and IAS Servers en la suya). Causa: la máscara de WriteProperty es 0x20 y
+  // AspAceHit la casa sin mirar el ObjectType, así que «escribir una propiedad»
+  // se leía como «reescribir la plantilla». Mismo fallo de máscara parcial que el
+  // DCSync del 14-sep.
+  const R = { WriteProperty: 0x20, WriteDacl: 0x40000, WriteOwner: 0x80000, GenericAll: 0xf01ff, GenericWrite: 0x20028, ReadProperty: 0x10, ExtendedRight: 0x100 };
+  const MODIFY = ["GenericAll", "GenericWrite", "WriteDacl", "WriteOwner"];
+  const NAME_FLAG_GUID = "ea1dddc4-60ff-416e-8cc0-17cee534bce7";
+  const EMPTY = "00000000-0000-0000-0000-000000000000";
+
+  function run(cases: Array<{ name: string; rights: number; objectType: string }>) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "asp-esc4-"));
+    try {
+      const casesPath = path.join(dir, "cases.json");
+      fs.writeFileSync(casesPath, JSON.stringify(cases));
+      const runner = path.join(dir, "run.ps1");
+      fs.writeFileSync(
+        runner,
+        [
+          `$t = $null; $e = $null`,
+          `$ast = [System.Management.Automation.Language.Parser]::ParseFile('${SCRIPT}', [ref]$t, [ref]$e)`,
+          `$fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'AspAceHit' }, $true) | Select-Object -First 1`,
+          `. ([scriptblock]::Create($fn.Extent.Text))`,
+          `$MODIFY = @(${MODIFY.map((m) => `'${m}'`).join(", ")})`,
+          `$out = [ordered]@{}`,
+          `foreach ($c in (Get-Content -Raw '${casesPath}' | ConvertFrom-Json)) {`,
+          `  $rights = [int]$c.rights; $type = [string]$c.objectType`,
+          // La misma condición que usa AspAdcsTemplates.
+          `  $hit = (AspAceHit $rights $type $false $MODIFY @{} @{})`,
+          `  if (-not $hit) { $hit = ((($rights -band 0x20) -ne 0) -and $type -eq '${EMPTY}') }`,
+          `  $out[[string]$c.name] = $hit`,
+          `}`,
+          `$out | ConvertTo-Json -Compress`
+        ].join("\n")
+      );
+      const r = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", runner], { encoding: "utf8", timeout: 60_000 });
+      expect(r.status, r.stderr).toBe(0);
+      return JSON.parse(r.stdout) as Record<string, boolean>;
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("🔴 escribir UNA propiedad no es ESC4; escribir TODAS sí", () => {
+    const out = run([
+      // Los falsos positivos del 27-sep: write sobre una propiedad concreta.
+      { name: "write-una-propiedad", rights: R.WriteProperty, objectType: NAME_FLAG_GUID },
+      { name: "read-write-una-propiedad", rights: R.ReadProperty | R.WriteProperty, objectType: NAME_FLAG_GUID },
+      // Write sobre TODAS las propiedades: eso sí reescribe la plantilla.
+      { name: "write-todas", rights: R.WriteProperty, objectType: EMPTY },
+      // El hallazgo REAL de este dominio: nextgsys con WriteDacl + WriteOwner.
+      { name: "writedacl-writeowner", rights: R.WriteDacl | R.WriteOwner | R.ReadProperty, objectType: EMPTY },
+      { name: "control-total", rights: R.GenericAll, objectType: EMPTY },
+      { name: "generic-write", rights: R.GenericWrite, objectType: EMPTY },
+      // Enroll es un derecho extendido, no una escritura.
+      { name: "solo-enroll", rights: R.ExtendedRight, objectType: "0e10c968-78fb-11d2-90d4-00c04f79dc55" },
+      { name: "solo-lectura", rights: R.ReadProperty, objectType: EMPTY }
+    ]);
+    expect(out["write-una-propiedad"]).toBe(false);
+    expect(out["read-write-una-propiedad"]).toBe(false);
+    expect(out["write-todas"]).toBe(true);
+    expect(out["writedacl-writeowner"]).toBe(true);
+    expect(out["control-total"]).toBe(true);
+    expect(out["generic-write"]).toBe(true);
+    expect(out["solo-enroll"]).toBe(false);
+    expect(out["solo-lectura"]).toBe(false);
   });
 });
 

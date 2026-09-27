@@ -540,7 +540,19 @@ function AspAdcsTemplates($query, $ctx, [int]$limit) {
     [void]$tplSearcher.PropertiesToLoad.Add($a)
   }
   $inheritOnly = [int][System.Security.AccessControl.PropagationFlags]::InheritOnly
-  $MODIFY = @('GenericAll', 'WriteDacl', 'WriteOwner', 'WriteProperty')
+  # ⚠️ SIN 'WriteProperty' a secas. La mascara de WriteProperty es 0x20 y AspAceHit
+  # la casa sin mirar el ObjectType, asi que "escribir UNA propiedad" se leeria
+  # como "puede reescribir la plantilla". Eso es lo que hizo que ESC4 pasara de 1
+  # a 10 en el DC real (27-sep): 4 plantillas por Enterprise Domain Controllers
+  # (S-1-5-9), una por Domain Users y una por RAS and IAS Servers, todas con ACE
+  # por propiedad concreta de las plantillas predeterminadas. Mismo fallo de
+  # mascara parcial que el DCSync del 14-sep.
+  #
+  # Lo que SI es ESC4: control total, GenericWrite, WriteDacl, WriteOwner, o
+  # escritura sobre TODAS las propiedades (ObjectType vacio) -- eso ultimo se
+  # comprueba aparte, abajo, porque AspAceHit no sabe exigir "vacio".
+  $MODIFY = @('GenericAll', 'GenericWrite', 'WriteDacl', 'WriteOwner')
+  $ALL_PROPS_WRITE = 0x20
   $hits = New-Object System.Collections.Generic.List[object]
   $count = 0
   $seen = 0
@@ -560,7 +572,9 @@ function AspAdcsTemplates($query, $ctx, [int]$limit) {
     }
 
     $lowEnroll = $null
+    $lowEnrollRights = $null
     $lowModify = $null
+    $lowModifyRights = $null
     if ($r.Properties.Contains('ntsecuritydescriptor') -and $r.Properties['ntsecuritydescriptor'].Count -gt 0) {
       $sd = New-Object System.DirectoryServices.ActiveDirectorySecurity
       $sd.SetSecurityDescriptorBinaryForm([byte[]]$r.Properties['ntsecuritydescriptor'][0])
@@ -574,10 +588,23 @@ function AspAdcsTemplates($query, $ctx, [int]$limit) {
         # Inscribirse es un derecho EXTENDIDO concreto; "todos los extendidos"
         # (ObjectType vacio) tambien lo concede.
         if ((($rights -band 0x100) -ne 0) -and ($type -eq $ENROLL -or $type -eq $AUTOENROLL -or $type -eq $ALL_GUID)) {
-          if ($null -eq $lowEnroll) { $lowEnroll = $sid }
+          if ($null -eq $lowEnroll) {
+            $lowEnroll = $sid
+            $lowEnrollRights = $(if ($type -eq $ALL_GUID) { 'all extended rights' } elseif ($type -eq $AUTOENROLL) { 'AutoEnroll' } else { 'Enroll' })
+          }
         }
-        if (AspAceHit $rights $type $false $MODIFY @{} @{}) {
-          if ($null -eq $lowModify) { $lowModify = $sid }
+        $modifies = (AspAceHit $rights $type $false $MODIFY @{} @{})
+        if (-not $modifies) {
+          # Escritura sobre TODAS las propiedades: ObjectType vacio. Una
+          # escritura sobre una propiedad concreta NO cuenta.
+          $modifies = ((($rights -band $ALL_PROPS_WRITE) -ne 0) -and $type -eq $ALL_GUID)
+        }
+        if ($modifies -and $null -eq $lowModify) {
+          $lowModify = $sid
+          # ⚠️ QUE derecho casó, no solo quien. Sin esto no se puede auditar un
+          # hallazgo, y de hecho no pude diagnosticar el falso positivo del
+          # 27-sep desde el JSON: tuve que deducirlo de los SID.
+          $lowModifyRights = [string]$ace.ActiveDirectoryRights
         }
       }
     }
@@ -602,6 +629,7 @@ function AspAdcsTemplates($query, $ctx, [int]$limit) {
           template = $cn
           published = $flags.published
           grantedTo = $(if ($require -contains 'lowPrivCanModify') { $lowModify } else { $lowEnroll })
+          grantedRights = $(if ($require -contains 'lowPrivCanModify') { $lowModifyRights } else { $lowEnrollRights })
           nameFlag = $nameFlag
           enrollFlag = $enrollFlag
           raSignature = $ra
