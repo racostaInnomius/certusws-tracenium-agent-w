@@ -233,13 +233,34 @@ internal static class SessionScreenCapture
                     //  · y el propio Windows dice que es una SKU de servidor.
                     //    Es la salvaguarda técnica: un error clasificando no
                     //    puede encender esto en el portátil de nadie.
-                    if (!_serverConsoleAllowed || !IsWindowsServerSku())
+                    // ⚠️ El mensaje dice QUÉ CONDICIÓN falló, con el dato.
+                    //
+                    // La primera versión devolvía un texto único para las dos,
+                    // y costó una ronda entera de despliegue no poder
+                    // distinguirlas: con el equipo clasificado como servidor,
+                    // la política confirmada con sufijo `-sv0` y el agente en
+                    // 1.1.84, seguía diciendo «no hay nadie» sin decir por qué.
+                    // Es el mismo error que ya cometimos con el consentimiento
+                    // y con el 1008: afirmar una conclusión en vez de reportar
+                    // el dato. Un mensaje que no se puede accionar cuesta un
+                    // despliegue por intento.
+                    if (!_serverConsoleAllowed)
                     {
                         return (null, PrivSvcResponse.Fail(reqId, "no_interactive_desktop",
-                            "Nobody is signed in to this device right now — not at the console " +
-                            "and not over RDP. Screen sharing shows a signed-in user's desktop, " +
-                            "so there is nothing to show yet. Sign in and try again, or use a " +
-                            "Shell session, which does not need a desktop."));
+                            "Nobody is signed in to this device, and the control plane has not " +
+                            "marked it as a server, so there is no sign-in screen to show. " +
+                            "Check that its policy version ends in '-sv0' and that it carries " +
+                            "features.remoteServerConsole. Meanwhile a Shell session works."));
+                    }
+                    var sku = WindowsProductType();
+                    if (!IsServerProductType(sku))
+                    {
+                        return (null, PrivSvcResponse.Fail(reqId, "no_interactive_desktop",
+                            "Nobody is signed in to this device. It is classified as a server, " +
+                            $"but Windows reports ProductType='{sku ?? "(unreadable)"}' — only " +
+                            "'ServerNT' or 'LanmanNT' get the sign-in screen, so a wrong " +
+                            "classification cannot switch this on for somebody's laptop. " +
+                            "A Shell session works."));
                     }
 
                     var console = NativeMethods.WTSGetActiveConsoleSessionId();
@@ -479,21 +500,30 @@ internal static class SessionScreenCapture
     /// Ante la duda —clave ilegible— se responde NO: no encender una función
     /// privilegiada por no haber podido leer una cadena.
     /// </summary>
-    private static bool IsWindowsServerSku()
+    /// El dato crudo, para poder decirlo en el mensaje. `null` = ilegible.
+    private static string? WindowsProductType()
     {
         try
         {
             using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
                 @"SYSTEM\CurrentControlSet\Control\ProductOptions");
-            var value = key?.GetValue("ProductType") as string;
-            return string.Equals(value, "ServerNT", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(value, "LanmanNT", StringComparison.OrdinalIgnoreCase);
+            return key?.GetValue("ProductType") as string;
         }
         catch
         {
-            return false;
+            return null;
         }
     }
+
+    /// El juicio, separado del dato: así el mensaje puede enseñar lo que leyó
+    /// en vez de dejar al operador adivinando qué vio el equipo.
+    private static bool IsServerProductType(string? value)
+    {
+        return string.Equals(value, "ServerNT", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "LanmanNT", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsWindowsServerSku() => IsServerProductType(WindowsProductType());
 
     /// <summary>
     /// Qué sesión se captura.
