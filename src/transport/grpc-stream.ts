@@ -6,6 +6,7 @@ import { outbox } from "../queue/sqlite-outbox";
 import { AD_PRINTERS_JOB_TYPE, runAdPrintersJob } from "../plugins/amp/ad-printers-job";
 import { AD_DISCOVERY_JOB_TYPE, runAdDiscoveryJob } from "../plugins/amp/ad-discovery-job";
 import { LIVE_QUERY_JOB_TYPE, runLiveQueryJob } from "../plugins/live-query/live-query-job";
+import { EVIDENCE_JOB_TYPE } from "../plugins/evidence/evidence-job";
 import { defaultProbeDeps } from "../plugins/live-query/probes";
 import { resolveListenerOwners } from "../plugins/cdp/process-owner";
 import { CDP_VERIFY_SERVING_JOB_TYPE, runVerifyServingJob } from "../plugins/cdp/verify-serving";
@@ -1559,6 +1560,41 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
           ampEnabled: () => ctx.policyRuntime.pluginEnabled("amp"),
           enqueue: (p) => outbox.enqueue({ type: "FACTS_SNAPSHOT", payload: p }),
           logger: ctx.logger,
+        },
+        { jobId, payload }
+      );
+    }
+
+    // ADR-0032 — captura de evidencia de incidente. Los colectores son
+    // lecturas tipadas; el paquete se sube con un destino que pide PrivSvc
+    // (tiene el certificado del equipo) y el manifiesto vuelve en su namespace.
+    case EVIDENCE_JOB_TYPE: {
+      const { runEvidenceJob } = await import("../plugins/evidence/evidence-job");
+      const { defaultExec } = await import("../plugins/evidence/collectors");
+      const { uploadArtifact } = await import("../plugins/evidence/upload");
+      const { agentDataDir } = await import("../bootstrap/paths");
+      return runEvidenceJob(
+        {
+          platform: process.platform,
+          collectorDeps: (workDir) => ({
+            platform: process.platform,
+            exec: defaultExec,
+            workDir,
+            agentDataDir: agentDataDir(),
+            logger: ctx.logger
+          }),
+          upload: (art) =>
+            uploadArtifact(
+              {
+                call: (req) => ctx.priv.call(req as any),
+                meta: { tenantId: ctx.enrollment?.tenantId, deviceId: ctx.enrollment?.deviceId },
+                logger: ctx.logger
+              },
+              art
+            ),
+          ampEnabled: () => ctx.policyRuntime.pluginEnabled("amp"),
+          enqueue: (p) => outbox.enqueue({ type: "FACTS_SNAPSHOT", payload: p }),
+          logger: ctx.logger
         },
         { jobId, payload }
       );
