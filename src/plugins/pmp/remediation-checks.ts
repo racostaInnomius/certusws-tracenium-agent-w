@@ -97,11 +97,12 @@ const ENTRIES: AgentCheckEntry[] = [
   // ── Linux Phase 8 ───────────────────────────────────────────────
   // These four checkIds are implemented in
   // privsvc/linux/src/pmp-remediation.ts. Each remediation writes a
-  // directive to /etc/ssh/sshd_config.d/99-tracenium-hardening.conf
+  // directive to /etc/ssh/sshd_config.d/00-tracenium-hardening.conf
   // (the drop-in approach — never touches the operator's main
-  // /etc/ssh/sshd_config). Drop-in changes are validated via
-  // `sshd -t` BEFORE atomic rename so a syntactically broken edit
-  // never lands. Pre-edit backup goes to <file>.tracenium.<ts>.bak.
+  // /etc/ssh/sshd_config; 00- because sshd keeps the FIRST value it
+  // reads, so a 99- file lost to e.g. 50-cloud-init.conf). Drop-in
+  // changes are validated via `sshd -t` BEFORE atomic rename so a
+  // syntactically broken edit never lands. Pre-edit backup goes to <file>.tracenium.<ts>.bak.
   //
   // Catalog entries that drive these will live in the backend's
   // compliance_catalog_seed migration with `agent_remediable=true`.

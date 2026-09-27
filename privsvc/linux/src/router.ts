@@ -348,9 +348,10 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     // ── PMP v2 — non-patch security remediation (Phase 8) ─────────
     // Per-checkId handlers for sshd hardening + firewall enable.
     // SSH config edits use the drop-in approach (write to
-    // /etc/ssh/sshd_config.d/99-tracenium-hardening.conf and
-    // validate via `sshd -t` before atomic rename). Operator's
-    // /etc/ssh/sshd_config is never touched.
+    // /etc/ssh/sshd_config.d/00-tracenium-hardening.conf — 00- porque
+    // sshd se queda con el PRIMER valor que lee — and validate via
+    // `sshd -t` before atomic rename). Operator's /etc/ssh/sshd_config
+    // is never touched.
     case "pmp.read_check_state":
       return handlePmpReadCheckState(req);
     case "pmp.remediate":

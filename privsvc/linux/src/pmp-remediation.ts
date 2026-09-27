@@ -22,14 +22,27 @@
 // and are worth pulling out up here:
 //
 // 1. SSH config edits use the DROP-IN approach.
-//    We write directives to /etc/ssh/sshd_config.d/99-tracenium-
-//    hardening.conf and never touch the operator's /etc/ssh/
-//    sshd_config. On modern distros (Debian 11+, Ubuntu 22+, RHEL
-//    8+) the main config has `Include /etc/ssh/sshd_config.d/*.conf`
-//    near the top, and our drop-in's last-write-wins ordering means
-//    `99-tracenium-hardening.conf` overrides any earlier weaker
-//    setting from another drop-in. Operator-controlled edits to the
-//    main file stay completely separate from our automation.
+//    Escribimos las directivas en /etc/ssh/sshd_config.d/00-tracenium-
+//    hardening.conf y nunca tocamos el /etc/ssh/sshd_config del
+//    operador. En las distros modernas (Debian 11+, Ubuntu 20.04+,
+//    RHEL 9+) el principal lleva `Include /etc/ssh/sshd_config.d/*.conf`
+//    arriba del todo.
+//
+//    ⚠️ El nombre empieza por 00- A PROPÓSITO. sshd_config(5): «for
+//    each keyword, the first obtained value will be used», y el glob
+//    del Include se procesa «in lexical order». Gana el PRIMER fichero,
+//    no el último. Hasta sep-2026 el drop-in se llamaba 99-…, que es
+//    justo el que PIERDE: la imagen cloud de Ubuntu trae 50-cloud-init.conf
+//    con `PasswordAuthentication yes`, RHEL 9 trae 01-permitrootlogin.conf
+//    (Anaconda) y 50-redhat.conf incluye los KexAlgorithms de
+//    crypto-policies. El fix se validaba, se recargaba… y no cambiaba
+//    nada: el agente lo veía como failed/post_state_mismatch sin saber
+//    por qué. Ver «Drop-in: nombre, migración y precedencia» abajo.
+//
+//    Ni siquiera 00- garantiza ganar (un 00-aaa.conf, o una directiva
+//    en sshd_config ANTES del Include). Por eso, tras el fix, se relee
+//    el efectivo con `sshd -T` y, si no quedó como se pidió, se devuelve
+//    exitCode 1 diciendo QUÉ fichero y línea lo fija antes que nosotros.
 //
 // 2. Every remediation that mutates a config file follows this
 //    safety pattern:
@@ -44,9 +57,10 @@
 //         `systemctl reload sshd`.
 //      h. If invalid: unlink pending, restore from backup if needed,
 //         return failure with sshd -t stderr as the reason.
-//    Steps (d)..(h) viven en `commitSshdDropin`: el revert (quitar
-//    nuestra directiva, o borrar el drop-in entero) tiene que pasar
-//    por la MISMA validación que el fix, no por una copia que diverja.
+//    Steps (d)..(h) viven en `commitSshdDropins`: el revert (quitar
+//    nuestra directiva, o borrar el drop-in entero) y la migración del
+//    99- viejo tienen que pasar por la MISMA validación que el fix, no
+//    por una copia que diverja.
 import { execFile } from "child_process";
 import fs from "fs";
 import path from "path";
@@ -63,8 +77,14 @@ const execFileAsync = promisify(execFile);
 // cap that still bounds runaway processes.
 const HANDLER_TIMEOUT_MS = 10_000;
 
+const SSHD_MAIN_CONFIG = "/etc/ssh/sshd_config";
 const SSHD_DROPIN_DIR = "/etc/ssh/sshd_config.d";
-const SSHD_DROPIN_FILE = path.join(SSHD_DROPIN_DIR, "99-tracenium-hardening.conf");
+// 00-: ver la cabecera. sshd se queda con el PRIMER valor que lee.
+const SSHD_DROPIN_NAME = "00-tracenium-hardening.conf";
+const SSHD_DROPIN_FILE = path.join(SSHD_DROPIN_DIR, SSHD_DROPIN_NAME);
+// El nombre anterior. Sigue en los equipos que ya recibieron un fix; se
+// vacía directiva a directiva (ver planSshDropinChanges), nunca de golpe.
+const LEGACY_SSHD_DROPIN_FILE = path.join(SSHD_DROPIN_DIR, "99-tracenium-hardening.conf");
 
 // Safe SSH KexAlgorithms set — 2024 baseline matching the
 // CIS L1 server profile. We deliberately exclude:
@@ -156,7 +176,8 @@ function setDirective(
   directive: string,
   value: string
 ): string {
-  const lines = content.split("\n");
+  // "" → [] y no [""]: si no, el fichero nuevo empezaba con una línea en blanco.
+  const lines = content === "" ? [] : content.split("\n");
   const lower = directive.toLowerCase();
   let found = false;
   const out: string[] = [];
@@ -225,76 +246,129 @@ async function loadSshdEffective(): Promise<{
   };
 }
 
-type EditResult = {
-  changedFile: boolean;
-  bytesBefore: number;
-  bytesAfter: number;
-  backupPath?: string;
+// ── Drop-in: nombre, migración y precedencia ───────────────────────
+//
+// Hay dos ficheros nuestros posibles: el 00- actual y el 99- de antes
+// de sep-2026. La migración va DIRECTIVA A DIRECTIVA: cuando un fix (o
+// un revert) toca `PasswordAuthentication`, esa directiva se escribe en
+// el 00- (o se quita) y se quita del 99-; las demás directivas del 99-
+// se quedan donde están. Mover el 99- entero al 00- de una vez haría
+// efectivas, en un job de OTRO check, directivas que llevaban meses
+// perdiendo contra un drop-in anterior (p. ej. un `PasswordAuthentication
+// no` latente tras el 50-cloud-init.conf): cortarle el acceso por
+// contraseña a alguien sin que lo pidiera ese job. El 99- se borra solo
+// cuando se queda sin directivas.
+
+export type DropinChange = {
+  file: string;
+  oldContent: string;
+  /** null = borrar el fichero. */
+  newContent: string | null;
 };
 
-// Apply a single directive change to the drop-in file. Returns info
-// about whether the file changed and where we backed it up. Caller
-// is responsible for validating + reloading.
-async function editSshdDropin(
+/**
+ * Cambios en disco para fijar (`value` string) o quitar (`value` null)
+ * `directive` en nuestros drop-ins. Pura. [] si no hay nada que cambiar.
+ *   fijar  — el 00- la lleva con nuestro valor; el 99- deja de llevarla.
+ *   quitar — ninguno de los dos la lleva (el revert).
+ */
+export function planSshDropinChanges(
+  current: { primary: string; legacy: string },
   directive: string,
-  value: string
-): Promise<EditResult> {
+  value: string | null
+): DropinChange[] {
+  const changes: DropinChange[] = [];
+  const fromRevertPlan = (file: string, oldContent: string) => {
+    const p = planSshRevert(oldContent, directive);
+    if (p.action === "write") changes.push({ file, oldContent, newContent: p.content });
+    if (p.action === "remove") changes.push({ file, oldContent, newContent: null });
+  };
+
+  if (value === null) {
+    fromRevertPlan(SSHD_DROPIN_FILE, current.primary);
+  } else {
+    const next = setDirective(current.primary, directive, value);
+    if (next !== current.primary) changes.push({ file: SSHD_DROPIN_FILE, oldContent: current.primary, newContent: next });
+  }
+  fromRevertPlan(LEGACY_SSHD_DROPIN_FILE, current.legacy);
+  return changes;
+}
+
+function readOurDropins(): { primary: string; legacy: string } {
+  return { primary: readFileSafe(SSHD_DROPIN_FILE), legacy: readFileSafe(LEGACY_SSHD_DROPIN_FILE) };
+}
+
+// Apply a single directive change to our drop-ins. Returns the
+// changes committed ([] = no-op idempotente). Caller is responsible
+// for reloading.
+async function editSshdDropin(directive: string, value: string): Promise<DropinChange[]> {
   // Make sure the directory exists. On modern distros it does, but
   // an extremely stripped image (Alpine, scratch + manual openssh)
   // might not have created it.
   await fs.promises.mkdir(SSHD_DROPIN_DIR, { recursive: true, mode: 0o755 }).catch(() => {});
 
-  const oldContent = readFileSafe(SSHD_DROPIN_FILE);
-  const newContent = setDirective(oldContent, directive, value);
-
-  if (oldContent === newContent) {
-    return { changedFile: false, bytesBefore: oldContent.length, bytesAfter: newContent.length };
-  }
-  return commitSshdDropin(oldContent, newContent);
+  const changes = planSshDropinChanges(readOurDropins(), directive, value);
+  if (changes.length) await commitSshdDropins(changes);
+  return changes;
 }
 
-// Pasos (d)..(h): backup, dejar en su sitio el contenido nuevo (o
-// quitar el fichero si `newContent` es null), `sshd -t`, y restaurar
-// si sshd lo rechaza. Lanza con `stderrExcerpt` si la validación falla.
-async function commitSshdDropin(
-  oldContent: string,
-  newContent: string | null
-): Promise<EditResult> {
+// Pasos (d)..(h) para todos los ficheros a la vez: backup de cada uno,
+// dejar en su sitio el contenido nuevo (o quitar el fichero si
+// `newContent` es null), UN `sshd -t` sobre el conjunto, y restaurarlos
+// TODOS si sshd lo rechaza. Todo o nada: el 00- escrito con el 99-
+// a medio quitar es una pila que nadie validó. Lanza con `stderrExcerpt`
+// si la validación falla.
+async function commitSshdDropins(changes: DropinChange[]): Promise<void> {
   // Backup first (only if the original file existed — first-time
   // create has nothing to back up).
-  let backupPath: string | undefined;
-  if (oldContent.length > 0 && fs.existsSync(SSHD_DROPIN_FILE)) {
-    backupPath = `${SSHD_DROPIN_FILE}.tracenium.${backupTimestamp()}.bak`;
-    fs.copyFileSync(SSHD_DROPIN_FILE, backupPath);
-    fs.chmodSync(backupPath, 0o600);
-  }
-
-  if (newContent === null) {
-    // Revert que deja el drop-in sin directivas: se borra en vez de
-    // dejar un fichero vacío con nuestro nombre. Se valida igual —
-    // quitar un fichero también puede dejar la pila inválida (p. ej. un
-    // Match de otro drop-in que dependía del orden).
-    try { fs.unlinkSync(SSHD_DROPIN_FILE); } catch (err: any) { if (err?.code !== "ENOENT") throw err; }
-    const validate = await runCmd("/usr/sbin/sshd", ["-t"]);
-    if (validate.code !== 0) {
-      if (backupPath) fs.copyFileSync(backupPath, SSHD_DROPIN_FILE);
-      const err: any = new Error(`sshd -t rejected the config without the drop-in: ${validate.stderr.trim()}`);
-      err.stderrExcerpt = excerpt(validate.stderr);
-      throw err;
+  const backups = new Map<string, string>();
+  for (const c of changes) {
+    if (c.oldContent.length > 0 && fs.existsSync(c.file)) {
+      const backupPath = `${c.file}.tracenium.${backupTimestamp()}.bak`;
+      fs.copyFileSync(c.file, backupPath);
+      fs.chmodSync(backupPath, 0o600);
+      backups.set(c.file, backupPath);
     }
-    return { changedFile: true, bytesBefore: oldContent.length, bytesAfter: 0, backupPath };
   }
 
-  // Write to .pending, validate, then atomic rename.
-  const pending = `${SSHD_DROPIN_FILE}.pending`;
-  fs.writeFileSync(pending, newContent, { encoding: "utf8", mode: 0o644 });
+  // Roll back: restore from backup OR delete the file we created.
+  const rollback = () => {
+    for (const c of changes) {
+      const backupPath = backups.get(c.file);
+      try {
+        if (backupPath) fs.copyFileSync(backupPath, c.file);
+        else fs.unlinkSync(c.file);
+      } catch {}
+    }
+  };
 
-  // Validate by running `sshd -t -f` against the would-be combined
+  try {
+    for (const c of changes) {
+      if (c.newContent === null) {
+        // Revert (o migración) que deja el fichero sin directivas: se
+        // borra en vez de dejar un fichero vacío con nuestro nombre. Se
+        // valida igual — quitar un fichero también puede dejar la pila
+        // inválida (p. ej. un Match de otro drop-in que dependía del orden).
+        try { fs.unlinkSync(c.file); } catch (err: any) { if (err?.code !== "ENOENT") throw err; }
+        continue;
+      }
+      // Write to .pending, then atomic rename. `.pending` no casa con el
+      // glob `*.conf` del Include: sshd nunca lo lee a medio escribir.
+      const pending = `${c.file}.pending`;
+      fs.writeFileSync(pending, c.newContent, { encoding: "utf8", mode: 0o644 });
+      fs.renameSync(pending, c.file);
+    }
+  } catch (err) {
+    rollback();
+    throw err;
+  }
+
+  // Validate by running `sshd -t` against the would-be combined
   // config. We can't pass a single drop-in to `-f`; what we do
-  // instead is temporarily rename the pending into place, run
-  // `sshd -t` (which parses the entire stack), and revert if
-  // validation fails. This is the only way to validate a drop-in
-  // change against the drop-in loader's own logic.
+  // instead is rename the pending into place, run `sshd -t` (which
+  // parses the entire stack), and revert if validation fails. This
+  // is the only way to validate a drop-in change against the drop-in
+  // loader's own logic.
   //
   // The window between rename-in and validate-out is small (< 100ms
   // typically) and during this window any new sshd CHILD processes
@@ -313,27 +387,135 @@ async function commitSshdDropin(
   //
   // We accept the tradeoff. Most remediations land within seconds
   // and run far from peak ssh-attempt windows.
-  fs.renameSync(pending, SSHD_DROPIN_FILE);
-
   const validate = await runCmd("/usr/sbin/sshd", ["-t"]);
   if (validate.code !== 0) {
-    // Roll back: restore from backup OR delete the file we created.
-    if (backupPath) {
-      fs.copyFileSync(backupPath, SSHD_DROPIN_FILE);
-    } else {
-      try { fs.unlinkSync(SSHD_DROPIN_FILE); } catch {}
-    }
+    rollback();
     const err: any = new Error(`sshd -t rejected the new config: ${validate.stderr.trim()}`);
     err.stderrExcerpt = excerpt(validate.stderr);
     throw err;
   }
+}
 
-  return {
-    changedFile: true,
-    bytesBefore: oldContent.length,
-    bytesAfter: newContent.length,
-    backupPath,
+// ── ¿Quién fija la directiva antes que nosotros? ───────────────────
+//
+// Sólo para EXPLICAR un fix que no surtió efecto: la verdad sobre el
+// valor efectivo la da siempre `sshd -T`, nunca este recorrido. Imita
+// el orden de lectura de sshd sobre lo que importa aquí: el sshd_config
+// principal hasta su Include de sshd_config.d, y los drop-ins que
+// ordenan (byte a byte, como el glob de sshd en locale C) antes que el
+// nuestro. Se para en el primer `Match`: lo que va detrás es
+// condicional y `sshd -T` sin -C no lo aplica. No sigue Includes
+// anidados (p. ej. el de crypto-policies dentro de 50-redhat.conf): si
+// el culpable está ahí, el mensaje lo dice sin nombrarlo.
+
+export type SshdDefinition = { source: string; line: number; value: string };
+
+export type SshdPrecedence = {
+  /** false = el sshd_config principal no incluye sshd_config.d antes de su primer Match: nuestro drop-in no se lee. */
+  dropinIncluded: boolean;
+  /** Definiciones de la directiva que sshd lee ANTES que la nuestra, en orden de lectura. */
+  earlier: SshdDefinition[];
+};
+
+function directiveValue(line: string): string {
+  const v = line.trim().replace(/^[^\s=]+\s*=?\s*/, "").trim();
+  return v.replace(/^"(.*)"$/, "$1");
+}
+
+function globToRegExp(glob: string): RegExp {
+  const body = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]");
+  return new RegExp(`^${body}$`);
+}
+
+// Byte a byte, como strcmp: `localeCompare` ordenaría «0-x» y «00-x»
+// distinto de como lo hace sshd.
+const byteOrder = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** Pura: recorre la configuración como sshd y devuelve quién define `directive` antes que nuestro drop-in. */
+export function sshdEarlierDefinitions(
+  mainConfig: string,
+  dropins: { name: string; content: string }[],
+  directive: string
+): SshdPrecedence {
+  const lower = directive.toLowerCase();
+  const earlier: SshdDefinition[] = [];
+
+  const scan = (source: string, content: string, onInclude?: (args: string[]) => boolean): boolean => {
+    const lines = String(content || "").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const key = directiveKey(lines[i]);
+      if (key === null) continue;
+      if (key === "match") return false;
+      if (key === lower) earlier.push({ source, line: i + 1, value: directiveValue(lines[i]) });
+      if (key === "include" && onInclude && onInclude(directiveValue(lines[i]).split(/\s+/))) return true;
+    }
+    return false;
   };
+
+  const dropinIncluded = scan(SSHD_MAIN_CONFIG, mainConfig, (args) => {
+    // Rutas relativas: relativas a /etc/ssh (sshd_config(5), Include).
+    const patterns = args
+      .map((a) => (a.startsWith("/") ? a : path.posix.join("/etc/ssh", a)))
+      .filter((a) => path.posix.dirname(a) === SSHD_DROPIN_DIR)
+      .map((a) => globToRegExp(path.posix.basename(a)));
+    if (!patterns.length) return false;
+    const names = dropins
+      .map((d) => d.name)
+      .filter((n) => !n.startsWith(".") && patterns.some((re) => re.test(n)))
+      .sort(byteOrder);
+    for (const name of names) {
+      if (byteOrder(name, SSHD_DROPIN_NAME) >= 0) break;
+      scan(path.posix.join(SSHD_DROPIN_DIR, name), dropins.find((d) => d.name === name)!.content);
+    }
+    return true;
+  });
+
+  return { dropinIncluded, earlier };
+}
+
+/**
+ * Pura: el porqué, legible para el operador, de que `directive` no
+ * quedara como pedimos. El culpable va PRIMERO: el agente corta el
+ * `reason` del ack a 200 caracteres, y la lista de KEX efectiva puede
+ * ocupar eso sola.
+ */
+export function explainSshdOverride(directive: string, actual: string, p: SshdPrecedence): string {
+  const where = p.earlier.map((d) => `${d.source}:${d.line} (${d.value})`).join(", ");
+  if (!p.dropinIncluded) {
+    return (
+      `${SSHD_MAIN_CONFIG} does not Include ${SSHD_DROPIN_DIR}/*.conf before its first Match, so sshd never reads ` +
+      `${SSHD_DROPIN_FILE}` +
+      (where ? `; ${directive} is set in ${where}` : "") +
+      `. Tracenium does not edit sshd_config. Effective ${directive}: ${actual}`
+    );
+  }
+  if (where) {
+    return (
+      `${where} sets ${directive} before ${SSHD_DROPIN_FILE} and sshd keeps the first value it reads. ` +
+      `Tracenium does not edit other files; change or remove that line. Effective ${directive}: ${actual}`
+    );
+  }
+  return (
+    `${directive} is overridden although ${SSHD_DROPIN_FILE} sets it; no earlier definition in ${SSHD_MAIN_CONFIG} ` +
+    `or ${SSHD_DROPIN_DIR} (a nested Include or an sshd -o option may override it). Effective ${directive}: ${actual}`
+  );
+}
+
+// Lee de disco lo que necesita sshdEarlierDefinitions. Nunca lanza: es
+// para el mensaje de error, no puede tapar el error que explica.
+function readSshdPrecedence(directive: string): SshdPrecedence | null {
+  try {
+    let names: string[] = [];
+    try { names = fs.readdirSync(SSHD_DROPIN_DIR).map(String); } catch {}
+    const dropins = names.map((name) => {
+      let content = "";
+      try { content = readFileSafe(path.join(SSHD_DROPIN_DIR, name)); } catch {}
+      return { name, content };
+    });
+    return sshdEarlierDefinitions(readFileSafe(SSHD_MAIN_CONFIG), dropins, directive);
+  } catch {
+    return null;
+  }
 }
 
 async function reloadSshd(): Promise<{ ok: boolean; stderr: string }> {
@@ -382,16 +564,18 @@ function kexListFromSshdT(rendered: string): string[] {
   return current.split(",").map(s => s.trim()).filter(Boolean);
 }
 
+// Sin flag `g`: con `test()` repetido, lastIndex haría fallar entradas alternas.
+const WEAK_KEX_RE = /(group1-sha1|group14-sha1|group-exchange-sha1|.+-sha1$)/i;
+
 async function readSshKex(): Promise<{ state: any; isCompliant: boolean }> {
   const sshd = await loadSshdEffective();
   const list = kexListFromSshdT(sshd.rendered);
   // Compliance: NO weak entries present. We don't require an exact
   // match to SAFE_SSH_KEX_ALGORITHMS (operators may have sane
   // additions of their own).
-  const weakRe = /(group1-sha1|group14-sha1|group-exchange-sha1|.+-sha1$)/i;
-  const offenders = list.filter(a => weakRe.test(a));
+  const offenders = list.filter(a => WEAK_KEX_RE.test(a));
   return {
-    state: { current: list, offenders, expectedNoMatch: weakRe.toString() },
+    state: { current: list, offenders, expectedNoMatch: WEAK_KEX_RE.toString() },
     isCompliant: offenders.length === 0,
   };
 }
@@ -424,21 +608,47 @@ type RemediateOutcome = {
   changesApplied?: string[];
 };
 
+// ¿Quedó el valor EFECTIVO (el de `sshd -T`) como pide el check? Mismo
+// criterio que el read handler: lo que el agente releerá después.
+type EffectiveCheck = (sshdT: string) => { ok: boolean; actual: string };
+
+function directiveIs(directive: string, value: string): EffectiveCheck {
+  return (rendered) => {
+    const actual = readEffectiveSshd(directive, rendered);
+    return { ok: String(actual || "").toLowerCase() === value.toLowerCase(), actual: actual ?? "(unset)" };
+  };
+}
+
+const kexHasNoWeak: EffectiveCheck = (rendered) => {
+  const list = kexListFromSshdT(rendered);
+  return { ok: list.length > 0 && !list.some(a => WEAK_KEX_RE.test(a)), actual: list.join(",") || "(unset)" };
+};
+
 async function remediateSshDirective(
   directive: string,
-  value: string
+  value: string,
+  check: EffectiveCheck = directiveIs(directive, value)
 ): Promise<RemediateOutcome> {
   const t0 = Date.now();
+  const done = (exitCode: number, changesApplied: string[], stderr?: string): RemediateOutcome => ({
+    exitCode,
+    stderrExcerpt: stderr ? excerpt(stderr) : undefined,
+    durationMs: Date.now() - t0,
+    requiresReboot: false,
+    changesApplied,
+  });
+
+  let committed: DropinChange[];
   try {
-    const edit = await editSshdDropin(directive, value);
-    if (!edit.changedFile) {
-      return {
-        exitCode: 0,
-        durationMs: Date.now() - t0,
-        requiresReboot: false,
-        changesApplied: [],
-      };
-    }
+    committed = await editSshdDropin(directive, value);
+  } catch (err: any) {
+    return done(1, [], err?.stderrExcerpt || err?.message || String(err));
+  }
+
+  const changes: string[] = [];
+  if (committed.length) {
+    changes.push(`${directive}=${value}`);
+    if (committed.some(c => c.file === LEGACY_SSHD_DROPIN_FILE)) changes.push("moved-from-99-dropin");
 
     const reload = await reloadSshd();
     if (!reload.ok) {
@@ -447,34 +657,35 @@ async function remediateSshDirective(
       // it'll pick the change up at next start; the new config is
       // already validated by `sshd -t` so it's safe.
       logger.warn("sshd_reload_failed_post_remediate", { directive, stderr: reload.stderr });
-      return {
-        exitCode: 1,
-        stderrExcerpt: excerpt(reload.stderr),
-        durationMs: Date.now() - t0,
-        requiresReboot: false,
-        changesApplied: [`${directive}=${value}`, "config-staged-not-reloaded"],
-      };
+      return done(1, [...changes, "config-staged-not-reloaded"], reload.stderr || "sshd reload failed");
     }
-
-    return {
-      exitCode: 0,
-      durationMs: Date.now() - t0,
-      requiresReboot: false,
-      changesApplied: [`${directive}=${value}`, "sshd-reloaded"],
-    };
-  } catch (err: any) {
-    return {
-      exitCode: 1,
-      stderrExcerpt: err?.stderrExcerpt || excerpt(err?.message || String(err)),
-      durationMs: Date.now() - t0,
-      requiresReboot: false,
-      changesApplied: [],
-    };
+    changes.push("sshd-reloaded");
   }
+
+  // Comprobar SIEMPRE, también en el no-op: que nuestro fichero ya lleve
+  // la directiva no significa que gane (antes del 00- era justo el caso
+  // del 99-). `sshd -t` sólo dice que la configuración es VÁLIDA, no que
+  // sea la nuestra la que manda.
+  const post = await loadSshdEffective();
+  if (!post.ok) return done(1, changes, `could not verify ${directive}: sshd -T failed: ${post.stderr}`);
+  const m = check(post.rendered);
+  if (m.ok) return done(0, changes);
+
+  // Otro fichero la fija antes que nosotros. Nuestra directiva se DEJA
+  // (validada, inofensiva, y el revert la quita): borrarla no devuelve
+  // nada al operador, y si retira el conflicto, entra en vigor el fix
+  // que pidió. Lo que no se hace es tocar el fichero ajeno: no es
+  // nuestro, y 50-cloud-init.conf lo regenera cloud-init de todos modos.
+  const precedence = readSshdPrecedence(directive);
+  const why = precedence
+    ? explainSshdOverride(directive, m.actual, precedence)
+    : `Effective ${directive} is ${m.actual} although ${SSHD_DROPIN_FILE} sets it (could not read the sshd configuration to find out why).`;
+  logger.warn("sshd_directive_overridden", { directive, actual: m.actual, earlier: precedence?.earlier, dropinIncluded: precedence?.dropinIncluded });
+  return done(1, [...changes, "effective-value-overridden"], why);
 }
 
 async function remediateSshKex(): Promise<RemediateOutcome> {
-  return remediateSshDirective("KexAlgorithms", SAFE_SSH_KEX_ALGORITHMS);
+  return remediateSshDirective("KexAlgorithms", SAFE_SSH_KEX_ALGORITHMS, kexHasNoWeak);
 }
 
 // ── ufw: SSH antes que el candado ──────────────────────────────────
@@ -695,8 +906,9 @@ function outcomeToWire(result: RemediateOutcome) {
 // mismo al final: su exitCode tiene que decir lo mismo que dirá el
 // agente.
 //
-// SSH: no se escribe el valor antiguo. Se QUITA nuestra directiva del
-// drop-in y el valor efectivo vuelve a ser el que dicte el resto de la
+// SSH: no se escribe el valor antiguo. Se QUITA nuestra directiva de
+// nuestros drop-ins (el 00- y, si aún existe, el 99- de antes de
+// sep-2026) y el valor efectivo vuelve a ser el que dicte el resto de la
 // configuración — que es lo que había antes del fix, salvo que alguien
 // haya tocado sshd_config desde entonces. En ese caso NO se inventa un
 // valor: se deja quitada y se devuelve exitCode 1 con el porqué.
@@ -869,11 +1081,9 @@ function sameList(a: string[], b: string[]): boolean {
   return JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
 }
 
-type RevertMatch = (sshdT: string) => { ok: boolean; actual: string };
-
 async function revertSshDropinDirective(
   directive: string,
-  matchesBefore: RevertMatch,
+  matchesBefore: EffectiveCheck,
   expectedDesc: string
 ): Promise<RemediateOutcome> {
   const t0 = Date.now();
@@ -890,25 +1100,29 @@ async function revertSshDropinDirective(
   const pre = await loadSshdEffective();
   if (pre.ok && matchesBefore(pre.rendered).ok) return done(0, []);
 
-  const oldContent = readFileSafe(SSHD_DROPIN_FILE);
-  const plan = planSshRevert(oldContent, directive);
-  if (plan.action === "noop") {
+  // De los DOS ficheros nuestros: el fix pudo escribirla en el 99- (antes
+  // de sep-2026) o en el 00-, y basta que quede en uno para que el
+  // revert no surta efecto.
+  const plan = planSshDropinChanges(readOurDropins(), directive, null);
+  if (!plan.length) {
     const actual = pre.ok ? matchesBefore(pre.rendered).actual : "unknown (sshd -T failed)";
     return done(
       1,
       [],
-      `${directive} is not set by Tracenium in ${SSHD_DROPIN_FILE}; effective value is ${actual}, ` +
+      `${directive} is not set by Tracenium in ${SSHD_DROPIN_FILE} or ${LEGACY_SSHD_DROPIN_FILE}; effective value is ${actual}, ` +
         `expected ${expectedDesc}. It was changed outside Tracenium; not overwriting it.`
     );
   }
 
   try {
-    await commitSshdDropin(oldContent, plan.action === "write" ? plan.content : null);
+    await commitSshdDropins(plan);
   } catch (err: any) {
     return done(1, [], err?.stderrExcerpt || err?.message || String(err));
   }
+  const removed = (file: string) => plan.some(c => c.file === file && c.newContent === null);
   const changes = [`${directive}-unset`];
-  if (plan.action === "remove") changes.push("dropin-removed");
+  if (removed(SSHD_DROPIN_FILE)) changes.push("dropin-removed");
+  if (removed(LEGACY_SSHD_DROPIN_FILE)) changes.push("legacy-99-dropin-removed");
 
   const reload = await reloadSshd();
   if (!reload.ok) {

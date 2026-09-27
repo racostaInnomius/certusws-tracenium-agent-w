@@ -579,7 +579,10 @@ async function runOne(
           checkId,
           exit: exitCode,
           duration: durationMs,
-          reason: extraReason,
+          // El porqué del privsvc (p. ej. «50-cloud-init.conf:1 fija
+          // PasswordAuthentication antes que nuestro drop-in»), como ya
+          // hace el revert: sin él, el portal sólo ve post_state_mismatch.
+          reason: applyResult.stderrExcerpt ? `${extraReason}: ${applyResult.stderrExcerpt}` : extraReason,
         },
         buildForensics()
       );

@@ -228,4 +228,31 @@ describe("PMP B3 forensics — emit stateBefore/stateAfter", () => {
       postSnap
     );
   });
+
+  it("post_state_mismatch lleva el porqué del privsvc (stderrExcerpt), como el revert", async () => {
+    // Caso real: el drop-in SSH no gana porque otro fichero fija la
+    // directiva antes. Sin esto el portal sólo veía «post_state_mismatch».
+    const base = privRouter({ preCompliant: false, postCompliant: false });
+    const { ctx } = makeCtx(async (req: any) =>
+      req.method === "pmp.remediate"
+        ? {
+            ok: true,
+            result: {
+              exitCode: 1,
+              stderrExcerpt: "/etc/ssh/sshd_config.d/00-aaa.conf:2 (yes) sets PasswordAuthentication before ours",
+              durationMs: 5,
+              requiresReboot: false,
+              changesApplied: [],
+            },
+          }
+        : base(req)
+    );
+
+    const ack = await runRemediation(ctx, "job-6", makePayload());
+
+    expect(ack.outcome).toBe("failed");
+    expect(extractAckKey(ack.ackMessage, "reason")).toBe(
+      "post_state_mismatch: /etc/ssh/sshd_config.d/00-aaa.conf:2 (yes) sets PasswordAuthentication before ours"
+    );
+  });
 });

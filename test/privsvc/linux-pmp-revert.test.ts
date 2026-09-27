@@ -33,7 +33,9 @@ import {
   validateSshKexBefore,
 } from "../../privsvc/linux/src/pmp-remediation";
 
-const DROPIN = "/etc/ssh/sshd_config.d/99-tracenium-hardening.conf";
+// 00-: sshd se queda con el PRIMER valor (ver linux-sshd-dropin-precedence.test.ts,
+// que cubre también el 99- de antes de sep-2026).
+const DROPIN = "/etc/ssh/sshd_config.d/00-tracenium-hardening.conf";
 const WEAK_KEX = ["curve25519-sha256", "diffie-hellman-group14-sha1", "ecdh-sha2-nistp256"];
 const SAFE_KEX_IN_DROPIN =
   "sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group16-sha512,diffie-hellman-group14-sha256";
