@@ -184,6 +184,9 @@ export function getTimeoutForMethod(method: string): number {
     case "pmp.read_check_state":
       return 60 * 1000;
     case "pmp.remediate":
+    case "pmp.revert":
+      // Revertir SMBv1 es Enable-WindowsOptionalFeature (120 s en el PrivSvc),
+      // igual que aplicarlo era Disable-: mismo presupuesto.
       return 180 * 1000;
     case "agent.install":
       return 1800 * 1000;

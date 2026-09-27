@@ -42,6 +42,24 @@
 //
 // Function is non-throwing — any internal exception maps to
 // outcome=failed + ackStatus 1 with reason=exception:<msg>.
+//
+// ── Deshacer un fix (modos `revert` / `revert_dry_run`) ─────────────
+// El backend manda `params.stateBefore`: el `state` que leyó
+// pmp.read_check_state ANTES del fix. `revert_dry_run` lee lo de hoy y
+// dice si ya está como antes (dryrun_already_compliant) o si revertir
+// cambiaría algo (dryrun_would_apply). `revert` llama a pmp.revert del
+// PrivSvc, vuelve a leer y sólo da `applied` si el estado coincide con el
+// de antes. Un agente anterior rechaza el modo (invalid_mode): nunca
+// reaplica el fix por error.
+//
+// ── Varios fixes en UN job (`items`) ────────────────────────────────
+// 27-sep: 20 fixes a un equipo eran 20 jobs. Con `payload.items` el
+// agente toma el lock UNA vez, ejecuta cada fix en serie con el mismo
+// camino de siempre y contesta con un solo ACK:
+//   patch_remediate_batch:done;items=<b64url(JSON [ackDeCadaFix, ...])>
+// que el backend reparte fix a fix. Se anuncia como capacidad
+// `pmp.remediate.batch` (y `pmp.remediate.revert`) en el hello: el backend
+// sólo agrupa para agentes que lo dicen.
 
 import os from "os";
 import type { AgentContext } from "../../core/agent-context";
@@ -70,7 +88,16 @@ export type RemediationAck = {
   outcome: RemediationOutcome;
 };
 
-type Mode = "apply" | "dry_run";
+type Mode = "apply" | "dry_run" | "revert" | "revert_dry_run";
+const MODES: ReadonlySet<string> = new Set(["apply", "dry_run", "revert", "revert_dry_run"]);
+
+/** Capacidades que este agente anuncia en el hello (grpc-client.ts). */
+export const PMP_REMEDIATE_CAPABILITIES = ["pmp.remediate.batch", "pmp.remediate.revert"] as const;
+
+/** Tope de fixes por job agrupado: el mismo que valida el backend. */
+export const MAX_BATCH_ITEMS = 25;
+/** Tope del bloque `items` en el ACK agrupado (el backend acepta hasta 1,5 M). */
+export const BATCH_ITEMS_B64_MAX = 1_400_000;
 
 // Subset of the catalog entry we receive from the backend snapshot.
 // Mirrors `CheckSnapshot` in remediation-types.ts on the backend.
@@ -158,6 +185,110 @@ export async function runRemediation(
   jobId: string,
   payload: any
 ): Promise<RemediationAck> {
+  if (Array.isArray(payload?.items)) return runRemediationBatch(ctx, jobId, payload.items);
+  return runOne(ctx, jobId, payload, { takeLock: true });
+}
+
+/**
+ * Varios fixes para ESTE equipo en un job. Un lock para todos, en serie,
+ * con el mismo camino que un fix suelto; un ACK con el de cada uno.
+ */
+export async function runRemediationBatch(
+  ctx: AgentContext,
+  jobId: string,
+  items: any[]
+): Promise<RemediationAck> {
+  if (items.length === 0 || items.length > MAX_BATCH_ITEMS) {
+    return { ackStatus: 2, ackMessage: "patch_remediate_batch:rejected;reason=invalid_items", outcome: "rejected" };
+  }
+  if (!tryStartRemediate(ctx)) {
+    // Transitorio: el orquestador reintenta el job entero.
+    return { ackStatus: 1, ackMessage: "patch_remediate_batch:busy;reason=another_pmp_action_in_progress", outcome: "failed" };
+  }
+  const acks: RemediationAck[] = [];
+  try {
+    for (const item of items) {
+      try {
+        const ack = await runOne(ctx, jobId, item, { takeLock: false });
+        acks.push(ack);
+      } catch (err: any) {
+        // runOne no lanza; si lo hiciera, ese fix falla y los demás siguen.
+        acks.push({
+          ackStatus: 2,
+          ackMessage: encodeAckMessage("failed", Number(item?.remediationId) || 0, { reason: `exception:${(err?.message || "unknown").slice(0, 120)}` }),
+          outcome: "failed",
+        });
+      }
+    }
+  } finally {
+    finishRemediate();
+  }
+  const allOk = acks.every((a) => a.ackStatus === 0);
+  return {
+    ackStatus: allOk ? 0 : 2,
+    ackMessage: encodeBatchAck(acks.map((a) => a.ackMessage), (len) =>
+      ctx.logger?.warn?.("[pmp.remediate] batch forensics trimmed to fit the ACK", { jobId, encodedLen: len })
+    ),
+    outcome: allOk ? acks[acks.length - 1]?.outcome ?? "applied" : "failed",
+  };
+}
+
+/**
+ * `patch_remediate_batch:done;items=<b64url(JSON [...])>`. Si no cabe, se
+ * quitan primero los `stateAfter` y después los `stateBefore` (el resultado
+ * de cada fix llega siempre; lo forense es lo prescindible).
+ */
+export function encodeBatchAck(messages: string[], onTrim?: (len: number) => void): string {
+  const encode = (arr: string[]) => Buffer.from(JSON.stringify(arr), "utf8").toString("base64url");
+  let b64 = encode(messages);
+  if (b64.length > BATCH_ITEMS_B64_MAX) {
+    onTrim?.(b64.length);
+    const strip = (key: string) => (m: string) => m.split(";").filter((seg) => !seg.startsWith(`${key}=`)).join(";");
+    let trimmed = messages.map(strip("stateAfter"));
+    b64 = encode(trimmed);
+    if (b64.length > BATCH_ITEMS_B64_MAX) {
+      trimmed = trimmed.map(strip("stateBefore"));
+      b64 = encode(trimmed);
+    }
+  }
+  return `patch_remediate_batch:done;items=${b64}`;
+}
+
+/** El `state` de una respuesta de pmp.read_check_state (con o sin sobre). */
+function stateOf(result: any): unknown {
+  if (result && typeof result === "object") {
+    if ("state" in result) return (result as any).state;
+    if ((result as any).snapshot && typeof (result as any).snapshot === "object" && "state" in (result as any).snapshot) {
+      return (result as any).snapshot.state;
+    }
+  }
+  return result ?? null;
+}
+
+/**
+ * ¿El estado de hoy es el de antes del fix? Cada clave del estado anterior
+ * tiene que valer lo mismo (listas sin importar el orden; `writes` de los
+ * genéricos, por clave+valor). Es lo que decide si un revert «aplicó».
+ */
+export function stateMatchesBefore(current: unknown, before: unknown): boolean {
+  if (!before || typeof before !== "object" || Array.isArray(before)) return false;
+  if (!current || typeof current !== "object" || Array.isArray(current)) return false;
+  const norm = (v: unknown): string =>
+    Array.isArray(v) ? JSON.stringify(v.map((x) => JSON.stringify(x ?? null)).sort()) : JSON.stringify(v ?? null);
+  for (const [k, v] of Object.entries(before as Record<string, unknown>)) {
+    if (k === "queryError") continue;
+    if (norm(v) !== norm((current as Record<string, unknown>)[k])) return false;
+  }
+  return true;
+}
+
+/** Un fix. `takeLock:false` cuando corre dentro de un job agrupado que ya lo tiene. */
+async function runOne(
+  ctx: AgentContext,
+  jobId: string,
+  payload: any,
+  opts: { takeLock: boolean }
+): Promise<RemediationAck> {
   const remediationId = Number(payload?.remediationId);
   const checkId = String(payload?.checkId || "").trim();
   const mode = String(payload?.mode || "") as Mode;
@@ -167,8 +298,13 @@ export async function runRemediation(
   if (!Number.isInteger(remediationId) || remediationId <= 0 || !checkId) {
     return reject(0, "invalid_payload");
   }
-  if (mode !== "apply" && mode !== "dry_run") {
+  if (!MODES.has(mode)) {
     return reject(remediationId, "invalid_mode");
+  }
+  const isRevert = mode === "revert" || mode === "revert_dry_run";
+  const stateBeforeFix = isRevert ? payload?.params?.stateBefore : undefined;
+  if (isRevert && (!stateBeforeFix || typeof stateBeforeFix !== "object" || Array.isArray(stateBeforeFix))) {
+    return reject(remediationId, "revert_without_state_before");
   }
 
   // ── Whitelist gate (agent-side) ───────────────────────────────
@@ -197,7 +333,7 @@ export async function runRemediation(
   // Mutual exclusion with patch_install via the lock helpers in
   // state.ts (which check ctx._patchInstallInProgress). Ack 1 →
   // orchestrator retries with backoff.
-  const acquired = tryStartRemediate(ctx);
+  const acquired = opts.takeLock ? tryStartRemediate(ctx) : true;
   if (!acquired) {
     return {
       ackStatus: 1,
@@ -280,6 +416,56 @@ export async function runRemediation(
     const preCompliant = preResult.isCompliant === true;
     // B3: snapshot the full pre-remediation compliance state.
     preState = (preResult as any).snapshot ?? preResult;
+
+    // ── Revert ────────────────────────────────────────────────
+    if (isRevert) {
+      const alreadyBefore = stateMatchesBefore(stateOf(preResult), stateBeforeFix);
+      if (mode === "revert_dry_run") {
+        outcome = alreadyBefore ? "dryrun_already_compliant" : "dryrun_would_apply";
+        return ackFor(outcome, remediationId, { checkId, duration: Date.now() - preStart }, buildForensics());
+      }
+      if (alreadyBefore) {
+        outcome = "already_compliant";
+        return ackFor(outcome, remediationId, { checkId, duration: Date.now() - preStart, reason: "already_at_previous_state" }, buildForensics());
+      }
+      const revertStart = Date.now();
+      const revertResp = await ctx.priv.call({
+        v: 1,
+        id: `pmp-revert-${jobId}-${Date.now()}`,
+        method: "pmp.revert",
+        params: { checkId, params: { stateBefore: stateBeforeFix }, timeoutSeconds: 540 },
+        meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId },
+      });
+      if (!revertResp?.ok) {
+        const code = (revertResp as any)?.error?.code || "revert_failed";
+        outcome = code === "revert_timeout" ? "timed_out" : code === "unsupported_check" ? "rejected" : "failed";
+        return ackFor(outcome, remediationId, { checkId, duration: Date.now() - revertStart, reason: code }, buildForensics());
+      }
+      const r = revertResp.result || {};
+      exitCode = Number(r.exitCode);
+      durationMs = Number(r.durationMs ?? Date.now() - revertStart);
+      const needsReboot = r.requiresReboot === true;
+      const postResp = await ctx.priv.call({
+        v: 1,
+        id: `pmp-read-${jobId}-${Date.now()}`,
+        method: "pmp.read_check_state",
+        params: { checkId, params: {} },
+        meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId },
+      });
+      const back = postResp?.ok ? stateMatchesBefore(stateOf(postResp.result), stateBeforeFix) : false;
+      if (postResp?.ok) postState = (postResp.result as any)?.snapshot ?? postResp.result;
+      if (!back) {
+        outcome = "failed";
+        return ackFor(
+          outcome,
+          remediationId,
+          { checkId, exit: exitCode, duration: durationMs, reason: r.stderrExcerpt ? `post_state_mismatch: ${r.stderrExcerpt}` : "post_state_mismatch" },
+          buildForensics()
+        );
+      }
+      outcome = needsReboot ? "applied_reboot_required" : "applied";
+      return ackFor(outcome, remediationId, { checkId, exit: exitCode, duration: durationMs }, buildForensics());
+    }
 
     // ── Dry-run branch ────────────────────────────────────────
     if (mode === "dry_run") {
@@ -422,7 +608,7 @@ export async function runRemediation(
       outcome,
     };
   } finally {
-    finishRemediate();
+    if (opts.takeLock) finishRemediate();
   }
 }
 

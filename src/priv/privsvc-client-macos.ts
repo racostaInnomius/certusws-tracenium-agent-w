@@ -129,6 +129,7 @@ export function getTimeoutForMethod(method: string): number {
     case "pmp.read_check_state":
       return 30 * 1000;
     case "pmp.remediate":
+    case "pmp.revert":
       return 90 * 1000;
     case "agent.install":
       return 1800 * 1000;

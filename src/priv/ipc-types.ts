@@ -40,6 +40,9 @@ export type PrivSvcMethod =
   //                                changesApplied[] }.
   | "pmp.read_check_state"
   | "pmp.remediate"
+  // Deshacer un fix: restaura `params.stateBefore` (el `state` que leyó
+  // pmp.read_check_state antes del fix). Misma respuesta que pmp.remediate.
+  | "pmp.revert"
   // CDP — Crypto Discovery Plugin. Read-only enumeration of the
   // LocalMachine certificate stores via C# X509Store. Returns
   // { certificates: [{ store, rawDerBase64, hasPrivateKey }] }.

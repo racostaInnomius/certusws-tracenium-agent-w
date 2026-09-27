@@ -520,6 +520,15 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
           // Plugin module missing or threw — leave RCP caps off
           // rather than crash bootstrap.
         }
+        // PMP: varios fixes en UN job y deshacer un fix. El backend sólo agrupa
+        // y sólo manda reverts de handlers dedicados a quien lo anuncia.
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { PMP_REMEDIATE_CAPABILITIES } = require("../plugins/pmp/remediation");
+          baseCaps.push(...PMP_REMEDIATE_CAPABILITIES);
+        } catch {
+          // Sin el módulo, sin las capacidades: el backend despacha como antes.
+        }
         const capabilities = Array.from(new Set(baseCaps));
 
         const clientCertThumbprint = String((ctx.enrollment as any)?.mtls?.clientCertThumbprint || "");
