@@ -244,6 +244,36 @@ describe("catálogo 1.4.0 — «Recent changes» por metadata de replicación", 
     expect(r.status).toBe("needs_review");
   });
 
+  it("🔴 un cero SIN `lastWrite` no prueba nada: es el verde de la habitación vacía", () => {
+    // El spike del 27-sep salió con los cinco a 0 y `unreadable: 0`. Eso puede
+    // ser «no cambió nada» o «no parseé ni una entrada», y las dos cosas se leen
+    // igual. El colector lo separa: si el atributo vuelve con valores y no se
+    // parsea ninguna entrada, ese objeto se cuenta como `unreadable`.
+    const ciego = evaluateIndicator(
+      ind140("ASP-AD-CHG-002"),
+      { ok: true, data: { count: 0, sample: [], objectsScanned: 1, notFound: 0, unreadable: 1, entriesSeen: 0, lastWrite: {} } },
+      DC,
+      opts
+    );
+    expect(ciego.status).toBe("not_assessed");
+    expect(ciego.reason).toBe("insufficient_read:1");
+  });
+
+  it("⭐ un cero CON `lastWrite` es un cero de verdad, y la fecha viaja en la evidencia", () => {
+    // Control positivo: si el colector sabe decir CUÁNDO se escribió por última
+    // vez, la cadena entera (petición, XML, nombre del atributo, fecha) funciona
+    // y el 0 significa «no en la ventana». Y la fecha es útil por sí sola: «se
+    // tocó por última vez en 2019» le dice algo a un auditor.
+    const r = evaluateIndicator(
+      ind140("ASP-AD-CHG-002"),
+      { ok: true, data: { count: 0, sample: [], objectsScanned: 1, notFound: 0, unreadable: 0, entriesSeen: 61, lastWrite: { nTSecurityDescriptor: "2019-03-02T11:04:00.000Z" } } },
+      DC,
+      opts
+    );
+    expect(r.status).toBe("pass");
+    expect((r.evidence as any).lastWrite.nTSecurityDescriptor).toBe("2019-03-02T11:04:00.000Z");
+  });
+
   it("⚠️ `notFound` NO es ceguera: Enterprise Admins no existe en un dominio hijo y eso es normal", () => {
     const r = evaluateIndicator(
       ind140("ASP-AD-CHG-001"),

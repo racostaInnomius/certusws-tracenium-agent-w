@@ -153,6 +153,12 @@ export function buildEvidence(
       if (truncated || data?.truncated === true) ev.truncated = true;
       if (typeof data?.filesScanned === "number") ev.filesScanned = data.filesScanned;
       if (typeof data?.objectsScanned === "number") ev.objectsScanned = data.objectsScanned;
+      // `lastWrite` viaja incluso cuando el indicador PASA, a propósito: «el
+      // DACL de AdminSDHolder se tocó por última vez en 2019» le dice algo a un
+      // auditor, y un `0` no le dice nada. Y de paso es la prueba de que la
+      // consulta miró de verdad — un cero sin `lastWrite` es sospechoso.
+      if (data?.lastWrite && typeof data.lastWrite === "object") ev.lastWrite = data.lastWrite;
+      if (typeof data?.notFound === "number" && data.notFound > 0) ev.notFound = data.notFound;
     }
   }
 

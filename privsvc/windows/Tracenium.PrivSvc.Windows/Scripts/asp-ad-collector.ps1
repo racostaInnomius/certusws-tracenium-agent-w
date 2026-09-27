@@ -501,6 +501,13 @@ function AspReplMetadata($query, $ctx, [int]$limit) {
   #                 ceguera, y no puede leerse como "sin cambios".
   $notFound = New-Object System.Collections.Generic.List[string]
   $unreadable = New-Object System.Collections.Generic.List[string]
+  # ⚠️ CONTROL POSITIVO. `count = 0` con `unreadable = 0` puede ser "no cambio
+  # nada" o "no parsee ni una entrada": las dos cosas se leen igual. Estos dos
+  # contadores lo separan, y `lastWrite` ademas es informacion util por si sola
+  # -- "el DACL de AdminSDHolder se toco por ultima vez en 2019" le dice algo a
+  # un auditor, y "0" no.
+  $entriesSeen = 0
+  $lastWrite = [ordered]@{}
 
   foreach ($rawDn in @($query.dns)) {
     $dn = AspExpand ([string]$rawDn) $ctx
@@ -524,12 +531,29 @@ function AspReplMetadata($query, $ctx, [int]$limit) {
       $unreadable.Add([string]$rawDn)
       continue
     }
+    $parsedHere = 0
     foreach ($xml in $r.Properties[$key]) {
       $node = $null
       try { $node = ([xml]([string]$xml)).DocumentElement } catch { continue }
       if ($null -eq $node) { continue }
+      $entriesSeen++
+      $parsedHere++
       $name = ([string]$node.pszAttributeName).ToLowerInvariant()
       if ($wanted -notcontains $name) { continue }
+      # La escritura mas reciente de este atributo, SIN la ventana: es lo que
+      # prueba que la cadena entera (peticion, XML, nombre, fecha) funciona.
+      $seenAt = if ([string]$query.scope -eq 'value') {
+        $c = AspReplTime $node.ftimeCreated; $d = AspReplTime $node.ftimeDeleted
+        if ($null -ne $d -and ($null -eq $c -or $d -gt $c)) { $d } else { $c }
+      } else {
+        AspReplTime $node.ftimeLastOriginatingChange
+      }
+      if ($null -ne $seenAt) {
+        $key = [string]$node.pszAttributeName
+        if (-not $lastWrite.Contains($key) -or ([DateTime]$lastWrite[$key]) -lt $seenAt) {
+          $lastWrite[$key] = $seenAt
+        }
+      }
       if ([string]$query.scope -eq 'value') {
         # ftimeDeleted de un valor vivo es el FILETIME cero (1601-01-01): eso NO
         # es una baja. Distinguirlo es la diferencia entre "entro alguien" y
@@ -567,12 +591,23 @@ function AspReplMetadata($query, $ctx, [int]$limit) {
         }
       }
     }
+    # El atributo vino con valores y no se parseo NI UNA entrada: no es "sin
+    # cambios", es que la cadena esta rota. Va a `unreadable` para que el
+    # evaluador lo saque como not_assessed con el guardia que ya existe, en vez
+    # de inventar un caso especial.
+    if ($parsedHere -eq 0) { $unreadable.Add([string]$rawDn) }
   }
   return [ordered]@{
     count = $count
     sample = $hits.ToArray()
     truncated = ($count -gt $hits.Count)
     objectsScanned = $scanned
+    entriesSeen = $entriesSeen
+    lastWrite = (& {
+        $o = [ordered]@{}
+        foreach ($k in $lastWrite.Keys) { $o[$k] = ([DateTime]$lastWrite[$k]).ToString('o') }
+        $o
+      })
     notFound = $notFound.Count
     unreadable = $unreadable.Count
     unreadableSample = @($unreadable | Select-Object -First 8)
