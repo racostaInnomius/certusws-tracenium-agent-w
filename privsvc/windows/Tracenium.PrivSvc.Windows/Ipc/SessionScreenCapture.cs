@@ -33,6 +33,7 @@
 // el orden de campos verificado contra la documentación de Win32. Cualquier
 // cambio aquí merece la misma desconfianza.
 
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -175,16 +176,16 @@ internal static class SessionScreenCapture
         {
             try
             {
-                var session = NativeMethods.WTSGetActiveConsoleSessionId();
-                // 0xFFFFFFFF = no hay sesión de consola conectada. Es el único
-                // caso en el que el mensaje histórico ("no user is logged in")
-                // era CIERTO; durante meses se mostró también cuando sí lo había.
-                if (session == 0xFFFFFFFF)
+                var picked = PickInteractiveSession();
+                if (picked is null)
                 {
                     return (null, PrivSvcResponse.Fail(reqId, "no_interactive_desktop",
-                        "No user is signed in to this device right now. " +
-                        "For a headless server, use a Shell session instead."));
+                        "Nobody is signed in to this device right now — not at the console " +
+                        "and not over RDP. Screen sharing shows a signed-in user's desktop, " +
+                        "so there is nothing to show yet. Sign in and try again, or use a " +
+                        "Shell session, which does not need a desktop."));
                 }
+                var session = picked.Value;
 
                 // Si el usuario cerró sesión y entró otro, el helper viejo
                 // apunta a un escritorio que ya no existe.
@@ -312,6 +313,89 @@ internal static class SessionScreenCapture
     internal sealed class NoInteractiveUserException : Exception
     {
         public NoInteractiveUserException(string message) : base(message) { }
+    }
+
+    /// <summary>
+    /// Qué sesión se captura.
+    ///
+    /// 🔴 Antes era siempre `WTSGetActiveConsoleSessionId()`, y en un servidor
+    /// eso es casi siempre la sesión equivocada.
+    ///
+    /// Windows Server es multiusuario por definición: quien administra entra
+    /// por RDP, y RDP crea una sesión NUEVA. La consola se queda en la pantalla
+    /// de inicio de sesión, vacía. Así que con un administrador trabajando
+    /// dentro del servidor, mirábamos la consola, no encontrábamos usuario y
+    /// devolvíamos Win32 1008 — «no hay nadie» cuando sí había alguien.
+    /// Medido en TNS-OPER-SNOC04 (T1, 26-sep-2026).
+    ///
+    /// Orden de preferencia, y el porqué de cada paso:
+    ///
+    ///   1. La consola, SI tiene usuario. Es la pantalla física del equipo: en
+    ///      un portátil o un sobremesa es la única que existe, y en un servidor
+    ///      con alguien delante es la que esa persona está usando.
+    ///   2. Si no, una sesión ACTIVA con usuario — el caso RDP. Por id
+    ///      ascendente para que dos peticiones seguidas vean lo mismo: elegir
+    ///      «la más reciente» haría saltar al operador de escritorio a mitad de
+    ///      una intervención cada vez que alguien se conecta.
+    ///
+    /// ⚠️ NO se cae a sesiones DESCONECTADAS. Existen y tienen token, pero su
+    /// escritorio no se está componiendo: se capturaría un fotograma congelado
+    /// o negro, que es peor que decir que no hay nadie — el operador lo
+    /// diagnosticaría como «la captura está rota».
+    ///
+    /// ⚠️ La sesión 0 es la de servicios y no tiene escritorio de usuario.
+    /// Nunca se elige.
+    /// </summary>
+    private static uint? PickInteractiveSession()
+    {
+        var console = NativeMethods.WTSGetActiveConsoleSessionId();
+        if (console != 0xFFFFFFFF && console != 0 && HasUserToken(console))
+        {
+            return console;
+        }
+
+        if (!UserScopedUninstall.Native.WTSEnumerateSessions(IntPtr.Zero, 0, 1,
+                                                             out var buffer, out var count))
+        {
+            IpcLog.Write("[screencap] WTSEnumerateSessions falló (Win32 " +
+                         Marshal.GetLastWin32Error() + "); sin candidatos alternativos");
+            return null;
+        }
+        try
+        {
+            var size = Marshal.SizeOf<UserScopedUninstall.Native.WTS_SESSION_INFO>();
+            var actives = new List<uint>();
+            for (var i = 0; i < count; i++)
+            {
+                var info = Marshal.PtrToStructure<UserScopedUninstall.Native.WTS_SESSION_INFO>(
+                    buffer + i * size);
+                if (info.SessionId <= 0) continue;                       // 0 = servicios
+                if (info.State != UserScopedUninstall.Native.WTSActive) continue;
+                actives.Add((uint)info.SessionId);
+            }
+            actives.Sort();
+            foreach (var s in actives)
+            {
+                if (HasUserToken(s))
+                {
+                    IpcLog.Write($"[screencap] la consola no tiene usuario; se captura la sesión {s}");
+                    return s;
+                }
+            }
+        }
+        finally
+        {
+            UserScopedUninstall.Native.WTSFreeMemory(buffer);
+        }
+        return null;
+    }
+
+    /// <summary>¿Hay un usuario con token en esta sesión? Sin efectos.</summary>
+    private static bool HasUserToken(uint session)
+    {
+        if (!NativeMethods.WTSQueryUserToken(session, out var token)) return false;
+        NativeMethods.CloseHandle(token);
+        return true;
     }
 
     // ── Arranque del helper en la sesión del usuario ──────────────────────

@@ -126,3 +126,76 @@ describe("WTSQueryUserToken: el código de error decide el mensaje", () => {
     expect(set).toContain('"no_interactive_desktop"');
   });
 });
+
+/**
+ * 🔴 EN UN SERVIDOR, LA CONSOLA CASI NUNCA ES LA SESIÓN BUENA.
+ *
+ * Windows Server es multiusuario por definición: quien administra entra por
+ * RDP, y RDP crea una sesión NUEVA. La consola se queda en la pantalla de
+ * inicio de sesión, vacía. Mirando sólo `WTSGetActiveConsoleSessionId()`,
+ * con un administrador trabajando DENTRO del servidor devolvíamos Win32 1008
+ * — «no hay nadie» cuando sí lo había.
+ */
+describe("elección de sesión: consola, y si no, RDP", () => {
+  /**
+   * ⚠️ Perezoso a propósito, y con el `expect` DENTRO de cada prueba.
+   *
+   * La primera versión calculaba esto al recolectar el fichero, con un
+   * `expect` suelto. Contra el código anterior el fichero reventaba antes de
+   * registrar ninguna prueba y vitest decía «no tests» — un fallo que no
+   * aparece en el recuento es un fallo que se pasa por alto en CI.
+   */
+  function picker(): string {
+    const i = text.indexOf("private static uint? PickInteractiveSession()");
+    if (i < 0) return "";
+    return codeOnly(text.slice(i, text.indexOf("private static bool HasUserToken", i)));
+  }
+
+  it("ya no se usa la consola a secas", () => {
+    const exchange = codeOnly(
+      text.slice(text.indexOf("private static (string? line,"), text.indexOf("StartHelperLocked(session)"))
+    );
+    expect(
+      exchange,
+      "volver a coger la consola sin comprobar usuario reabre el 1008 en cada servidor con RDP",
+    ).toContain("PickInteractiveSession()");
+    expect(exchange).not.toContain("WTSGetActiveConsoleSessionId()");
+  });
+
+  it("prefiere la consola SÓLO si tiene usuario", () => {
+    const p = picker();
+    expect(p, "ya no existe el selector de sesión").not.toBe("");
+    expect(p).toContain("WTSGetActiveConsoleSessionId()");
+    expect(p).toContain("HasUserToken(console)");
+  });
+
+  it("y si no, enumera sesiones activas", () => {
+    expect(picker()).toContain("WTSEnumerateSessions");
+    expect(picker()).toContain("WTSActive");
+  });
+
+  it("⚠️ nunca la sesión 0 — es la de servicios, sin escritorio", () => {
+    expect(picker()).toContain("info.SessionId <= 0");
+  });
+
+  it("⚠️ nunca una sesión DESCONECTADA: daría un fotograma congelado", () => {
+    // Tienen token y tientan, pero su escritorio no se compone. Capturarlas
+    // se diagnosticaría como «la captura está rota», que es peor que decir
+    // que no hay nadie.
+    expect(picker()).not.toContain("WTSDisconnected");
+  });
+
+  it("orden estable: dos peticiones seguidas ven lo mismo", () => {
+    // Elegir «la más reciente» haría saltar al operador de escritorio a mitad
+    // de una intervención cada vez que alguien se conecta.
+    expect(picker()).toContain("actives.Sort()");
+  });
+
+  it("libera el buffer de WTS y el token que sondea", () => {
+    expect(picker()).toContain("WTSFreeMemory");
+    const has = codeOnly(
+      text.slice(text.indexOf("private static bool HasUserToken"), text.indexOf("private static void StartHelperLocked"))
+    );
+    expect(has, "sondear sin cerrar el token filtra un handle por intento").toContain("CloseHandle");
+  });
+});
