@@ -401,6 +401,34 @@ describe("catálogo 1.6.0 — rutas de credencial", () => {
   });
 });
 
+describe("catálogo 1.7.0 — gMSA", () => {
+  const cat170 = require("./fixtures/asp-ad-1.7.0.json");
+  function ind170(id: string): AgentIndicator {
+    const i = (cat170.indicators as any[]).find((x) => x.controlId === id);
+    if (!i) throw new Error(id);
+    return { controlId: i.controlId, severity: i.severity, requires: i.requires, query: i.query, derive: i.derive ?? [], predicate: i.predicate, onFail: i.onFail, whenMissing: i.whenMissing ?? "not_assessed" };
+  }
+
+  it("un gMSA privilegiado es needs_review alto: arrastra a todo el que pueda leer su contraseña", () => {
+    const r = evaluateIndicator(
+      ind170("ASP-AD-SVC-003"),
+      { ok: true, data: { count: 1, sample: ["CN=gmsa-sql,CN=Managed Service Accounts,DC=m"] } },
+      DC,
+      opts
+    );
+    expect(r).toMatchObject({ status: "needs_review", severity: "high", affectedCount: 1 });
+  });
+
+  it("⚠️ un dominio SIN ningún gMSA pasa los tres, y aquí eso sí es correcto", () => {
+    // Distinto de ADCS: allí el 0 tapaba plantillas que existían y no podíamos
+    // leer. Aquí, si no hay gMSA, no hay nada que exponer — el cero es la
+    // respuesta, no una ceguera.
+    for (const id of ["ASP-AD-SVC-001", "ASP-AD-SVC-002", "ASP-AD-SVC-003"]) {
+      expect(evaluateIndicator(ind170(id), { ok: true, data: { count: 0, sample: [] } }, DC, opts).status, id).toBe("pass");
+    }
+  });
+});
+
 describe("el dominio del spike (MSIG-TSPDC, ADR §Fase 0)", () => {
   const spike: Record<string, { data: any; expect: string }> = {
     "ASP-AD-KRB-002": { data: { count: 2, sample: ["CN=Administrator,CN=Users,DC=m", "CN=next gsys,OU=IT,DC=m"] }, expect: "fail" },
