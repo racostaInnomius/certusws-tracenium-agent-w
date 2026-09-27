@@ -61,6 +61,27 @@ public static class KnownSilentUninstall
             return cmd.Contains("/S", StringComparison.Ordinal) ? cmd : cmd + " /S";
         }
 
+        // 🔴 AnyDesk (campo 26-sep, W11-JPR-LAB02). Registra
+        // `"…\AnyDesk.exe" --uninstall`, y `--uninstall` ABRE UNA VENTANA: el
+        // fabricante lo documenta como «opens a user interface to guide the
+        // uninstallation process». Como SYSTEM esa ventana sale en la sesión 0,
+        // no la ve nadie, y el job se colgó 1740 s × 5 intentos sin quitar nada.
+        //
+        // ⚠️ ES EL ÚNICO QUE SUSTITUYE EL VERBO. A WinRAR y Chrome se les AÑADE
+        // un modificador a lo que ya hay; aquí `--uninstall` es justo la parte
+        // mala. La forma documentada para script es `--remove`, y `--silent`
+        // calla los mensajes: `anydesk.exe --silent --remove`.
+        //
+        // ⚠️ Se reconstruye desde cero en vez de concatenar, para que una cadena
+        // que YA sea silenciosa no acabe en `--silent --remove --silent
+        // --remove`. La ruta entre comillas se conserva tal cual (lección de
+        // WinRAR: `C:\Program` es lo que queda al partirla mal).
+        if (AnyDeskExe.IsMatch(cmd) && AnyDeskRemove.IsMatch(cmd))
+        {
+            var bare = AnyDeskVerbs.Replace(cmd, string.Empty);
+            return bare + " --silent --remove";
+        }
+
         return null;
     }
 
@@ -78,6 +99,23 @@ public static class KnownSilentUninstall
 
     private static readonly System.Text.RegularExpressions.Regex Zoom = new(
         @"\\Zoom\\uninstall\\Installer\.exe""?\s+/uninstall\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Su binario Y una orden de quitar: son DOS condiciones. Con el verbo
+    /// pegado al .exe, una cadena que ya trajera `--silent` delante no casaba.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex AnyDeskExe = new(
+        @"\\AnyDesk\.exe""?(\s|$)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static readonly System.Text.RegularExpressions.Regex AnyDeskRemove = new(
+        @"--(uninstall|remove)\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>Los verbos y modificadores que se recomponen desde cero.</summary>
+    private static readonly System.Text.RegularExpressions.Regex AnyDeskVerbs = new(
+        @"\s+--(uninstall|remove|silent)\b",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     private static readonly System.Text.RegularExpressions.Regex Chrome = new(
