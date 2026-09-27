@@ -651,7 +651,11 @@ async function collectOnce(
             params: { ports },
             meta: { tenantId: ctx.enrollment?.tenantId, deviceId: ctx.enrollment?.deviceId }
           });
-          return resp?.ok && Array.isArray(resp.result?.processes) ? resp.result.processes : null;
+          if (!resp?.ok || !Array.isArray(resp.result?.processes)) return null;
+          // Nada con dueño pero con /proc denegados = no se pudo mirar
+          // (perfil de AppArmor sin `ptrace (read)`), no «nadie escucha».
+          if (resp.result.processes.length === 0 && Number(resp.result.denied) > 0) return null;
+          return resp.result.processes;
         }
       });
       // El digest ignora los PID: un reinicio de nginx cambia el pid y no

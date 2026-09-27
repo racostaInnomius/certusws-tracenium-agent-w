@@ -74,7 +74,20 @@ export function serviceFromCgroup(content: string): string | null {
   return m ? `${m[1]}.service` : null;
 }
 
-export function collectProcessMaps(portsIn: unknown, fsImpl: Fs = fs): ProcessMaps[] {
+/** `withLibs: false` = sólo dueños (nombrar un listener no necesita leer mapas de memoria). */
+/**
+ * Cuántos /proc/<pid>/fd se DENEGARON (EACCES/EPERM) mientras quedaban puertos
+ * sin dueño. Distingue «nadie escucha» de «AppArmor/permisos no me dejaron
+ * mirar» — medido el 27-sep: sin `ptrace (read)` en el perfil, 0 de 30
+ * puertos con dueño y ni un error visible.
+ */
+export function lastDeniedCount(): number {
+  return lastDenied;
+}
+let lastDenied = 0;
+
+export function collectProcessMaps(portsIn: unknown, fsImpl: Fs = fs, opts: { withLibs?: boolean } = {}): ProcessMaps[] {
+  lastDenied = 0;
   const ports = (Array.isArray(portsIn) ? portsIn : [])
     .map(Number)
     .filter((p) => Number.isInteger(p) && p > 0 && p <= 65535)
@@ -105,8 +118,9 @@ export function collectProcessMaps(portsIn: unknown, fsImpl: Fs = fs): ProcessMa
     let fds: string[];
     try {
       fds = fsImpl.readdirSync(`/proc/${pid}/fd`) as unknown as string[];
-    } catch {
-      continue; // el proceso terminó entre medias
+    } catch (err: any) {
+      if (err?.code === "EACCES" || err?.code === "EPERM") lastDenied += 1;
+      continue; // o el proceso terminó entre medias
     }
     for (const fd of fds) {
       let link: string;
@@ -142,7 +156,7 @@ export function collectProcessMaps(portsIn: unknown, fsImpl: Fs = fs): ProcessMa
     const cg = read(`/proc/${entry.pid}/cgroup`);
     const service = cg ? serviceFromCgroup(cg) : null;
     if (service) entry.service = service;
-    const maps = read(`/proc/${entry.pid}/maps`);
+    const maps = opts.withLibs === false ? undefined : read(`/proc/${entry.pid}/maps`);
     entry.libs = maps ? parseProcMaps(maps).slice(0, MAX_LIBS) : [];
     entry.ports.sort((a, b) => a - b);
   }

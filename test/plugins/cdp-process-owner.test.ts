@@ -6,14 +6,14 @@
 // whitespace-separated token, so "the last column" was the state, not
 // the address. These tests use real output verbatim.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   parseLsofListeners,
   parsePsPaths,
   parseNetstatPids,
   parseTasklist,
   parseProcNetTcpInodes,
-  resolveListenerOwners
+  resolveListenerOwners, setPrivilegedOwnerLookup
 } from "../../src/plugins/cdp/process-owner";
 
 describe("parseLsofListeners (macOS)", () => {
@@ -140,5 +140,47 @@ describe("resolveListenerOwners", () => {
 
   it("returns nothing on an unsupported platform instead of throwing", async () => {
     expect((await resolveListenerOwners([443], "aix" as NodeJS.Platform)).size).toBe(0);
+  });
+});
+
+// Linux sin root (27-sep): el agente corre como `tracenium` y no puede leer
+// /proc/<pid>/fd de nginx/sshd; quién escucha se le pregunta al PrivSvc.
+describe("resolveListenerOwners en Linux sin root", () => {
+  afterEach(() => setPrivilegedOwnerLookup(null));
+
+  it("⭐ los dueños vienen del PrivSvc (cdp.process.maps), sólo de los puertos pedidos", async () => {
+    const asked: number[][] = [];
+    setPrivilegedOwnerLookup(async (ports) => {
+      asked.push(ports);
+      return [
+        { pid: 900, name: "nginx", path: "/usr/sbin/nginx", ports: [80, 443] },
+        { pid: 77, name: "sshd", ports: [22] },
+      ];
+    });
+    const owners = await resolveListenerOwners([443, 22], "linux", { isRoot: false });
+    expect(asked).toEqual([[443, 22]]);
+    expect(owners.get(443)).toEqual({ pid: 900, name: "nginx", path: "/usr/sbin/nginx" });
+    expect(owners.get(22)).toEqual({ pid: 77, name: "sshd" });
+    // El 80 no se pidió: no se devuelve.
+    expect(owners.has(80)).toBe(false);
+  });
+
+  it("si el PrivSvc no contesta, cae a la lectura local (mejor que nada) sin lanzar", async () => {
+    setPrivilegedOwnerLookup(async () => null);
+    await expect(resolveListenerOwners([443], "linux", { isRoot: false })).resolves.toBeInstanceOf(Map);
+  });
+
+  it("como root no pregunta al PrivSvc", async () => {
+    let asked = false;
+    setPrivilegedOwnerLookup(async () => ((asked = true), []));
+    await resolveListenerOwners([443], "linux", { isRoot: true });
+    expect(asked).toBe(false);
+  });
+
+  it("⭐ el arranque del agente registra la búsqueda (un paso lejos de quien lo usa es el que se olvida)", () => {
+    const src = require("fs").readFileSync(require("path").join(__dirname, "../../src/core/service.ts"), "utf8");
+    expect(src).toContain("setPrivilegedOwnerLookup");
+    expect(src).toContain('method: "cdp.process.maps"');
+    expect(src).toContain("withLibs: false");
   });
 });

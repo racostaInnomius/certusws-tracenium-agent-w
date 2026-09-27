@@ -72,7 +72,7 @@ import {
 } from "./cdp-keys";
 import { handleCdpCertInstall } from "./cdp-cert-install";
 import { handleCdpAcmeHttp01 } from "./cdp-acme-http01";
-import { collectProcessMaps } from "./cdp-process-maps";
+import { collectProcessMaps, lastDeniedCount } from "./cdp-process-maps";
 import { handleCdpAnchorState } from "./cdp-anchor-state";
 import { handleCdpAnchorDistrust } from "./cdp-anchor-distrust";
 
@@ -198,7 +198,10 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     // Linux no es root y sin esto no ve ni nginx ni sshd. Sólo lectura de
     // /proc, sólo por PUERTOS (nunca rutas ni pids del llamante).
     case "cdp.process.maps":
-      return success(req.id, { processes: collectProcessMaps((req.params as any)?.ports) });
+      {
+        const processes = collectProcessMaps((req.params as any)?.ports, undefined, { withLibs: (req.params as any)?.withLibs !== false });
+        return success(req.id, { processes, denied: lastDeniedCount() });
+      }
 
     // ADR-0011 fase 0, paso 1. En Linux responde «no aplica» con su
     // motivo: callarse haria indistinguible una decision de diseno

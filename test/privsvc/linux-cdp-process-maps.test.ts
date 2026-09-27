@@ -66,3 +66,32 @@ describe("cdp.process.maps", () => {
     expect(parseProcMaps("a r-xp 0 0 1 /usr/lib/libgnutls.so.30.34.1\nb r--p 0 0 2 /var/lib/data.db\n")).toEqual(["/usr/lib/libgnutls.so.30.34.1"]);
   });
 });
+
+describe("cdp.process.maps sin librerías", () => {
+  it("withLibs:false = sólo dueños: nombrar un listener no lee mapas de memoria", () => {
+    const fsFake = fakeProc();
+    const reads: string[] = [];
+    const spy = { ...fsFake, readFileSync: (p: string, e: any) => (reads.push(p), fsFake.readFileSync(p, e)) };
+    const out = collectProcessMaps([443], spy, { withLibs: false });
+    expect(out[0]).toMatchObject({ pid: 900, name: "nginx", libs: [] });
+    expect(reads.some((p) => p.endsWith("/maps"))).toBe(false);
+  });
+});
+
+describe("cdp.process.maps denegado", () => {
+  it("⭐ cuenta los /proc/<pid>/fd denegados: «no pude mirar» no es «nadie escucha»", async () => {
+    const { lastDeniedCount } = await import("../../privsvc/linux/src/cdp-process-maps");
+    const fsFake = fakeProc();
+    const denied = {
+      ...fsFake,
+      readdirSync: (p: string) => {
+        if (p.endsWith("/fd")) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+        return fsFake.readdirSync(p);
+      },
+    };
+    expect(collectProcessMaps([443, 22], denied)).toEqual([]);
+    expect(lastDeniedCount()).toBe(3); // los tres pids del /proc falso
+    collectProcessMaps([443], fakeProc());
+    expect(lastDeniedCount()).toBe(0);
+  });
+});

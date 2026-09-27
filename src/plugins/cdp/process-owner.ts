@@ -295,25 +295,69 @@ async function windowsOwners(): Promise<Map<number, ProcessOwner>> {
 }
 
 /**
+ * Linux sin root: quién escucha en cada puerto, preguntado al PrivSvc
+ * (`cdp.process.maps`, que sí es root). `null` = no pudo (PrivSvc anterior,
+ * caído). Se registra UNA vez al arrancar, donde existe el cliente IPC, y así
+ * sirve a todos los que atribuyen puertos (listeners TLS, consulta en vivo,
+ * librerías por proceso) sin pasarles el contexto.
+ *
+ * ⚠️ Sin esto, el agente de Linux —que corre como `tracenium`— no podía leer
+ * `/proc/<pid>/fd` de nginx, sshd o mariadb, y todos sus listeners TLS salían
+ * sin proceso dueño (confirmado en server.certusws.com el 27-sep).
+ */
+export type PrivilegedOwnerLookup = (
+  ports: number[]
+) => Promise<Array<{ pid: number; name?: string; path?: string; ports: number[] }> | null>;
+
+let privilegedOwnerLookup: PrivilegedOwnerLookup | null = null;
+
+export function setPrivilegedOwnerLookup(fn: PrivilegedOwnerLookup | null): void {
+  privilegedOwnerLookup = fn;
+}
+
+function runningAsRoot(): boolean {
+  return typeof process.getuid === "function" ? process.getuid() === 0 : true;
+}
+
+async function linuxOwnersViaPrivSvc(ports: number[]): Promise<Map<number, ProcessOwner> | null> {
+  if (!privilegedOwnerLookup) return null;
+  const rows = await privilegedOwnerLookup(ports).catch(() => null);
+  if (!rows) return null;
+  const out = new Map<number, ProcessOwner>();
+  for (const r of rows) {
+    for (const port of r.ports ?? []) {
+      if (!out.has(port)) out.set(port, { pid: r.pid, ...(r.name ? { name: r.name } : {}), ...(r.path ? { path: r.path } : {}) });
+    }
+  }
+  return out;
+}
+
+/**
  * Resolve which process is listening on each of `ports`.
  * Never throws: attribution is an enrichment, and losing it must not
  * cost us the certificate inventory it decorates.
  */
 export async function resolveListenerOwners(
   ports: number[],
-  platform: NodeJS.Platform = os.platform()
+  platform: NodeJS.Platform = os.platform(),
+  opts: { isRoot?: boolean } = {}
 ): Promise<Map<number, ProcessOwner>> {
   if (ports.length === 0) return new Map();
 
   try {
+    const isRoot = opts.isRoot ?? runningAsRoot();
+    // Linux sin root: el PrivSvc primero; si no contesta, la lectura local
+    // (que sólo ve los procesos del propio usuario) es mejor que nada.
+    const viaPriv = platform === "linux" && !isRoot ? await linuxOwnersViaPrivSvc(ports) : null;
     const all =
-      platform === "linux"
+      viaPriv ??
+      (platform === "linux"
         ? await linuxOwners(ports)
         : platform === "darwin"
           ? await macosOwners()
           : platform === "win32"
             ? await windowsOwners()
-            : new Map<number, ProcessOwner>();
+            : new Map<number, ProcessOwner>());
 
     // Only hand back what was asked for.
     const wanted = new Set(ports);

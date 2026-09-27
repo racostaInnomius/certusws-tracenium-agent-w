@@ -223,6 +223,27 @@ export async function startService() {
         log.warn("Tray device info collection failed", e?.message || e);
       });
 
+    // Linux: el agente no es root y no puede leer /proc de nginx, sshd o
+    // mariadb. Quién escucha en cada puerto se lo pregunta al PrivSvc; lo usan
+    // los listeners TLS, la consulta en vivo y las librerías por proceso.
+    if (ctx.priv && process.platform === "linux") {
+      const { setPrivilegedOwnerLookup } = await import("../plugins/cdp/process-owner");
+      setPrivilegedOwnerLookup(async (ports) => {
+        const resp: any = await ctx.priv.call({
+          v: 1,
+          id: `cdpowners_${Date.now()}`,
+          method: "cdp.process.maps",
+          params: { ports, withLibs: false },
+          meta: { tenantId: ctx.enrollment?.tenantId, deviceId: ctx.enrollment?.deviceId }
+        });
+        if (!resp?.ok || !Array.isArray(resp.result?.processes)) return null;
+          // Nada con dueño pero con /proc denegados = no se pudo mirar
+          // (perfil de AppArmor sin `ptrace (read)`), no «nadie escucha».
+          if (resp.result.processes.length === 0 && Number(resp.result.denied) > 0) return null;
+          return resp.result.processes;
+      });
+    }
+
     // Ping PrivSvc (best-effort)
     if (ctx.priv) {
       try {

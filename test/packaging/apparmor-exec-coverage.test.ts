@@ -58,6 +58,7 @@ const NON_LINUX = new Set([
   "/usr/bin/bioutil", // macOS: Touch ID
   "/usr/bin/sqlite3", // macOS: TCC.db (Full Disk Access)
   "/usr/bin/profiles", // macOS: estado de enrolamiento MDM
+  "/usr/bin/vmmap", // macOS: imágenes de la caché compartida de dyld (librerías por proceso)
 ]);
 
 const BIN_RE = /"((?:\/usr\/bin|\/usr\/sbin|\/bin|\/sbin)\/[a-zA-Z0-9._-]+)"/g;
@@ -188,5 +189,21 @@ describe("perfil AppArmor: cobertura de exec", () => {
         "  Ux = sin confinar (gestores de paquetes y cualquier cosa que lance postinst)\n\n" +
         missing.join("\n")
     ).toEqual([]);
+  });
+});
+
+// CDP ola 1.5 (27-sep): sin estas reglas, `cdp.process.maps` bajo el perfil en
+// enforce veía 0 de 30 puertos con dueño (medido con un perfil de prueba).
+describe("perfil AppArmor: lectura de /proc de otros procesos", () => {
+  const profile = require("fs").readFileSync(PROFILE, "utf8");
+  it("⭐ permite leer fd, maps, comm y exe de /proc/<pid>, en modo ptrace READ (nunca trace)", () => {
+    for (const rule of ["/proc/[0-9]*/fd/", "/proc/[0-9]*/fd/*", "/proc/[0-9]*/maps", "/proc/[0-9]*/comm", "/proc/[0-9]*/exe"]) {
+      expect(profile).toMatch(new RegExp(`^\\s*${rule.replace(/[[\]*./]/g, (c: string) => `\\${c}`)}\\s+r,`, "m"));
+    }
+    expect(profile).toMatch(/^\s*ptrace \(read\),/m);
+    expect(profile).toMatch(/^\s*capability sys_ptrace,/m);
+    // Engancharse a otro proceso sigue sin estar permitido.
+    expect(profile).not.toMatch(/^\s*ptrace \((trace|read,\s*trace|trace,\s*read)\)/m);
+    expect(profile).not.toMatch(/^\s*ptrace,\s*$/m);
   });
 });

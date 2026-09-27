@@ -197,6 +197,16 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   /proc/[0-9]*/mounts                               r,
   /proc/[0-9]*/mountinfo                            r,
   /proc/[0-9]*/net/**                               r,
+  # CDP ola 1.5 — `cdp.process.maps`: quién escucha en cada puerto (inodo del
+  # socket → fd del proceso) y qué .so tiene mapeadas. SÓLO LECTURA; el agente
+  # (no root) no puede verlo y sin esto los listeners TLS de Linux salían sin
+  # dueño y las librerías por proceso vacías (27-sep). Ver `ptrace (read)` y
+  # `capability sys_ptrace` más abajo.
+  /proc/[0-9]*/fd/                                  r,
+  /proc/[0-9]*/fd/*                                 r,
+  /proc/[0-9]*/maps                                 r,
+  /proc/[0-9]*/comm                                 r,
+  /proc/[0-9]*/exe                                  r,
   /proc/                                            r,
   /proc/swaps                                       r,
   # /proc/sys/{net,kernel}: NO es relleno de inventario — son las fuentes de
@@ -597,7 +607,7 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   # listed here; AppArmor double-checks. Notable absences:
   #   * sys_module    — never load kernel modules
   #   * sys_admin     — never mount/unmount
-  #   * sys_ptrace    — never attach to other processes
+  #   * sys_ptrace    — (ya NO en esta lista: ver abajo, con ptrace (read))
   #   * net_admin     — never reconfigure interfaces (firewall
   #                     remediation shells out to ufw/firewall-cmd
   #                     which run unconfined and have their own
@@ -610,6 +620,14 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   capability setuid,              # spawn unprivileged children if ever needed
   capability setgid,              # idem
 
+  # Leer /proc/<pid>/{fd,maps,exe} de OTRO proceso es un acceso ptrace en modo
+  # READ. Para procesos de root basta la regla `ptrace (read)`; para los de
+  # otro usuario (mariadb corre como `mysql`) el kernel exige además
+  # CAP_SYS_PTRACE. Juntas siguen sin permitir ENGANCHARSE a nada: AppArmor
+  # sólo concede `read`, así que PTRACE_ATTACH/trace se deniega igual.
+  capability sys_ptrace,
+  ptrace (read),
+
   # ── Deny rules — explicit, to make policy intent obvious ─────────
   # ── Lo que se deja DENEGADO a proposito ──────────────────────────
   #
@@ -620,7 +638,8 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   #                 de un plumazo el bloque de denies de aqui abajo.
   #   sys_admin     practicamente equivalente a root; el "cajon de sastre"
   #                 del kernel.
-  #   sys_ptrace    leer la memoria de otros procesos (y ptrace, igual).
+  #   (sys_ptrace salió de esta lista el 27-sep: se concede SÓLO junto a
+  #    `ptrace (read)`, para leer /proc/<pid>/{fd,maps} — ver arriba.)
   #   perfmon       contadores de rendimiento del kernel.
   #
   # Las pide `systeminformation` sondeando de mas, no codigo nuestro, y con
