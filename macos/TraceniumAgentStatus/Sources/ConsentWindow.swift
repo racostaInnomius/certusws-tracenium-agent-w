@@ -87,6 +87,12 @@ final class ConsentWindow {
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
         window.backgroundColor = .white
+        // Misma razón que en PermissionsWindow: la paleta está escrita para una
+        // tarjeta blanca, así que la apariencia se fija en vez de confiar en la
+        // del equipo. Aquí no se ha visto el fallo porque este diálogo nunca
+        // asigna `.title` —siempre `attributedTitle`—, pero la exposición es la
+        // misma en cuanto alguien añada un control del sistema.
+        window.appearance = NSAppearance(named: .aqua)
         window.level = .modalPanel
 
         let root = NSStackView()

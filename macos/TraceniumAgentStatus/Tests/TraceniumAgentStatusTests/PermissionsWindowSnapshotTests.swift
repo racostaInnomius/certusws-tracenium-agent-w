@@ -96,4 +96,79 @@ final class PermissionsWindowSnapshotTests: XCTestCase {
         XCTAssertTrue(offenders.isEmpty,
                       "esto queda debajo de los botones del sistema: \(offenders.joined(separator: ", "))")
     }
+
+    /// 🔴 En modo oscuro los botones salían VACÍOS.
+    ///
+    /// Captura del usuario (25-sep-2026): «Granted» y «Done» sin texto. El
+    /// texto estaba, pintado de blanco sobre nuestra tarjeta blanca.
+    ///
+    /// La causa no es el tema: es que `refresh()` y `apply()` asignaban
+    /// `.title`, y ESO DESCARTA el `attributedTitle` —y con él el color que le
+    /// habíamos puesto—. El botón pasa a pintarse con el color de etiqueta del
+    /// sistema, que en claro es oscuro (colaba por accidente) y en oscuro es
+    /// blanco.
+    ///
+    /// Se comprueba la propiedad que importa —que cada botón lleve SU color— y
+    /// no que la ventana «se vea bien», que no es medible.
+    func testEveryButtonKeepsItsOwnColour() throws {
+        let w = PermissionsWindow()
+        w.locationState = { .granted }
+        guard let content = w.contentViewForTests else { throw XCTSkip("sin contenido") }
+        w.present()
+        defer { w.close() }
+        content.layoutSubtreeIfNeeded()
+
+        func deep(_ v: NSView) -> [NSView] { v.subviews + v.subviews.flatMap(deep) }
+        let buttons = deep(content).compactMap { $0 as? NSButton }
+        XCTAssertFalse(buttons.isEmpty, "no se encontró ningún botón")
+
+        // ⚠️ La aserción NO puede ser «tiene attributedTitle»: AppKit lo
+        // SINTETIZA a partir de `.title`, así que siempre hay uno y con color.
+        // La primera versión de esta prueba comprobaba eso y pasaba aunque se
+        // devolviera el bug. Lo que distingue un caso del otro es CUÁL es el
+        // color: los nuestros son literales de marca; el sintetizado es el
+        // color de etiqueta del sistema, que sigue el tema del equipo.
+        let brand: [NSColor] = [
+            NSColor(srgbRed: 0x1C/255.0, green: 0x20/255.0, blue: 0x27/255.0, alpha: 1), // ink
+            NSColor(srgbRed: 0x5C/255.0, green: 0x64/255.0, blue: 0x6E/255.0, alpha: 1), // inkSoft
+            NSColor(srgbRed: 0x3C/255.0, green: 0x7C/255.0, blue: 0x7C/255.0, alpha: 1), // teal
+            NSColor(srgbRed: 0x2F/255.0, green: 0x60/255.0, blue: 0x60/255.0, alpha: 1)  // teal oscuro
+        ]
+        func isBrand(_ c: NSColor?) -> Bool {
+            guard let c = c?.usingColorSpace(.sRGB) else { return false }
+            return brand.contains { b in
+                let b = b.usingColorSpace(.sRGB)!
+                return abs(b.redComponent - c.redComponent) < 0.01
+                    && abs(b.greenComponent - c.greenComponent) < 0.01
+                    && abs(b.blueComponent - c.blueComponent) < 0.01
+            }
+        }
+
+        for b in buttons {
+            let attr = b.attributedTitle
+            XCTAssertGreaterThan(attr.length, 0, "botón sin texto")
+            var range = NSRange(location: 0, length: 0)
+            let colour = attr.attribute(.foregroundColor, at: 0, effectiveRange: &range) as? NSColor
+            XCTAssertTrue(
+                isBrand(colour),
+                "«\(attr.string)» no lleva un color de marca sino "
+                + "\(String(describing: colour)): alguien asignó `.title` y AppKit "
+                + "lo repintó con el color de etiqueta del sistema — en modo oscuro "
+                + "eso es blanco sobre nuestra tarjeta blanca"
+            )
+        }
+    }
+
+    /// Y la otra mitad: la apariencia se fija, para que lo que dibuja el
+    /// SISTEMA encima (botones de ventana, atenuado de un control desactivado)
+    /// no siga el tema del equipo sobre una paleta escrita para tarjeta clara.
+    func testTheWindowPinsTheLightAppearance() throws {
+        let w = PermissionsWindow()
+        w.locationState = { .granted }
+        w.present()
+        defer { w.close() }
+        XCTAssertEqual(w.contentViewForTests?.window?.appearance?.name, .aqua,
+                       "sin fijar la apariencia, la mitad de los Macs pintan "
+                       + "los controles del sistema en claro sobre nuestro blanco")
+    }
 }

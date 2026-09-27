@@ -255,7 +255,26 @@ final class PermissionsWindow: NSObject {
         apply(loc, to: locationChip, button: locationButton)
         apply(screen, to: screenChip, button: screenButton)
 
-        doneButton.title = (loc == .granted && screen == .granted) ? "Done" : "Not now"
+        setTitle(doneButton,
+                 (loc == .granted && screen == .granted) ? "Done" : "Not now",
+                 Self.ink)
+    }
+
+    /// Pone el texto de un botón SIN perder su color.
+    ///
+    /// 🔴 Asignar `.title` descarta el `attributedTitle`, y con él el color que
+    /// le habíamos dado: el botón pasa a pintarse con el color de etiqueta del
+    /// sistema. En modo claro ese color es oscuro y colaba por accidente; en
+    /// MODO OSCURO es blanco, sobre nuestra tarjeta blanca. Resultado en el Mac
+    /// del usuario (25-sep-2026): los botones «Granted» y «Done» aparecían
+    /// vacíos — el texto estaba ahí, pintado de blanco sobre blanco.
+    ///
+    /// Por eso aquí nunca se toca `.title`.
+    private func setTitle(_ button: NSButton, _ text: String, _ color: NSColor) {
+        button.attributedTitle = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+            .foregroundColor: color
+        ])
     }
 
     private func apply(_ state: State, to chip: NSTextField, button: NSButton) {
@@ -264,12 +283,12 @@ final class PermissionsWindow: NSObject {
             chip.stringValue = "Granted"
             chip.textColor = Self.good
             button.isEnabled = false
-            button.title = "Granted"
+            setTitle(button, "Granted", Self.inkSoft)
         case .missing:
             chip.stringValue = "Not granted"
             chip.textColor = Self.inkSoft
             button.isEnabled = true
-            button.title = "Allow…"
+            setTitle(button, "Allow…", Self.teal)
         case .unknown:
             // ⚠️ "No lo sé" NO se pinta como "no concedido". Pasa cuando el
             // helper no está instalado (desarrollo), y decir que falta un
@@ -278,7 +297,7 @@ final class PermissionsWindow: NSObject {
             chip.stringValue = "Unknown"
             chip.textColor = Self.inkSoft
             button.isEnabled = false
-            button.title = "Allow…"
+            setTitle(button, "Allow…", Self.inkSoft)
         }
     }
 
@@ -311,6 +330,18 @@ final class PermissionsWindow: NSObject {
 
     private func build() {
         window.title = "Tracenium"
+        // ⚠️ Apariencia CLARA forzada, y no por capricho.
+        //
+        // Toda la paleta de esta ventana está escrita a mano para una tarjeta
+        // blanca: tinta oscura, píldoras teal, cromo de marca. Lo que NO
+        // controlamos es lo que dibuja el sistema encima —los tres botones de
+        // la ventana, el atenuado de un botón desactivado, cualquier control
+        // futuro—, y eso sigue la apariencia del equipo. En modo oscuro esas
+        // piezas se pintaban claras sobre nuestro blanco.
+        //
+        // Fijar la apariencia hace que la paleta escrita a mano sea correcta
+        // POR CONSTRUCCIÓN, en vez de correcta sólo en la mitad de los Macs.
+        window.appearance = NSAppearance(named: .aqua)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.backgroundColor = .white
