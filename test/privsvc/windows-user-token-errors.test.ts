@@ -246,23 +246,33 @@ describe("captura del escritorio de inicio de sesión (sólo servidores)", () =>
       e,
       "sin la comprobación del SO, un error clasificando encendería el "
         + "escritorio seguro en el portátil de una persona",
-    ).toContain("IsWindowsServerSku()");
-    // Y unidas por AND negado: basta que falte una para rendirse.
-    expect(e).toContain("!_serverConsoleAllowed || !IsWindowsServerSku()");
+    ).toContain("IsServerProductType(sku)");
+    // Las dos por separado, cada una con su mensaje: el genérico costó una
+    // ronda de despliegue sin poder distinguirlas.
+    expect(e).toContain("!_serverConsoleAllowed");
+    expect(e).toContain("!IsServerProductType(sku)");
   });
 
   it("⚠️ la SKU se decide por el SO, no por nada editable desde el portal", () => {
     const sku = codeOnly(
-      text.slice(text.indexOf("private static bool IsWindowsServerSku"),
+      text.slice(text.indexOf("private static string? WindowsProductType"),
                  text.indexOf("private static uint? PickInteractiveSession"))
     );
     expect(sku).toContain("ProductOptions");
     expect(sku).toContain("ServerNT");
     expect(sku).toContain("LanmanNT");
     // Ante la duda, NO: no se enciende una función privilegiada por no poder
-    // leer una cadena del registro.
+    // leer una cadena del registro. El dato devuelve `null` («ilegible») y el
+    // juicio sólo dice sí a las dos cadenas de servidor, así que `null` cae
+    // del lado seguro sin que nadie tenga que escribir un `false`.
     expect(sku).toContain("catch");
-    expect(sku).toContain("return false;");
+    expect(sku).toContain("return null;");
+    const judge = codeOnly(
+      text.slice(text.indexOf("private static bool IsServerProductType"),
+                 text.indexOf("private static bool IsWindowsServerSku"))
+    );
+    expect(judge).toContain("ServerNT");
+    expect(judge).toContain("LanmanNT");
   });
 
   it("el helper va a winsta0\\winlogon SÓLO en ese caso", () => {
@@ -330,7 +340,7 @@ describe("UAC: seguir el escritorio seguro, y sólo por UAC", () => {
   function uac(): string {
     const i = text.indexOf("private static bool UacPromptActive");
     if (i < 0) return "";
-    return codeOnly(text.slice(i, text.indexOf("private static bool IsWindowsServerSku", i)));
+    return codeOnly(text.slice(i, text.indexOf("private static string? WindowsProductType", i)));
   }
 
   it("⚠️ la señal es consent.exe, NO «perdí el escritorio»", () => {
@@ -352,6 +362,7 @@ describe("UAC: seguir el escritorio seguro, y sólo por UAC", () => {
   it("⚠️ si no se puede enumerar, NO se salta al escritorio seguro", () => {
     const u = uac();
     const cat = u.slice(u.lastIndexOf("catch"));
+    expect(u, "ya no existe la detección de UAC").not.toBe("");
     expect(
       cat,
       "fallar hacia «hay UAC» pondría al operador en el escritorio seguro sin motivo",
