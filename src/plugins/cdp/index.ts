@@ -640,7 +640,20 @@ async function collectOnce(
     try {
       const { collectProcessLibraries } = await import("./providers/process-libraries");
       const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
-      const block = await collectProcessLibraries();
+      const block = await collectProcessLibraries({
+        // Linux: el agente no es root; el PrivSvc lee /proc por él. En un
+        // PrivSvc anterior el método no existe → null → el bloque lo dice.
+        viaPrivSvc: async (ports) => {
+          const resp = await ctx.priv.call({
+            v: 1,
+            id: `cdpprocmaps_${Date.now()}`,
+            method: "cdp.process.maps",
+            params: { ports },
+            meta: { tenantId: ctx.enrollment?.tenantId, deviceId: ctx.enrollment?.deviceId }
+          });
+          return resp?.ok && Array.isArray(resp.result?.processes) ? resp.result.processes : null;
+        }
+      });
       // El digest ignora los PID: un reinicio de nginx cambia el pid y no
       // cambia nada de lo que se afirma (la identidad es la imagen), asi
       // que contarlo como cambio seria un tick por cada reinicio.

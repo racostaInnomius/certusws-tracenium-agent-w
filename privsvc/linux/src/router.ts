@@ -72,6 +72,7 @@ import {
 } from "./cdp-keys";
 import { handleCdpCertInstall } from "./cdp-cert-install";
 import { handleCdpAcmeHttp01 } from "./cdp-acme-http01";
+import { collectProcessMaps } from "./cdp-process-maps";
 import { handleCdpAnchorState } from "./cdp-anchor-state";
 import { handleCdpAnchorDistrust } from "./cdp-anchor-distrust";
 
@@ -192,6 +193,12 @@ export async function routeRequest(req: PrivSvcRequest, push: PushSink): Promise
     // forma fija, sólo bajo raíces permitidas y sin seguir enlaces.
     case "cdp.acme.http01":
       return handleCdpAcmeHttp01(req);
+
+    // Ola 1.5 — quién escucha en cada puerto y qué .so mapea. El agente de
+    // Linux no es root y sin esto no ve ni nginx ni sshd. Sólo lectura de
+    // /proc, sólo por PUERTOS (nunca rutas ni pids del llamante).
+    case "cdp.process.maps":
+      return success(req.id, { processes: collectProcessMaps((req.params as any)?.ports) });
 
     // ADR-0011 fase 0, paso 1. En Linux responde «no aplica» con su
     // motivo: callarse haria indistinguible una decision de diseno

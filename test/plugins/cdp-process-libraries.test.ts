@@ -14,6 +14,7 @@ import {
   parseLsofLibraries,
   parseProcMaps,
   parseWindowsModules,
+  parseVmmapImages,
   serviceFromCgroup,
   versionFromBinary,
   versionFromPath,
@@ -28,7 +29,12 @@ describe("classifyLibraryPath", () => {
     expect(classifyLibraryPath("/usr/lib/libnss3.so")).toBe("nss");
     expect(classifyLibraryPath("/usr/lib/libgcrypt.so.20")).toBe("gcrypt");
     expect(classifyLibraryPath("C:\\Windows\\System32\\bcrypt.dll")).toBe("schannel");
-    expect(classifyLibraryPath("/usr/lib/libssl.48.dylib")).toBe("openssl");
+    // ⚠️ /usr/lib/libssl.48.dylib y libcrypto.46.dylib son la LibreSSL DEL
+    // SISTEMA de macOS; este test la daba por OpenSSL (el patrón genérico
+    // casaba antes). Un OpenSSL de Homebrew sí es openssl.
+    expect(classifyLibraryPath("/usr/lib/libssl.48.dylib")).toBe("libressl");
+    expect(classifyLibraryPath("/usr/lib/libcrypto.46.dylib")).toBe("libressl");
+    expect(classifyLibraryPath("/opt/homebrew/Cellar/openssl@3/3.5.0/lib/libssl.3.dylib")).toBe("openssl");
   });
 
   it("lo que no es una libreria criptografica no cuenta", () => {
@@ -239,5 +245,92 @@ describe("collectProcessLibraries", () => {
       libraries: new Map([[900, [{ path: "C:\\App\\libssl-3-x64.dll", version: "3.2.1.0" }]]])
     });
     expect(r.libraries[0]).toMatchObject({ library: "openssl", version: "3.2.1.0", versionSource: "module" });
+  });
+});
+
+describe("macOS: la pila del sistema, que lsof no ve (caché compartida de dyld)", () => {
+  const mac = { platform: "darwin" as NodeJS.Platform, serviceFor: () => null, readVersion: () => null, realpath: (f: string) => f };
+  const proc = (pid: number, name: string, ports: number[]) => ({ pid, name, path: `/usr/libexec/${name}`, ports });
+
+  it("vmmap: rutas de imágenes, con espacios incluidos", () => {
+    const out = [
+      "__TEXT                      1a2b3c000-1a2b4d000    [   68K    68K     0K     0K] r-x/r-x SM=COW          /System/Library/Frameworks/Security.framework/Versions/A/Security",
+      "__TEXT                      1b0000000-1b0010000    [   64K    64K     0K     0K] r-x/r-x SM=COW  /Applications/Remote Desktop Manager.app/Contents/MacOS/RDM",
+      "MALLOC_TINY                 100000000-100100000    [ 1024K ] rw-/rwx SM=PRV",
+    ].join("\n");
+    expect(parseVmmapImages(out)).toEqual([
+      "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+      "/Applications/Remote Desktop Manager.app/Contents/MacOS/RDM",
+    ]);
+  });
+
+  it("⭐ un daemon de Apple sin nada en lsof sale con Security.framework gracias a vmmap", async () => {
+    const asked: number[] = [];
+    const r = await collectProcessLibraries({
+      ...mac,
+      processes: [proc(10, "rapportd", [49152]), proc(11, "nginx", [443])],
+      libraries: new Map([[11, [{ path: "/opt/homebrew/Cellar/openssl@3/3.5.0/lib/libssl.3.dylib" }]]]),
+      vmmapImages: async (pid) => {
+        asked.push(pid);
+        return ["/System/Library/Frameworks/Security.framework/Versions/A/Security", "/usr/lib/libcrypto.46.dylib"];
+      },
+    });
+    // Sólo se le pregunta a vmmap por quien no tenía nada reconocido (es caro).
+    expect(asked).toEqual([10]);
+    const rapportd = r.libraries.filter((l) => l.process === "rapportd").map((l) => l.library).sort();
+    expect(rapportd).toEqual(["libressl", "security-framework"]);
+    expect(r.libraries.find((l) => l.process === "nginx")?.library).toBe("openssl");
+  });
+
+  it("el presupuesto de vmmap corta y lo dice", async () => {
+    let t = 0;
+    const many = Array.from({ length: 5 }, (_, i) => proc(100 + i, `d${i}`, [1000 + i]));
+    const r = await collectProcessLibraries({
+      ...mac,
+      processes: many,
+      libraries: new Map(),
+      now: () => (t += 6_000),
+      vmmapImages: async () => ["/System/Library/Frameworks/Security.framework/Versions/A/Security"],
+    });
+    expect(r.truncated).toBe(true);
+  });
+});
+
+describe("Linux sin root: el PrivSvc lee /proc por el agente", () => {
+  const lin = { platform: "linux" as NodeJS.Platform, readVersion: () => null, realpath: (f: string) => f, isRoot: false };
+
+  it("⭐ los procesos, sus puertos, su unidad y sus .so vienen del PrivSvc", async () => {
+    const asked: number[][] = [];
+    const r = await collectProcessLibraries({
+      ...lin,
+      listeningPorts: async () => [22, 443],
+      viaPrivSvc: async (ports) => {
+        asked.push(ports);
+        return [{ pid: 900, name: "nginx", path: "/usr/sbin/nginx", service: "nginx.service", ports: [443], libs: ["/usr/lib/x86_64-linux-gnu/libssl.so.3", "/usr/lib/x86_64-linux-gnu/libc.so.6"] }];
+      },
+    });
+    expect(asked).toEqual([[22, 443]]);
+    expect(r.processes).toBe(1);
+    expect(r.libraries).toEqual([
+      expect.objectContaining({ process: "nginx", service: "nginx.service", ports: [443], library: "openssl", libraryPath: "/usr/lib/x86_64-linux-gnu/libssl.so.3" }),
+    ]);
+  });
+
+  it("⭐ sin PrivSvc que conteste lo DICE: una lista vacía se leería como «nadie carga criptografía»", async () => {
+    const r = await collectProcessLibraries({ ...lin, listeningPorts: async () => [443], viaPrivSvc: async () => null });
+    expect(r.unsupported).toBe("linux:not-root-and-privsvc-unavailable");
+    expect(r.libraries).toEqual([]);
+  });
+
+  it("como root sigue leyendo /proc directamente (no pregunta al PrivSvc)", async () => {
+    let asked = false;
+    await collectProcessLibraries({
+      ...lin,
+      isRoot: true,
+      processes: [{ pid: 1, name: "sshd", ports: [22] }],
+      libraries: new Map([[1, [{ path: "/usr/lib/libcrypto.so.3" }]]]),
+      viaPrivSvc: async () => ((asked = true), []),
+    });
+    expect(asked).toBe(false);
   });
 });

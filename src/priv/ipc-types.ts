@@ -70,6 +70,8 @@ export type PrivSvcMethod =
   | "cdp.cert.install"
   // ADR-0033 F2b — desafío HTTP-01 en el webroot.
   | "cdp.acme.http01"
+  // Ola 1.5 — dueños de puertos y .so mapeadas, leídos como root (Linux).
+  | "cdp.process.maps"
   | "cdp.key.list"
   | "cdp.key.destroy"
   | "crypto.cert.renew"

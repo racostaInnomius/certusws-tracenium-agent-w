@@ -65,6 +65,9 @@ const VERSION_SCAN_BYTES = 12 * 1024 * 1024;
  * siguiente pregunta.
  */
 const LIBRARY_PATTERNS: Array<{ re: RegExp; library: string }> = [
+  // ⚠️ ANTES que OpenSSL: /usr/lib/libcrypto.46.dylib es la LibreSSL del
+  // sistema de macOS, y el patrón genérico `libcrypto.` la contaba como OpenSSL.
+  { re: /^\/usr\/lib\/lib(ssl|crypto)\.[\d.]+\.dylib$/, library: "libressl" },
   { re: /\blibssl[.\-]/i, library: "openssl" },
   { re: /\blibcrypto[.\-]/i, library: "openssl" },
   { re: /\blibgnutls[.\-]/i, library: "gnutls" },
@@ -199,6 +202,36 @@ export function parseLsofLibraries(output: string): Map<number, string[]> {
   return out;
 }
 
+/**
+ * `vmmap <pid>` → rutas de las imágenes cargadas.
+ *
+ * Existe porque desde Big Sur las librerías DEL SISTEMA (Security.framework,
+ * la LibreSSL de /usr/lib, BoringSSL) viven en la caché compartida de dyld y
+ * no son ficheros: `lsof` no las lista y el colector no veía la pila TLS de
+ * ningún daemon de Apple. `vmmap` (del sistema base, no de Xcode) sí las
+ * enseña. Formato de línea: `__TEXT  <rango> [...] r-x/r-x SM=COW  /ruta`.
+ */
+export function parseVmmapImages(output: string): string[] {
+  const out = new Set<string>();
+  for (const line of String(output).split("\n")) {
+    const m = /SM=\S+\s+(\/.+?)\s*$/.exec(line);
+    if (m) out.add(m[1]);
+  }
+  return [...out];
+}
+
+/** Tope de tiempo para `vmmap` (≈1,5 s por proceso). */
+const VMMAP_BUDGET_MS = 15_000;
+const VMMAP_TIMEOUT_MS = 8_000;
+
+async function vmmapImagesReal(pid: number): Promise<string[]> {
+  const { stdout } = await execFileAsync("/usr/bin/vmmap", [String(pid)], {
+    timeout: VMMAP_TIMEOUT_MS,
+    maxBuffer: CMD_MAX_BUFFER
+  }).catch((err: any) => ({ stdout: typeof err?.stdout === "string" ? err.stdout : "" }));
+  return parseVmmapImages(stdout);
+}
+
 // ── Windows ─────────────────────────────────────────────────────────
 
 /**
@@ -228,8 +261,23 @@ export function parseWindowsModules(json: string): Map<number, Array<{ path: str
   return out;
 }
 
+/** Lo que devuelve el PrivSvc de Linux con `cdp.process.maps` (root). */
+export type PrivProcessMaps = { pid: number; name?: string; path?: string; service?: string; ports: number[]; libs: string[] };
+
 type Options = {
   platform?: NodeJS.Platform;
+  /**
+   * Linux sin root: pide al PrivSvc dueños de puertos y .so mapeadas. `null`
+   * = el PrivSvc no pudo (versión anterior, caído). Sin esto el agente, que
+   * corre como `tracenium`, no veía NINGÚN servicio de otro usuario.
+   */
+  viaPrivSvc?: (ports: number[]) => Promise<PrivProcessMaps[] | null>;
+  /** Semilla de test: ¿corre como root? */
+  isRoot?: boolean;
+  /** Semilla de test: puertos a la escucha. */
+  listeningPorts?: () => Promise<number[]>;
+  /** Semilla de test / macOS: imágenes cargadas de un pid según `vmmap`. */
+  vmmapImages?: (pid: number) => Promise<string[]>;
   /** Semilla de test: procesos a mirar. */
   processes?: Array<ProcessOwner & { ports: number[] }>;
   /** Semilla de test: pid → rutas de librerias. */
@@ -281,10 +329,12 @@ async function loadedLibraries(
   }
 
   if (platform === "darwin") {
+    // ⚠️ lsof sale con 1 en cuanto UN pid ya no existe (el proceso terminó
+    // entre listar y preguntar), y aquí se tiraba la salida entera.
     const { stdout } = await execFileAsync("lsof", ["-p", pids.join(","), "-Fn", "-w"], {
       timeout: CMD_TIMEOUT_MS,
       maxBuffer: CMD_MAX_BUFFER
-    }).catch(() => ({ stdout: "" }));
+    }).catch((err: any) => ({ stdout: typeof err?.stdout === "string" ? err.stdout : "" }));
     // `-Fn` da un formato por lineas etiquetadas; se pide tambien el
     // formato clasico por si el sistema no lo soporta.
     if (stdout.trim()) {
@@ -347,12 +397,59 @@ export async function collectProcessLibraries(options: Options = {}): Promise<Cd
     return result;
   }
 
-  const processes = options.processes ?? (await listeningProcesses(platform));
+  let processes: Array<ProcessOwner & { ports: number[] }>;
+  let libs: Map<number, Array<{ path: string; version?: string }>>;
+  let serviceFor = options.serviceFor ?? defaultServiceFor(platform);
+
+  const isRoot = options.isRoot ?? (typeof process.getuid === "function" ? process.getuid() === 0 : true);
+  if (platform === "linux" && !isRoot && !options.processes) {
+    // El agente de Linux corre como `tracenium`: sin root no ve los /proc de
+    // nginx, sshd o postgres. Se pregunta al PrivSvc, que sí es root.
+    const ports = await (options.listeningPorts ?? listListeningPorts)();
+    if (ports.length === 0) return result;
+    const priv = options.viaPrivSvc ? await options.viaPrivSvc(ports).catch(() => null) : null;
+    if (!priv) {
+      // Decirlo: una lista vacía se leería como «ningún servicio carga
+      // criptografía», y el informe de agilidad lo tomaría por bueno.
+      result.unsupported = "linux:not-root-and-privsvc-unavailable";
+      return result;
+    }
+    const top = priv.slice(0, MAX_PROCESSES);
+    processes = top.map((p) => ({ pid: p.pid, name: p.name, path: p.path, ports: p.ports }));
+    libs = new Map(top.map((p) => [p.pid, p.libs.map((path) => ({ path }))]));
+    const services = new Map(top.map((p) => [p.pid, p.service ?? null]));
+    serviceFor = options.serviceFor ?? ((pid: number) => services.get(pid) ?? null);
+  } else {
+    processes = options.processes ?? (await listeningProcesses(platform));
+    if (processes.length === 0) {
+      result.processes = 0;
+      return result;
+    }
+    libs = options.libraries ?? (await loadedLibraries(platform, processes.map((p) => p.pid)));
+  }
   result.processes = processes.length;
   if (processes.length === 0) return result;
 
-  const libs = options.libraries ?? (await loadedLibraries(platform, processes.map((p) => p.pid)));
-  const serviceFor = options.serviceFor ?? defaultServiceFor(platform);
+  if (platform === "darwin") {
+    // La pila del sistema no aparece en lsof (caché compartida de dyld): a
+    // los procesos sin ninguna librería reconocida se les pregunta a vmmap,
+    // con tope de tiempo.
+    const vmmap = options.vmmapImages ?? vmmapImagesReal;
+    const vmmapDeadline = now() + VMMAP_BUDGET_MS;
+    for (const proc of processes) {
+      const known = (libs.get(proc.pid) ?? []).some((l) => classifyLibraryPath(l.path));
+      if (known) continue;
+      if (now() >= vmmapDeadline) {
+        result.truncated = true;
+        break;
+      }
+      const images = await vmmap(proc.pid);
+      if (images.length === 0) continue;
+      const list = libs.get(proc.pid) ?? [];
+      for (const path of images) if (!list.some((l) => l.path === path)) list.push({ path });
+      libs.set(proc.pid, list);
+    }
+  }
   const readVersion = options.readVersion ?? readVersionFromFile;
   const realpath =
     options.realpath ??
