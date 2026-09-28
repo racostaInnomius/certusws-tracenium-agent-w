@@ -631,16 +631,36 @@ $status = if ($mode -eq 'download') {{
     ///     90 * 60_000 (90 min — covers even kernel + .NET runtime
     ///     updates with download).
     /// </summary>
+    /// <summary>
+    /// UTF-8 en los DOS extremos del tubo.
+    /// </summary>
+    /// <remarks>
+    /// 🔴 En un Windows en español los títulos llegaban como
+    /// «2026-09 Actualizaci¢n de seguridad (KB5129195)» (3 de 13 en T1, 28-sep).
+    /// PowerShell escribe la salida redirigida en la página OEM de la consola
+    /// (CP850: «ó» = 0xA2) y .NET, sin StandardOutputEncoding, la leía como ANSI
+    /// 1252, donde 0xA2 es «¢». Se fija UTF-8 en los dos lados. Sin BOM: un BOM
+    /// delante del JSON rompería su lectura en el primer carácter.
+    /// El preámbulo va en try: si la consola no admitiera el cambio, la salida
+    /// sigue como antes y los KB (ASCII) no se ven afectados.
+    /// ⚠️ ASCII puro y sin líneas que empiecen por `|`: lo parsea Windows
+    /// PowerShell 5.1 (ver powershell-scripts-parse.test.ts).
+    /// </remarks>
+    internal const string Utf8OutputPrelude =
+        "try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch {}\n";
+
     private static PsResult RunPs(string command, int timeoutMs)
     {
-        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
+        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(Utf8OutputPrelude + command));
         var psi = new ProcessStartInfo("powershell",
             $"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}")
         {
             CreateNoWindow = true,
             UseShellExecute = false,
             RedirectStandardOutput = true,
-            RedirectStandardError = true
+            RedirectStandardError = true,
+            StandardOutputEncoding = new UTF8Encoding(false),
+            StandardErrorEncoding = new UTF8Encoding(false)
         };
 
         using var proc = Process.Start(psi);
