@@ -17,7 +17,7 @@
 // cierre falló — y el enforcer lo registra.
 
 import { describe, it, expect } from "vitest";
-import { effectiveMode } from "../../src/security/enforcer";
+import { effectiveMode, guardedMode, AUTO_GUARDED_CHECK_IDS } from "../../src/security/enforcer";
 
 const NO_DEFAULT = {} as any;
 
@@ -73,5 +73,27 @@ describe("effectiveMode — gate de PMP", () => {
     // comportamiento no cambia respecto a antes de F2. El cierre que de verdad
     // protege el parque es el del backend, no éste.
     expect(effectiveMode({ mode: "auto" }, NO_DEFAULT)).toBe("auto");
+  });
+});
+
+// ADR-0035 D1 — el firewall no se enciende por política, ni con PMP.
+describe("guardedMode — el firewall se queda en report-only", () => {
+  it("los tres remediadores de firewall bajan auto a report-only", () => {
+    for (const id of ["windows.firewall.profiles_enabled", "linux.firewall.enabled", "macos.firewall.enabled"]) {
+      expect(guardedMode(id, "auto")).toBe("report-only");
+      expect(AUTO_GUARDED_CHECK_IDS.has(id)).toBe(true);
+    }
+  });
+
+  it("también cuando el auto llega heredado de defaultMode", () => {
+    const mode = effectiveMode({ required: true }, { defaultMode: "auto" } as any, true);
+    expect(guardedMode("windows.firewall.profiles_enabled", mode)).toBe("report-only");
+  });
+
+  it("report-only y off no cambian; el resto de remediadores conserva auto", () => {
+    expect(guardedMode("windows.firewall.profiles_enabled", "off")).toBe("off");
+    expect(guardedMode("linux.firewall.enabled", "report-only")).toBe("report-only");
+    expect(guardedMode("windows.network_sharing.smbv1_disabled", "auto")).toBe("auto");
+    expect(guardedMode("linux.ssh.root_login_disabled", "auto")).toBe("auto");
   });
 });

@@ -125,7 +125,7 @@ public class FirewallStatusShapeTests
     {
         var gpo = new Dictionary<string, FirewallStatusShape.GpoProfile>
         {
-            ["domain"] = new() { EnableFirewall = false, AnyValue = true },
+            ["domain"] = new() { EnableFirewall = false, ManagesTraffic = true },
         };
         var shaped = FirewallStatusShape.FromScriptOutput(
             "{\"profiles\":[{\"Name\":\"Domain\",\"Enabled\":\"False\"},{\"Name\":\"Public\",\"Enabled\":\"True\"}]}", gpo);
@@ -134,6 +134,19 @@ public class FirewallStatusShapeTests
         Assert.Equal(true, Settings(shaped!, "domain")["gpoManaged"]);
         Assert.Null(Settings(shaped!, "public")["gpoEnabled"]);
         Assert.Equal(false, Settings(shaped!, "public")["gpoManaged"]);
+    }
+
+    [Fact]
+    public void Solo_gobierna_el_trafico_lo_que_decide_que_entra()
+    {
+        // 🔴 MSIG-VEEAM-PC, 27-sep: la subclave Logging (nuestra remediación de
+        // LogDroppedPackets) lo marcaba «gestionado por GPO». Los nombres de
+        // subclave no llegan aquí: sólo los VALORES de la clave del perfil.
+        Assert.False(FirewallStatusShape.GpoManagesTraffic(Array.Empty<string>()));
+        Assert.False(FirewallStatusShape.GpoManagesTraffic(new[] { "DisableNotifications" }));
+        Assert.True(FirewallStatusShape.GpoManagesTraffic(new[] { "DisableNotifications", "EnableFirewall" }));
+        Assert.True(FirewallStatusShape.GpoManagesTraffic(new[] { "defaultinboundaction" }));
+        Assert.True(FirewallStatusShape.GpoManagesTraffic(new[] { "AllowLocalPolicyMerge" }));
     }
 
     [Fact]

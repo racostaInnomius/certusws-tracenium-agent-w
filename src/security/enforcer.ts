@@ -344,6 +344,29 @@ export function effectiveMode(
   return resolved;
 }
 
+// ADR-0035 D1 — el firewall no se ENCIENDE por política.
+//
+// Con `auto`, este enforcer encendía los perfiles del firewall en cada equipo
+// del tenant en el mismo pase: toda conexión entrante que ninguna regla
+// permite dejaba de funcionar a la vez en toda la flota. Es el «fallan cosas»
+// por el que los clientes no encienden el firewall; ADR-0035 lo resuelve con
+// un plan por equipo sobre el tráfico observado, no con un interruptor.
+//
+// Cinturón, como el de PMP de arriba: el backend ya rechaza guardar
+// `firewall.mode: "auto"` y lo degrada al proyectar la política (también el
+// heredado de `defaultMode`). Si aun así llega, aquí se queda en report-only:
+// el drift se sigue detectando y reportando, y el caller lo registra.
+export const AUTO_GUARDED_CHECK_IDS: ReadonlySet<string> = new Set([
+  "windows.firewall.profiles_enabled",
+  "linux.firewall.enabled",
+  "macos.firewall.enabled",
+]);
+
+/** El modo con el que se evalúa un remediador concreto, tras la guarda de ADR-0035. */
+export function guardedMode(checkId: string, mode: SecurityMode): SecurityMode {
+  return mode === "auto" && AUTO_GUARDED_CHECK_IDS.has(checkId) ? "report-only" : mode;
+}
+
 type EnforceOutcome =
   | "skipped_off"
   | "skipped_no_value"
@@ -407,6 +430,7 @@ export async function runSecurityEnforce(
   // detección que ha pagado.
   const mayRemediate = ctx.policyRuntime.pluginEnabled?.("pmp") !== false;
   const degradedCapabilities: string[] = [];
+  const guardedChecks: string[] = [];
 
   // Iterate every potential remediator. We do this serially because
   // (a) the privsvc lock makes parallelism a no-op anyway, and
@@ -427,7 +451,9 @@ export async function runSecurityEnforce(
       continue;
     }
 
-    const mode = effectiveMode(cap, policy, mayRemediate);
+    const resolvedMode = effectiveMode(cap, policy, mayRemediate);
+    const mode = guardedMode(entry.checkId, resolvedMode);
+    if (mode !== resolvedMode) guardedChecks.push(entry.checkId);
     if (!mayRemediate && cap?.mode === "auto") {
       // Llegó `auto` sin derecho a PMP: el degradado del backend no actuó.
       // No es fatal —acabamos de bajarlo a report-only— pero SÍ es señal de
@@ -652,6 +678,13 @@ export async function runSecurityEnforce(
   // política llegó con `auto` a un tenant sin PMP. No es fatal (ya lo bajamos a
   // report-only), pero sin esta línea el síntoma —nadie remedia— es
   // indistinguible de "así está configurado".
+  if (guardedChecks.length > 0) {
+    // Llegó `auto` para el firewall: el cierre del backend (ADR-0035) no actuó.
+    ctx.logger?.warn?.("[security] `auto` recibido para el firewall; se queda en report-only (ADR-0035)", {
+      checkIds: guardedChecks,
+    });
+  }
+
   if (degradedCapabilities.length > 0) {
     ctx.logger?.warn?.("[security] `auto` recibido sin derecho a pmp; degradado a report-only", {
       capabilities: degradedCapabilities,

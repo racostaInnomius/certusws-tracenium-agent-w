@@ -476,7 +476,7 @@ public static class SecurityCompliance
                 using var k = baseKey.OpenSubKey($@"{FirewallPolicyKey}\{sub}");
                 if (k is null) continue;
                 bool? enable = k.GetValue("EnableFirewall") is int v ? v != 0 : null;
-                out_[name] = new FirewallStatusShape.GpoProfile { EnableFirewall = enable, AnyValue = k.ValueCount > 0 || k.SubKeyCount > 0 };
+                out_[name] = new FirewallStatusShape.GpoProfile { EnableFirewall = enable, ManagesTraffic = FirewallStatusShape.GpoManagesTraffic(k.GetValueNames()) };
             }
             return out_;
         }

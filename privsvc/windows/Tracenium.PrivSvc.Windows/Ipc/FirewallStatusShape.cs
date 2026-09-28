@@ -136,9 +136,31 @@ try {
     public sealed class GpoProfile
     {
         public bool? EnableFirewall { get; init; }
-        /// <summary>Hay al menos un valor de firewall bajo la clave de directiva de este perfil.</summary>
-        public bool AnyValue { get; init; }
+        /// <summary>
+        /// La directiva fija algo que decide QUÉ ENTRA (ver GpoManagesTraffic).
+        /// Es lo que hace que un cambio local lo pise la GPO.
+        /// </summary>
+        public bool ManagesTraffic { get; init; }
     }
+
+    /// <summary>
+    /// Valores de directiva de un perfil que deciden qué entra. Los mismos que
+    /// la guarda de GenericWriteShape: encender, acción por defecto, si valen
+    /// las reglas locales.
+    /// </summary>
+    private static readonly HashSet<string> TrafficValues = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "EnableFirewall", "DefaultInboundAction", "DefaultOutboundAction", "AllowLocalPolicyMerge", "DoNotAllowExceptions",
+    };
+
+    /// <summary>
+    /// ¿La directiva de este perfil gobierna el tráfico? 🔴 27-sep: contaba
+    /// CUALQUIER valor o subclave, y la subclave `Logging` que escribe nuestra
+    /// propia remediación de LogDroppedPackets marcaba MSIG-VEEAM-PC como
+    /// «gestionado por GPO» sin que ninguna GPO tocara su firewall.
+    /// </summary>
+    public static bool GpoManagesTraffic(IEnumerable<string> valueNames) =>
+        valueNames.Any(n => TrafficValues.Contains(n));
 
     /// <summary>
     /// La salida del script → el bloque `firewall`. Null si la salida no es
@@ -192,7 +214,7 @@ try {
                     // true = cualquier cambio local lo pisa la GPO en el
                     // siguiente refresco (ADR-0035 D5).
                     ["gpoEnabled"] = g?.EnableFirewall,
-                    ["gpoManaged"] = g?.AnyValue ?? false,
+                    ["gpoManaged"] = g?.ManagesTraffic ?? false,
                 };
             }
             if (settings.Count == 0) return null;
