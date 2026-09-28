@@ -148,6 +148,24 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   /etc/ssh/sshd_config                              r,
   /etc/ssh/sshd_config.d/                           r,
   /etc/ssh/sshd_config.d/*                          rw,    # Phase 8 drop-in writes
+  # ── Remediación genérica de Linux (generic-config.ts) ────────────
+  # Sólo NUESTROS ficheros (y el temporal del rename atómico), más los
+  # ficheros «clave = valor» de la lista cerrada con su copia .bak. Lo que
+  # necesita capacidades del kernel (sysctl -w, modprobe -r, augenrules
+  # --load, auditctl -s) NO se concede aquí: va por systemd-run (Ux, abajo),
+  # que lo ejecuta PID 1 como unidad transitoria.
+  /etc/sysctl.d/99-tracenium-hardening.conf{,.tracenium-tmp}      rw,
+  /etc/modprobe.d/tracenium-hardening.conf{,.tracenium-tmp}       rw,
+  /etc/audit/rules.d/60-tracenium.rules{,.tracenium-tmp}          rw,
+  /etc/systemd/journald.conf.d/                                   rw,
+  /etc/systemd/journald.conf.d/99-tracenium-hardening.conf{,.tracenium-tmp}  rw,
+  /etc/systemd/coredump.conf.d/                                   rw,
+  /etc/systemd/coredump.conf.d/99-tracenium-hardening.conf{,.tracenium-tmp}  rw,
+  /etc/security/pwquality.conf{,.tracenium-tmp,.tracenium.*.bak}  rw,
+  /etc/security/faillock.conf{,.tracenium-tmp,.tracenium.*.bak}   rw,
+  /etc/login.defs{,.tracenium-tmp,.tracenium.*.bak}               rw,
+  /etc/audit/auditd.conf{,.tracenium-tmp,.tracenium.*.bak}        rw,
+  /etc/default/apport{,.tracenium-tmp,.tracenium.*.bak}           rw,
   /etc/ssh/ssh_host_*_key                           r,
   /etc/ssh/ssh_host_*_key.pub                       r,
   /sys/kernel/security/apparmor/profiles            r,
@@ -579,6 +597,12 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   /usr/bin/sudo                                     Ux,
   # augenrules --check: ¿las reglas cargadas son las de rules.d? (6.2.3.30).
   /usr/sbin/augenrules                              ix,
+  # ausyscall: tabla nombre→número de syscall por arquitectura. La
+  # remediación genérica comprueba con ella que una regla de auditd no
+  # nombra una syscall que no existe aquí (auditctl pararía la carga).
+  /usr/sbin/ausyscall                               ix,
+  /sbin/ausyscall                                   ix,
+  /usr/bin/ausyscall                                ix,
   # apt-config dump: configuración efectiva de APT (CIS 26.04 1.2.1.12–15).
   /usr/bin/apt-config                               ix,
   /sbin/augenrules                                  ix,

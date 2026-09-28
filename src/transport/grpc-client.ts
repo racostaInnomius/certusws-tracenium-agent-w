@@ -524,8 +524,8 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         // y sólo manda reverts de handlers dedicados a quien lo anuncia.
         try {
           // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const { PMP_REMEDIATE_CAPABILITIES } = require("../plugins/pmp/remediation");
-          baseCaps.push(...PMP_REMEDIATE_CAPABILITIES);
+          const { pmpRemediateCapabilities } = require("../plugins/pmp/remediation");
+          baseCaps.push(...pmpRemediateCapabilities());
         } catch {
           // Sin el módulo, sin las capacidades: el backend despacha como antes.
         }

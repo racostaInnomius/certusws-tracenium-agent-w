@@ -18,6 +18,7 @@ import {
   stateMatchesBefore,
   BATCH_ITEMS_B64_MAX,
   PMP_REMEDIATE_CAPABILITIES,
+  pmpRemediateCapabilities,
 } from "../../src/plugins/pmp/remediation";
 
 function localCheck(): { checkId: string; platform: string } {
@@ -172,5 +173,9 @@ describe("varios fixes en UN job", () => {
 
   it("el agente anuncia las dos capacidades", () => {
     expect(PMP_REMEDIATE_CAPABILITIES).toEqual(["pmp.remediate.batch", "pmp.remediate.revert"]);
+    // El genérico de Linux sólo se anuncia en Linux.
+    expect(pmpRemediateCapabilities("linux")).toEqual(["pmp.remediate.batch", "pmp.remediate.revert", "pmp.remediate.linux_config"]);
+    expect(pmpRemediateCapabilities("win32")).toEqual(["pmp.remediate.batch", "pmp.remediate.revert"]);
+    expect(pmpRemediateCapabilities("darwin")).not.toContain("pmp.remediate.linux_config");
   });
 });

@@ -94,6 +94,17 @@ const MODES: ReadonlySet<string> = new Set(["apply", "dry_run", "revert", "rever
 /** Capacidades que este agente anuncia en el hello (grpc-client.ts). */
 export const PMP_REMEDIATE_CAPABILITIES = ["pmp.remediate.batch", "pmp.remediate.revert"] as const;
 
+/**
+ * El genérico de Linux (`linux.config.set_value`): el backend sólo lo manda
+ * a los equipos que lo anuncian. Uno anterior lo rechazaría por la lista
+ * blanca, y el operador vería un «Fix» que no puede salir bien.
+ */
+export const LINUX_CONFIG_CAPABILITY = "pmp.remediate.linux_config";
+
+export function pmpRemediateCapabilities(platform: NodeJS.Platform = process.platform): string[] {
+  return platform === "linux" ? [...PMP_REMEDIATE_CAPABILITIES, LINUX_CONFIG_CAPABILITY] : [...PMP_REMEDIATE_CAPABILITIES];
+}
+
 /** Tope de fixes por job agrupado: el mismo que valida el backend. */
 export const MAX_BATCH_ITEMS = 25;
 /** Tope del bloque `items` en el ACK agrupado (el backend acepta hasta 1,5 M). */

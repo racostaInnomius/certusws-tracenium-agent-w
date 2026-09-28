@@ -120,6 +120,14 @@ const ENTRIES: AgentCheckEntry[] = [
     checkId: "linux.cryptography.weak_ssh_kex_disabled",
     applicableTo: new Set<CheckOsApplicability>(["linux"]),
   },
+  // Genérico de Linux (2026-09): sysctl, módulos del kernel, reglas de
+  // auditd y «clave = valor» en una lista cerrada de ficheros. Las
+  // escrituras viajan en `params.writes` y el PrivSvc las valida una por
+  // una (privsvc/linux/src/generic-config.ts), con las guardas repetidas.
+  {
+    checkId: "linux.config.set_value",
+    applicableTo: new Set<CheckOsApplicability>(["linux"]),
+  },
   {
     checkId: "linux.firewall.enabled",
     applicableTo: new Set<CheckOsApplicability>(["linux"]),

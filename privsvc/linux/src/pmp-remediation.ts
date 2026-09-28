@@ -66,6 +66,7 @@ import fs from "fs";
 import path from "path";
 import { promisify } from "util";
 import { detectFamily } from "./distro";
+import { applyGeneric, readGenericState } from "./generic-config";
 import { logger } from "./logger";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
@@ -809,14 +810,34 @@ async function remediateFirewallEnable(): Promise<RemediateOutcome> {
 
 // ── Dispatch tables ───────────────────────────────────────────────
 
-type ReadHandler = () => Promise<{ state: any; isCompliant: boolean }>;
-type RemediateHandler = () => Promise<RemediateOutcome>;
+// `params` es `req.params.params`: sólo lo usa el genérico (las escrituras
+// que pidió el backend); los dedicados lo ignoran.
+type ReadHandler = (params: unknown) => Promise<{ state: any; isCompliant: boolean }>;
+type RemediateHandler = (params: unknown) => Promise<RemediateOutcome>;
+
+/** Un payload inválido para el genérico es bad_request, no un fallo del equipo. */
+class BadGenericParams extends Error {}
+
+async function readGeneric(params: unknown): Promise<{ state: any; isCompliant: boolean }> {
+  const r = readGenericState(params);
+  if (!r.ok) throw new BadGenericParams(r.message);
+  return r.value;
+}
+
+async function remediateGeneric(params: unknown): Promise<RemediateOutcome> {
+  const r = await applyGeneric(params);
+  if (!r.ok) throw new BadGenericParams(r.message);
+  return r.value;
+}
 
 const READ_HANDLERS: Record<string, ReadHandler> = {
   "linux.ssh.root_login_disabled": () => readSshDirective("PermitRootLogin", "no", true),
   "linux.ssh.password_auth_disabled": () => readSshDirective("PasswordAuthentication", "no", true),
   "linux.cryptography.weak_ssh_kex_disabled": () => readSshKex(),
   "linux.firewall.enabled": () => readFirewallEnabled(),
+  // Genérico (desired-state-linux.ts en el backend): sysctl, módulos,
+  // reglas de auditd y «clave = valor». Ver generic-config.ts.
+  "linux.config.set_value": (params) => readGeneric(params),
 };
 
 const REMEDIATE_HANDLERS: Record<string, RemediateHandler> = {
@@ -824,6 +845,7 @@ const REMEDIATE_HANDLERS: Record<string, RemediateHandler> = {
   "linux.ssh.password_auth_disabled": () => remediateSshDirective("PasswordAuthentication", "no"),
   "linux.cryptography.weak_ssh_kex_disabled": () => remediateSshKex(),
   "linux.firewall.enabled": () => remediateFirewallEnable(),
+  "linux.config.set_value": (params) => remediateGeneric(params),
 };
 
 // ── pmp.read_check_state ─────────────────────────────────────────
@@ -839,13 +861,14 @@ export async function handlePmpReadCheckState(req: PrivSvcRequest): Promise<Priv
   }
 
   try {
-    const result = await handler();
+    const result = await handler(req.params?.params);
     return success(req.id, {
       state: result.state,
       isCompliant: result.isCompliant === true,
       supported: true,
     });
   } catch (err: any) {
+    if (err instanceof BadGenericParams) return fail(req.id, "bad_request", err.message);
     logger.error("pmp_read_check_state_failed", {
       checkId,
       error: err?.message || String(err),
@@ -868,7 +891,7 @@ export async function handlePmpRemediate(req: PrivSvcRequest): Promise<PrivSvcRe
 
   try {
     logger.info("pmp_remediate_start", { checkId });
-    const result = await handler();
+    const result = await handler(req.params?.params);
     logger.info("pmp_remediate_complete", {
       checkId,
       exitCode: result.exitCode,
@@ -876,6 +899,7 @@ export async function handlePmpRemediate(req: PrivSvcRequest): Promise<PrivSvcRe
     });
     return success(req.id, outcomeToWire(result));
   } catch (err: any) {
+    if (err instanceof BadGenericParams) return fail(req.id, "bad_request", err.message);
     logger.error("pmp_remediate_failed", {
       checkId,
       error: err?.message || String(err),
