@@ -142,6 +142,19 @@ describe("preinstall de macOS: la bandeja se para en todas las sesiones", () => 
   it("es sh válido", () => {
     expect(() => execFileSync("/bin/sh", ["-n", PREINSTALL])).not.toThrow();
   });
+
+  // El node del 27-sep murió con "SIGKILL (Code Signature Invalid)" 10 s
+  // después del preinstall: seguía vivo cuando PackageKit reescribió
+  // Runtime/node. bootout manda SIGTERM y vuelve; no espera.
+  it("⭐ espera a que el node salga, y lo mata antes de que llegue el payload", () => {
+    const bootout = pre.indexOf("bootout system/com.certusws.tracenium.privsvc");
+    const wait = pre.indexOf('pgrep -f "$NODE_BIN"');
+    const kill = pre.indexOf('pkill -9 -f "$NODE_BIN"');
+    expect(pre).toContain('NODE_BIN="/Library/Application Support/Tracenium/Runtime/node"');
+    expect(wait, "sin espera, el payload llega con el node vivo").toBeGreaterThan(bootout);
+    expect(kill, "lo que no sale solo lo mata el kernel a mitad, con informe").toBeGreaterThan(wait);
+    expect(pre, "un tope, o un node colgado cuelga el Installer").toMatch(/\[ "\$waited" -lt \d+ \]/);
+  });
 });
 
 /**

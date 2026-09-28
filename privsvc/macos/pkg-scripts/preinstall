@@ -15,6 +15,26 @@ trap 'rc=$?; set +x; echo "==== $(/bin/date -u "+%Y-%m-%dT%H:%M:%SZ") preinstall
 /bin/launchctl bootout system/com.certusws.tracenium.agent >/dev/null 2>&1 || true
 /bin/launchctl bootout system/com.certusws.tracenium.privsvc >/dev/null 2>&1 || true
 
+# `bootout` manda SIGTERM y vuelve; el node puede tardar en cerrar. Si sigue
+# vivo cuando PackageKit reescribe Runtime/node, el kernel lo mata con
+# "SIGKILL (Code Signature Invalid)" y queda un informe de crash de `node`.
+# Visto en el iMac de T1 el 27-sep: el preinstall acabó a las 21:59:47 y el
+# node murió así a las 21:59:57, ya con el payload escribiéndose. DEX lo contó
+# como "Unstable application: node".
+#
+# Se espera a que salgan (hasta ~20 s) y lo que quede se mata a mano: un
+# SIGKILL nuestro no deja informe, y el proceso iba a morir igual.
+NODE_BIN="/Library/Application Support/Tracenium/Runtime/node"
+waited=0
+while /usr/bin/pgrep -f "$NODE_BIN" >/dev/null 2>&1 && [ "$waited" -lt 20 ]; do
+  /bin/sleep 1
+  waited=$((waited + 1))
+done
+if /usr/bin/pgrep -f "$NODE_BIN" >/dev/null 2>&1; then
+  echo "tracenium node still running after ${waited}s; killing it before the payload replaces the binary"
+  /usr/bin/pkill -9 -f "$NODE_BIN" >/dev/null 2>&1 || true
+fi
+
 # La bandeja se para en TODAS las sesiones graficas, no solo en la del
 # usuario de consola, y antes de que PackageKit reescriba el .app.
 #
