@@ -21,6 +21,10 @@
 //               <fichero>.d/99-tracenium-hardening.conf, el último en orden.
 //               El resto (pwquality, faillock, login.defs, auditd.conf,
 //               apport): en su sitio, con copia <fichero>.tracenium.<ts>.bak.
+//   line        una línea de una lista CERRADA (fichero Y línea): en un
+//               fichero nuestro de un directorio que la herramienta lee
+//               entero (limits.d, rules.d) o al final de uno del sistema
+//               (pwquality.conf), con copia.
 //   sshd        /etc/ssh/sshd_config.d/00-tracenium-hardening.conf, el MISMO
 //               drop-in que los handlers dedicados de SSH (sshd-dropin.ts:
 //               sshd se queda con el PRIMER valor, por eso 00-). `sshd -t`
@@ -112,7 +116,7 @@ type ConfPolicy = {
 const AUDITD_HALT = "halts the machine or drops it to single-user when the audit disk fills";
 
 export const CONF_FILES: Readonly<Record<string, ConfPolicy>> = Object.freeze({
-  "/etc/systemd/journald.conf": { mode: "dropin", section: "Journal", style: "systemd", effect: "service", restart: "systemd-journald", keys: { Compress: {}, ForwardToSyslog: {}, Storage: {} } },
+  "/etc/systemd/journald.conf": { mode: "dropin", section: "Journal", style: "systemd", effect: "service", restart: "systemd-journald", keys: { Compress: {}, ForwardToSyslog: {}, Storage: {}, MaxFileSec: {} } },
   "/etc/systemd/coredump.conf": { mode: "dropin", section: "Coredump", style: "systemd", effect: "immediate", keys: { Storage: {}, ProcessSizeMax: {} } },
   "/etc/security/pwquality.conf": { mode: "inplace", style: "eq", effect: "immediate", keys: { minlen: {}, difok: {}, maxrepeat: {}, maxsequence: {}, dictcheck: {}, enforcing: {} } },
   "/etc/security/faillock.conf": { mode: "inplace", style: "eq", effect: "immediate", keys: { deny: { guard: "account lockout locks real users out" }, unlock_time: {} } },
@@ -157,6 +161,24 @@ export const SSHD_DIRECTIVES: Readonly<Record<string, SshdPolicy>> = Object.free
   kexalgorithms: { name: "KexAlgorithms", list: true },
 });
 
+/**
+ * Líneas literales (espejo de LINE_FILES en desired-state-linux.ts). Fuera
+ * de esta lista no se escribe nada; las que llevan guarda sólo se dejan
+ * QUITAR (el revert), nunca poner.
+ */
+type LinePolicy = { mode: "ours" | "append"; perms: number; reload?: "augenrules"; lines: Readonly<Record<string, { guard?: string }>> };
+
+export const LINE_FILES: Readonly<Record<string, LinePolicy>> = Object.freeze({
+  "/etc/security/limits.d/60-tracenium.conf": { mode: "ours", perms: 0o644, lines: { "* hard core 0": {} } },
+  "/etc/apt/apt.conf.d/60tracenium-hardening": {
+    mode: "ours", perms: 0o644,
+    lines: { 'APT::Install-Recommends "false";': { guard: "apt stops installing recommended packages" }, 'APT::Install-Suggests "false";': { guard: "apt stops installing recommended packages" } },
+  },
+  "/etc/security/pwquality.conf": { mode: "append", perms: 0o644, lines: { enforce_for_root: {} } },
+  "/etc/security/faillock.conf": { mode: "append", perms: 0o644, lines: { even_deny_root: { guard: "root is locked out too after failed passwords" } } },
+  "/etc/audit/rules.d/01-tracenium-continue.rules": { mode: "ours", perms: 0o640, reload: "augenrules", lines: { "-c": {} } },
+});
+
 // ── Escrituras ───────────────────────────────────────────────────────
 
 export type LinuxWrite =
@@ -164,7 +186,8 @@ export type LinuxWrite =
   | { kind: "kmod"; module: string; disable: boolean }
   | { kind: "audit_rule"; line: string; present: boolean }
   | { kind: "conf"; file: string; key: string; value: string | null }
-  | { kind: "sshd"; key: string; value: string | null; required?: string[] };
+  | { kind: "sshd"; key: string; value: string | null; required?: string[] }
+  | { kind: "line"; file: string; line: string; present: boolean };
 
 const SYSCTL_KEY = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_-]+)+$/;
 const SAFE_VALUE = /^[A-Za-z0-9_.:\/ -]{1,64}$/;
@@ -244,6 +267,16 @@ export function parseWrites(params: unknown): Check<LinuxWrite[]> {
           if (policy.guard && w.value.toLowerCase() === policy.guardValue) return { ok: false, message: `${at}: guarded (${policy.guard})` };
         }
         out.push(required ? { kind: "sshd", key: policy.name, value: w.value, required } : { kind: "sshd", key: policy.name, value: w.value });
+        break;
+      }
+      case "line": {
+        const policy = typeof w.file === "string" ? LINE_FILES[w.file] : undefined;
+        if (!policy) return { ok: false, message: `${at}: file not on the list Tracenium may edit` };
+        if (typeof w.line !== "string" || !Object.prototype.hasOwnProperty.call(policy.lines, w.line)) return { ok: false, message: `${at}: line not on the list for ${w.file}` };
+        if (typeof w.present !== "boolean") return { ok: false, message: `${at}: present must be boolean` };
+        const guard = w.present ? policy.lines[w.line].guard : undefined;
+        if (guard) return { ok: false, message: `${at}: guarded (${guard})` };
+        out.push({ kind: "line", file: w.file, line: w.line, present: w.present });
         break;
       }
       default:
@@ -442,7 +475,8 @@ export type StateEntry =
   | { kind: "kmod"; module: string; loaded: boolean; blocked: boolean }
   | { kind: "audit_rule"; line: string; present: boolean }
   | { kind: "conf"; file: string; key: string; effective: string | null; ours: string | null; effectiveSource: string | null }
-  | { kind: "sshd"; key: string; effective: string | null; ours: string | null };
+  | { kind: "sshd"; key: string; effective: string | null; ours: string | null }
+  | { kind: "line"; file: string; line: string; present: boolean };
 
 /** Lo que se lee una vez por petición: la configuración efectiva de sshd. */
 export type ReadContext = { sshdT: string | null };
@@ -483,6 +517,8 @@ export function readEntry(w: LinuxWrite, deps: GenericDeps, ctx: ReadContext = {
       const ours = lookup(parseKeyValue(deps.readFile(confOursPath(w.file))), w.key);
       return { kind: "conf", file: w.file, key: w.key, effective: eff.value, ours, effectiveSource: eff.source };
     }
+    case "line":
+      return { kind: "line", file: w.file, line: w.line, present: activeLines(deps.readFile(w.file)).includes(w.line) };
     case "sshd":
       return {
         kind: "sshd",
@@ -523,6 +559,9 @@ export function satisfied(w: LinuxWrite, e: StateEntry): { ok: boolean; why: str
     if (e.ours !== w.value) return { ok: false, why: `${w.key} is not set in ${confOursPath(w.file)}` };
     if (e.effective !== w.value) return { ok: false, why: `${e.effectiveSource} sets ${w.key} = ${e.effective} after ours` };
     return { ok: true, why: null };
+  }
+  if (w.kind === "line" && e.kind === "line") {
+    return e.present === w.present ? { ok: true, why: null } : { ok: false, why: `"${w.line}" ${w.present ? "missing from" : "still in"} ${w.file}` };
   }
   if (w.kind === "sshd" && e.kind === "sshd") {
     const same = (a: string | null, b: string | null) => (a ?? "").toLowerCase() === (b ?? "").toLowerCase();
@@ -837,6 +876,45 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
     const r = await deps.exec("/usr/bin/systemctl", ["restart", unit], 30_000);
     if (r.code === 0) changes.push(`restarted ${unit}`);
     else problems.push(`systemctl restart ${unit} failed: ${(r.stderr || r.stdout).trim().slice(0, 160)}`);
+  }
+
+  // ── líneas ──
+  // Por fichero: se quita/añade la línea exacta. En los ficheros del sistema
+  // (`append`) sólo la línea pedida, y con copia antes del primer cambio.
+  const lineWrites = writes.filter((w): w is Extract<LinuxWrite, { kind: "line" }> => w.kind === "line");
+  for (const file of [...new Set(lineWrites.map((w) => w.file))]) {
+    const policy = LINE_FILES[file];
+    const before = deps.readFile(file);
+    if (policy.mode === "append" && before === null) {
+      problems.push(`${file} does not exist on this machine`);
+      continue;
+    }
+    let text = before ?? "";
+    for (const w of lineWrites.filter((x) => x.file === file)) {
+      const kept = text.split("\n").filter((l) => l.trim() !== w.line);
+      while (kept.length && kept[kept.length - 1].trim() === "") kept.pop();
+      if (!kept.length && policy.mode === "ours") kept.push("# Managed by Tracenium — compliance fixes. Remove a line to hand it back.");
+      if (w.present) kept.push(w.line);
+      text = kept.join("\n") + "\n";
+    }
+    // Un fichero nuestro que se queda sólo con la cabecera sobra.
+    const empty = policy.mode === "ours" && activeLines(text).length === 0;
+    if ((empty ? null : text) === before || (empty && before === null)) continue;
+    if (policy.mode === "append") deps.copyFile(file, `${file}.tracenium.${stamp(deps.now())}.bak`);
+    if (empty) deps.unlink(file);
+    else {
+      deps.mkdirp(pathMod.dirname(file));
+      deps.writeFile(file, text, policy.mode === "append" ? deps.fileMode(file) ?? policy.perms : policy.perms);
+    }
+    changes.push(`${empty ? "removed" : "wrote"} ${file}`);
+    if (policy.reload === "augenrules") {
+      const augenrules = firstExisting(AUGENRULES, deps);
+      if (augenrules) {
+        const r = await privileged(augenrules, ["--load"], deps);
+        if (r.code === 0) changes.push("augenrules --load");
+        else problems.push(`augenrules --load failed: ${(r.stderr || r.stdout).trim().slice(0, 200)}`);
+      }
+    }
   }
 
   // ── sshd ──

@@ -422,3 +422,50 @@ describe("sshd — el mismo drop-in 00- que los handlers dedicados", () => {
     expect(parseWrites(w({ kind: "sshd", key: "PermitRootLogin", value: null })).ok).toBe(true);
   });
 });
+
+describe("line — una línea de la lista cerrada", () => {
+  it("fichero nuestro: se crea con cabecera, idempotente, y el revert lo quita entero", async () => {
+    const add = w({ kind: "line", file: "/etc/security/limits.d/60-tracenium.conf", line: "* hard core 0", present: true });
+    expect(await applyGeneric(add, deps())).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(files.get("/etc/security/limits.d/60-tracenium.conf")).toBe("# Managed by Tracenium — compliance fixes. Remove a line to hand it back.\n* hard core 0\n");
+    const again = await applyGeneric(add, deps());
+    expect((again as any).value.changesApplied).toEqual([]);
+    expect(await readGenericState(add, deps())).toMatchObject({ ok: true, value: { isCompliant: true, state: { writes: [{ kind: "line", present: true }] } } });
+    await applyGeneric(w({ kind: "line", file: "/etc/security/limits.d/60-tracenium.conf", line: "* hard core 0", present: false }), deps());
+    expect(files.has("/etc/security/limits.d/60-tracenium.conf")).toBe(false);
+  });
+
+  it("fichero del sistema: sólo la línea, al final, con copia; lo comentado del operador se queda", async () => {
+    files.set("/etc/security/pwquality.conf", "# enforce_for_root\nminlen = 8\n");
+    const r = await applyGeneric(w({ kind: "line", file: "/etc/security/pwquality.conf", line: "enforce_for_root", present: true }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(files.get("/etc/security/pwquality.conf")).toBe("# enforce_for_root\nminlen = 8\nenforce_for_root\n");
+    expect(files.get("/etc/security/pwquality.conf.tracenium.20260927-200000.bak")).toBe("# enforce_for_root\nminlen = 8\n");
+  });
+
+  it("auditd -c en su fichero 01-, y se recarga", async () => {
+    const r = await applyGeneric(w({ kind: "line", file: "/etc/audit/rules.d/01-tracenium-continue.rules", line: "-c", present: true }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(files.get("/etc/audit/rules.d/01-tracenium-continue.rules")).toMatch(/\n-c\n$/);
+    expect(calls.some((c) => c.endsWith("augenrules --load"))).toBe(true);
+  });
+
+  it("fuera de la lista, o con guarda, no", () => {
+    for (const bad of [
+      { kind: "line", file: "/etc/security/limits.d/60-tracenium.conf", line: "* hard nofile 1", present: true },
+      { kind: "line", file: "/etc/sudoers.d/x", line: "ALL ALL=(ALL) NOPASSWD: ALL", present: true },
+      { kind: "line", file: "/etc/security/faillock.conf", line: "even_deny_root", present: true },
+      { kind: "line", file: "/etc/apt/apt.conf.d/60tracenium-hardening", line: 'APT::Install-Recommends "false";', present: true },
+    ]) {
+      expect(parseWrites(w(bad)).ok, JSON.stringify(bad)).toBe(false);
+    }
+    expect(parseWrites(w({ kind: "line", file: "/etc/security/faillock.conf", line: "even_deny_root", present: false })).ok).toBe(true);
+  });
+
+  it("journald: MaxFileSec en nuestro drop-in", async () => {
+    dirs.add("/etc/systemd/journald.conf.d");
+    const r = await applyGeneric(w({ kind: "conf", file: "/etc/systemd/journald.conf", key: "MaxFileSec", value: "1month" }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(files.get("/etc/systemd/journald.conf.d/99-tracenium-hardening.conf")).toContain("[Journal]\nMaxFileSec=1month\n");
+  });
+});
