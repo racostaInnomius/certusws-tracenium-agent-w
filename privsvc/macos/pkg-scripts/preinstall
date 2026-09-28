@@ -15,16 +15,30 @@ trap 'rc=$?; set +x; echo "==== $(/bin/date -u "+%Y-%m-%dT%H:%M:%SZ") preinstall
 /bin/launchctl bootout system/com.certusws.tracenium.agent >/dev/null 2>&1 || true
 /bin/launchctl bootout system/com.certusws.tracenium.privsvc >/dev/null 2>&1 || true
 
-CONSOLE_USER="$(/usr/bin/stat -f %Su /dev/console 2>/dev/null || true)"
-if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
-  CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER" 2>/dev/null || true)"
-  if [ -n "$CONSOLE_UID" ]; then
-    /bin/launchctl bootout "gui/$CONSOLE_UID/com.certusws.tracenium.agentstatus" >/dev/null 2>&1 || true
-  else
-    echo "Skipping agent status LaunchAgent bootout: unable to resolve console UID"
+# La bandeja se para en TODAS las sesiones graficas, no solo en la del
+# usuario de consola, y antes de que PackageKit reescriba el .app.
+#
+# 🔴 Antes solo se paraba la del dueño de /dev/console. Con la sesion abierta
+# pero sin estar en pantalla —ventana de login, cambio rapido de usuario—
+# no habia "usuario de consola", la bandeja seguia viva, el payload le
+# reescribia el binario debajo y crasheaba; KeepAlive la relanzaba cada ~10 s
+# contra un bundle a medio escribir hasta que llegaba el postinstall. En el
+# iMac Intel de T1 (26-sep, disco de 2015) fueron 25 crashes en 4 minutos, y
+# DEX lo pinto como "Unstable application: TraceniumAgentStatus".
+#
+# Mismo conjunto que el postinstall, que la vuelve a levantar en cada UID con
+# dominio gui vivo: lo que se para aqui, se restaura alli.
+STOPPED_AGENTS=0
+for uid in $(/usr/bin/dscl . -list /Users UniqueID 2>/dev/null | /usr/bin/awk '$2 >= 500 && $2 < 60000 {print $2}'); do
+  if /bin/launchctl print "gui/$uid" >/dev/null 2>&1; then
+    /bin/launchctl bootout "gui/$uid/com.certusws.tracenium.agentstatus" >/dev/null 2>&1 || true
+    STOPPED_AGENTS=$((STOPPED_AGENTS + 1))
   fi
-else
-  echo "Skipping agent status LaunchAgent bootout: no interactive console user"
-fi
+done
+echo "agent status LaunchAgent stopped in $STOPPED_AGENTS gui session(s)"
+
+# Y la que launchd no gestiona (la del `open --args --setup`): `bootout` no la
+# alcanza. DESPUES del bootout, o KeepAlive relanzaria lo que se acaba de matar.
+/usr/bin/pkill -f "Tracenium Agent Status.app/Contents/MacOS/TraceniumAgentStatus" >/dev/null 2>&1 || true
 
 exit 0

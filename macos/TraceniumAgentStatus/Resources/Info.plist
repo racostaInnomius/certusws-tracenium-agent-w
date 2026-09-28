@@ -30,7 +30,7 @@
   <key>NSLocationWhenInUseUsageDescription</key>
   <string>Your organization's IT team uses this device's approximate location to keep the asset inventory accurate and to help recover the device if it is lost or stolen. You can turn this off at any time in System Settings.</string>
   <key>LSMinimumSystemVersion</key>
-  <string>13.0</string>
+  <string>12.3</string>
   <key>LSUIElement</key>
   <true/>
   <key>NSHighResolutionCapable</key>

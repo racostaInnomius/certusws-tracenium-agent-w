@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 
 /**
@@ -104,5 +105,63 @@ describe("postinstall de macOS: no deja bandejas huérfanas", () => {
     it("la marca vive fuera de Agent/, que es 700 y se borra", () => {
       expect(MARKER).not.toContain("/Agent/");
     });
+  });
+});
+
+/**
+ * 🔴 La otra punta del mismo problema: el PREINSTALL.
+ *
+ * El iMac Intel de T1 (26-sep) sumó 25 crashes de TraceniumAgentStatus en
+ * cuatro minutos, uno cada ~10 s, justo tras un `agent_update`. El preinstall
+ * solo paraba la bandeja del dueño de /dev/console; con la sesión abierta pero
+ * sin estar en pantalla no había usuario de consola, la bandeja seguía viva,
+ * PackageKit le reescribía el binario debajo y KeepAlive la relanzaba contra
+ * un bundle a medio escribir. DEX lo contó como "Unstable application".
+ */
+describe("preinstall de macOS: la bandeja se para en todas las sesiones", () => {
+  const PREINSTALL = path.resolve(__dirname, "../../privsvc/macos/pkg-scripts/preinstall");
+  const pre = readFileSync(PREINSTALL, "utf8");
+
+  it("⭐ no depende del usuario de consola", () => {
+    expect(pre, "volvería a saltarse la sesión que no está en pantalla").not.toMatch(/stat -f %Su \/dev\/console/);
+  });
+
+  it("recorre los mismos UID que el postinstall restaura (dominio gui vivo)", () => {
+    expect(pre).toContain("dscl . -list /Users UniqueID");
+    expect(pre).toMatch(/launchctl print "gui\/\$uid"/);
+    expect(pre).toMatch(/launchctl bootout "gui\/\$uid\/com\.certusws\.tracenium\.agentstatus"/);
+  });
+
+  it("mata también la instancia suelta, y DESPUÉS del bootout", () => {
+    const bootout = pre.indexOf('bootout "gui/$uid/com.certusws.tracenium.agentstatus"');
+    const kill = pre.indexOf(`pkill -f "${STATUS_APP_BINARY}"`);
+    expect(kill, "la del `open --setup` no la gestiona launchd").toBeGreaterThan(-1);
+    expect(kill, "antes del bootout, KeepAlive la relanzaría").toBeGreaterThan(bootout);
+  });
+
+  it("es sh válido", () => {
+    expect(() => execFileSync("/bin/sh", ["-n", PREINSTALL])).not.toThrow();
+  });
+});
+
+/**
+ * La bandeja pedía macOS 13 sin usar nada de 13; los otros dos helpers piden
+ * 12.3. Con LSMinimumSystemVersion 13.0, LaunchServices se negaba a abrirla en
+ * Monterey y la ventana de permisos del `--setup` no salía en el iMac de T1.
+ */
+describe("la bandeja arranca en macOS 12.3, como los helpers", () => {
+  const root = path.resolve(__dirname, "../../macos/TraceniumAgentStatus");
+
+  it("Package.swift e Info.plist dicen lo mismo: 12.3", () => {
+    expect(readFileSync(path.join(root, "Package.swift"), "utf8")).toContain('.macOS("12.3")');
+    expect(readFileSync(path.join(root, "Resources/Info.plist"), "utf8")).toMatch(
+      /<key>LSMinimumSystemVersion<\/key>\s*<string>12\.3<\/string>/
+    );
+  });
+
+  it("y los helpers del pkg siguen en 12.3", () => {
+    const build = readFileSync(path.resolve(__dirname, "../../scripts/build-macos-pkg.sh"), "utf8");
+    expect(build).toContain("x86_64-apple-macos12.3");
+    expect(build).toMatch(/<key>LSMinimumSystemVersion<\/key>\s*<string>12\.3<\/string>/);
   });
 });
