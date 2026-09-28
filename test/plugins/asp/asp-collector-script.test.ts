@@ -85,6 +85,23 @@ describe("asp-ad-collector.ps1 — reglas estáticas", () => {
     }
   });
 
+  it("🔴 ninguna línea puede empezar por `|`: PowerShell 5.1 no lo parsea y el DC va en 5.1", () => {
+    // El 27-sep esto tumbó el colector en producción (T111): un `| Where-Object`
+    // al principio de una línea. pwsh 7 lo parsea sin quejarse, así que la
+    // comprobación de sintaxis de más abajo dio VERDE y el DC murió con
+    // `collector_no_output:exit=1`.
+    //
+    // ⚠️ La lección no es «esa línea»: es que el parser con el que verifico (7) no
+    // es el que ejecuta (5.1), así que las diferencias de sintaxis entre los dos
+    // hay que cazarlas de forma estática. Esta es la primera.
+    const offenders = src
+      .split("\n")
+      .map((l, i) => ({ n: i + 1, l }))
+      .filter((x) => x.l.trimStart().startsWith("|"))
+      .map((x) => `línea ${x.n}: ${x.l.trim().slice(0, 60)}`);
+    expect(offenders).toEqual([]);
+  });
+
   it("🔴 `$MODIFY` de ADCS no puede incluir 'WriteProperty' a secas", () => {
     // El test de semántica de abajo reconstruye la condición, así que no vería
     // que alguien vuelva a meter 'WriteProperty' en la constante. Esto sí.

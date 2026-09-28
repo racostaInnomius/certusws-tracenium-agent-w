@@ -624,6 +624,19 @@ function AspAdcsTemplates($query, $ctx, [int]$limit) {
     foreach ($k in $require) { if (-not $flags[$k]) { $all = $false; break } }
     if (-not $all) { continue }
     $count++
+
+    # A cuantas condiciones de ESC1 esta la plantilla, y cuales le faltan. Un
+    # ESC4 no es "alguien tiene permisos de mas": es "alguien esta a N ediciones
+    # de poder pedir un certificado como cualquiera".
+    $esc1Met = 0
+    $esc1Missing = New-Object System.Collections.Generic.List[string]
+    foreach ($c in @(
+        @{ n = 'enrolleeSuppliesSubject'; v = $flags.enrolleeSuppliesSubject },
+        @{ n = 'managerApprovalRequired'; v = $flags.noManagerApproval },
+        @{ n = 'signaturesRequired'; v = $flags.noSignatures },
+        @{ n = 'authEku'; v = $flags.authEku })) {
+      if ($c.v) { $esc1Met++ } else { $esc1Missing.Add([string]$c.n) }
+    }
     if ($hits.Count -lt $limit) {
       $hits.Add([ordered]@{
           template = $cn
@@ -641,13 +654,13 @@ function AspAdcsTemplates($query, $ctx, [int]$limit) {
           # aprobacion, sin firmas -- y solo le falta una EKU de autenticacion,
           # que la puede anadir justo quien tiene WriteDacl sobre ella. Sin este
           # dato el hallazgo se lee como administrativo, y no lo es.
-          esc1ConditionsMet = @($flags.enrolleeSuppliesSubject, $flags.noManagerApproval, $flags.noSignatures, $flags.authEku | Where-Object { $_ }).Count
-          esc1Missing = @(
-            $(if (-not $flags.enrolleeSuppliesSubject) { 'enrolleeSuppliesSubject' })
-            $(if (-not $flags.noManagerApproval) { 'managerApprovalRequired' })
-            $(if (-not $flags.noSignatures) { 'signaturesRequired' })
-            $(if (-not $flags.authEku) { 'authEku' })
-          | Where-Object { $_ })
+          # ⚠️ Se calculan arriba con una lista, NO con @(...) y un pipe en la
+          # linea siguiente: PowerShell 5.1 NO PARSEA una linea que empieza por
+          # `|`, y 5.1 es la version del DC. pwsh 7 si la parsea, asi que mi
+          # comprobacion en el Mac dio verde y el colector murio en produccion
+          # (T111, 27-sep: collector_no_output:exit=1).
+          esc1ConditionsMet = $esc1Met
+          esc1Missing = $esc1Missing.ToArray()
         })
     }
   }
