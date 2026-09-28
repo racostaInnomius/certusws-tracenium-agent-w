@@ -143,3 +143,71 @@ describe("estado para el revert", () => {
     ]);
   });
 });
+
+// ── authdb, install.log y pistas de contraseña ──────────────────────
+describe("authdb, asl_install y pwhint_clear", () => {
+  let rights: Map<string, boolean>;
+  let text: Map<string, string>;
+  let hints: Map<string, string>;
+  const plist = (shared: boolean) => `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n\t<key>class</key>\n\t<string>user</string>\n\t<key>shared</key>\n\t<${shared}/>\n</dict>\n</plist>\n`;
+  const macDeps = (): MacGenericDeps => {
+    const base = deps();
+    return {
+      ...base,
+      exec: async (bin, args) => {
+        if (bin === "/usr/bin/security" && args[1] === "read") return rights.has(args[2]) ? { stdout: plist(rights.get(args[2])!), stderr: "YES (0)", code: 0 } : { stdout: "", stderr: "NO", code: 1 };
+        if (bin === "/usr/bin/dscl" && args[1] === "-list") return { stdout: [...hints].map(([u, h]) => `${u}  ${h}`).join("\n"), stderr: "", code: 0 };
+        if (bin === "/usr/bin/dscl" && args[1] === "-delete") { hints.delete(args[2].replace("/Users/", "")); return { stdout: "", stderr: "", code: 0 }; }
+        if (bin === "/usr/bin/killall") { calls.push("killall " + args.join(" ")); return { stdout: "", stderr: "", code: 0 }; }
+        return base.exec(bin, args);
+      },
+      execInput: async (bin, args, input) => {
+        calls.push([bin, ...args].join(" ") + " <stdin>");
+        if (bin === "/usr/bin/security" && args[1] === "write") rights.set(args[2], /<key>shared<\/key>\s*<true\/>/.test(input));
+        return { stdout: "", stderr: "YES (0)", code: 0 };
+      },
+      readFile: (p) => text.get(p) ?? null,
+      writeFile: (p, c) => void text.set(p, c),
+      copyFile: (s, d) => void text.set(d, text.get(s) ?? ""),
+      now: () => new Date("2026-09-28T20:00:00Z"),
+    };
+  };
+  beforeEach(() => {
+    rights = new Map([["system.preferences", true], ["system.preferences.network", false]]);
+    text = new Map([["/etc/asl/com.apple.install", "? [= Facility install] claim only\n* file /var/log/install.log format='$((Time)(JZ)) $Host' rotate=seq compress file_max=50M all_max=150M size_only\n"]]);
+    hints = new Map([["jpr", "the usual"], ["_mbsetupuser", "x"]]);
+  });
+
+  it("authdb: shared=false por stdin, sólo si hace falta", async () => {
+    const r = await applyGeneric({ writes: [{ kind: "authdb", right: "system.preferences", shared: false }, { kind: "authdb", right: "system.preferences.network", shared: false }] }, macDeps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(rights.get("system.preferences")).toBe(false);
+    expect(calls.filter((c) => c.endsWith("<stdin>"))).toEqual(["/usr/bin/security authorizationdb write system.preferences <stdin>"]);
+  });
+
+  it("install.log: ttl=365 y fuera all_max, con copia y HUP a syslogd; el revert devuelve el texto", async () => {
+    const before = text.get("/etc/asl/com.apple.install")!;
+    const r = await applyGeneric({ writes: [{ kind: "asl_install" }] }, macDeps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    const line = text.get("/etc/asl/com.apple.install")!.split("\n")[1];
+    expect(line).toMatch(/ ttl=365$/);
+    expect(line).not.toMatch(/all_max/);
+    expect(line).toContain("format='$((Time)(JZ)) $Host'");
+    expect(calls).toContain("killall -HUP syslogd");
+    expect(text.get("/etc/asl/com.apple.install.tracenium.20260928-200000.bak")).toBe(before);
+    await applyGeneric({ writes: [{ kind: "asl_install", restore: before }] }, macDeps());
+    expect(text.get("/etc/asl/com.apple.install")).toBe(before);
+  });
+
+  it("pistas: se quitan (no las cuentas de sistema) y el estado sólo lleva nombres", async () => {
+    const r = await applyGeneric({ writes: [{ kind: "pwhint_clear" }] }, macDeps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(hints.has("jpr")).toBe(false);
+    const s = await readGenericState({ writes: [{ kind: "pwhint_clear" }] }, macDeps());
+    expect(JSON.stringify(s)).not.toContain("the usual");
+  });
+
+  it("derechos fuera de la lista: no", () => {
+    expect(parseWrites({ writes: [{ kind: "authdb", right: "system.login.console", shared: false }] }).ok).toBe(false);
+  });
+});

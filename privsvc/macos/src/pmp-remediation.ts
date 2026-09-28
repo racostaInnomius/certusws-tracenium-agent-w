@@ -268,8 +268,29 @@ class BadGenericParams extends Error {}
 
 const genericDeps: MacGenericDeps = {
   exec: (bin, args, timeoutMs) => runCmd(bin, args, timeoutMs ?? 60_000),
+  execInput: (bin, args, input, timeoutMs) =>
+    new Promise((resolve) => {
+      const child = execFile(bin, args, { timeout: timeoutMs ?? 60_000 }, (err: any, stdout, stderr) => {
+        resolve({ stdout: String(stdout ?? ""), stderr: String(stderr ?? ""), code: err ? (typeof err.code === "number" ? err.code : 1) : 0 });
+      });
+      child.stdin?.end(input);
+    }),
   exists: (p) => fs.existsSync(p),
   copyFile: (src, dst) => fs.copyFileSync(src, dst),
+  readFile: (p) => {
+    try {
+      return fs.readFileSync(p, "utf8");
+    } catch {
+      return null;
+    }
+  },
+  writeFile: (p, content, mode) => {
+    const tmp = `${p}.tracenium-tmp`;
+    fs.writeFileSync(tmp, content, { mode });
+    fs.chmodSync(tmp, mode);
+    fs.renameSync(tmp, p);
+  },
+  now: () => new Date(),
 };
 
 async function readGeneric(params: unknown): Promise<{ state: any; isCompliant: boolean }> {
