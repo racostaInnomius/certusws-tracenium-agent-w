@@ -29,6 +29,11 @@
 //               lista CERRADA; antes, `apt-get -s`: si instalar quita algo, o
 //               quitar se lleva otro paquete (ubuntu-standard), no se hace.
 //   unit        systemctl enable|disable --now (por systemd-run), lista cerrada.
+//   banner      /etc/issue, /etc/issue.net, /etc/motd con el aviso de CIS
+//               (o, en el revert, el texto que había), con copia.
+//   grub_audit  audit=1 audit_backlog_limit=8192 en un drop-in propio de
+//               /etc/default/grub.d + update-grub (por systemd-run: /boot
+//               está negado en el perfil). Surte efecto al reiniciar.
 //   perm        chmod/chown (por systemd-run) de una lista cerrada de rutas:
 //               el modo sólo PIERDE bits (actual & máximo), dueño root:root;
 //               los enlaces simbólicos no se tocan (chmod seguiría al destino).
@@ -83,6 +88,7 @@ import {
   sshdEarlierDefinitions,
 } from "./sshd-dropin";
 import { probePkg, probeUnit } from "./linux-probes";
+import { probeGrubCmdline } from "./linux-system-probes";
 
 // ── Listas cerradas (espejo de desired-state-linux.ts) ───────────────
 
@@ -257,6 +263,13 @@ export const PERM_POLICY: Readonly<Record<string, { maxMode: string; scope: "pat
 
 type PermRestore = { file: string; mode: string; uid: number; gid: number };
 
+export const BANNER_FILES: ReadonlySet<string> = new Set(["/etc/issue", "/etc/issue.net", "/etc/motd"]);
+/** El único texto que se escribe (espejo de BANNER_TEXT del backend); el revert trae el que había. */
+export const BANNER_TEXT = "Authorized users only. All activity may be monitored and reported.";
+export const GRUB_AUDIT_DROPIN = "/etc/default/grub.d/99-tracenium-audit.cfg";
+const GRUB_AUDIT_LINE = 'GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX audit=1 audit_backlog_limit=8192"';
+const UPDATE_GRUB = "/usr/sbin/update-grub";
+
 // ── Escrituras ───────────────────────────────────────────────────────
 
 export type LinuxWrite =
@@ -268,7 +281,10 @@ export type LinuxWrite =
   | { kind: "line"; file: string; line: string; present: boolean }
   | { kind: "pkg"; name: string; installed: boolean }
   | { kind: "unit"; unit: string; enabled: boolean }
-  | { kind: "perm"; path: string; maxMode: string; restore?: PermRestore[] };
+  | { kind: "perm"; path: string; maxMode: string; restore?: PermRestore[] }
+  // restore: el revert, con el texto que había (null = no existía).
+  | { kind: "banner"; file: string; text: string; restore?: string | null }
+  | { kind: "grub_audit"; present: boolean };
 
 const SYSCTL_KEY = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_-]+)+$/;
 const SAFE_VALUE = /^[A-Za-z0-9_.:\/ -]{1,64}$/;
@@ -376,6 +392,18 @@ export function parseWrites(params: unknown): Check<LinuxWrite[]> {
         const guard = (w.enabled ? policy.enable : policy.disable)?.guard;
         if (guard) return { ok: false, message: `${at}: guarded (${guard})` };
         out.push({ kind: "unit", unit: w.unit, enabled: w.enabled });
+        break;
+      }
+      case "banner": {
+        if (typeof w.file !== "string" || !BANNER_FILES.has(w.file)) return { ok: false, message: `${at}: banner file not on the list` };
+        if (w.text !== BANNER_TEXT) return { ok: false, message: `${at}: only the standard banner text is written` };
+        if (w.restore !== undefined && w.restore !== null && (typeof w.restore !== "string" || w.restore.length > 8192 || w.restore.includes("\0"))) return { ok: false, message: `${at}: invalid restore text` };
+        out.push(w.restore !== undefined ? { kind: "banner", file: w.file, text: w.text, restore: w.restore } : { kind: "banner", file: w.file, text: w.text });
+        break;
+      }
+      case "grub_audit": {
+        if (typeof w.present !== "boolean") return { ok: false, message: `${at}: present must be boolean` };
+        out.push({ kind: "grub_audit", present: w.present });
         break;
       }
       case "perm": {
@@ -607,7 +635,9 @@ export type StateEntry =
   | { kind: "line"; file: string; line: string; present: boolean }
   | { kind: "pkg"; name: string; installed: boolean; version: string | null }
   | { kind: "unit"; unit: string; isEnabled: boolean; isActive: boolean; state: string }
-  | { kind: "perm"; path: string; entries: PermRestore[] };
+  | { kind: "perm"; path: string; entries: PermRestore[] }
+  | { kind: "banner"; file: string; content: string | null }
+  | { kind: "grub_audit"; ours: boolean; entriesWithoutAudit1: number | null; entriesWithoutBacklogLimit: number | null; entriesBacklogBelow8192: number | null };
 
 /** Lo que se lee una vez por petición: la configuración efectiva de sshd. */
 export type ReadContext = {
@@ -673,6 +703,21 @@ export function readEntry(w: LinuxWrite, deps: GenericDeps, ctx: ReadContext = {
       const p = ctx.pkgs?.get(w.name);
       return { kind: "pkg", name: w.name, installed: p?.installed ?? false, version: p?.version ?? null };
     }
+    case "banner": {
+      const t = deps.readFile(w.file);
+      return { kind: "banner", file: w.file, content: t === null ? null : t.slice(0, 8192) };
+    }
+    case "grub_audit": {
+      const g = probeGrubCmdline({ readFile: deps.readFile } as any) as Record<string, any>;
+      const n = (v: unknown) => (typeof v === "number" ? v : null);
+      return {
+        kind: "grub_audit",
+        ours: deps.readFile(GRUB_AUDIT_DROPIN) !== null,
+        entriesWithoutAudit1: g.exists ? n(g.entriesWithoutAudit1) : null,
+        entriesWithoutBacklogLimit: g.exists ? n(g.entriesWithoutBacklogLimit) : null,
+        entriesBacklogBelow8192: g.exists ? n(g.entriesBacklogBelow8192) : null,
+      };
+    }
     case "perm":
       return { kind: "perm", path: w.path, entries: permTargets(w.path, deps).map((file) => {
         const st = deps.stat(file)!;
@@ -721,6 +766,17 @@ export function satisfied(w: LinuxWrite, e: StateEntry): { ok: boolean; why: str
     if (w.value === null) return e.ours === null ? { ok: true, why: null } : { ok: false, why: `${w.key} is still set in ${confOursPath(w.file)}` };
     if (e.ours !== w.value) return { ok: false, why: `${w.key} is not set in ${confOursPath(w.file)}` };
     if (e.effective !== w.value) return { ok: false, why: `${e.effectiveSource} sets ${w.key} = ${e.effective} after ours` };
+    return { ok: true, why: null };
+  }
+  if (w.kind === "banner" && e.kind === "banner") {
+    const want = w.restore !== undefined ? w.restore : BANNER_TEXT + "\n";
+    return e.content === want ? { ok: true, why: null } : { ok: false, why: `${w.file} does not have the expected text` };
+  }
+  if (w.kind === "grub_audit" && e.kind === "grub_audit") {
+    if (!w.present) return e.ours ? { ok: false, why: `${GRUB_AUDIT_DROPIN} is still there` } : { ok: true, why: null };
+    if (!e.ours) return { ok: false, why: `${GRUB_AUDIT_DROPIN} is missing` };
+    if (e.entriesWithoutAudit1 === null) return { ok: false, why: "grub.cfg could not be read" };
+    if (e.entriesWithoutAudit1 || e.entriesWithoutBacklogLimit || e.entriesBacklogBelow8192) return { ok: false, why: "some boot entries in grub.cfg still lack audit=1 audit_backlog_limit=8192 (another setting overrides it?)" };
     return { ok: true, why: null };
   }
   if (w.kind === "perm" && e.kind === "perm") {
@@ -979,6 +1035,20 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
     if (problems.length) return done(2);
   }
 
+  // GRUB: sólo el de Debian/Ubuntu, y con auditd (audit=1 sin él vuelca el
+  // registro de auditoría en el log del kernel).
+  const grub = writes.find((w): w is Extract<LinuxWrite, { kind: "grub_audit" }> => w.kind === "grub_audit");
+  if (grub) {
+    if (deps.fileMode(UPDATE_GRUB) === null || deps.readFile("/boot/grub/grub.cfg") === null) {
+      problems.push("this machine does not boot with the Debian/Ubuntu GRUB (no update-grub or /boot/grub/grub.cfg)");
+      return done(2);
+    }
+    if (grub.present && deps.fileMode("/usr/sbin/auditd") === null && deps.fileMode("/sbin/auditd") === null) {
+      problems.push("auditd is not installed: install it first (audit=1 without auditd sends every audit record to the kernel log)");
+      return done(2);
+    }
+  }
+
   // Paquetes: sólo apt, y lo que apt haría se mira antes (simulación, sin tocar nada).
   const pkgWrites = writes.filter((w): w is Extract<LinuxWrite, { kind: "pkg" }> => w.kind === "pkg");
   if (pkgWrites.length) {
@@ -1215,6 +1285,42 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
     const r = await privileged("/usr/bin/systemctl", [w.enabled ? "enable" : "disable", "--now", ...units], deps, 60_000);
     if (r.code === 0) changes.push(`systemctl ${w.enabled ? "enable" : "disable"} --now ${units.join(" ")}`);
     else problems.push(`systemctl ${w.enabled ? "enable" : "disable"} ${w.unit} failed: ${(r.stderr || r.stdout).trim().slice(0, 200)}`);
+  }
+
+  // ── avisos ──
+  for (const w of writes) {
+    if (w.kind !== "banner") continue;
+    const before = deps.readFile(w.file);
+    const want = w.restore !== undefined ? w.restore : BANNER_TEXT + "\n";
+    if (before === want) continue;
+    if (before !== null) deps.copyFile(w.file, `${w.file}.tracenium.${stamp(deps.now())}.bak`);
+    if (want === null) deps.unlink(w.file);
+    else deps.writeFile(w.file, want, 0o644);
+    changes.push(`${want === null ? "removed" : "wrote"} ${w.file}`);
+  }
+
+  // ── GRUB ── (update-grub escribe en /boot, negado en el perfil: por systemd-run)
+  if (grub) {
+    const before = deps.readFile(GRUB_AUDIT_DROPIN);
+    const want = grub.present ? GRUB_AUDIT_LINE + "\n" : null;
+    if (before !== want) {
+      if (want === null) deps.unlink(GRUB_AUDIT_DROPIN);
+      else {
+        deps.mkdirp(pathMod.dirname(GRUB_AUDIT_DROPIN));
+        deps.writeFile(GRUB_AUDIT_DROPIN, want, 0o644);
+      }
+      const r = await privileged(UPDATE_GRUB, [], deps, 300_000);
+      if (r.code === 0) {
+        changes.push(`${want === null ? "removed" : "wrote"} ${GRUB_AUDIT_DROPIN}`, "update-grub");
+        requiresReboot = true;
+      } else {
+        // grub-mkconfig escribe grub.cfg.new y lo mueve: si falla, grub.cfg no cambió. Se deja el drop-in como estaba.
+        if (before === null) deps.unlink(GRUB_AUDIT_DROPIN);
+        else deps.writeFile(GRUB_AUDIT_DROPIN, before, 0o644);
+        problems.push(`update-grub failed, ${GRUB_AUDIT_DROPIN} restored: ${(r.stderr || r.stdout).trim().split("\n").slice(-2).join(" ").slice(0, 200)}`);
+        return done(1);
+      }
+    }
   }
 
   // ── permisos ── (por systemd-run: el perfil no concede chown ni fowner)

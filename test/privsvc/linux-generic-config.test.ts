@@ -644,3 +644,64 @@ describe("perm — quitar bits, root:root, sin seguir enlaces", () => {
     }
   });
 });
+
+describe("banner y grub_audit", () => {
+  const TEXT = "Authorized users only. All activity may be monitored and reported.";
+  beforeEach(() => {
+    files.set("/etc/issue", "Ubuntu 24.04.5 LTS \\n \\l\n\n");
+    files.set("/etc/os-release", "ID=ubuntu\n");
+    files.set("/boot/grub/grub.cfg", "menuentry 'Ubuntu' {\n\tlinux /boot/vmlinuz root=/dev/sda1 ro quiet\n}\n");
+    bins.add("/usr/sbin/update-grub");
+    bins.add("/usr/sbin/auditd");
+    execImpl = (bin, args) => {
+      if (bin.endsWith("systemd-run")) {
+        const i = args.indexOf("--");
+        return execImpl(args[i + 1], args.slice(i + 2));
+      }
+      if (bin === "/usr/sbin/update-grub") {
+        const extra = (files.get("/etc/default/grub.d/99-tracenium-audit.cfg") ?? "").includes("audit=1") ? " audit=1 audit_backlog_limit=8192" : "";
+        files.set("/boot/grub/grub.cfg", `menuentry 'Ubuntu' {\n\tlinux /boot/vmlinuz root=/dev/sda1 ro quiet${extra}\n}\n`);
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return defaultExec(bin, args);
+    };
+  });
+
+  it("issue: el aviso de CIS, con copia del de antes; el revert lo devuelve tal cual", async () => {
+    const r = await applyGeneric(w({ kind: "banner", file: "/etc/issue", text: TEXT }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(files.get("/etc/issue")).toBe(TEXT + "\n");
+    expect(files.get("/etc/issue.tracenium.20260927-200000.bak")).toBe("Ubuntu 24.04.5 LTS \\n \\l\n\n");
+    await applyGeneric(w({ kind: "banner", file: "/etc/issue", text: TEXT, restore: "Ubuntu 24.04.5 LTS \\n \\l\n\n" }), deps());
+    expect(files.get("/etc/issue")).toBe("Ubuntu 24.04.5 LTS \\n \\l\n\n");
+  });
+
+  it("grub: drop-in propio + update-grub; requiere reinicio; y la relectura mira grub.cfg", async () => {
+    const r = await applyGeneric(w({ kind: "grub_audit", present: true }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0, requiresReboot: true } });
+    expect(files.get("/etc/default/grub.d/99-tracenium-audit.cfg")).toBe('GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX audit=1 audit_backlog_limit=8192"\n');
+    expect(calls).toContain("/usr/bin/systemd-run --wait --pipe --collect --quiet -- /usr/sbin/update-grub");
+    const back = await applyGeneric(w({ kind: "grub_audit", present: false }), deps());
+    expect(back).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(files.has("/etc/default/grub.d/99-tracenium-audit.cfg")).toBe(false);
+  });
+
+  it("sin auditd no se pone audit=1; sin GRUB de Debian, nada", async () => {
+    bins.delete("/usr/sbin/auditd");
+    expect(await applyGeneric(w({ kind: "grub_audit", present: true }), deps())).toMatchObject({ ok: true, value: { exitCode: 2, stderrExcerpt: expect.stringMatching(/install it first/) } });
+    bins.delete("/usr/sbin/update-grub");
+    expect(await applyGeneric(w({ kind: "grub_audit", present: false }), deps())).toMatchObject({ ok: true, value: { exitCode: 2, stderrExcerpt: expect.stringMatching(/does not boot with the Debian\/Ubuntu GRUB/) } });
+  });
+
+  it("update-grub que falla: el drop-in vuelve a como estaba", async () => {
+    execImpl = (bin, args) => (bin.endsWith("systemd-run") ? { stdout: "", stderr: "grub-mkconfig: error", code: 1 } : defaultExec(bin, args));
+    const r = await applyGeneric(w({ kind: "grub_audit", present: true }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 1, stderrExcerpt: expect.stringMatching(/update-grub failed/) } });
+    expect(files.has("/etc/default/grub.d/99-tracenium-audit.cfg")).toBe(false);
+  });
+
+  it("sólo el texto estándar, y sólo esos tres ficheros", () => {
+    expect(parseWrites(w({ kind: "banner", file: "/etc/issue", text: "Welcome to Ubuntu \\r" })).ok).toBe(false);
+    expect(parseWrites(w({ kind: "banner", file: "/etc/passwd", text: TEXT })).ok).toBe(false);
+  });
+});

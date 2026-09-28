@@ -582,8 +582,13 @@ export function probeAideIntegrity(deps: ProbeDeps): Obj {
 
 // ── banner ───────────────────────────────────────────────────────────
 
-const MOTD_FILES = ["/etc/motd", "/run/motd", "/usr/lib/motd"];
-const MOTD_DIRS = ["/etc/motd.d", "/run/motd.d", "/usr/lib/motd.d", "/etc/update-motd.d"];
+// Lo que mira la auditoría de CIS (1.6.1): /etc/motd y /etc/motd.d/*. Antes
+// entraban también /etc/update-motd.d, /run y /usr/lib: los scripts de
+// update-motd.d llevan «ubuntu» en su CÓDIGO (help.ubuntu.com) y los 3
+// Linux de la flota fallaban por eso, con /etc/motd inexistente. Lo que esos
+// scripts generan al entrar lo mide pam_motd (1.6.4), no este check.
+const MOTD_FILES = ["/etc/motd"];
+const MOTD_DIRS = ["/etc/motd.d"];
 
 function osId(deps: ProbeDeps): string | null {
   const m = (deps.readFile("/etc/os-release") ?? "").match(/^ID=["']?([A-Za-z0-9_-]+)/m);

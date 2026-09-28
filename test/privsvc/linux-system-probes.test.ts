@@ -235,3 +235,21 @@ describe("collectLinuxProbes — dedicated collectors", () => {
     expect(parseAptConfigDump('Acquire::AllowWeakRepositories "0";\nDir::Etc "etc";\n')).toEqual({ "Acquire::AllowWeakRepositories": "0" });
   });
 });
+
+describe("banner.motd — lo que mira CIS 1.6.1: /etc/motd y /etc/motd.d", () => {
+  it("los scripts de update-motd.d (con «ubuntu» en su código) ya no cuentan", async () => {
+    const { probeBannerMotd } = await import("../../privsvc/linux/src/linux-system-probes");
+    const files: Record<string, string> = {
+      "/etc/os-release": "ID=ubuntu\n",
+      "/etc/update-motd.d/10-help-text": "#!/bin/sh\nprintf ' * Documentation:  https://help.ubuntu.com\\n'\n",
+      "/etc/motd.d/10-site": "Authorized users only.\n",
+    };
+    const deps: any = {
+      readFile: (p: string) => files[p] ?? null,
+      readdir: (d: string) => Object.keys(files).filter((f) => f.startsWith(d + "/")).map((f) => f.slice(d.length + 1)),
+    };
+    expect(probeBannerMotd(deps)).toMatchObject({ files: 1, violations: 0 });
+    files["/etc/motd"] = "Ubuntu 24.04 \\m\n";
+    expect(probeBannerMotd(deps)).toMatchObject({ files: 2, violations: 1 });
+  });
+});

@@ -113,7 +113,9 @@ function executedBinaries(): Map<string, string[]> {
         const total = src.split(`"${bin}"`).length - 1;
         const probes =
           (src.split(`existsSync("${bin}")`).length - 1) +
-          (src.split(`hasExecutable("${bin}")`).length - 1);
+          (src.split(`hasExecutable("${bin}")`).length - 1) +
+          // generic-config.ts: `deps.fileMode(ruta)` = ¿existe?, nunca ejecuta.
+          (src.split(`fileMode("${bin}")`).length - 1);
 
         if (probes >= total) continue; // sólo se comprueba su existencia
 
