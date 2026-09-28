@@ -241,4 +241,56 @@ describe("mergeMacAppsBySource", () => {
     expect(a[0].installId).toBe(b[0].installId);
     expect(a[0].version).toBe(b[0].version);
   });
+
+  describe("⭐ dos COPIAS de la misma app (mismo bundle id)", () => {
+    // TNS-OPER-JMARV.local (T1), 28-sep: /Applications/Firefox.app (154.0.1)
+    // y /Applications/Firefox 2.app (100.0) comparten org.mozilla.firefox. La
+    // fusión por bundle id dejaba UNA, y cuál dependía del orden del
+    // directorio: cada escaneo ganaba una distinta y Activity anotaba
+    // «Software removed» / «installed» cuatro veces al día.
+    const nueva = app({
+      installId: "sha256:b854",
+      name: "Firefox",
+      source: "macos-app-bundle",
+      packageFamilyName: "org.mozilla.firefox",
+      version: "154.0.1",
+      installLocation: "/Applications/Firefox.app",
+    });
+    const vieja = app({
+      installId: "sha256:9bfe",
+      name: "Firefox 2",
+      source: "macos-app-bundle",
+      packageFamilyName: "org.mozilla.firefox",
+      version: "100.0",
+      installLocation: "/Applications/Firefox 2.app",
+    });
+
+    it("se quedan LAS DOS: son dos instalaciones, y la vieja es la que importa para CVE", () => {
+      const out = mergeMacAppsBySource([nueva, vieja]);
+      expect(out.map((a) => `${a.name} ${a.version}`).sort()).toEqual(["Firefox 154.0.1", "Firefox 2 100.0"]);
+    });
+
+    it("⭐ el resultado es el MISMO en cualquier orden de llegada (no hay «gana una distinta»)", () => {
+      const a = mergeMacAppsBySource([nueva, vieja]).map((x) => x.installId);
+      const b = mergeMacAppsBySource([vieja, nueva]).map((x) => x.installId);
+      expect(a).toEqual(b);
+    });
+
+    it("un recibo del mismo id rellena a UNA de ellas y no crea una tercera fila", () => {
+      const recibo = app({
+        installId: "pkgutil:org.mozilla.firefox",
+        name: "org.mozilla.firefox",
+        source: "pkgutil",
+        packageFamilyName: "org.mozilla.firefox",
+        publisher: "Mozilla",
+      });
+      const out = mergeMacAppsBySource([vieja, recibo, nueva]);
+      expect(out).toHaveLength(2);
+      expect(out.every((a) => a.source === "macos-app-bundle")).toBe(true);
+      expect(out.filter((a) => a.publisher === "Mozilla")).toHaveLength(1);
+      // Siempre la misma: la de installId menor.
+      expect(out.find((a) => a.publisher === "Mozilla")?.installId).toBe("sha256:9bfe");
+    });
+  });
 });
+

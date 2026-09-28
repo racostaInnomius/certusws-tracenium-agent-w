@@ -203,7 +203,8 @@ export function mergeMacAppsBySource(
 
   const sourceRank = (s: string) => SOURCE_PRIORITY[s?.toLowerCase?.() || ""] ?? 0;
 
-  const byPfn = new Map<string, SoftwareApplication>();
+  // Agrupa por packageFamilyName; lo que no lo tiene pasa tal cual.
+  const byPfn = new Map<string, SoftwareApplication[]>();
   const unkeyed: SoftwareApplication[] = [];
 
   for (const app of byInstallId.values()) {
@@ -217,29 +218,31 @@ export function mergeMacAppsBySource(
       continue;
     }
 
-    const existing = byPfn.get(pfn);
+    const g = byPfn.get(pfn);
+    if (g) g.push(app);
+    else byPfn.set(pfn, [app]);
+  }
 
-    if (!existing) {
-      byPfn.set(pfn, app);
-      continue;
-    }
+  // Orden total y estable: fuente de más prioridad primero, y a igualdad el
+  // installId menor. El resultado NO puede depender del orden en que el disco
+  // devuelva los directorios.
+  const porPrioridad = (a: SoftwareApplication, b: SoftwareApplication) =>
+    sourceRank(b.source) - sourceRank(a.source) || String(a.installId).localeCompare(String(b.installId));
 
-    // ⚠️ Se FUSIONAN campos, no se elige un ganador.
-    //
-    // Antes esto era `byPfn.set(pfn, app)` para el de mayor prioridad, y
-    // como el bundle gana sobre pkgutil, la fila que sobrevivía era
-    // justamente la que no traía versión — descartando la del recibo, que sí
-    // la tenía. PMP third-party y la detección de CVE cruzan por nombre +
-    // versión, así que la fusión les estaba quitando el dato con el que
-    // trabajan.
-    //
-    // La prioridad sigue mandando en QUIÉN es la fila (nombre, ubicación,
-    // fuente); lo que cambia es que un campo vacío del ganador se rellena
-    // con el del perdedor en vez de perderse.
-    const winner = sourceRank(app.source) > sourceRank(existing.source) ? app : existing;
-    const loser = winner === app ? existing : app;
-
-    byPfn.set(pfn, {
+  // ⚠️ Se FUSIONAN campos, no se elige un ganador.
+  //
+  // Antes esto era `byPfn.set(pfn, app)` para el de mayor prioridad, y
+  // como el bundle gana sobre pkgutil, la fila que sobrevivía era
+  // justamente la que no traía versión — descartando la del recibo, que sí
+  // la tenía. PMP third-party y la detección de CVE cruzan por nombre +
+  // versión, así que la fusión les estaba quitando el dato con el que
+  // trabajan.
+  //
+  // La prioridad sigue mandando en QUIÉN es la fila (nombre, ubicación,
+  // fuente); lo que cambia es que un campo vacío del ganador se rellena
+  // con el del perdedor en vez de perderse.
+  const rellenar = (winner: SoftwareApplication, loser: SoftwareApplication): SoftwareApplication =>
+    ({
       ...winner,
       version: winner.version ?? loser.version ?? null,
       publisher: winner.publisher ?? loser.publisher,
@@ -247,10 +250,34 @@ export function mergeMacAppsBySource(
       // El bundle gana, y su fecha es la del directorio; si no la tiene, la
       // del recibo del mismo paquete es la mejor que queda.
       installedOn: winner.installedOn ?? loser.installedOn
-    } as SoftwareApplication);
+    }) as SoftwareApplication;
+
+  const merged: SoftwareApplication[] = [];
+  for (const grupo of byPfn.values()) {
+    const ordenado = [...grupo].sort(porPrioridad);
+    const bundles = ordenado.filter((a) => a.source?.toLowerCase?.() === "macos-app-bundle");
+
+    // ⚠️ DOS bundles con el mismo identificador son DOS copias instaladas,
+    // no dos lecturas de la misma app: `/Applications/Firefox.app` (154.0.1)
+    // y `/Applications/Firefox 2.app` (100.0) comparten org.mozilla.firefox.
+    // Fusionarlos dejaba UNA fila, y cuál dependía del orden del directorio:
+    // en TNS-OPER-JMARV.local (T1) cada escaneo ganaba una distinta y el
+    // inventario anotaba «Software removed: Firefox» + «Firefox 2» cuatro
+    // veces al día (28-sep). Y la que desaparecía a ratos era la vieja —
+    // justo la que importa para vulnerabilidades. Se quedan las dos.
+    if (bundles.length >= 2) {
+      // Los recibos y fórmulas del grupo rellenan a UN bundle (el primero del
+      // orden estable) y se van, como con un solo bundle.
+      const otros = ordenado.filter((a) => !bundles.includes(a));
+      const [destino, ...resto] = bundles;
+      merged.push(otros.reduce(rellenar, destino), ...resto);
+      continue;
+    }
+
+    merged.push(ordenado.slice(1).reduce(rellenar, ordenado[0]));
   }
 
-  return collapseReceiptsByName([...byPfn.values(), ...unkeyed]);
+  return collapseReceiptsByName([...merged, ...unkeyed]);
 }
 
 /** La fuente que NO es un inventario de lo instalado, sino de lo que se instaló. */
