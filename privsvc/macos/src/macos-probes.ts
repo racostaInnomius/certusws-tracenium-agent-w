@@ -75,29 +75,51 @@ export function probesFromParams(params: unknown): string[] {
 
 // ── parsers puros ────────────────────────────────────────────────────
 
-/** Script JXA que devuelve JSON {"suite:key": valor|null} para cada par. */
+/**
+ * Script JXA: para cada par, el valor (NSUserDefaults, lo que ve una app) y
+ * si lo IMPONE un perfil de configuración (`objectIsForcedForKey`). Devuelve
+ * `{"v": {"suite:key": valor|null}, "f": {"suite:key": true|false}}`.
+ *
+ * ⚠️ El valor solo no distingue un perfil de un `defaults write` a mano, y en
+ * dominios como com.apple.applicationaccess macOS sólo respeta el perfil: un
+ * valor escrito a mano ponía el check en verde sin cambiar nada. `f` es lo que
+ * el backend usa para las hojas `managedOnly` (evaluator.ts).
+ */
 export function buildPrefScript(pairs: Array<{ suite: string; key: string }>): string {
   const list = JSON.stringify(pairs.map((p) => [p.suite, p.key]));
   return [
     "ObjC.import('Foundation');",
     `var pairs = ${list};`,
-    "var out = {};",
+    "var out = {}, forced = {};",
     "for (var i = 0; i < pairs.length; i++) {",
     "  var s = pairs[i][0], k = pairs[i][1];",
-    "  try { var v = ObjC.unwrap($.NSUserDefaults.alloc.initWithSuiteName(s).objectForKey(k)); out[s + ':' + k] = (v === undefined) ? null : v; }",
-    "  catch (e) { out[s + ':' + k] = null; }",
+    "  try {",
+    "    var d = $.NSUserDefaults.alloc.initWithSuiteName(s);",
+    "    var v = ObjC.unwrap(d.objectForKey(k)); out[s + ':' + k] = (v === undefined) ? null : v;",
+    "    forced[s + ':' + k] = d.objectIsForcedForKey(k) === true;",
+    "  } catch (e) { out[s + ':' + k] = null; forced[s + ':' + k] = false; }",
     "}",
-    "JSON.stringify(out);",
+    "JSON.stringify({ v: out, f: forced });",
   ].join("\n");
 }
 
-export function parsePrefOutput(stdout: string): Record<string, unknown> {
+/**
+ * Salida del script → valores y «forzado por perfil». Acepta también la forma
+ * anterior (el mapa de valores a pelo): sin `f`, nada cuenta como forzado.
+ */
+export function parsePrefResult(stdout: string): { values: Record<string, unknown>; forced: Record<string, boolean> } {
   try {
     const v = JSON.parse(stdout.trim());
-    return v && typeof v === "object" ? v : {};
+    if (!v || typeof v !== "object") return { values: {}, forced: {} };
+    if (v.v && typeof v.v === "object" && v.f && typeof v.f === "object") return { values: v.v, forced: v.f };
+    return { values: v, forced: {} };
   } catch {
-    return {};
+    return { values: {}, forced: {} };
   }
+}
+
+export function parsePrefOutput(stdout: string): Record<string, unknown> {
+  return parsePrefResult(stdout).values;
 }
 
 /** `pmset -g custom` → key → valor máximo entre secciones. */
@@ -258,12 +280,20 @@ export async function collectMacProbes(probes: string[], deps: MacProbeDeps): Pr
     const pairs = prefs.map((x) => { const sep = x.parsed.key.lastIndexOf(":"); return { suite: decodeKey(x.parsed.key.slice(0, sep)), key: decodeKey(x.parsed.key.slice(sep + 1)), raw: x.parsed.key }; }).filter((p) => p.suite && p.key);
     try {
       const r = await deps.exec("/usr/bin/osascript", ["-l", "JavaScript", "-e", buildPrefScript(pairs)]);
-      const values = parsePrefOutput(r.stdout);
+      const { values, forced } = parsePrefResult(r.stdout);
       const bucket = (out.pref ??= {});
+      // `prefManaged`: SÓLO lo que impone un perfil. Va siempre que se leyó
+      // alguna preferencia (vacío = no hay perfiles que las fijen): su
+      // presencia es la señal de que este agente sabe distinguirlo.
+      const managed = (out.prefManaged ??= {});
       for (const p of pairs) {
         const v = values[`${p.suite}:${p.key}`];
-        if (v !== null && v !== undefined) bucket[p.raw] = v;
+        if (v !== null && v !== undefined) {
+          bucket[p.raw] = v;
+          if (forced[`${p.suite}:${p.key}`] === true) managed[p.raw] = v;
+        }
       }
+      if (r.code !== 0 || !r.stdout.trim()) delete out.prefManaged;
       if (!r.stdout.trim() && r.stderr) errors["pref"] = r.stderr.slice(0, 120);
     } catch (err: any) { errors["pref"] = String(err?.message || err).slice(0, 120); }
   }

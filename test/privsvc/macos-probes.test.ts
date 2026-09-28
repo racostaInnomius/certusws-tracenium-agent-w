@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  buildPrefScript, collectMacProbes, parseAuthdb, parseLaunchctlList, parsePmsetCustom, parsePrefOutput, parseProbe,
+  buildPrefScript, collectMacProbes, parseAuthdb, parseLaunchctlList, parsePmsetCustom, parsePrefOutput, parsePrefResult, parseProbe,
   parsePwpolicy, parseSystemsetup, type MacProbeDeps,
 } from "../../privsvc/macos/src/macos-probes";
 
@@ -40,6 +40,10 @@ describe("parsers", () => {
     expect(js).toContain('[["com.apple.screensaver","idleTime"]]');
     expect(parsePrefOutput('{"com.apple.screensaver:idleTime":900,"x:y":null}')).toEqual({ "com.apple.screensaver:idleTime": 900, "x:y": null });
     expect(parsePrefOutput("garbage")).toEqual({});
+    // La forma nueva: valores y «forzado por perfil».
+    expect(js).toContain("objectIsForcedForKey");
+    expect(parsePrefResult('{"v":{"a:b":1},"f":{"a:b":true}}')).toEqual({ values: { "a:b": 1 }, forced: { "a:b": true } });
+    expect(parsePrefResult('{"a:b":1}')).toEqual({ values: { "a:b": 1 }, forced: {} });
   });
 });
 
@@ -49,7 +53,7 @@ function fakeDeps(): MacProbeDeps {
     stat: (p) => (p === "/etc/security/audit_control" ? { mode: 0o100440, uid: 0, gid: 0, isDir: false, isFile: true } : null),
     readdir: () => [],
     exec: async (bin, args) => {
-      if (bin.endsWith("osascript")) return { stdout: '{"com.apple.screensaver:idleTime":600,"com.apple.screensaver:askForPassword":1,"com.apple.MCX:nope":null}', stderr: "", code: 0 };
+      if (bin.endsWith("osascript")) return { stdout: '{"v":{"com.apple.screensaver:idleTime":600,"com.apple.screensaver:askForPassword":1,"com.apple.MCX:nope":null},"f":{"com.apple.screensaver:idleTime":true,"com.apple.screensaver:askForPassword":false,"com.apple.MCX:nope":false}}', stderr: "", code: 0 };
       if (bin.endsWith("pmset")) return { stdout: "AC Power:\n womp 0\n powernap 1\n", stderr: "", code: 0 };
       if (bin.endsWith("launchctl")) return { stdout: "PID\tStatus\tLabel\n1\t0\tcom.apple.timed\n", stderr: "", code: 0 };
       if (bin.endsWith("systemsetup")) return { stdout: args[0] === "-getremotelogin" ? "Remote Login: Off\n" : "Network Time: On\n", stderr: "", code: 0 };
@@ -73,6 +77,8 @@ describe("collectMacProbes", () => {
     expect(r.probes.pref["com~apple~screensaver:idleTime"]).toBe(600);
     expect(r.probes.pref["com~apple~screensaver:askForPassword"]).toBe(1);
     expect(r.probes.pref).not.toHaveProperty("com~apple~MCX:nope");
+    // Sólo lo que impone un perfil: idleTime sí, askForPassword (a mano) no.
+    expect(r.probes.prefManaged).toEqual({ "com~apple~screensaver:idleTime": 600 });
     expect(r.probes.pmset).toEqual({ womp: 0, powernap: 1 });
     expect(r.probes.launchctl["com~apple~timed"]).toEqual({ loaded: true });
     expect(r.probes.launchctl["com~apple~screensharing"]).toEqual({ loaded: false });
