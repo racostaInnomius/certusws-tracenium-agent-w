@@ -191,7 +191,44 @@ export function parseIpsTimestamp(v: unknown): string | null {
  * kernel panic. `.panic` es panic; `.hang`, cuelgue. El resto (Jetsam,
  * recursos, analítica) no es inestabilidad y se ignora.
  */
-export function classifyMacReport(fileName: string, firstLine: string | null, mtimeMs: number): StabilityEvent | null {
+/**
+ * Por qué murió el proceso, en una línea: tipo de excepción + señal, y el
+ * motivo de terminación (namespace + indicador). Sin esto la consola sólo sabía
+ * QUE crasheó: los 25 crashes del iMac de T1 (26-sep) llegaron todos con
+ * `detail: null`, y distinguir «le reescribieron el binario» (CODESIGNING) de
+ * «le falta un símbolo» (DYLD) exigía entrar al equipo a leer los .ips.
+ *
+ * Deliberadamente NO se copian `termination.details` ni `asi`: traen rutas,
+ * nombres de usuario y mensajes de la aplicación. Tope 120, el del backend.
+ */
+export function macCrashReason(body: string | null, ext: string): string | null {
+  if (!body) return null;
+  const parts: string[] = [];
+  if (ext === ".ips") {
+    let b: any = null;
+    try {
+      b = JSON.parse(body);
+    } catch {
+      return null;
+    }
+    const exc = [b?.exception?.type, b?.exception?.signal].filter((x) => typeof x === "string" && x).join(" ");
+    if (exc) parts.push(exc);
+    const ns = typeof b?.termination?.namespace === "string" ? b.termination.namespace : "";
+    const ind = typeof b?.termination?.indicator === "string" ? b.termination.indicator : "";
+    if (ns || ind) parts.push([ns, ind].filter(Boolean).join(": "));
+  } else {
+    // `.crash`, el formato de texto de antes de macOS 12.
+    const line = (label: string) => body.match(new RegExp(`^${label}:[ \t]+(.+)$`, "m"))?.[1]?.trim();
+    const exc = line("Exception Type");
+    const term = line("Termination Reason");
+    if (exc) parts.push(exc);
+    if (term) parts.push(term);
+  }
+  const out = parts.join(" · ").replace(/\s+/g, " ").trim();
+  return out ? out.slice(0, 120) : null;
+}
+
+export function classifyMacReport(fileName: string, firstLine: string | null, mtimeMs: number, body: string | null = null): StabilityEvent | null {
   const ext = path.extname(fileName).toLowerCase();
   const fallbackApp = fileName.replace(/[-_]\d{4}-\d{2}-\d{2}[-_].*$/, "").replace(/\.[^.]+$/, "") || null;
   const at = new Date(mtimeMs).toISOString();
@@ -212,7 +249,13 @@ export function classifyMacReport(fileName: string, firstLine: string | null, mt
   const bug = String(header?.bug_type ?? (ext === ".crash" ? "109" : ""));
   const when = parseIpsTimestamp(header?.timestamp) ?? at;
   if (bug === "309" || bug === "109") {
-    return { key: fileName, kind: "app_crash", occurredAtUtc: when, app: bare(header?.app_name ?? header?.name ?? fallbackApp), detail: null };
+    return {
+      key: fileName,
+      kind: "app_crash",
+      occurredAtUtc: when,
+      app: bare(header?.app_name ?? header?.name ?? fallbackApp),
+      detail: macCrashReason(body, ext)
+    };
   }
   if (bug === "210" || bug === "110") return { key: fileName, kind: "os_crash", occurredAtUtc: when, app: null, detail: null };
   return null;
@@ -250,8 +293,14 @@ async function macEvents(d: SourceDeps, cursors: Cursors, defaultSince: string):
       if (!st || !st.isFile() || st.mtimeMs <= sinceMs) continue;
       const iso = new Date(st.mtimeMs).toISOString();
       if (!next[dir] || iso > next[dir]) next[dir] = iso;
-      const first = name.toLowerCase().endsWith(".ips") ? await d.readFile(full).then((t) => t.split("\n", 1)[0]).catch(() => null) : null;
-      const ev = classifyMacReport(name, first, st.mtimeMs);
+      // El `.ips` es cabecera JSON (primera línea) + cuerpo JSON (el resto); el
+      // `.crash`, texto. De los dos sale el motivo del crash.
+      const lower = name.toLowerCase();
+      const text = lower.endsWith(".ips") || lower.endsWith(".crash") ? await d.readFile(full).catch(() => null) : null;
+      const nl = text && lower.endsWith(".ips") ? text.indexOf("\n") : -1;
+      const first = text && lower.endsWith(".ips") ? (nl < 0 ? text : text.slice(0, nl)) : null;
+      const body = text ? (lower.endsWith(".ips") ? (nl < 0 ? null : text.slice(nl + 1)) : text) : null;
+      const ev = classifyMacReport(name, first, st.mtimeMs, body);
       if (ev) events.push(ev);
     }
   }

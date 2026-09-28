@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DexWindowAggregator, cpuPercent, memPercentFromFree, parseVmStat, readCpuTimes } from "../../src/plugins/dex/dex-windows";
 import {
   classifyMacReport,
+  macCrashReason,
   parseBatteryReportXml,
   parseCoredumpctlJson,
   parseIoregBattery,
@@ -167,6 +168,59 @@ describe("macOS: DiagnosticReports e ioreg", () => {
     expect(parseIpsTimestamp("2026-09-20 10:15:02.00 -0500")).toBe("2026-09-20T15:15:02.000Z");
   });
 
+  // Los dos informes reales del iMac Intel de T1 (26 y 27-sep), recortados a
+  // lo que importa. Antes llegaban con `detail: null`: la consola sabía QUE
+  // crasheaban, no POR QUÉ.
+  const TRAY_BODY = JSON.stringify({
+    exception: { codes: "0x0, 0x0", rawCodes: [0, 0], type: "EXC_CRASH", signal: "SIGABRT" },
+    termination: {
+      code: 4, flags: 518, namespace: "DYLD", indicator: "Symbol missing",
+      details: ["(terminated at launch; ignore backtrace)"],
+      reasons: [
+        "Symbol not found: (_$s10Foundation11JSONDecoderC20DateDecodingStrategyO7iso8601yA2EmFWC)",
+        "Referenced from: '/Applications/Tracenium Agent Status.app/Contents/MacOS/TraceniumAgentStatus'",
+      ],
+    },
+    asi: { "libsystem_c.dylib": ["/Users/imac_choncha/secret"] },
+  });
+  const NODE_BODY = JSON.stringify({
+    exception: { codes: "0x0, 0x0", rawCodes: [0, 0], type: "EXC_CRASH", signal: "SIGKILL (Code Signature Invalid)" },
+    termination: { flags: 0, code: 15, namespace: "SIGNAL", indicator: "Terminated: 15", byProc: "launchd", byPid: 1 },
+  });
+
+  it("⭐ el motivo del crash viaja en `detail`: excepción + terminación", () => {
+    expect(macCrashReason(TRAY_BODY, ".ips")).toBe("EXC_CRASH SIGABRT · DYLD: Symbol missing");
+    expect(macCrashReason(NODE_BODY, ".ips")).toBe("EXC_CRASH SIGKILL (Code Signature Invalid) · SIGNAL: Terminated: 15");
+    expect(classifyMacReport("TraceniumAgentStatus-2026-09-26-121311.ips", IPS_REAL, 0, TRAY_BODY)?.detail).toBe(
+      "EXC_CRASH SIGABRT · DYLD: Symbol missing"
+    );
+  });
+
+  it("no copia rutas, usuarios ni mensajes (reasons, details, asi)", () => {
+    const d = macCrashReason(TRAY_BODY, ".ips") ?? "";
+    expect(d).not.toMatch(/imac_choncha|\/Applications|Symbol not found|terminated at launch/);
+  });
+
+  it("el formato de texto .crash también", () => {
+    const crash = [
+      "Process:               TraceniumAgentStatus [812]",
+      "Exception Type:        EXC_BAD_ACCESS (SIGKILL (Code Signature Invalid))",
+      "Exception Codes:       UNKNOWN_0x32 at 0x0000000104f3c000",
+      "Termination Reason:    Namespace CODESIGNING, Code 2 Invalid Page",
+    ].join("\n");
+    expect(macCrashReason(crash, ".crash")).toBe(
+      "EXC_BAD_ACCESS (SIGKILL (Code Signature Invalid)) · Namespace CODESIGNING, Code 2 Invalid Page"
+    );
+  });
+
+  it("sin cuerpo, o ilegible, se queda en null; y nunca pasa de 120", () => {
+    expect(macCrashReason(null, ".ips")).toBeNull();
+    expect(macCrashReason("{roto", ".ips")).toBeNull();
+    expect(macCrashReason("{}", ".ips")).toBeNull();
+    const long = JSON.stringify({ exception: { type: "X".repeat(300) } });
+    expect(macCrashReason(long, ".ips")?.length).toBe(120);
+  });
+
   it("⭐ los informes en Retired/ también se leen (macOS los mueve ahí al enviarlos)", async () => {
     const tree: Record<string, string[]> = {
       "/Users": ["ana"],
@@ -177,7 +231,7 @@ describe("macOS: DiagnosticReports e ioreg", () => {
     };
     const files: Record<string, string> = {
       "/Users/ana/Library/Logs/DiagnosticReports/ExcUserFault_textunderstandingd-2026-09-21-100452.ips": IPS_SIMULATED,
-      "/Users/ana/Library/Logs/DiagnosticReports/Retired/node-2026-09-17-091808.ips": IPS_REAL,
+      "/Users/ana/Library/Logs/DiagnosticReports/Retired/node-2026-09-17-091808.ips": IPS_REAL + "\n" + NODE_BODY,
     };
     const d = {
       platform: "darwin",
@@ -190,6 +244,8 @@ describe("macOS: DiagnosticReports e ioreg", () => {
     } as unknown as SourceDeps;
     const r = await readStabilityEvents(d, {}, "2026-09-14T00:00:00.000Z");
     expect(r.events.map((e) => e.app)).toEqual(["node"]);
+    // El cuerpo (todo lo que va tras la primera línea) llega al clasificador.
+    expect(r.events[0].detail).toBe("EXC_CRASH SIGKILL (Code Signature Invalid) · SIGNAL: Terminated: 15");
     expect(r.scope).toBe("collected");
   });
 
