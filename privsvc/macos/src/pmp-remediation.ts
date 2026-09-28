@@ -58,6 +58,8 @@ import { promisify } from "util";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
+import fs from "fs";
+import { applyGeneric, readGenericState, type MacGenericDeps } from "./generic-config";
 
 const execFileAsync = promisify(execFile);
 
@@ -257,18 +259,45 @@ async function readMacFileVault(): Promise<{ state: any; isCompliant: boolean }>
 
 // ── Dispatch tables ──────────────────────────────────────────────
 
-const READ_HANDLERS: Record<string, () => Promise<{ state: any; isCompliant: boolean }>> = {
+// ── Genérico (generic-config.ts) ─────────────────────────────────
+// Recibe `req.params.params` (las escrituras que pidió el backend); los
+// dedicados lo ignoran.
+
+/** Un payload inválido para el genérico es bad_request, no un fallo del equipo. */
+class BadGenericParams extends Error {}
+
+const genericDeps: MacGenericDeps = {
+  exec: (bin, args, timeoutMs) => runCmd(bin, args, timeoutMs ?? 60_000),
+  exists: (p) => fs.existsSync(p),
+  copyFile: (src, dst) => fs.copyFileSync(src, dst),
+};
+
+async function readGeneric(params: unknown): Promise<{ state: any; isCompliant: boolean }> {
+  const r = await readGenericState(params, genericDeps);
+  if (!r.ok) throw new BadGenericParams(r.message);
+  return r.value;
+}
+
+async function remediateGeneric(params: unknown): Promise<any> {
+  const r = await applyGeneric(params, genericDeps);
+  if (!r.ok) throw new BadGenericParams(r.message);
+  return r.value;
+}
+
+const READ_HANDLERS: Record<string, (params: unknown) => Promise<{ state: any; isCompliant: boolean }>> = {
   "macos.firewall.enabled":      readMacFirewall,
   "macos.gatekeeper.enabled":    readMacGatekeeper,
   "macos.remote_login.disabled": readMacRemoteLogin,
   "macos.sip.enabled":           readMacSip,
   "macos.filevault.enabled":     readMacFileVault,
+  "macos.config.set_value":      readGeneric,
 };
 
-const REMEDIATE_HANDLERS: Record<string, () => Promise<any>> = {
+const REMEDIATE_HANDLERS: Record<string, (params: unknown) => Promise<any>> = {
   "macos.firewall.enabled":      remediateMacFirewall,
   "macos.gatekeeper.enabled":    remediateMacGatekeeper,
   "macos.remote_login.disabled": remediateMacRemoteLogin,
+  "macos.config.set_value":      remediateGeneric,
   // sip / filevault intentionally omitted — see file header.
 };
 
@@ -287,13 +316,14 @@ export async function handlePmpReadCheckState(req: PrivSvcRequest): Promise<Priv
   }
 
   try {
-    const result = await handler();
+    const result = await handler(req.params?.params);
     return success(req.id, {
       state: result.state,
       isCompliant: result.isCompliant === true,
       supported: true,
     });
   } catch (err: any) {
+    if (err instanceof BadGenericParams) return fail(req.id, "bad_request", err.message);
     logger.error("pmp_read_check_state_failed", {
       checkId,
       error: err?.message || String(err),
@@ -329,9 +359,10 @@ export async function handlePmpRemediate(req: PrivSvcRequest): Promise<PrivSvcRe
   }
 
   try {
-    const result = await handler();
+    const result = await handler(req.params?.params);
     return success(req.id, toRemediationResult(result));
   } catch (err: any) {
+    if (err instanceof BadGenericParams) return fail(req.id, "bad_request", err.message);
     if (err?.code === "remediate_timeout") {
       return fail(req.id, "remediate_timeout", err?.message || "remediate timed out");
     }
@@ -537,7 +568,7 @@ async function executeMacRevert(
 
   // No-op (el estado previo ya era el que deja el fix): nada que verificar.
   if (plan.commands.length > 0) {
-    const after = await READ_HANDLERS[checkId]();
+    const after = await READ_HANDLERS[checkId](undefined);
     const mismatched = Object.entries(plan.expect)
       .filter(([k, v]) => after.state?.[k] !== v)
       .map(([k, v]) => `${k}: expected ${JSON.stringify(v)}, got ${JSON.stringify(after.state?.[k])}`);

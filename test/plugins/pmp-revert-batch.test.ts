@@ -176,6 +176,6 @@ describe("varios fixes en UN job", () => {
     // El genérico de Linux sólo se anuncia en Linux.
     expect(pmpRemediateCapabilities("linux")).toEqual(["pmp.remediate.batch", "pmp.remediate.revert", "pmp.remediate.linux_config"]);
     expect(pmpRemediateCapabilities("win32")).toEqual(["pmp.remediate.batch", "pmp.remediate.revert"]);
-    expect(pmpRemediateCapabilities("darwin")).not.toContain("pmp.remediate.linux_config");
+    expect(pmpRemediateCapabilities("darwin")).toEqual(["pmp.remediate.batch", "pmp.remediate.revert", "pmp.remediate.macos_config"]);
   });
 });
