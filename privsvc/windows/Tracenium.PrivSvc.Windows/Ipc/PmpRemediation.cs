@@ -840,7 +840,7 @@ public static class PmpRemediation
     // ── Dónde vive cada escritura ─────────────────────────────────
     //
     // Una escritura HKLM tiene UN destino. Una HKU tiene uno por perfil
-    // cargado (HKEY_USERS\S-1-5-21-*, el mismo criterio que la sonda
+    // cargado (HKEY_USERS\<SID> de persona, AD o Entra ID: IsUserProfileHive, el mismo criterio que la sonda
     // registryUser): se lee y se escribe en TODOS, y sólo cumple si cumple
     // en todos — que es exactamente lo que el evaluador del control plane
     // exige a la sonda. Los perfiles sin sesión no están cargados y no se

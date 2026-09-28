@@ -23,7 +23,9 @@ import type { SoftwareApplication } from "./normalize-app";
 
 // Mismo formato que UninstallIdentity.BuildUserKeyPath en el PrivSvc:
 // HKU\<SID>\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\<sub>
-const USER_KEY_PATH = /^HKU\\(S-1-5-21-\d+-\d+-\d+-\d+)\\/i;
+// y el mismo criterio de persona que IsUserProfileHive: AD/local (S-1-5-21-…)
+// y Entra ID (S-1-12-1-…).
+const USER_KEY_PATH = /^HKU\\(S-1-(?:5-21|12-1)-\d+-\d+-\d+-\d+)\\/i;
 
 /** El SID del perfil al que pertenece una app por usuario; null si es de máquina. */
 export function userSidOfKeyPath(keyPath: string | null | undefined): string | null {

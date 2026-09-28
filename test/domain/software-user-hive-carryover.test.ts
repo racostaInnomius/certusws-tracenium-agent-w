@@ -17,6 +17,12 @@ describe("userSidOfKeyPath", () => {
     expect(userSidOfKeyPath(`hku\\${ANA.toLowerCase()}${UNINSTALL}ZoomUMX`)).toBe(ANA);
   });
 
+  it("⭐ también los usuarios de Entra ID (S-1-12-1-…)", () => {
+    const entra = "S-1-12-1-3570604255-1238987765-2263183267-4104715137";
+    expect(userSidOfKeyPath(`HKU\\${entra}${UNINSTALL}ZoomUMX`)).toBe(entra);
+    expect(carryOverUnreadUserApps([], [app("zoom", `HKU\\${entra}${UNINSTALL}ZoomUMX`)], [entra]).carried).toBe(1);
+  });
+
   it("máquina, HKCU de SYSTEM o sin ruta → null", () => {
     expect(userSidOfKeyPath(`HKLM${UNINSTALL}{GUID}`)).toBeNull();
     expect(userSidOfKeyPath(`HKCU${UNINSTALL}x`)).toBeNull();

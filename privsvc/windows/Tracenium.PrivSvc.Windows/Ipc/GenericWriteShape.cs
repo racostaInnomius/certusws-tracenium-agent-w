@@ -46,7 +46,7 @@ public enum RegistryHiveKind
     /// <summary>HKEY_LOCAL_MACHINE: la máquina.</summary>
     LocalMachine,
     /// <summary>
-    /// HKEY_USERS\S-1-5-21-* de CADA perfil cargado — lo que lee la sonda
+    /// HKEY_USERS\<SID> de CADA perfil de persona cargado (AD y Entra ID) — lo que lee la sonda
     /// `registryUser.*` (UserRegistryProbes) y, por tanto, lo único que un
     /// fix puede hacer pasar. Un perfil sin sesión no está cargado y no se
     /// carga a propósito (`reg load` de su NTUSER.DAT lo bloquearía al

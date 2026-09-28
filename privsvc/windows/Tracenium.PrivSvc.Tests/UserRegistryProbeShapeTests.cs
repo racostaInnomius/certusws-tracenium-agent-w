@@ -38,6 +38,23 @@ public class UserRegistryProbeShapeTests
     }
 
     [Fact]
+    public void EntraIdUsersArePeopleToo()
+    {
+        // Equipo unido a Entra ID: el usuario es S-1-12-1-…, no S-1-5-21-….
+        // Hasta el 28-sep no contaba y NADA de lo suyo se leía ni se escribía.
+        const string entra = "S-1-12-1-3570604255-1238987765-2263183267-4104715137";
+        Assert.True(UserRegistryProbeShape.IsUserProfileHive(entra));
+        Assert.True(UserRegistryProbeShape.IsUserProfileHive(entra.ToLowerInvariant()));
+        Assert.False(UserRegistryProbeShape.IsUserProfileHive(entra + "_Classes"));
+        // Ni otras autoridades 12 ni formas cortas.
+        Assert.False(UserRegistryProbeShape.IsUserProfileHive("S-1-12-2-1-2-3-4"));
+        Assert.False(UserRegistryProbeShape.IsUserProfileHive("S-1-12-1-1-2-3"));
+        Assert.False(UserRegistryProbeShape.IsUserProfileHive("S-1-5-20"));
+        Assert.False(UserRegistryProbeShape.IsUserProfileHive(""));
+        Assert.False(UserRegistryProbeShape.IsUserProfileHive(null));
+    }
+
+    [Fact]
     public void AggregatesAcrossHives()
     {
         var perHive = new Dictionary<string, Dictionary<string, object?>>

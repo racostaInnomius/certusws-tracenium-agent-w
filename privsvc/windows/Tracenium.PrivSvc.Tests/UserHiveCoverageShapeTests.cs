@@ -42,6 +42,13 @@ public class UserHiveCoverageShapeTests
     }
 
     [Fact]
+    public void EntraIdProfileWithoutSessionIsUnreadToo()
+    {
+        const string entra = "S-1-12-1-3570604255-1238987765-2263183267-4104715137";
+        Assert.Equal(new[] { entra }, UserHiveCoverageShape.Unread(new[] { Ana, entra }, new[] { Ana }));
+    }
+
+    [Fact]
     public void UnreadableProfileListCarriesNothing()
     {
         // Sin la lista de perfiles no se inventa ninguno: vuelve la regla de antes.

@@ -4,7 +4,7 @@
 // agrega (ver UserRegistryProbeShape.cs para el contrato). Sin juzgar: el
 // veredicto es del control plane.
 //
-// Sólo perfiles S-1-5-21-* con sesión: los hives de un usuario sin
+// Sólo perfiles de persona (AD S-1-5-21-* y Entra S-1-12-1-*) con sesión: los hives de un usuario sin
 // sesión no están cargados y cargarlos (`reg load` de NTUSER.DAT) los
 // bloquearía para el propio usuario al iniciar sesión. Que un equipo sin
 // nadie conectado no pueda afirmar nada es la verdad, y así se reporta.

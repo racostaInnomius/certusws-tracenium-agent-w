@@ -55,10 +55,10 @@ public static class UserPrinterConnections
             using var users = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default);
             foreach (var sid in users.GetSubKeyNames())
             {
-                // Mismo criterio que CdpUserCertificates: HKEY_USERS también
+                // Mismo criterio que el resto del PrivSvc (IsUserProfileHive): HKEY_USERS también
                 // trae SYSTEM, LOCAL SERVICE, .DEFAULT y los `_Classes`, y
                 // ninguno es la mesa de nadie.
-                if (!CdpUserCertificates.IsInteractiveUserSid(sid)) continue;
+                if (!UserRegistryProbeShape.IsUserProfileHive(sid)) continue;
                 usuarios += 1;
 
                 using var conexiones = users.OpenSubKey($@"{sid}\Printers\Connections");

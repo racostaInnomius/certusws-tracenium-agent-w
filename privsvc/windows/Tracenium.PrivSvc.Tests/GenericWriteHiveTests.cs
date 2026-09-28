@@ -1,6 +1,6 @@
 // privsvc/windows/Tracenium.PrivSvc.Tests/GenericWriteHiveTests.cs
 //
-// Escrituras de perfil de usuario (hive HKU = cada HKEY_USERS\S-1-5-21-*
+// Escrituras de perfil de usuario (hive HKU = cada HKEY_USERS\<SID> de persona
 // cargado). Lo que se fija: HKU se acepta y queda marcado como tal, HKCU
 // se rechaza (un servicio no tiene "usuario actual"), una escritura HKU
 // fuera de Software\ se rechaza, y las guardas de clave siguen aplicando

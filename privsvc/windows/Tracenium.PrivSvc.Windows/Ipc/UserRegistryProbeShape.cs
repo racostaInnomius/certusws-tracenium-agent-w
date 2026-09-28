@@ -79,11 +79,28 @@ public static class UserRegistryProbeShape
         return list;
     }
 
-    /// <summary>¿Es un hive de perfil de usuario? S-1-5-21-…, sin sufijo _Classes.</summary>
-    public static bool IsUserProfileHive(string name)
+    /// <summary>
+    /// ¿Es el perfil de una PERSONA? El único criterio del PrivSvc para
+    /// «usuario»: inventario por usuario, sondas CIS de usuario, remediación
+    /// HKU, desinstalación por usuario, impresoras, certificados de usuario,
+    /// usuarios con sesión y apps de la Store.
+    ///
+    /// · <c>S-1-5-21-a-b-c-RID</c> — cuentas locales y de dominio (AD).
+    /// · <c>S-1-12-1-a-b-c-d</c>  — cuentas de Entra ID (Azure AD) en un equipo
+    ///   unido a Entra.
+    ///
+    /// ⚠️ Hasta el 28-sep sólo contaba S-1-5-21: en un equipo unido a Entra el
+    /// usuario NO EXISTÍA para nada de lo anterior — sus apps por usuario no se
+    /// inventariaban, sus directivas de usuario salían «sin nadie con sesión»,
+    /// y un fix de HKU no le escribía. Fuera siguen SYSTEM (S-1-5-18),
+    /// LOCAL/NETWORK SERVICE (-19/-20), .DEFAULT y los <c>_Classes</c>.
+    /// </summary>
+    public static bool IsUserProfileHive(string? name)
     {
+        if (string.IsNullOrWhiteSpace(name)) return false;
         if (name.EndsWith("_Classes", StringComparison.OrdinalIgnoreCase)) return false;
-        return System.Text.RegularExpressions.Regex.IsMatch(name, @"^S-1-5-21-\d+-\d+-\d+-\d+$");
+        return System.Text.RegularExpressions.Regex.IsMatch(name.Trim(), @"^S-1-(5-21|12-1)-\d+-\d+-\d+-\d+$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
     /// <summary>

@@ -20,20 +20,13 @@ namespace Tracenium.PrivSvc.Windows.Ipc;
 /// </summary>
 public static class AppxInventoryShape
 {
-    /// Cuentas de persona: locales/dominio (S-1-5-21-…) y Entra ID
-    /// (S-1-12-1-…). Fuera SYSTEM, LocalService, NetworkService y compañía.
-    public static bool IsPersonSid(string? sid) =>
-        !string.IsNullOrWhiteSpace(sid) &&
-        System.Text.RegularExpressions.Regex.IsMatch(sid.Trim(), @"^S-1-(5-21|12-1)(-\d+){4}$",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
     /// <param name="users">«SID|InstallState» por cada usuario del paquete.</param>
     public static bool InstalledForPerson(IEnumerable<string> users) =>
         users.Any(u =>
         {
             var sep = u.LastIndexOf('|');
             if (sep <= 0) return false;
-            return IsPersonSid(u[..sep]) &&
+            return UserRegistryProbeShape.IsUserProfileHive(u[..sep]) &&
                    u[(sep + 1)..].Trim().Equals("Installed", StringComparison.OrdinalIgnoreCase);
         });
 

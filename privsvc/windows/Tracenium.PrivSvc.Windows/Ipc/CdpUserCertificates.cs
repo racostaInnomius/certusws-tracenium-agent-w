@@ -102,23 +102,6 @@ public static class CdpUserCertificates
         return null;
     }
 
-    /// <summary>
-    /// True for a real interactive user's SID.
-    ///
-    /// HKEY_USERS also carries the service accounts (SYSTEM S-1-5-18,
-    /// LOCAL SERVICE -19, NETWORK SERVICE -20), `.DEFAULT`, and a
-    /// `_Classes` companion key per user. None of those are a person's
-    /// certificate store, and reading them would pad the inventory with
-    /// entries nobody can act on.
-    /// </summary>
-    internal static bool IsInteractiveUserSid(string sid)
-    {
-        if (string.IsNullOrWhiteSpace(sid)) return false;
-        if (sid.EndsWith("_Classes", StringComparison.OrdinalIgnoreCase)) return false;
-        if (!sid.StartsWith("S-1-5-21-", StringComparison.OrdinalIgnoreCase)) return false;
-        return true;
-    }
-
     public static Task<PrivSvcResponse> Handle(PrivSvcRequest req)
     {
         try
@@ -134,7 +117,9 @@ public static class CdpUserCertificates
             foreach (var sid in users.GetSubKeyNames())
             {
                 if (budgetExceeded) break;
-                if (!IsInteractiveUserSid(sid)) continue;
+                // Personas (AD y Entra ID): fuera SYSTEM, servicios, .DEFAULT y
+                // los `_Classes`, que no son el almacén de nadie.
+                if (!UserRegistryProbeShape.IsUserProfileHive(sid)) continue;
                 usersSeen += 1;
 
                 foreach (var storeName in AllowedStores)

@@ -25,10 +25,10 @@ public static class LoggedOnUsers
             using var users = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default);
             foreach (var sid in users.GetSubKeyNames())
             {
-                // Mismo criterio que CdpUserCertificates y las impresoras:
+                // Mismo criterio que el resto del PrivSvc (IsUserProfileHive):
                 // HKEY_USERS trae también SYSTEM, LOCAL SERVICE, .DEFAULT y
                 // los `_Classes`, y ninguno es una persona.
-                if (!CdpUserCertificates.IsInteractiveUserSid(sid)) continue;
+                if (!UserRegistryProbeShape.IsUserProfileHive(sid)) continue;
                 try
                 {
                     // gpresult quiere el NOMBRE de cuenta, no el SID.
