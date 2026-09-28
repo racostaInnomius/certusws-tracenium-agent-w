@@ -488,6 +488,61 @@ describe("AMP Windows — normalización de software.inventory (contrato items/a
     expect(repo.deleteSoftwareByIds).toHaveBeenCalledWith(["sha256:old"]);
   });
 
+  // ⚠️ T111, 25–27 sep: Teams, RingCentral y Zoom «se desinstalaban» al
+  // cerrar sesión y «se reinstalaban» al volver, cada ~12 h. Su hive
+  // (HKU\<SID>) sólo está montado con sesión.
+  describe("apps por usuario con el perfil SIN sesión", () => {
+    const SID = "S-1-5-21-1111111111-222222222-3333333333-1001";
+    const zoom = {
+      name: "Zoom Workplace",
+      version: "7.1.9",
+      publisher: "Zoom",
+      source: "win32-registry",
+      uninstallString: "C:\\Users\\ana\\AppData\\Roaming\\Zoom\\uninstall\\Installer.exe /uninstall",
+      uninstallKeyPath: `HKU\\${SID}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ZoomUMX`
+    };
+    const chrome = { name: "Google Chrome", version: "154.0", publisher: "Google LLC", source: "win32-registry" };
+
+    function escaneo(items: any[], userHives?: any) {
+      return makeCtx(
+        privRouter({
+          "security.compliance": () => ({ ok: false, error: { code: "x" } }),
+          "software.inventory": () => ({ ok: true, result: { items, ...(userHives ? { userHives } : {}) } })
+        })
+      );
+    }
+
+    async function conSesionYLuegoSin(userHivesSinSesion?: any) {
+      const { windowsProvider } = await import("../../src/plugins/amp/providers/windows");
+      await windowsProvider.collect(escaneo([chrome, zoom], { read: [SID], unread: [] }));
+      return windowsProvider.collect(escaneo([chrome], userHivesSinSesion));
+    }
+
+    const quitadas = (amp: any) => (amp.software.delta?.removed ?? []).map((a: any) => a.rawName);
+
+    it("⭐ perfil sin sesión: sus apps NO salen desinstaladas y siguen en la línea base", async () => {
+      const amp = await conSesionYLuegoSin({ read: [], unread: [SID] });
+      expect(quitadas(amp)).toEqual([]);
+      expect(amp.software.hasChanges).toBe(false);
+      expect(baselineState.rows.map((r) => r.rawName)).toContain("Zoom Workplace");
+    });
+
+    it("perfil leído y la app ya no está: SÍ se desinstaló", async () => {
+      const amp = await conSesionYLuegoSin({ read: [SID], unread: [] });
+      expect(quitadas(amp)).toEqual(["Zoom Workplace"]);
+    });
+
+    it("perfil borrado del equipo (fuera de ProfileList): sus apps se van", async () => {
+      const amp = await conSesionYLuegoSin({ read: [], unread: [] });
+      expect(quitadas(amp)).toEqual(["Zoom Workplace"]);
+    });
+
+    it("PrivSvc anterior sin `userHives`: la regla de antes, no se inventa nada", async () => {
+      const amp = await conSesionYLuegoSin(undefined);
+      expect(quitadas(amp)).toEqual(["Zoom Workplace"]);
+    });
+  });
+
   // ───────────────────────────────────────────────────────────────────
   // Impresoras: el orden de recolección, que es el bug real.
   //

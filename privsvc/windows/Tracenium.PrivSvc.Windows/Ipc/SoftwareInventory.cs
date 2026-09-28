@@ -28,9 +28,12 @@ public static class SoftwareInventory
             // arreglo que las impresoras de red: HKEY_USERS\<SID> de cada perfil
             // con sesión. Un perfil sin sesión no está cargado y no se carga
             // (bloquearía el NTUSER.DAT al propio usuario), así que sus apps
-            // siguen sin verse: se sabe y es la verdad.
-            var perUser = ReadLoadedUserProfiles();
+            // siguen sin verse — y se DICE cuáles (userHives.unread), para que
+            // el agente no los tome por desinstalados (UserHiveCoverageShape).
+            var readSids = new List<string>();
+            var perUser = ReadLoadedUserProfiles(readSids);
             apps.AddRange(perUser);
+            var unreadSids = UserHiveCoverageShape.Unread(ReadProfileListSids(), readSids);
             Console.WriteLine($"[PrivSvc][SoftwareInventory] Registry inventory collected. Items={apps.Count} perUser={perUser.Count}");
 
             // AppX (Store) via PowerShell (pragmatic v1)
@@ -61,7 +64,8 @@ public static class SoftwareInventory
             var result = new
             {
                 count = dedup.Count,
-                items = dedup
+                items = dedup,
+                userHives = new { read = readSids, unread = unreadSids }
             };
 
             return Task.FromResult(PrivSvcResponse.Success(req.Id, result));
@@ -109,8 +113,11 @@ public static class SoftwareInventory
     /// <summary>
     /// Las apps instaladas por usuario, de cada perfil con sesión.
     /// Un perfil que falla no tumba a los demás ni al inventario.
+    /// <paramref name="readSids"/> recibe los perfiles leídos ENTEROS (sin clave
+    /// Uninstall también cuenta: se miró y no había nada); uno que lanza a
+    /// medias no entra, y el agente conserva lo que sabía de él.
     /// </summary>
-    private static List<object> ReadLoadedUserProfiles()
+    private static List<object> ReadLoadedUserProfiles(List<string> readSids)
     {
         var list = new List<object>();
         try
@@ -124,6 +131,7 @@ public static class SoftwareInventory
                 {
                     using var uninstall = users.OpenSubKey(sid + @"\Software\Microsoft\Windows\CurrentVersion\Uninstall");
                     list.AddRange(ReadUninstallKey(uninstall, subName => UninstallIdentity.BuildUserKeyPath(sid, subName)));
+                    readSids.Add(sid);
                 }
                 catch (Exception ex)
                 {
@@ -136,6 +144,24 @@ public static class SoftwareInventory
             Console.WriteLine($"[PrivSvc][SoftwareInventory] HKEY_USERS unreadable: {ex.GetType().Name}");
         }
         return list;
+    }
+
+    /// Los perfiles que EXISTEN en el equipo, con sesión o sin ella. Si no se
+    /// puede leer, lista vacía: el agente vuelve a la regla de antes (lo no
+    /// visto se va), nunca inventa perfiles.
+    private static List<string> ReadProfileListSids()
+    {
+        try
+        {
+            using var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+            using var profiles = hklm.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList");
+            return profiles?.GetSubKeyNames().ToList() ?? new List<string>();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[PrivSvc][SoftwareInventory] ProfileList unreadable: {ex.GetType().Name}");
+            return new List<string>();
+        }
     }
 
     private static List<object> ReadUninstallKey(RegistryKey? uninstall, Func<string, string> keyPathFor)

@@ -5,6 +5,7 @@ import type { AgentContext } from "../../../core/agent-context";
 import { normalizeApp } from "../../../domain/normalize-app";
 import { installedOnFromWindowsRegistry } from "../../../domain/install-date";
 import { computeSoftwareDelta, toBaselineOps } from "../../../domain/software-inventory-delta";
+import { carryOverUnreadUserApps } from "../../../domain/software-user-hive-carryover";
 import { loadSoftwareBaseline, upsertSoftwareBaseline, deleteSoftwareByIds } from "../../../domain/software-baseline-repo";
 import type { AmpNamespace } from "../../../domain/amp-types";
 import { readBootTime } from "../../../domain/boot-time";
@@ -193,9 +194,17 @@ export async function collectWindowsSoftwareInventory(ctx: AgentContext) {
     normalizedCount: normalized.length
   });
 
+  // Perfiles que existen y no se leyeron (sin sesión). null = PrivSvc anterior
+  // que no lo dice: entonces no se conserva nada (software-user-hive-carryover).
+  const unread = resp.result?.userHives?.unread;
+  const unreadUserSids = Array.isArray(unread)
+    ? unread.filter((s: unknown): s is string => typeof s === "string")
+    : null;
+
   return {
     count: normalized.length,
-    apps: normalized
+    apps: normalized,
+    unreadUserSids
   };
 }
 
@@ -282,7 +291,7 @@ export const windowsProvider = {
     try {
       const result = await collectWindowsSoftwareInventory(ctx);
       // ensure typing
-      const apps: SoftwareApplication[] = result.apps as SoftwareApplication[];
+      let apps: SoftwareApplication[] = result.apps as SoftwareApplication[];
 
       if (!apps || apps.length === 0) {
         console.warn("[AGENT] EMPTY INVENTORY RECEIVED — CLEARING BASELINE");
@@ -312,12 +321,23 @@ export const windowsProvider = {
         //sample: apps.slice(0, 3)
       });
 
+      const previous: SoftwareApplication[] = loadSoftwareBaseline() ?? [];
+
+      // Las apps de un perfil sin sesión no se vieron, no se desinstalaron:
+      // sin esto salían «removed» al cerrar sesión y «added» al volver.
+      const conservadas = carryOverUnreadUserApps(apps, previous, result.unreadUserSids);
+      if (conservadas.carried > 0) {
+        invDebug("[AGENT] USER APPS CARRIED OVER (profile not loaded)", {
+          carried: conservadas.carried,
+          profiles: result.unreadUserSids?.length ?? 0
+        });
+      }
+      apps = conservadas.apps;
+
       // Ensure deterministic ordering before delta + hashing
       apps.sort((a: SoftwareApplication, b: SoftwareApplication) =>
         (a.installId ?? "").localeCompare(b.installId ?? "")
       );
-
-      const previous: SoftwareApplication[] = loadSoftwareBaseline() ?? [];
       const isFirstRun = previous.length === 0;
 
       if (isFirstRun) {

@@ -97,6 +97,9 @@
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\SeceditShape.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\AuditpolShape.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UserRegistryProbeShape.cs" />
+    <!-- Qué perfiles NO se leyeron en el inventario de software: sin sesión
+         no hay hive, y lo no visto no es lo desinstalado. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UserHiveCoverageShape.cs" />
     <!-- ADR-0015 bloque 3. Las tres piezas de la mitad híbrida se
          escribieron SIN nada de Windows dentro precisamente para poder
          probarse aquí: `MlDsaAlt` es BouncyCastle gestionado,
