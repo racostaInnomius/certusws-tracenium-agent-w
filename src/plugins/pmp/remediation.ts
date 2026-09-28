@@ -100,11 +100,13 @@ export const PMP_REMEDIATE_CAPABILITIES = ["pmp.remediate.batch", "pmp.remediate
  * blanca, y el operador vería un «Fix» que no puede salir bien.
  */
 export const LINUX_CONFIG_CAPABILITY = "pmp.remediate.linux_config";
+/** Su forma `sshd` (privsvc/linux/src/generic-config.ts), que llegó después. */
+export const LINUX_SSHD_CAPABILITY = "pmp.remediate.linux_sshd";
 /** Lo mismo para `macos.config.set_value`. */
 export const MAC_CONFIG_CAPABILITY = "pmp.remediate.macos_config";
 
 export function pmpRemediateCapabilities(platform: NodeJS.Platform = process.platform): string[] {
-  if (platform === "linux") return [...PMP_REMEDIATE_CAPABILITIES, LINUX_CONFIG_CAPABILITY];
+  if (platform === "linux") return [...PMP_REMEDIATE_CAPABILITIES, LINUX_CONFIG_CAPABILITY, LINUX_SSHD_CAPABILITY];
   if (platform === "darwin") return [...PMP_REMEDIATE_CAPABILITIES, MAC_CONFIG_CAPABILITY];
   return [...PMP_REMEDIATE_CAPABILITIES];
 }

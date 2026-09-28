@@ -21,6 +21,12 @@
 //               <fichero>.d/99-tracenium-hardening.conf, el último en orden.
 //               El resto (pwquality, faillock, login.defs, auditd.conf,
 //               apport): en su sitio, con copia <fichero>.tracenium.<ts>.bak.
+//   sshd        /etc/ssh/sshd_config.d/00-tracenium-hardening.conf, el MISMO
+//               drop-in que los handlers dedicados de SSH (sshd-dropin.ts:
+//               sshd se queda con el PRIMER valor, por eso 00-). `sshd -t`
+//               sobre el conjunto antes de recargar; si lo rechaza, nuestros
+//               ficheros vuelven a como estaban. El sshd_config del operador
+//               no se toca.
 //
 // ── Privilegios: por systemd-run, no ampliando el perfil ─────────────
 //
@@ -54,6 +60,17 @@ import fsDefault from "fs";
 import pathMod from "path";
 import os from "os";
 import { execFile } from "child_process";
+import {
+  LEGACY_SSHD_DROPIN_FILE,
+  SSHD_DROPIN_DIR,
+  SSHD_DROPIN_FILE,
+  SSHD_MAIN_CONFIG,
+  directiveKey,
+  explainSshdOverride,
+  planSshDropinChanges,
+  readEffectiveSshd,
+  sshdEarlierDefinitions,
+} from "./sshd-dropin";
 
 // ── Listas cerradas (espejo de desired-state-linux.ts) ───────────────
 
@@ -107,17 +124,53 @@ export const CONF_FILES: Readonly<Record<string, ConfPolicy>> = Object.freeze({
   "/etc/default/apport": { mode: "inplace", style: "shell", effect: "reboot", keys: { enabled: {} } },
 });
 
+/**
+ * Directivas de sshd que se pueden escribir (clave: en minúsculas, como las
+ * imprime `sshd -T`). `guard` se aplica cuando el valor es `guardValue`, el
+ * que endurece: devolver el valor anterior en un revert no se bloquea.
+ * `list`: algoritmos; se quitan los que este OpenSSH no conoce.
+ */
+type SshdPolicy = { name: string; guard?: string; guardValue?: string; list?: boolean; values?: readonly string[] };
+
+export const SSHD_DIRECTIVES: Readonly<Record<string, SshdPolicy>> = Object.freeze({
+  permitrootlogin: { name: "PermitRootLogin", guardValue: "no", guard: "if root is the account people log in with over SSH, nobody can log in by SSH afterwards" },
+  passwordauthentication: { name: "PasswordAuthentication", guardValue: "no", guard: "users who log in with a password are locked out of SSH" },
+  permitemptypasswords: { name: "PermitEmptyPasswords" },
+  maxauthtries: { name: "MaxAuthTries" },
+  logingracetime: { name: "LoginGraceTime" },
+  x11forwarding: { name: "X11Forwarding" },
+  usepam: { name: "UsePAM" },
+  clientaliveinterval: { name: "ClientAliveInterval" },
+  clientalivecountmax: { name: "ClientAliveCountMax" },
+  // El banner es un fichero: sólo los que nombra el benchmark, y tiene que existir.
+  banner: { name: "Banner", values: ["/etc/issue.net", "/etc/issue", "none"] },
+  disableforwarding: { name: "DisableForwarding", guardValue: "yes", guard: "turns off SSH tunnels and port forwarding" },
+  gssapiauthentication: { name: "GSSAPIAuthentication", guardValue: "no", guard: "Kerberos single sign-on over SSH stops working" },
+  hostbasedauthentication: { name: "HostbasedAuthentication" },
+  ignorerhosts: { name: "IgnoreRhosts" },
+  loglevel: { name: "LogLevel" },
+  maxsessions: { name: "MaxSessions" },
+  maxstartups: { name: "MaxStartups" },
+  permituserenvironment: { name: "PermitUserEnvironment" },
+  ciphers: { name: "Ciphers", list: true },
+  macs: { name: "MACs", list: true },
+  kexalgorithms: { name: "KexAlgorithms", list: true },
+});
+
 // ── Escrituras ───────────────────────────────────────────────────────
 
 export type LinuxWrite =
   | { kind: "sysctl"; key: string; value: string; persist: boolean }
   | { kind: "kmod"; module: string; disable: boolean }
   | { kind: "audit_rule"; line: string; present: boolean }
-  | { kind: "conf"; file: string; key: string; value: string | null };
+  | { kind: "conf"; file: string; key: string; value: string | null }
+  | { kind: "sshd"; key: string; value: string | null; required?: string[] };
 
 const SYSCTL_KEY = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_-]+)+$/;
 const SAFE_VALUE = /^[A-Za-z0-9_.:\/ -]{1,64}$/;
 const CONF_VALUE = /^[A-Za-z0-9_.:\/-]{1,64}$/;
+const SSHD_VALUE = /^[A-Za-z0-9_.:@\/+-]{1,64}$/;
+const SSHD_ALGORITHM = /^[a-z0-9][a-z0-9_.@+-]{0,63}$/;
 const WATCH_RULE = /^-w (\/[A-Za-z0-9._\/-]+) -p ([rwxa]{1,4}) -k ([A-Za-z0-9_-]{1,32})$/;
 const SYSCALL_RULE = /^-a always,exit -F arch=b(32|64) -S ([a-z0-9_]+(?:,[a-z0-9_]+){0,31})((?: -F auid>=1000 -F auid!=unset)?) -k ([A-Za-z0-9_-]{1,32})$/;
 
@@ -167,6 +220,30 @@ export function parseWrites(params: unknown): Check<LinuxWrite[]> {
         const guard = w.value !== null ? policy.keys[w.key].guard : undefined;
         if (guard) return { ok: false, message: `${at}: guarded (${guard})` };
         out.push({ kind: "conf", file: w.file, key: w.key, value: w.value });
+        break;
+      }
+      case "sshd": {
+        const policy = typeof w.key === "string" ? SSHD_DIRECTIVES[w.key.toLowerCase()] : undefined;
+        if (!policy) return { ok: false, message: `${at}: sshd directive not on the list Tracenium may set` };
+        let required: string[] | undefined;
+        if (w.value !== null) {
+          if (typeof w.value !== "string") return { ok: false, message: `${at}: invalid value` };
+          if (policy.list) {
+            const items = w.value.split(",");
+            if (items.length > 32 || !items.every((i: string) => SSHD_ALGORITHM.test(i))) return { ok: false, message: `${at}: invalid algorithm list` };
+            if (w.required !== undefined) {
+              if (!Array.isArray(w.required) || !w.required.every((r: unknown) => typeof r === "string" && items.includes(r))) {
+                return { ok: false, message: `${at}: required algorithms must come from the list` };
+              }
+              required = w.required.length ? [...w.required] : undefined;
+            }
+          } else if (!SSHD_VALUE.test(w.value)) {
+            return { ok: false, message: `${at}: invalid value` };
+          }
+          if (policy.values && !policy.values.includes(w.value)) return { ok: false, message: `${at}: ${policy.name} ${w.value} is not a value Tracenium sets` };
+          if (policy.guard && w.value.toLowerCase() === policy.guardValue) return { ok: false, message: `${at}: guarded (${policy.guard})` };
+        }
+        out.push(required ? { kind: "sshd", key: policy.name, value: w.value, required } : { kind: "sshd", key: policy.name, value: w.value });
         break;
       }
       default:
@@ -364,9 +441,31 @@ export type StateEntry =
   | { kind: "sysctl"; key: string; runtime: string | null; ours: string | null; boot: string | null; bootSource: string | null }
   | { kind: "kmod"; module: string; loaded: boolean; blocked: boolean }
   | { kind: "audit_rule"; line: string; present: boolean }
-  | { kind: "conf"; file: string; key: string; effective: string | null; ours: string | null; effectiveSource: string | null };
+  | { kind: "conf"; file: string; key: string; effective: string | null; ours: string | null; effectiveSource: string | null }
+  | { kind: "sshd"; key: string; effective: string | null; ours: string | null };
 
-export function readEntry(w: LinuxWrite, deps: GenericDeps): StateEntry {
+/** Lo que se lee una vez por petición: la configuración efectiva de sshd. */
+export type ReadContext = { sshdT: string | null };
+
+export const SSHD_BIN = "/usr/sbin/sshd";
+
+async function readContext(writes: LinuxWrite[], deps: GenericDeps): Promise<ReadContext> {
+  if (!writes.some((w) => w.kind === "sshd")) return { sshdT: null };
+  const r = await deps.exec(SSHD_BIN, ["-T"], 15_000);
+  return { sshdT: r.code === 0 ? r.stdout : null };
+}
+
+/** El valor de la directiva en NUESTRO drop-in 00-, o null. */
+export function sshdOurs(text: string | null, key: string): string | null {
+  const lower = key.toLowerCase();
+  let v: string | null = null;
+  for (const l of (text ?? "").split("\n")) {
+    if (directiveKey(l) === lower && v === null) v = l.trim().replace(/^[^\s=]+\s*=?\s*/, "").trim();
+  }
+  return v;
+}
+
+export function readEntry(w: LinuxWrite, deps: GenericDeps, ctx: ReadContext = { sshdT: null }): StateEntry {
   switch (w.kind) {
     case "sysctl": {
       const ours = sysctlEntries(deps.readFile(SYSCTL_DROPIN)).filter((e) => e.key === w.key).pop()?.value ?? null;
@@ -384,7 +483,20 @@ export function readEntry(w: LinuxWrite, deps: GenericDeps): StateEntry {
       const ours = lookup(parseKeyValue(deps.readFile(confOursPath(w.file))), w.key);
       return { kind: "conf", file: w.file, key: w.key, effective: eff.value, ours, effectiveSource: eff.source };
     }
+    case "sshd":
+      return {
+        kind: "sshd",
+        key: w.key,
+        effective: ctx.sshdT === null ? null : readEffectiveSshd(w.key, ctx.sshdT) ?? null,
+        ours: sshdOurs(deps.readFile(SSHD_DROPIN_FILE), w.key),
+      };
   }
+}
+
+/** Por qué sshd no se queda con nuestro valor: quién lo fija antes (sshd-dropin.ts). */
+function sshdOverrideWhy(key: string, actual: string, deps: GenericDeps): string {
+  const dropins = deps.readdir(SSHD_DROPIN_DIR).map((name) => ({ name, content: deps.readFile(pathMod.join(SSHD_DROPIN_DIR, name)) ?? "" }));
+  return explainSshdOverride(key, actual, sshdEarlierDefinitions(deps.readFile(SSHD_MAIN_CONFIG) ?? "", dropins, key));
 }
 
 /** ¿Está como pide la escritura? Y si no, por qué, en una frase. */
@@ -412,13 +524,22 @@ export function satisfied(w: LinuxWrite, e: StateEntry): { ok: boolean; why: str
     if (e.effective !== w.value) return { ok: false, why: `${e.effectiveSource} sets ${w.key} = ${e.effective} after ours` };
     return { ok: true, why: null };
   }
+  if (w.kind === "sshd" && e.kind === "sshd") {
+    const same = (a: string | null, b: string | null) => (a ?? "").toLowerCase() === (b ?? "").toLowerCase();
+    if (w.value === null) return e.ours === null ? { ok: true, why: null } : { ok: false, why: `${w.key} is still set in ${SSHD_DROPIN_FILE}` };
+    if (!same(e.ours, w.value)) return { ok: false, why: `${w.key} is not set in ${SSHD_DROPIN_FILE}` };
+    if (e.effective === null) return { ok: false, why: `could not read the effective sshd configuration (sshd -T failed)` };
+    if (!same(e.effective, w.value)) return { ok: false, why: `effective ${w.key} is ${e.effective}` };
+    return { ok: true, why: null };
+  }
   return { ok: false, why: "state does not match the write" };
 }
 
-export function readGenericState(params: unknown, deps: GenericDeps = realDeps): Check<{ state: { writes: StateEntry[] }; isCompliant: boolean }> {
+export async function readGenericState(params: unknown, deps: GenericDeps = realDeps): Promise<Check<{ state: { writes: StateEntry[] }; isCompliant: boolean }>> {
   const parsed = parseWrites(params);
   if (!parsed.ok) return parsed;
-  const entries = parsed.value.map((w) => readEntry(w, deps));
+  const ctx = await readContext(parsed.value, deps);
+  const entries = parsed.value.map((w) => readEntry(w, deps, ctx));
   const isCompliant = parsed.value.every((w, i) => satisfied(w, entries[i]).ok);
   return { ok: true, value: { state: { writes: entries }, isCompliant } };
 }
@@ -578,6 +699,43 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
   }
   if (problems.length) return done(2);
 
+  // sshd: la configuración de ahora tiene que ser válida (si no, `sshd -t`
+  // rechazaría también la nuestra), los algoritmos que este OpenSSH no conoce
+  // se quitan de la lista (salvo los que el check necesita), y el banner
+  // tiene que existir. Todo antes de escribir nada.
+  const sshdWrites = writes.filter((w): w is Extract<LinuxWrite, { kind: "sshd" }> => w.kind === "sshd");
+  const sshdValue = new Map<Extract<LinuxWrite, { kind: "sshd" }>, string | null>();
+  if (sshdWrites.length) {
+    if (deps.fileMode(SSHD_BIN) === null) {
+      problems.push("the OpenSSH server (sshd) is not installed");
+      return done(2);
+    }
+    const baseline = await deps.exec(SSHD_BIN, ["-t"], 15_000);
+    if (baseline.code !== 0) {
+      problems.push(`the current sshd configuration is already invalid, so no change can be validated: ${(baseline.stderr || baseline.stdout).trim().slice(0, 200)}`);
+      return done(2);
+    }
+    for (const w of sshdWrites) {
+      if (w.value === null || !SSHD_DIRECTIVES[w.key.toLowerCase()].list) {
+        if (w.key === "Banner" && w.value !== null && w.value !== "none" && deps.readFile(w.value) === null) problems.push(`${w.value} does not exist, so sshd has no banner to show`);
+        sshdValue.set(w, w.value);
+        continue;
+      }
+      const kept: string[] = [];
+      const dropped: string[] = [];
+      for (const item of w.value.split(",")) {
+        const r = await deps.exec(SSHD_BIN, ["-t", "-o", `${w.key}=${item}`], 15_000);
+        (r.code === 0 ? kept : dropped).push(item);
+      }
+      const missing = (w.required ?? []).filter((r) => dropped.includes(r));
+      if (missing.length) problems.push(`this OpenSSH does not support ${missing.join(", ")}, which the check needs; upgrade OpenSSH`);
+      else if (!kept.length) problems.push(`this OpenSSH supports none of the ${w.key} Tracenium sets`);
+      else if (dropped.length) changes.push(`${w.key}: left out ${dropped.join(", ")} (not supported by this OpenSSH)`);
+      sshdValue.set(w, kept.join(","));
+    }
+    if (problems.length) return done(2);
+  }
+
   // ── sysctl ──
   const sysctl = writes.filter((w): w is Extract<LinuxWrite, { kind: "sysctl" }> => w.kind === "sysctl");
   if (sysctl.length) {
@@ -681,9 +839,69 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
     else problems.push(`systemctl restart ${unit} failed: ${(r.stderr || r.stdout).trim().slice(0, 160)}`);
   }
 
+  // ── sshd ──
+  if (sshdWrites.length) {
+    const orig = { primary: deps.readFile(SSHD_DROPIN_FILE), legacy: deps.readFile(LEGACY_SSHD_DROPIN_FILE) };
+    const next = { ...orig };
+    for (const w of sshdWrites) {
+      for (const c of planSshDropinChanges({ primary: next.primary ?? "", legacy: next.legacy ?? "" }, w.key, sshdValue.get(w) ?? null)) {
+        if (c.file === SSHD_DROPIN_FILE) next.primary = c.newContent;
+        else next.legacy = c.newContent;
+      }
+    }
+    const touched = ([[SSHD_DROPIN_FILE, "primary"], [LEGACY_SSHD_DROPIN_FILE, "legacy"]] as const).filter(([, k]) => (next[k] ?? null) !== (orig[k] ?? null) && !(next[k] === "" && orig[k] === null));
+    if (touched.length) {
+      const ts = stamp(deps.now());
+      for (const [file, k] of touched) if (orig[k] !== null) deps.copyFile(file, `${file}.tracenium.${ts}.bak`);
+      const restore = () => {
+        for (const [file, k] of touched) {
+          if (orig[k] === null) deps.unlink(file);
+          else deps.writeFile(file, orig[k]!, 0o644);
+        }
+      };
+      deps.mkdirp(SSHD_DROPIN_DIR);
+      for (const [file, k] of touched) {
+        if (next[k] === null) deps.unlink(file);
+        else deps.writeFile(file, next[k]!, 0o644);
+      }
+      const check = await deps.exec(SSHD_BIN, ["-t"], 15_000);
+      if (check.code !== 0) {
+        restore();
+        problems.push(`sshd -t rejected the new configuration, files restored: ${(check.stderr || check.stdout).trim().slice(0, 200)}`);
+        return done(1);
+      }
+      changes.push(`wrote ${touched.map(([f]) => f).join(", ")}`);
+      // Recargar es gracioso: las sesiones abiertas siguen. Sin sshd en marcha
+      // (socket de systemd sin conexiones aún) lo lee al arrancar.
+      let reloaded = false;
+      for (const unit of ["ssh.service", "sshd.service"]) {
+        if ((await deps.exec("/usr/bin/systemctl", ["reload", unit], 30_000)).code === 0) {
+          changes.push(`reloaded ${unit}`);
+          reloaded = true;
+          break;
+        }
+      }
+      if (!reloaded) {
+        const active = await deps.exec("/usr/bin/systemctl", ["is-active", "ssh.service", "sshd.service"], 10_000);
+        if (/^active$/m.test(active.stdout)) problems.push("sshd is running but could not be reloaded: the change applies when it restarts");
+        else changes.push("sshd is not running: the change applies when it starts");
+      }
+    }
+  }
+
   // ── Releer con el mismo criterio que la sonda ──
+  const ctx = await readContext(writes, deps);
   for (const w of writes) {
-    const s = satisfied(w, readEntry(w, deps));
+    if (w.kind === "sshd") {
+      const applied = { ...w, value: sshdValue.get(w) ?? null };
+      const e = readEntry(applied, deps, ctx);
+      const s = satisfied(applied, e);
+      if (s.ok) continue;
+      // Otro fichero la fija antes que el nuestro: se dice cuál y en qué línea.
+      problems.push(e.kind === "sshd" && e.effective !== null && e.ours !== null ? sshdOverrideWhy(w.key, e.effective, deps) : s.why ?? "not applied");
+      continue;
+    }
+    const s = satisfied(w, readEntry(w, deps, ctx));
     // Un módulo en uso es un «aplicado, falta reiniciar», no un fallo.
     if (!s.ok && !(w.kind === "kmod" && w.disable && requiresReboot)) problems.push(s.why ?? "not applied");
   }

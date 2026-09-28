@@ -121,7 +121,7 @@ describe("sysctl", () => {
     expect(files.get(SYSCTL_DROPIN)).toContain("net.ipv4.conf.all.accept_redirects = 0");
     // Escribir /proc/sys no cabe en el perfil de AppArmor: va por systemd-run.
     expect(calls).toContain("/usr/bin/systemd-run --wait --pipe --collect --quiet -- /usr/sbin/sysctl -q -w net.ipv4.conf.all.accept_redirects=0");
-    const s = readGenericState(w(redirects), deps());
+    const s = await readGenericState(w(redirects), deps());
     expect(s).toMatchObject({ ok: true, value: { isCompliant: true } });
     expect((s as any).value.state.writes[0]).toMatchObject({ kind: "sysctl", runtime: "0", ours: "0", boot: "0" });
   });
@@ -280,5 +280,145 @@ describe("todo o nada", () => {
     expect(r.ok).toBe(false);
     expect(files.has(SYSCTL_DROPIN)).toBe(false);
     expect(calls).toEqual([]);
+  });
+});
+
+// ── sshd ───────────────────────────────────────────────────────────
+// sshd simulado en lo que importa: lee sshd_config hasta su Include y los
+// drop-ins en orden, se queda con el PRIMER valor, `-t` rechaza algoritmos
+// que no conoce (este OpenSSH no tiene sntrup761: el de Ubuntu 20.04).
+describe("sshd — el mismo drop-in 00- que los handlers dedicados", () => {
+  const MAIN = "/etc/ssh/sshd_config";
+  const DIR = "/etc/ssh/sshd_config.d";
+  const OURS = `${DIR}/00-tracenium-hardening.conf`;
+  const KNOWN_KEX = new Set(["curve25519-sha256", "curve25519-sha256@libssh.org", "ecdh-sha2-nistp256", "diffie-hellman-group14-sha256", "diffie-hellman-group14-sha1"]);
+  const DEFAULTS: Record<string, string> = { maxauthtries: "6", kexalgorithms: "curve25519-sha256,diffie-hellman-group14-sha1", banner: "none", permitrootlogin: "without-password" };
+
+  function effective(extra: string[] = []): Map<string, string> {
+    const m = new Map<string, string>();
+    const take = (text: string) => {
+      for (const l of text.split("\n")) {
+        const t = l.trim();
+        if (!t || t.startsWith("#")) continue;
+        const [k, ...rest] = t.split(/\s+/);
+        const key = k.toLowerCase();
+        if (key === "include") {
+          for (const f of [...files.keys()].filter((f) => f.startsWith(DIR + "/") && f.endsWith(".conf")).sort()) take(files.get(f)!);
+          continue;
+        }
+        if (!m.has(key)) m.set(key, rest.join(" "));
+      }
+    };
+    for (const o of extra) take(o.replace("=", " "));
+    take(files.get(MAIN) ?? "");
+    for (const [k, v] of Object.entries(DEFAULTS)) if (!m.has(k)) m.set(k, v);
+    return m;
+  }
+  let reloads: string[];
+  function sshdExec(bin: string, args: string[]) {
+    if (bin === "/usr/sbin/sshd") {
+      const extra = args[0] === "-t" && args[1] === "-o" ? [args[2]] : [];
+      const m = effective(extra);
+      const kex = m.get("kexalgorithms")!.split(",");
+      const bad = kex.find((k) => !KNOWN_KEX.has(k));
+      if (bad) return { stdout: "", stderr: `Bad SSH2 KexAlgorithms '${bad}'`, code: 255 };
+      if ([...files.values()].some((t) => t.includes("BROKEN"))) return { stdout: "", stderr: "line 1: Bad configuration option: BROKEN", code: 255 };
+      if (args[0] === "-T") return { stdout: [...m].map(([k, v]) => `${k} ${v}`).join("\n") + "\n", stderr: "", code: 0 };
+      return { stdout: "", stderr: "", code: 0 };
+    }
+    if (bin === "/usr/bin/systemctl" && args[0] === "reload") {
+      reloads.push(args[1]);
+      return { stdout: "", stderr: "", code: args[1] === "ssh.service" ? 0 : 5 };
+    }
+    return defaultExec(bin, args);
+  }
+  beforeEach(() => {
+    bins.add("/usr/sbin/sshd");
+    reloads = [];
+    files.set(MAIN, "Include /etc/ssh/sshd_config.d/*.conf\nUsePAM yes\n");
+    files.set("/etc/issue.net", "Authorized use only\n");
+    dirs.add(DIR);
+    execImpl = sshdExec;
+  });
+
+  it("escribe en el 00-, valida con sshd -t, recarga, y el efectivo queda como pide el check", async () => {
+    const r = await applyGeneric(w({ kind: "sshd", key: "MaxAuthTries", value: "4" }, { kind: "sshd", key: "Banner", value: "/etc/issue.net" }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(files.get(OURS)).toBe("MaxAuthTries 4\n\nBanner /etc/issue.net\n");
+    expect(reloads).toEqual(["ssh.service"]);
+    expect(calls.indexOf("/usr/sbin/sshd -t")).toBeLessThan(calls.indexOf("/usr/bin/systemctl reload ssh.service"));
+    const s = await readGenericState(w({ kind: "sshd", key: "maxauthtries", value: "4" }), deps());
+    expect(s).toMatchObject({ ok: true, value: { isCompliant: true, state: { writes: [{ kind: "sshd", key: "MaxAuthTries", effective: "4", ours: "4" }] } } });
+  });
+
+  it("⭐ un algoritmo que este OpenSSH no conoce sale de la lista; los débiles no entran", async () => {
+    const r = await applyGeneric(w({ kind: "sshd", key: "KexAlgorithms", value: "sntrup761x25519-sha512@openssh.com,curve25519-sha256,ecdh-sha2-nistp256" }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(files.get(OURS)).toBe("KexAlgorithms curve25519-sha256,ecdh-sha2-nistp256\n");
+    expect((r as any).value.changesApplied).toContain("KexAlgorithms: left out sntrup761x25519-sha512@openssh.com (not supported by this OpenSSH)");
+  });
+
+  it("⭐ pero si el check lo NECESITA (PQC), no se escribe nada y se dice por qué", async () => {
+    const r = await applyGeneric(w({ kind: "sshd", key: "KexAlgorithms", value: "sntrup761x25519-sha512@openssh.com,curve25519-sha256", required: ["sntrup761x25519-sha512@openssh.com"] }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 2, stderrExcerpt: expect.stringMatching(/does not support sntrup761.*upgrade OpenSSH/) } });
+    expect(files.has(OURS)).toBe(false);
+    expect(reloads).toEqual([]);
+  });
+
+  it("otro drop-in anterior gana: se dice cuál y en qué línea, y lo suyo no se toca", async () => {
+    files.set(`${DIR}/00-aaa-local.conf`, "# local\nMaxAuthTries 10\n");
+    const r = await applyGeneric(w({ kind: "sshd", key: "MaxAuthTries", value: "4" }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 1, stderrExcerpt: expect.stringMatching(/00-aaa-local\.conf:2 \(10\) sets MaxAuthTries before/) } });
+    expect(files.get(`${DIR}/00-aaa-local.conf`)).toBe("# local\nMaxAuthTries 10\n");
+  });
+
+  it("si sshd -t rechaza el conjunto, nuestros ficheros vuelven a como estaban y no se recarga", async () => {
+    files.set(OURS, "X11Forwarding no\n");
+    let n = 0;
+    execImpl = (bin, args) => (bin === "/usr/sbin/sshd" && args.length === 1 && args[0] === "-t" && ++n === 2 ? { stdout: "", stderr: "boom", code: 255 } : sshdExec(bin, args));
+    const r = await applyGeneric(w({ kind: "sshd", key: "MaxAuthTries", value: "4" }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 1, stderrExcerpt: expect.stringMatching(/rejected.*restored/) } });
+    expect(files.get(OURS)).toBe("X11Forwarding no\n");
+    expect(reloads).toEqual([]);
+  });
+
+  it("una configuración que ya está rota no se toca", async () => {
+    files.set(`${DIR}/50-cloud-init.conf`, "BROKEN\n");
+    const r = await applyGeneric(w({ kind: "sshd", key: "MaxAuthTries", value: "4" }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 2, stderrExcerpt: expect.stringMatching(/already invalid/) } });
+    expect(files.has(OURS)).toBe(false);
+  });
+
+  it("el 99- de antes se vacía directiva a directiva, como en el handler dedicado", async () => {
+    files.set(`${DIR}/99-tracenium-hardening.conf`, "MaxAuthTries 3\nX11Forwarding no\n");
+    await applyGeneric(w({ kind: "sshd", key: "MaxAuthTries", value: "4" }), deps());
+    expect(files.get(`${DIR}/99-tracenium-hardening.conf`)).toBe("X11Forwarding no\n");
+    expect(files.get(OURS)).toBe("MaxAuthTries 4\n");
+  });
+
+  it("revert: value null quita la directiva de NUESTRO drop-in (y el fichero si queda vacío)", async () => {
+    files.set(OURS, "MaxAuthTries 4\n");
+    const r = await applyGeneric(w({ kind: "sshd", key: "MaxAuthTries", value: null }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(files.has(OURS)).toBe(false);
+  });
+
+  it("guardas, banner fuera de la lista y valores con forma rara: rechazados", () => {
+    for (const bad of [
+      { kind: "sshd", key: "PermitRootLogin", value: "no" },
+      { kind: "sshd", key: "PasswordAuthentication", value: "NO" },
+      { kind: "sshd", key: "DisableForwarding", value: "yes" },
+      { kind: "sshd", key: "GSSAPIAuthentication", value: "no" },
+      { kind: "sshd", key: "Banner", value: "/etc/shadow" },
+      { kind: "sshd", key: "Subsystem", value: "sftp /bin/sh" },
+      { kind: "sshd", key: "MaxAuthTries", value: "4\nPermitRootLogin yes" },
+      { kind: "sshd", key: "Ciphers", value: "aes128-ctr,aes128 ctr" },
+      { kind: "sshd", key: "KexAlgorithms", value: "curve25519-sha256", required: ["sntrup761x25519-sha512@openssh.com"] },
+    ]) {
+      expect(parseWrites(w(bad)).ok, JSON.stringify(bad)).toBe(false);
+    }
+    // Deshacer lo guardado sí se deja.
+    expect(parseWrites(w({ kind: "sshd", key: "PermitRootLogin", value: "without-password" })).ok).toBe(true);
+    expect(parseWrites(w({ kind: "sshd", key: "PermitRootLogin", value: null })).ok).toBe(true);
   });
 });
