@@ -100,6 +100,9 @@
     <!-- Qué perfiles NO se leyeron en el inventario de software: sin sesión
          no hay hive, y lo no visto no es lo desinstalado. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UserHiveCoverageShape.cs" />
+    <!-- Paquetes de la Store: -AllUsers, instalados para una persona, uno
+         por familia. Como SYSTEM sin -AllUsers entraban y salían. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\AppxInventoryShape.cs" />
     <!-- ADR-0015 bloque 3. Las tres piezas de la mitad híbrida se
          escribieron SIN nada de Windows dentro precisamente para poder
          probarse aquí: `MlDsaAlt` es BouncyCastle gestionado,

@@ -280,11 +280,14 @@ public static class SoftwareInventory
     {
         var list = new List<object>();
 
-        // Output JSON array: Name, Version, Publisher, PackageFamilyName
+        // ⚠️ -AllUsers, y no la sesión de quien llama: el PrivSvc es SYSTEM y
+        // sin él sólo veía los paquetes de SYSTEM (AppxInventoryShape). Los
+        // usuarios viajan como «SID|InstallState» para decidir en C#, donde
+        // se prueba. Windows PowerShell 5.1: ahí vive el módulo Appx.
         var ps = "powershell";
         var args =
             "-NoProfile -Command " +
-            "\"Get-AppxPackage -ErrorAction SilentlyContinue | " +
+            "\"Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | " +
             "Select-Object @{Name='name';Expression={$_.Name}}," +
             "@{Name='version';Expression={$_.Version.ToString()}}, " +
             "@{Name='publisher';Expression={$_.Publisher}}," +
@@ -295,6 +298,10 @@ public static class SoftwareInventory
             // fecha de ESTA versión. Formato fijo yyyy-MM-dd en hora local
             // del equipo, que es lo que espera el agente.
             "@{Name='installDate';Expression={try{(Get-Item -LiteralPath $_.InstallLocation -ErrorAction Stop).CreationTime.ToString('yyyy-MM-dd')}catch{$null}}}," +
+            // Una CADENA «SID|Estado;SID|Estado», no un array: en 5.1 un array
+            // de una propiedad calculada puede salir de ConvertTo-Json como
+            // {"value":[…],"Count":n}.
+            "@{Name='users';Expression={(@($_.PackageUserInformation | ForEach-Object { [string]$_.UserSecurityId.Sid + '|' + [string]$_.InstallState }) -join ';')}}," +
             "@{Name='source';Expression={'ms-store'}} | " +
             "ConvertTo-Json -Depth 4\"";
 
@@ -323,130 +330,77 @@ public static class SoftwareInventory
             return list;
         }
 
+        List<Dictionary<string, object?>> parsed;
         try
         {
             // ConvertTo-Json returns object or array depending on count
-            if (stdout.TrimStart().StartsWith("["))
-            {
-                var arr = JsonSerializer.Deserialize<List<Dictionary<string, object?>>>(stdout);
-                if (arr != null)
-                {
-                    list.AddRange(arr.Where(x =>
-                    {
-                        if (!x.ContainsKey("name") || x["name"] == null) return false;
-
-                        var name = x["name"]!.ToString()!.Trim();
-                        var nameLower = name.ToLowerInvariant();
-
-                        // Exclude GUID-like names (very common noise)
-                        if (System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-f0-9\-]{20,}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-                        {
-                            return false;
-                        }
-
-                        // Exclude most Microsoft system/internal packages
-                        if (nameLower.StartsWith("microsoft."))
-                        {
-                            if (
-                                nameLower.Contains("windows") ||
-                                nameLower.Contains("store") ||
-                                nameLower.Contains("runtime") ||
-                                nameLower.Contains("framework") ||
-                                nameLower.Contains("host") ||
-                                nameLower.Contains("experience") ||
-                                nameLower.Contains("ui") ||
-                                nameLower.Contains("xaml") ||
-                                nameLower.Contains("aad") ||
-                                nameLower.Contains("broker") ||
-                                nameLower.Contains("cloud") ||
-                                nameLower.Contains("contentdelivery") ||
-                                nameLower.Contains("webview") ||
-                                nameLower.Contains("async") ||
-                                nameLower.Contains("bio") ||
-                                nameLower.Contains("textservice")
-                            )
-                            {
-                                return false;
-                            }
-                        }
-
-                        // Exclude entries where publisher is clearly Windows system
-                        if (x.ContainsKey("publisher") && x["publisher"] != null)
-                        {
-                            var pub = x["publisher"]!.ToString()!.ToLowerInvariant();
-                            if (pub.Contains("microsoft windows"))
-                            {
-                                return false;
-                            }
-                        }
-
-                        return true;
-                    }));
-                }
-            }
-            else
-            {
-                var obj = JsonSerializer.Deserialize<Dictionary<string, object?>>(stdout);
-                if (obj != null && obj.ContainsKey("name") && obj["name"] != null)
-                {
-                    var name = obj["name"]!.ToString()!.Trim();
-
-                    bool isFiltered = false;
-
-                    // GUID-like names
-                    if (System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-f0-9\-]{20,}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-                    {
-                        isFiltered = true;
-                    }
-
-                    if (!isFiltered && name.StartsWith("microsoft.", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var nameLower = name.ToLowerInvariant();
-
-                        if (
-                            nameLower.Contains("windows") ||
-                            nameLower.Contains("store") ||
-                            nameLower.Contains("runtime") ||
-                            nameLower.Contains("framework") ||
-                            nameLower.Contains("host") ||
-                            nameLower.Contains("experience") ||
-                            nameLower.Contains("ui") ||
-                            nameLower.Contains("xaml") ||
-                            nameLower.Contains("aad") ||
-                            nameLower.Contains("broker") ||
-                            nameLower.Contains("cloud") ||
-                            nameLower.Contains("contentdelivery") ||
-                            nameLower.Contains("webview") ||
-                            nameLower.Contains("async") ||
-                            nameLower.Contains("bio") ||
-                            nameLower.Contains("textservice")
-                        )
-                        {
-                            isFiltered = true;
-                        }
-                    }
-
-                    if (!isFiltered && obj.ContainsKey("publisher") && obj["publisher"] != null)
-                    {
-                        var pub = obj["publisher"]!.ToString()!.ToLowerInvariant();
-                        if (pub.Contains("microsoft windows"))
-                        {
-                            isFiltered = true;
-                        }
-                    }
-
-                    if (!isFiltered)
-                    {
-                        list.Add(obj);
-                    }
-                }
-            }
+            parsed = stdout.TrimStart().StartsWith("[")
+                ? JsonSerializer.Deserialize<List<Dictionary<string, object?>>>(stdout) ?? new()
+                : JsonSerializer.Deserialize<Dictionary<string, object?>>(stdout) is { } one ? new() { one } : new();
         }
         catch
         {
             // ignore parse errors (v1)
+            return list;
         }
 
+        var forPeople = parsed
+            .Where(x => x.TryGetValue("name", out var n) && n != null && !IsNoisePackage(x))
+            .Where(x => AppxInventoryShape.InstalledForPerson(AppxInventoryShape.ReadUsers(x.GetValueOrDefault("users"))))
+            .Select(x =>
+            {
+                // Los SIDs sólo sirven para decidir aquí; no viajan.
+                x.Remove("users");
+                return x;
+            });
+        list.AddRange(AppxInventoryShape.LatestPerFamily(forPeople));
         return list;
+    }
+
+    private static bool IsNoisePackage(Dictionary<string, object?> x)
+    {
+        var name = x["name"]!.ToString()!.Trim();
+        var nameLower = name.ToLowerInvariant();
+
+        // Exclude GUID-like names (very common noise)
+        if (System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-f0-9\-]{20,}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            return true;
+        }
+
+        // Exclude most Microsoft system/internal packages
+        if (nameLower.StartsWith("microsoft."))
+        {
+            if (
+                nameLower.Contains("windows") ||
+                nameLower.Contains("store") ||
+                nameLower.Contains("runtime") ||
+                nameLower.Contains("framework") ||
+                nameLower.Contains("host") ||
+                nameLower.Contains("experience") ||
+                nameLower.Contains("ui") ||
+                nameLower.Contains("xaml") ||
+                nameLower.Contains("aad") ||
+                nameLower.Contains("broker") ||
+                nameLower.Contains("cloud") ||
+                nameLower.Contains("contentdelivery") ||
+                nameLower.Contains("webview") ||
+                nameLower.Contains("async") ||
+                nameLower.Contains("bio") ||
+                nameLower.Contains("textservice")
+            )
+            {
+                return true;
+            }
+        }
+
+        // Exclude entries where publisher is clearly Windows system
+        if (x.TryGetValue("publisher", out var pub) && pub != null &&
+            pub.ToString()!.ToLowerInvariant().Contains("microsoft windows"))
+        {
+            return true;
+        }
+
+        return false;
     }
 }
