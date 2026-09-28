@@ -189,7 +189,8 @@ async function probeKmod(mod: string, deps: ProbeDeps): Promise<Record<string, u
   return { loaded, exists, installFalse, blacklisted: isBlacklisted(confs, mod) };
 }
 
-async function probeUnit(unit: string, deps: ProbeDeps): Promise<Record<string, unknown>> {
+/** También la usa la remediación genérica (generic-config.ts): «aplicado» = lo que ve la sonda. */
+export async function probeUnit(unit: string, deps: Pick<ProbeDeps, "exec">): Promise<Record<string, unknown>> {
   const en = await deps.exec("/usr/bin/systemctl", ["is-enabled", unit]);
   const ac = await deps.exec("/usr/bin/systemctl", ["is-active", unit]);
   const enabled = (en.stdout.trim() || en.stderr.trim() || "unknown").split("\n")[0];
@@ -203,7 +204,7 @@ async function probeUnit(unit: string, deps: ProbeDeps): Promise<Record<string, 
   };
 }
 
-async function probePkg(name: string, deps: ProbeDeps): Promise<Record<string, unknown>> {
+export async function probePkg(name: string, deps: Pick<ProbeDeps, "exec" | "family">): Promise<Record<string, unknown>> {
   if (deps.family === "debian") {
     const r = await deps.exec("/usr/bin/dpkg-query", ["-W", "-f=${Status}\t${Version}", name]);
     const installed = r.code === 0 && /\binstall ok installed\b/.test(r.stdout);

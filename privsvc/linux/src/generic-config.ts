@@ -25,6 +25,10 @@
 //               fichero nuestro de un directorio que la herramienta lee
 //               entero (limits.d, rules.d) o al final de uno del sistema
 //               (pwquality.conf), con copia.
+//   pkg         apt-get install --no-install-recommends | remove, de una
+//               lista CERRADA; antes, `apt-get -s`: si instalar quita algo, o
+//               quitar se lleva otro paquete (ubuntu-standard), no se hace.
+//   unit        systemctl enable|disable --now (por systemd-run), lista cerrada.
 //   sshd        /etc/ssh/sshd_config.d/00-tracenium-hardening.conf, el MISMO
 //               drop-in que los handlers dedicados de SSH (sshd-dropin.ts:
 //               sshd se queda con el PRIMER valor, por eso 00-). `sshd -t`
@@ -75,6 +79,7 @@ import {
   readEffectiveSshd,
   sshdEarlierDefinitions,
 } from "./sshd-dropin";
+import { probePkg, probeUnit } from "./linux-probes";
 
 // ── Listas cerradas (espejo de desired-state-linux.ts) ───────────────
 
@@ -179,6 +184,59 @@ export const LINE_FILES: Readonly<Record<string, LinePolicy>> = Object.freeze({
   "/etc/audit/rules.d/01-tracenium-continue.rules": { mode: "ours", perms: 0o640, reload: "augenrules", lines: { "-c": {} } },
 });
 
+/**
+ * Paquetes (espejo de PKG_POLICY en desired-state-linux.ts). `guard` en el
+ * sentido que la lleva; el sentido contrario se deja (es el revert), pero
+ * pasa por la misma simulación de apt.
+ */
+type PkgRule = { install?: { guard?: string }; remove?: { guard?: string } };
+
+export const PKG_POLICY: Readonly<Record<string, PkgRule>> = Object.freeze({
+  aide: { install: { guard: "AIDE needs aideinit first" } },
+  "aide-common": { install: { guard: "AIDE needs aideinit first" } },
+  apparmor: { install: {} },
+  "apparmor-utils": { install: {} },
+  auditd: { install: {} },
+  "audispd-plugins": { install: {} },
+  "cracklib-runtime": { install: {} },
+  sudo: { install: {} },
+  "rsyslog-gnutls": { install: {} },
+  "systemd-journal-remote": { install: {} },
+  "libpam-pwquality": { install: { guard: "turns password-quality checks on in PAM" } },
+  telnet: { remove: {} },
+  "inetutils-telnet": { remove: {} },
+  "telnet-ssl": { remove: {} },
+  ftp: { remove: {} },
+  tnftp: { remove: {} },
+  "ldap-utils": { remove: {} },
+  gdm3: { remove: { guard: "removes the graphical desktop" } },
+  "xserver-common": { remove: { guard: "removes the graphical desktop" } },
+  apache2: { remove: { guard: "removes the web server" } },
+  nginx: { remove: { guard: "removes the web server" } },
+  bind9: { remove: { guard: "stops answering DNS" } },
+  cups: { remove: { guard: "printing stops" } },
+  bluez: { remove: { guard: "Bluetooth stops" } },
+  "avahi-daemon": { remove: { guard: "local network discovery stops" } },
+  xinetd: { remove: { guard: "xinetd services stop" } },
+  apport: { remove: { guard: "turning it off is enough" } },
+});
+
+/** Unidades (espejo de UNIT_POLICY). `with`: las que van con ella. */
+type UnitRule = { enable?: { guard?: string }; disable?: { guard?: string }; with?: readonly string[] };
+
+export const UNIT_POLICY: Readonly<Record<string, UnitRule>> = Object.freeze({
+  auditd: { enable: {} },
+  "dailyaidecheck.timer": { enable: { guard: "AIDE needs aideinit first" } },
+  "update-notifier-motd.service": { disable: {} },
+  "update-notifier-motd.timer": { disable: {} },
+  "apport.service": { disable: {} },
+  "avahi-daemon.socket": { disable: { guard: "local network discovery stops" }, with: ["avahi-daemon.service"] },
+  "cups.socket": { disable: { guard: "printing stops" }, with: ["cups.service", "cups-browsed.service"] },
+  "bluetooth.service": { disable: { guard: "Bluetooth stops" } },
+  "named.service": { disable: { guard: "stops answering DNS" } },
+  "xinetd.service": { disable: { guard: "xinetd services stop" } },
+});
+
 // ── Escrituras ───────────────────────────────────────────────────────
 
 export type LinuxWrite =
@@ -187,7 +245,9 @@ export type LinuxWrite =
   | { kind: "audit_rule"; line: string; present: boolean }
   | { kind: "conf"; file: string; key: string; value: string | null }
   | { kind: "sshd"; key: string; value: string | null; required?: string[] }
-  | { kind: "line"; file: string; line: string; present: boolean };
+  | { kind: "line"; file: string; line: string; present: boolean }
+  | { kind: "pkg"; name: string; installed: boolean }
+  | { kind: "unit"; unit: string; enabled: boolean };
 
 const SYSCTL_KEY = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_-]+)+$/;
 const SAFE_VALUE = /^[A-Za-z0-9_.:\/ -]{1,64}$/;
@@ -279,6 +339,24 @@ export function parseWrites(params: unknown): Check<LinuxWrite[]> {
         out.push({ kind: "line", file: w.file, line: w.line, present: w.present });
         break;
       }
+      case "pkg": {
+        const policy = typeof w.name === "string" && Object.prototype.hasOwnProperty.call(PKG_POLICY, w.name) ? PKG_POLICY[w.name] : undefined;
+        if (!policy) return { ok: false, message: `${at}: package not on the list Tracenium may install or remove` };
+        if (typeof w.installed !== "boolean") return { ok: false, message: `${at}: installed must be boolean` };
+        const guard = (w.installed ? policy.install : policy.remove)?.guard;
+        if (guard) return { ok: false, message: `${at}: guarded (${guard})` };
+        out.push({ kind: "pkg", name: w.name, installed: w.installed });
+        break;
+      }
+      case "unit": {
+        const policy = typeof w.unit === "string" && Object.prototype.hasOwnProperty.call(UNIT_POLICY, w.unit) ? UNIT_POLICY[w.unit] : undefined;
+        if (!policy) return { ok: false, message: `${at}: unit not on the list Tracenium may enable or disable` };
+        if (typeof w.enabled !== "boolean") return { ok: false, message: `${at}: enabled must be boolean` };
+        const guard = (w.enabled ? policy.enable : policy.disable)?.guard;
+        if (guard) return { ok: false, message: `${at}: guarded (${guard})` };
+        out.push({ kind: "unit", unit: w.unit, enabled: w.enabled });
+        break;
+      }
       default:
         return { ok: false, message: `${at}: unknown kind` };
     }
@@ -299,7 +377,7 @@ export interface GenericDeps {
   /** Modo actual del fichero, para conservarlo al reescribir. */
   fileMode(p: string): number | null;
   copyFile(src: string, dst: string): void;
-  exec(bin: string, args: string[], timeoutMs?: number): Promise<{ stdout: string; stderr: string; code: number | null }>;
+  exec(bin: string, args: string[], timeoutMs?: number, env?: Record<string, string>): Promise<{ stdout: string; stderr: string; code: number | null }>;
   machine(): string;
   now(): Date;
 }
@@ -352,9 +430,9 @@ export const realDeps: GenericDeps = {
   copyFile(src, dst) {
     fsDefault.copyFileSync(src, dst);
   },
-  exec(bin, args, timeoutMs = 60_000) {
+  exec(bin, args, timeoutMs = 60_000, env) {
     return new Promise((resolve) => {
-      execFile(bin, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err: any, stdout, stderr) => {
+      execFile(bin, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: env ? { ...process.env, ...env } : process.env }, (err: any, stdout, stderr) => {
         resolve({ stdout: String(stdout ?? ""), stderr: String(stderr ?? ""), code: err ? (typeof err.code === "number" ? err.code : null) : 0 });
       });
     });
@@ -476,17 +554,38 @@ export type StateEntry =
   | { kind: "audit_rule"; line: string; present: boolean }
   | { kind: "conf"; file: string; key: string; effective: string | null; ours: string | null; effectiveSource: string | null }
   | { kind: "sshd"; key: string; effective: string | null; ours: string | null }
-  | { kind: "line"; file: string; line: string; present: boolean };
+  | { kind: "line"; file: string; line: string; present: boolean }
+  | { kind: "pkg"; name: string; installed: boolean; version: string | null }
+  | { kind: "unit"; unit: string; isEnabled: boolean; isActive: boolean; state: string };
 
 /** Lo que se lee una vez por petición: la configuración efectiva de sshd. */
-export type ReadContext = { sshdT: string | null };
+export type ReadContext = {
+  sshdT: string | null;
+  /** Paquetes y unidades: con la MISMA lectura que la sonda (linux-probes.ts). */
+  pkgs?: Map<string, { installed: boolean; version: string | null }>;
+  units?: Map<string, { isEnabled: boolean; isActive: boolean; state: string }>;
+};
 
 export const SSHD_BIN = "/usr/sbin/sshd";
 
 async function readContext(writes: LinuxWrite[], deps: GenericDeps): Promise<ReadContext> {
-  if (!writes.some((w) => w.kind === "sshd")) return { sshdT: null };
-  const r = await deps.exec(SSHD_BIN, ["-T"], 15_000);
-  return { sshdT: r.code === 0 ? r.stdout : null };
+  let sshdT: string | null = null;
+  if (writes.some((w) => w.kind === "sshd")) {
+    const r = await deps.exec(SSHD_BIN, ["-T"], 15_000);
+    sshdT = r.code === 0 ? r.stdout : null;
+  }
+  const pkgs = new Map<string, { installed: boolean; version: string | null }>();
+  const units = new Map<string, { isEnabled: boolean; isActive: boolean; state: string }>();
+  for (const w of writes) {
+    if (w.kind === "pkg" && !pkgs.has(w.name)) {
+      const p = await probePkg(w.name, { exec: deps.exec, family: "debian" });
+      pkgs.set(w.name, { installed: p.installed === true, version: (p.version as string | null) ?? null });
+    } else if (w.kind === "unit" && !units.has(w.unit)) {
+      const u = await probeUnit(w.unit, { exec: deps.exec });
+      units.set(w.unit, { isEnabled: u.isEnabled === true, isActive: u.isActive === true, state: String(u.enabled) });
+    }
+  }
+  return { sshdT, pkgs, units };
 }
 
 /** El valor de la directiva en NUESTRO drop-in 00-, o null. */
@@ -519,6 +618,14 @@ export function readEntry(w: LinuxWrite, deps: GenericDeps, ctx: ReadContext = {
     }
     case "line":
       return { kind: "line", file: w.file, line: w.line, present: activeLines(deps.readFile(w.file)).includes(w.line) };
+    case "pkg": {
+      const p = ctx.pkgs?.get(w.name);
+      return { kind: "pkg", name: w.name, installed: p?.installed ?? false, version: p?.version ?? null };
+    }
+    case "unit": {
+      const u = ctx.units?.get(w.unit);
+      return { kind: "unit", unit: w.unit, isEnabled: u?.isEnabled ?? false, isActive: u?.isActive ?? false, state: u?.state ?? "unknown" };
+    }
     case "sshd":
       return {
         kind: "sshd",
@@ -559,6 +666,15 @@ export function satisfied(w: LinuxWrite, e: StateEntry): { ok: boolean; why: str
     if (e.ours !== w.value) return { ok: false, why: `${w.key} is not set in ${confOursPath(w.file)}` };
     if (e.effective !== w.value) return { ok: false, why: `${e.effectiveSource} sets ${w.key} = ${e.effective} after ours` };
     return { ok: true, why: null };
+  }
+  if (w.kind === "pkg" && e.kind === "pkg") {
+    return e.installed === w.installed ? { ok: true, why: null } : { ok: false, why: `${w.name} is ${e.installed ? "still installed" : "not installed"}` };
+  }
+  if (w.kind === "unit" && e.kind === "unit") {
+    if (e.isEnabled === w.enabled && e.isActive === w.enabled) return { ok: true, why: null };
+    // Una unidad «static» no se puede deshabilitar: sólo enmascarar, y eso lo decide una persona.
+    if (!w.enabled && e.state === "static") return { ok: false, why: `${w.unit} is static: it cannot be disabled, only masked` };
+    return { ok: false, why: `${w.unit} is ${e.state} and ${e.isActive ? "active" : "inactive"}` };
   }
   if (w.kind === "line" && e.kind === "line") {
     return e.present === w.present ? { ok: true, why: null } : { ok: false, why: `"${w.line}" ${w.present ? "missing from" : "still in"} ${w.file}` };
@@ -661,6 +777,20 @@ export function ausyscallMachine(arch: "32" | "64", machine: string): string | n
 
 const AUSYSCALL = ["/usr/sbin/ausyscall", "/sbin/ausyscall", "/usr/bin/ausyscall"];
 const SYSTEMD_RUN = "/usr/bin/systemd-run";
+const APT_GET = "/usr/bin/apt-get";
+// Sin preguntas y en inglés (los mensajes se parsean). apt-get corre sin
+// confinar (Ux en el perfil), como el parcheo.
+const APT_ENV = { DEBIAN_FRONTEND: "noninteractive", LANG: "C", LC_ALL: "C" };
+
+/** Paquetes que `apt-get -s` quitaría (líneas «Remv <paquete> …»). */
+export function aptRemovals(simOutput: string): string[] {
+  const out: string[] = [];
+  for (const line of simOutput.split("\n")) {
+    const m = /^Remv (\S+)/.exec(line.trim());
+    if (m) out.push(m[1].replace(/:[a-z0-9]+$/, ""));
+  }
+  return out;
+}
 const AUGENRULES = ["/usr/sbin/augenrules", "/sbin/augenrules"];
 const AUDITCTL = ["/usr/sbin/auditctl", "/sbin/auditctl"];
 
@@ -771,6 +901,26 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
       else if (!kept.length) problems.push(`this OpenSSH supports none of the ${w.key} Tracenium sets`);
       else if (dropped.length) changes.push(`${w.key}: left out ${dropped.join(", ")} (not supported by this OpenSSH)`);
       sshdValue.set(w, kept.join(","));
+    }
+    if (problems.length) return done(2);
+  }
+
+  // Paquetes: sólo apt, y lo que apt haría se mira antes (simulación, sin tocar nada).
+  const pkgWrites = writes.filter((w): w is Extract<LinuxWrite, { kind: "pkg" }> => w.kind === "pkg");
+  if (pkgWrites.length) {
+    if (deps.fileMode(APT_GET) === null) {
+      problems.push("only apt (Debian/Ubuntu) is supported for package fixes");
+      return done(2);
+    }
+    for (const [verb, names] of [["install", pkgWrites.filter((w) => w.installed).map((w) => w.name)], ["remove", pkgWrites.filter((w) => !w.installed).map((w) => w.name)]] as const) {
+      if (!names.length) continue;
+      const sim = await deps.exec(APT_GET, ["-s", verb, ...(verb === "install" ? ["--no-install-recommends"] : []), ...names], 120_000, APT_ENV);
+      if (sim.code !== 0) {
+        problems.push(`apt-get -s ${verb} ${names.join(" ")} failed: ${(sim.stderr || sim.stdout).trim().slice(0, 200)}`);
+        continue;
+      }
+      const removed = aptRemovals(sim.stdout).filter((p) => verb === "install" || !names.includes(p));
+      if (removed.length) problems.push(`${verb === "install" ? "installing" : "removing"} ${names.join(", ")} would also remove ${removed.slice(0, 8).join(", ")}${removed.length > 8 ? "…" : ""} — not done`);
     }
     if (problems.length) return done(2);
   }
@@ -965,6 +1115,31 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
         else changes.push("sshd is not running: the change applies when it starts");
       }
     }
+  }
+
+  // ── paquetes ──
+  for (const [verb, names] of [["install", pkgWrites.filter((w) => w.installed).map((w) => w.name)], ["remove", pkgWrites.filter((w) => !w.installed).map((w) => w.name)]] as const) {
+    if (!names.length) continue;
+    const args = [
+      verb, "-y",
+      ...(verb === "install" ? ["--no-install-recommends"] : []),
+      "-o", "DPkg::Lock::Timeout=120",
+      "-o", "Dpkg::Options::=--force-confdef",
+      "-o", "Dpkg::Options::=--force-confold",
+      ...names,
+    ];
+    const r = await deps.exec(APT_GET, args, 900_000, APT_ENV);
+    if (r.code === 0) changes.push(`apt-get ${verb} ${names.join(" ")}`);
+    else problems.push(`apt-get ${verb} ${names.join(" ")} failed: ${(r.stderr || r.stdout).trim().split("\n").slice(-3).join(" ").slice(0, 300)}`);
+  }
+
+  // ── unidades ── (después de instalar: auditd tiene que existir para arrancarlo)
+  for (const w of writes) {
+    if (w.kind !== "unit") continue;
+    const units = [w.unit, ...(UNIT_POLICY[w.unit].with ?? [])];
+    const r = await privileged("/usr/bin/systemctl", [w.enabled ? "enable" : "disable", "--now", ...units], deps, 60_000);
+    if (r.code === 0) changes.push(`systemctl ${w.enabled ? "enable" : "disable"} --now ${units.join(" ")}`);
+    else problems.push(`systemctl ${w.enabled ? "enable" : "disable"} ${w.unit} failed: ${(r.stderr || r.stdout).trim().slice(0, 200)}`);
   }
 
   // ── Releer con el mismo criterio que la sonda ──

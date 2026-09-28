@@ -469,3 +469,102 @@ describe("line — una línea de la lista cerrada", () => {
     expect(files.get("/etc/systemd/journald.conf.d/99-tracenium-hardening.conf")).toContain("[Journal]\nMaxFileSec=1month\n");
   });
 });
+
+// ── Paquetes y unidades ────────────────────────────────────────────
+// apt y systemd simulados: dpkg-query dice lo instalado, `apt-get -s` enseña
+// lo que haría (ubuntu-standard depende de telnet), systemctl lleva el estado.
+describe("pkg y unit — lista cerrada, y apt simulado antes de tocar nada", () => {
+  let installed: Set<string>;
+  let unitState: Map<string, { enabled: string; active: string }>;
+  const DEPENDS_ON: Record<string, string[]> = { telnet: ["ubuntu-standard"] };
+  function aptExec(bin: string, args: string[]) {
+    if (bin.endsWith("systemd-run")) {
+      const i = args.indexOf("--");
+      return aptExec(args[i + 1], args.slice(i + 2));
+    }
+    if (bin === "/usr/bin/dpkg-query") {
+      const name = args[args.length - 1];
+      return installed.has(name) ? { stdout: "install ok installed\t1.0", stderr: "", code: 0 } : { stdout: "", stderr: `no packages found matching ${name}`, code: 1 };
+    }
+    if (bin === "/usr/bin/apt-get") {
+      const sim = args[0] === "-s";
+      const verb = sim ? args[1] : args[0];
+      const names = args.filter((a) => /^[a-z][a-z0-9+.-]+$/.test(a) && !["install", "remove"].includes(a));
+      if (verb === "remove") {
+        const gone = names.filter((n) => installed.has(n)).flatMap((n) => [n, ...(DEPENDS_ON[n] ?? []).filter((d) => installed.has(d))]);
+        if (sim) return { stdout: gone.map((g) => `Remv ${g} [1.0]`).join("\n"), stderr: "", code: 0 };
+        gone.forEach((g) => installed.delete(g));
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (sim) return { stdout: names.map((n) => `Inst ${n} (1.0 Ubuntu)`).join("\n"), stderr: "", code: 0 };
+      names.forEach((n) => installed.add(n));
+      return { stdout: "", stderr: "", code: 0 };
+    }
+    if (bin === "/usr/bin/systemctl") {
+      if (args[0] === "is-enabled") return { stdout: (unitState.get(args[1])?.enabled ?? "not-found") + "\n", stderr: "", code: 0 };
+      if (args[0] === "is-active") return { stdout: (unitState.get(args[1])?.active ?? "inactive") + "\n", stderr: "", code: 3 };
+      if (args[0] === "enable" || args[0] === "disable") {
+        for (const u of args.filter((a) => a.includes("."))) unitState.set(u, { enabled: args[0] === "enable" ? "enabled" : "disabled", active: args[0] === "enable" ? "active" : "inactive" });
+        return { stdout: "", stderr: "", code: 0 };
+      }
+    }
+    return defaultExec(bin, args);
+  }
+  beforeEach(() => {
+    installed = new Set(["telnet", "ubuntu-standard", "ftp", "cups"]);
+    unitState = new Map([["cups.socket", { enabled: "enabled", active: "active" }], ["update-notifier-motd.timer", { enabled: "enabled", active: "active" }]]);
+    bins.add("/usr/bin/apt-get");
+    execImpl = aptExec;
+  });
+
+  it("instala sin recomendados, y la relectura es la de la sonda (dpkg-query)", async () => {
+    const r = await applyGeneric(w({ kind: "pkg", name: "auditd", installed: true }, { kind: "pkg", name: "audispd-plugins", installed: true }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(calls.some((c) => c.startsWith("/usr/bin/apt-get install -y --no-install-recommends -o DPkg::Lock::Timeout=120") && c.endsWith("auditd audispd-plugins"))).toBe(true);
+    expect(installed.has("auditd")).toBe(true);
+  });
+
+  it("⭐ quitar telnet se llevaría ubuntu-standard: no se toca nada y se dice", async () => {
+    const r = await applyGeneric(w({ kind: "pkg", name: "telnet", installed: false }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 2, stderrExcerpt: expect.stringMatching(/would also remove ubuntu-standard/) } });
+    expect(installed.has("telnet")).toBe(true);
+    expect(calls.some((c) => c.startsWith("/usr/bin/apt-get remove"))).toBe(false);
+  });
+
+  it("quitar ftp, que no arrastra nada, sí", async () => {
+    const r = await applyGeneric(w({ kind: "pkg", name: "ftp", installed: false }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(installed.has("ftp")).toBe(false);
+  });
+
+  it("unidades por systemd-run, con las que van con ella; el revert las vuelve a encender", async () => {
+    const r = await applyGeneric(w({ kind: "unit", unit: "update-notifier-motd.timer", enabled: false }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(calls).toContain("/usr/bin/systemd-run --wait --pipe --collect --quiet -- /usr/bin/systemctl disable --now update-notifier-motd.timer");
+    const s = await readGenericState(w({ kind: "unit", unit: "update-notifier-motd.timer", enabled: false }), deps());
+    expect(s).toMatchObject({ ok: true, value: { isCompliant: true, state: { writes: [{ kind: "unit", isEnabled: false, isActive: false, state: "disabled" }] } } });
+  });
+
+  it("guardas y lista cerrada; el sentido contrario (revert) se deja", () => {
+    for (const bad of [
+      { kind: "pkg", name: "cups", installed: false },
+      { kind: "pkg", name: "gdm3", installed: false },
+      { kind: "pkg", name: "openssh-server", installed: false },
+      { kind: "pkg", name: "aide", installed: true },
+      { kind: "pkg", name: "sudo-ldap", installed: true },
+      { kind: "unit", unit: "cups.socket", enabled: false },
+      { kind: "unit", unit: "ssh.service", enabled: false },
+      { kind: "unit", unit: "auditd", enabled: "yes" },
+    ]) {
+      expect(parseWrites(w(bad)).ok, JSON.stringify(bad)).toBe(false);
+    }
+    expect(parseWrites(w({ kind: "unit", unit: "cups.socket", enabled: true })).ok).toBe(true);
+    expect(parseWrites(w({ kind: "pkg", name: "auditd", installed: false })).ok).toBe(true);
+  });
+
+  it("sin apt (RHEL), no se intenta", async () => {
+    bins.delete("/usr/bin/apt-get");
+    const r = await applyGeneric(w({ kind: "pkg", name: "auditd", installed: true }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 2, stderrExcerpt: expect.stringMatching(/only apt/) } });
+  });
+});
