@@ -568,3 +568,79 @@ describe("pkg y unit — lista cerrada, y apt simulado antes de tocar nada", () 
     expect(r).toMatchObject({ ok: true, value: { exitCode: 2, stderrExcerpt: expect.stringMatching(/only apt/) } });
   });
 });
+
+describe("perm — quitar bits, root:root, sin seguir enlaces", () => {
+  let meta: Map<string, { mode: number; uid: number; gid: number; isDir?: boolean; isLink?: boolean }>;
+  const permDeps = (): GenericDeps => ({
+    ...deps(),
+    stat: (p) => {
+      const m = meta.get(p);
+      return m ? { mode: m.mode, uid: m.uid, gid: m.gid, isDir: !!m.isDir, isFile: !m.isDir && !m.isLink, isLink: !!m.isLink } : null;
+    },
+    readdir: (p) => [...meta.keys()].filter((f) => f.startsWith(p + "/") && !f.slice(p.length + 1).includes("/")).map((f) => f.slice(p.length + 1)),
+  });
+  function permExec(bin: string, args: string[]) {
+    if (bin.endsWith("systemd-run")) {
+      const i = args.indexOf("--");
+      return permExec(args[i + 1], args.slice(i + 2));
+    }
+    if (bin === "/usr/bin/chmod") { meta.get(args[1])!.mode = parseInt(args[0], 8); return { stdout: "", stderr: "", code: 0 }; }
+    if (bin === "/usr/bin/chown") { const [u, g] = args[0].split(":").map(Number); Object.assign(meta.get(args[1])!, { uid: u, gid: g }); return { stdout: "", stderr: "", code: 0 }; }
+    return defaultExec(bin, args);
+  }
+  beforeEach(() => {
+    meta = new Map([
+      ["/etc/cron.d", { mode: 0o755, uid: 0, gid: 0, isDir: true }],
+      ["/etc/crontab", { mode: 0o644, uid: 0, gid: 1000 }],
+      ["/etc/ssh/sshd_config.d", { mode: 0o755, uid: 0, gid: 0, isDir: true }],
+      ["/etc/ssh/sshd_config.d/50-cloud-init.conf", { mode: 0o644, uid: 0, gid: 0 }],
+      ["/etc/ssh/sshd_config.d/00-tracenium-hardening.conf", { mode: 0o600, uid: 0, gid: 0 }],
+      ["/usr/share/keyrings", { mode: 0o755, uid: 0, gid: 0, isDir: true }],
+      ["/usr/share/keyrings/ubuntu-archive-keyring.gpg", { mode: 0o644, uid: 0, gid: 0 }],
+      ["/usr/share/keyrings/vendor.gpg", { mode: 0o600, uid: 0, gid: 0 }],
+      ["/usr/share/keyrings/link.gpg", { mode: 0o777, uid: 0, gid: 0, isLink: true }],
+    ]);
+    execImpl = permExec;
+  });
+
+  it("directorio: sólo pierde bits (0755 → 0700) y la relectura lo da por bueno", async () => {
+    const r = await applyGeneric(w({ kind: "perm", path: "/etc/cron.d", maxMode: "0700" }), permDeps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(meta.get("/etc/cron.d")!.mode).toBe(0o700);
+    expect(calls).toContain("/usr/bin/systemd-run --wait --pipe --collect --quiet -- /usr/bin/chmod 0700 /etc/cron.d");
+  });
+
+  it("fichero con grupo ajeno: chown root:root y modo", async () => {
+    await applyGeneric(w({ kind: "perm", path: "/etc/crontab", maxMode: "0600" }), permDeps());
+    expect(meta.get("/etc/crontab")).toMatchObject({ mode: 0o600, uid: 0, gid: 0 });
+  });
+
+  it("⭐ `files`: cada fichero; lo más estricto se queda (0600 no pasa a 0644) y el enlace no se toca", async () => {
+    const r = await applyGeneric(w({ kind: "perm", path: "/usr/share/keyrings", maxMode: "0644" }), permDeps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(meta.get("/usr/share/keyrings/vendor.gpg")!.mode).toBe(0o600);
+    expect(meta.get("/usr/share/keyrings/link.gpg")!.mode).toBe(0o777);
+    expect(calls.some((c) => c.includes("link.gpg"))).toBe(false);
+  });
+
+  it("revert: vuelven el modo y el dueño que había", async () => {
+    await applyGeneric(w({ kind: "perm", path: "/etc/ssh/sshd_config.d", maxMode: "0600" }), permDeps());
+    expect(meta.get("/etc/ssh/sshd_config.d/50-cloud-init.conf")!.mode).toBe(0o600);
+    const back = w({ kind: "perm", path: "/etc/ssh/sshd_config.d", maxMode: "0600", restore: [{ file: "/etc/ssh/sshd_config.d/50-cloud-init.conf", mode: "0644", uid: 0, gid: 0 }] });
+    expect(await applyGeneric(back, permDeps())).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(meta.get("/etc/ssh/sshd_config.d/50-cloud-init.conf")!.mode).toBe(0o644);
+  });
+
+  it("fuera de la lista, un máximo distinto, o un restore fuera de la ruta: rechazado", () => {
+    for (const bad of [
+      { kind: "perm", path: "/usr/bin/env", maxMode: "0644" },
+      { kind: "perm", path: "/etc/shadow", maxMode: "0000" },
+      { kind: "perm", path: "/etc/cron.d", maxMode: "0777" },
+      { kind: "perm", path: "/etc/cron.d", maxMode: "0700", restore: [{ file: "/etc/passwd", mode: "0666", uid: 0, gid: 0 }] },
+      { kind: "perm", path: "/etc/ssh/sshd_config.d", maxMode: "0600", restore: [{ file: "/etc/ssh/sshd_config.d/../../shadow", mode: "0644", uid: 0, gid: 0 }] },
+      { kind: "perm", path: "/etc/crontab", maxMode: "0600", restore: [{ file: "/etc/crontab", mode: "4777", uid: 0, gid: 0 }] },
+    ]) {
+      expect(parseWrites(w(bad)).ok, JSON.stringify(bad)).toBe(false);
+    }
+  });
+});

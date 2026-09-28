@@ -233,7 +233,9 @@ async function commitSshdDropins(changes: DropinChange[]): Promise<void> {
       // Write to .pending, then atomic rename. `.pending` no casa con el
       // glob `*.conf` del Include: sshd nunca lo lee a medio escribir.
       const pending = `${c.file}.pending`;
-      fs.writeFileSync(pending, c.newContent, { encoding: "utf8", mode: 0o644 });
+      // 0600: CIS lo pide a cada fichero de sshd_config.d, el nuestro incluido.
+      fs.writeFileSync(pending, c.newContent, { encoding: "utf8", mode: 0o600 });
+      fs.chmodSync(pending, 0o600);
       fs.renameSync(pending, c.file);
     }
   } catch (err) {

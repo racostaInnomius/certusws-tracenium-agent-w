@@ -29,6 +29,9 @@
 //               lista CERRADA; antes, `apt-get -s`: si instalar quita algo, o
 //               quitar se lleva otro paquete (ubuntu-standard), no se hace.
 //   unit        systemctl enable|disable --now (por systemd-run), lista cerrada.
+//   perm        chmod/chown (por systemd-run) de una lista cerrada de rutas:
+//               el modo sólo PIERDE bits (actual & máximo), dueño root:root;
+//               los enlaces simbólicos no se tocan (chmod seguiría al destino).
 //   sshd        /etc/ssh/sshd_config.d/00-tracenium-hardening.conf, el MISMO
 //               drop-in que los handlers dedicados de SSH (sshd-dropin.ts:
 //               sshd se queda con el PRIMER valor, por eso 00-). `sshd -t`
@@ -237,6 +240,23 @@ export const UNIT_POLICY: Readonly<Record<string, UnitRule>> = Object.freeze({
   "xinetd.service": { disable: { guard: "xinetd services stop" } },
 });
 
+/** Rutas cuyos permisos se pueden ajustar (espejo de PERM_POLICY). `files`: sus ficheros, sin bajar. */
+export const PERM_POLICY: Readonly<Record<string, { maxMode: string; scope: "path" | "files" }>> = Object.freeze({
+  "/etc/crontab": { maxMode: "0600", scope: "path" },
+  "/etc/cron.d": { maxMode: "0700", scope: "path" },
+  "/etc/cron.hourly": { maxMode: "0700", scope: "path" },
+  "/etc/cron.daily": { maxMode: "0700", scope: "path" },
+  "/etc/cron.weekly": { maxMode: "0700", scope: "path" },
+  "/etc/cron.monthly": { maxMode: "0700", scope: "path" },
+  "/etc/cron.yearly": { maxMode: "0700", scope: "path" },
+  "/etc/ssh/sshd_config": { maxMode: "0600", scope: "path" },
+  "/etc/ssh/sshd_config.d": { maxMode: "0600", scope: "files" },
+  "/usr/share/keyrings": { maxMode: "0644", scope: "files" },
+  "/etc/apt/trusted.gpg.d": { maxMode: "0644", scope: "files" },
+});
+
+type PermRestore = { file: string; mode: string; uid: number; gid: number };
+
 // ── Escrituras ───────────────────────────────────────────────────────
 
 export type LinuxWrite =
@@ -247,7 +267,8 @@ export type LinuxWrite =
   | { kind: "sshd"; key: string; value: string | null; required?: string[] }
   | { kind: "line"; file: string; line: string; present: boolean }
   | { kind: "pkg"; name: string; installed: boolean }
-  | { kind: "unit"; unit: string; enabled: boolean };
+  | { kind: "unit"; unit: string; enabled: boolean }
+  | { kind: "perm"; path: string; maxMode: string; restore?: PermRestore[] };
 
 const SYSCTL_KEY = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_-]+)+$/;
 const SAFE_VALUE = /^[A-Za-z0-9_.:\/ -]{1,64}$/;
@@ -357,6 +378,25 @@ export function parseWrites(params: unknown): Check<LinuxWrite[]> {
         out.push({ kind: "unit", unit: w.unit, enabled: w.enabled });
         break;
       }
+      case "perm": {
+        const policy = typeof w.path === "string" && Object.prototype.hasOwnProperty.call(PERM_POLICY, w.path) ? PERM_POLICY[w.path] : undefined;
+        if (!policy) return { ok: false, message: `${at}: path not on the list Tracenium may change permissions of` };
+        if (w.maxMode !== policy.maxMode) return { ok: false, message: `${at}: maxMode for ${w.path} is ${policy.maxMode}` };
+        let restore: PermRestore[] | undefined;
+        if (w.restore !== undefined) {
+          if (!Array.isArray(w.restore) || w.restore.length === 0 || w.restore.length > 256) return { ok: false, message: `${at}: restore must be a list of 1–256 entries` };
+          restore = [];
+          for (const r of w.restore) {
+            const inside = typeof r?.file === "string" && !r.file.includes("..") && (policy.scope === "path" ? r.file === w.path : pathMod.posix.dirname(r.file) === w.path);
+            if (!inside) return { ok: false, message: `${at}: restore entry outside ${w.path}` };
+            if (typeof r.mode !== "string" || !/^0?[0-7]{3}$/.test(r.mode)) return { ok: false, message: `${at}: restore mode must be three octal digits` };
+            if (!Number.isInteger(r.uid) || r.uid < 0 || !Number.isInteger(r.gid) || r.gid < 0) return { ok: false, message: `${at}: restore uid/gid must be numbers` };
+            restore.push({ file: r.file, mode: r.mode, uid: r.uid, gid: r.gid });
+          }
+        }
+        out.push(restore ? { kind: "perm", path: w.path, maxMode: w.maxMode, restore } : { kind: "perm", path: w.path, maxMode: w.maxMode });
+        break;
+      }
       default:
         return { ok: false, message: `${at}: unknown kind` };
     }
@@ -376,6 +416,8 @@ export interface GenericDeps {
   isDir(p: string): boolean;
   /** Modo actual del fichero, para conservarlo al reescribir. */
   fileMode(p: string): number | null;
+  /** lstat: un enlace simbólico sale como `isLink` (y no como fichero). */
+  stat(p: string): { mode: number; uid: number; gid: number; isDir: boolean; isFile: boolean; isLink: boolean } | null;
   copyFile(src: string, dst: string): void;
   exec(bin: string, args: string[], timeoutMs?: number, env?: Record<string, string>): Promise<{ stdout: string; stderr: string; code: number | null }>;
   machine(): string;
@@ -429,6 +471,14 @@ export const realDeps: GenericDeps = {
   },
   copyFile(src, dst) {
     fsDefault.copyFileSync(src, dst);
+  },
+  stat(p) {
+    try {
+      const st = fsDefault.lstatSync(p);
+      return { mode: st.mode & 0o7777, uid: st.uid, gid: st.gid, isDir: st.isDirectory(), isFile: st.isFile(), isLink: st.isSymbolicLink() };
+    } catch {
+      return null;
+    }
   },
   exec(bin, args, timeoutMs = 60_000, env) {
     return new Promise((resolve) => {
@@ -556,7 +606,8 @@ export type StateEntry =
   | { kind: "sshd"; key: string; effective: string | null; ours: string | null }
   | { kind: "line"; file: string; line: string; present: boolean }
   | { kind: "pkg"; name: string; installed: boolean; version: string | null }
-  | { kind: "unit"; unit: string; isEnabled: boolean; isActive: boolean; state: string };
+  | { kind: "unit"; unit: string; isEnabled: boolean; isActive: boolean; state: string }
+  | { kind: "perm"; path: string; entries: PermRestore[] };
 
 /** Lo que se lee una vez por petición: la configuración efectiva de sshd. */
 export type ReadContext = {
@@ -622,6 +673,11 @@ export function readEntry(w: LinuxWrite, deps: GenericDeps, ctx: ReadContext = {
       const p = ctx.pkgs?.get(w.name);
       return { kind: "pkg", name: w.name, installed: p?.installed ?? false, version: p?.version ?? null };
     }
+    case "perm":
+      return { kind: "perm", path: w.path, entries: permTargets(w.path, deps).map((file) => {
+        const st = deps.stat(file)!;
+        return { file, mode: "0" + (st.mode & 0o777).toString(8).padStart(3, "0"), uid: st.uid, gid: st.gid };
+      }) };
     case "unit": {
       const u = ctx.units?.get(w.unit);
       return { kind: "unit", unit: w.unit, isEnabled: u?.isEnabled ?? false, isActive: u?.isActive ?? false, state: u?.state ?? "unknown" };
@@ -667,6 +723,15 @@ export function satisfied(w: LinuxWrite, e: StateEntry): { ok: boolean; why: str
     if (e.effective !== w.value) return { ok: false, why: `${e.effectiveSource} sets ${w.key} = ${e.effective} after ours` };
     return { ok: true, why: null };
   }
+  if (w.kind === "perm" && e.kind === "perm") {
+    if (w.restore) {
+      const bad = w.restore.find((r) => { const x = e.entries.find((y) => y.file === r.file); return !x || parseInt(x.mode, 8) !== parseInt(r.mode, 8) || x.uid !== r.uid || x.gid !== r.gid; });
+      return bad ? { ok: false, why: `${bad.file} is not back to ${bad.mode} ${bad.uid}:${bad.gid}` } : { ok: true, why: null };
+    }
+    const max = parseInt(w.maxMode, 8);
+    const bad = e.entries.find((x) => (parseInt(x.mode, 8) & ~max) !== 0 || x.uid !== 0 || x.gid !== 0);
+    return bad ? { ok: false, why: `${bad.file} is ${bad.mode} ${bad.uid}:${bad.gid}, expected at most ${w.maxMode} root:root` } : { ok: true, why: null };
+  }
   if (w.kind === "pkg" && e.kind === "pkg") {
     return e.installed === w.installed ? { ok: true, why: null } : { ok: false, why: `${w.name} is ${e.installed ? "still installed" : "not installed"}` };
   }
@@ -697,6 +762,15 @@ export async function readGenericState(params: unknown, deps: GenericDeps = real
   const entries = parsed.value.map((w) => readEntry(w, deps, ctx));
   const isCompliant = parsed.value.every((w, i) => satisfied(w, entries[i]).ok);
   return { ok: true, value: { state: { writes: entries }, isCompliant } };
+}
+
+/** Lo que toca una escritura de permisos: la ruta, o los ficheros regulares de su directorio (sin enlaces). */
+export function permTargets(path: string, deps: GenericDeps): string[] {
+  const st = deps.stat(path);
+  if (!st || st.isLink) return [];
+  if (PERM_POLICY[path].scope === "path") return [path];
+  if (!st.isDir) return [];
+  return deps.readdir(path).sort().map((n) => pathMod.posix.join(path, n)).filter((f) => deps.stat(f)?.isFile === true);
 }
 
 // ── Edición de ficheros (puras: texto → texto) ───────────────────────
@@ -1084,13 +1158,14 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
       const restore = () => {
         for (const [file, k] of touched) {
           if (orig[k] === null) deps.unlink(file);
-          else deps.writeFile(file, orig[k]!, 0o644);
+          else deps.writeFile(file, orig[k]!, 0o600);
         }
       };
       deps.mkdirp(SSHD_DROPIN_DIR);
       for (const [file, k] of touched) {
         if (next[k] === null) deps.unlink(file);
-        else deps.writeFile(file, next[k]!, 0o644);
+        // 0600: CIS lo pide a cada fichero de sshd_config.d, el nuestro incluido.
+        else deps.writeFile(file, next[k]!, 0o600);
       }
       const check = await deps.exec(SSHD_BIN, ["-t"], 15_000);
       if (check.code !== 0) {
@@ -1140,6 +1215,33 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
     const r = await privileged("/usr/bin/systemctl", [w.enabled ? "enable" : "disable", "--now", ...units], deps, 60_000);
     if (r.code === 0) changes.push(`systemctl ${w.enabled ? "enable" : "disable"} --now ${units.join(" ")}`);
     else problems.push(`systemctl ${w.enabled ? "enable" : "disable"} ${w.unit} failed: ${(r.stderr || r.stdout).trim().slice(0, 200)}`);
+  }
+
+  // ── permisos ── (por systemd-run: el perfil no concede chown ni fowner)
+  for (const w of writes) {
+    if (w.kind !== "perm") continue;
+    const plan: Array<{ file: string; mode: number; uid: number; gid: number }> = w.restore
+      ? w.restore.map((r) => ({ file: r.file, mode: parseInt(r.mode, 8), uid: r.uid, gid: r.gid }))
+      : permTargets(w.path, deps).map((file) => {
+          const st = deps.stat(file)!;
+          return { file, mode: st.mode & 0o7777 & parseInt(w.maxMode, 8), uid: 0, gid: 0 };
+        });
+    for (const p of plan) {
+      const st = deps.stat(p.file);
+      if (!st || st.isLink) continue; // desapareció o es un enlace: no se sigue
+      if (st.uid !== p.uid || st.gid !== p.gid) {
+        const r = await privileged("/usr/bin/chown", [`${p.uid}:${p.gid}`, p.file], deps, 30_000);
+        if (r.code === 0) changes.push(`chown ${p.uid}:${p.gid} ${p.file}`);
+        else problems.push(`chown ${p.file} failed: ${(r.stderr || r.stdout).trim().slice(0, 160)}`);
+      }
+      // chown puede quitar setuid/setgid: el modo va después.
+      if ((deps.stat(p.file)?.mode ?? st.mode) !== p.mode) {
+        const octal = "0" + p.mode.toString(8).padStart(3, "0");
+        const r = await privileged("/usr/bin/chmod", [octal, p.file], deps, 30_000);
+        if (r.code === 0) changes.push(`chmod ${octal} ${p.file}`);
+        else problems.push(`chmod ${p.file} failed: ${(r.stderr || r.stdout).trim().slice(0, 160)}`);
+      }
+    }
   }
 
   // ── Releer con el mismo criterio que la sonda ──

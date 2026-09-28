@@ -608,6 +608,11 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   /usr/bin/ausyscall                                ix,
   # apt-config dump: configuración efectiva de APT (CIS 26.04 1.2.1.12–15).
   /usr/bin/apt-config                               ix,
+  # chmod/chown de la remediación genérica (forma perm): van por systemd-run
+  # (sin confinar); esta regla sólo cubre el camino sin systemd, donde bajo
+  # este perfil —sin chown ni fowner— fallan con su error, como sysctl.
+  /usr/bin/chmod                                    ix,
+  /usr/bin/chown                                    ix,
   /sbin/augenrules                                  ix,
   /usr/sbin/ufw                                     ix,
   /usr/sbin/iptables                                ix,
