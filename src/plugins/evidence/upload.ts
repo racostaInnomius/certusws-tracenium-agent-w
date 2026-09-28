@@ -33,6 +33,13 @@ export type PrivCall = (req: {
 
 export type UploadDeps = {
   call: PrivCall;
+  /**
+   * La base del control plane (`https://api…`). Va en la petición porque
+   * PrivSvc no la conoce: REST y gRPC viven en hosts distintos según el
+   * entorno, y fijarla en el servicio rompería pre-producción. PrivSvc la
+   * valida (origen https, sin ruta) y compone ÉL la ruta.
+   */
+  baseUrl: string;
   meta?: { tenantId?: string; deviceId?: string };
   /** Inyectable para el test; por defecto, el `fetch` de Node. */
   put?: (url: string, body: fs.ReadStream | Buffer, headers: Record<string, string>) => Promise<{ status: number; text: string }>;
@@ -67,7 +74,7 @@ export async function uploadArtifact(
     v: 1,
     id: `evidence_${Date.now()}`,
     method: UPLOAD_URL_METHOD,
-    params: { captureId: input.captureId, name: input.name },
+    params: { captureId: input.captureId, name: input.name, baseUrl: deps.baseUrl },
     meta: { tenantId: deps.meta?.tenantId, deviceId: deps.meta?.deviceId },
   });
 

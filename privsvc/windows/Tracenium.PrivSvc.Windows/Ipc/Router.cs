@@ -136,7 +136,12 @@ public sealed class Router
             // los metodos nuevos de la fase 2 de ADR-0011 como a
             // `cdp.anchor.distrust`, que ya escribia en el store
             // Disallowed de LocalMachine sin pasar por este gate.
-            req.Method.StartsWith("cdp.", StringComparison.OrdinalIgnoreCase))
+            req.Method.StartsWith("cdp.", StringComparison.OrdinalIgnoreCase) ||
+            // evidence.* presenta el CERTIFICADO DEL EQUIPO al control plane
+            // (ADR-0032 D3). La clave vive en el almacen de la maquina: quien
+            // pueda invocar esto habla como el equipo, asi que el gate es el
+            // mismo que el de crypto y grpc.
+            req.Method.StartsWith("evidence.", StringComparison.OrdinalIgnoreCase))
         {
             if (!IsLocalSystem())
             {
@@ -293,6 +298,11 @@ public sealed class Router
             "tray.ensure" => Task.FromResult(TrayPresence.Ensure(req)),
 
             // SDP — Phase 1-E. See Ipc/Sdp.cs.
+            // ADR-0032 — el destino de subida de un artefacto de evidencia. NO
+            // es una peticion HTTPS generica: la ruta la compone el handler y
+            // el equipo sale del puente gRPC. Ver EvidenceUpload.cs.
+            "evidence.upload.url" => EvidenceUpload.HandleAsync(req),
+
             "sdp.detect" => Sdp.HandleDetect(req),
             "sdp.download" => Sdp.HandleDownload(req),
             "sdp.install" => Sdp.HandleInstall(req),

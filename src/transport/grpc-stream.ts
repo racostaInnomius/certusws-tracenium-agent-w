@@ -1587,6 +1587,7 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
             uploadArtifact(
               {
                 call: (req) => ctx.priv.call(req as any),
+                baseUrl: ctx.config.serverBaseUrl,
                 meta: { tenantId: ctx.enrollment?.tenantId, deviceId: ctx.enrollment?.deviceId },
                 logger: ctx.logger
               },

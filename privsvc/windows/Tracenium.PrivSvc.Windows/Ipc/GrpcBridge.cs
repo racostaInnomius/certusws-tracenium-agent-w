@@ -496,6 +496,16 @@ private const int MaxPendingPushEvents = 50;
     public string? IssuingCaThumbprint => _lastConnectOptions?.IssuingCaThumbprint;
 
     /// <summary>
+    /// El equipo tal como lo conoce el control plane, del ultimo grpc.connect.
+    ///
+    /// Lo usa `evidence.upload.url` para componer la ruta: pedir el destino de
+    /// subida de OTRO equipo no es un caso de uso, y tomar el id de los
+    /// parametros del IPC lo dejaria a eleccion del llamante. Null hasta el
+    /// primer grpc.connect.
+    /// </summary>
+    public string? DeviceId => _lastConnectOptions?.DeviceId;
+
+    /// <summary>
     /// TODAS las CAs emisoras que este agente acepta (singular + lista), el
     /// mismo conjunto que valida al servidor. El DP lo usa como base de a qué
     /// peers sirve: quedarse con la singular dejó fuera a MSIG-VEEAM-PC (G2)
