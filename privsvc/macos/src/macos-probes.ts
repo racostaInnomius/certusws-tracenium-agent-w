@@ -24,7 +24,8 @@
 // Fase 5 (macos-system-probes.ts): userpref.<domain>:<key> por usuario
 // local, profile.<Key> de los perfiles de configuración instalados, y
 // mac.timemachine|hints|homefolders|wwapps|wwsystem|wwlibrary|volumes|
-// policybanner|sleep|touchid|locationclients|fulldiskaccess.
+// policybanner|sleep|touchid|locationclients|fulldiskaccess, y
+// mac.locationservices (Location Services leído como _locationd, CIS 2.6.1.1).
 //
 // Claves con punto viajan con "~" (com~apple~screensaver). La evidencia se
 // indexa por la clave tal cual llegó. Un valor que no existe se omite (el
@@ -49,7 +50,8 @@ export const MAC_PROBE_KINDS = ["pref", "pmset", "launchctl", "systemsetup", "ma
 export type MacProbeKind = (typeof MAC_PROBE_KINDS)[number];
 export const SYSTEMSETUP_FLAGS = new Set(["getremotelogin", "getremoteappleevents", "getusingnetworktime", "getnetworktimeserver", "getwakeonnetworkaccess", "getcomputersleep", "getdisplaysleep", "getrestartfreeze", "getcomputername", "getlocalsubnetname"]);
 export const MAC_CMDS = new Set(["csrutil", "spctl", "fdesetup", "amfi", "screenlock", "pwpolicy", "cupsctl", "xprotect", "rootaccount", "ardagent", "sudo", "smbguest", "nfsd", "ssv",
-  "timemachine", "hints", "homefolders", "wwapps", "wwsystem", "wwlibrary", "volumes", "policybanner", "sleep", "touchid", "locationclients", "fulldiskaccess", "mdm", "efi"]);
+  "timemachine", "hints", "homefolders", "wwapps", "wwsystem", "wwlibrary", "volumes", "policybanner", "sleep", "touchid", "locationclients", "fulldiskaccess", "mdm", "efi",
+  "locationservices"]);
 
 export function decodeKey(k: string): string {
   return k.replace(/~/g, ".");
@@ -262,6 +264,7 @@ async function macCmd(cmd: string, deps: MacProbeDeps): Promise<Record<string, u
     case "sleep": return sys.probeSleep(deps);
     case "touchid": return sys.probeTouchId(sys.localUsers(deps), deps);
     case "locationclients": return sys.probeLocationClients(deps);
+    case "locationservices": return sys.probeLocationServices(deps);
     case "fulldiskaccess": return sys.probeFullDiskAccess(deps);
     case "mdm": return sys.probeMdm(deps);
     case "efi": return sys.probeEfi(deps);

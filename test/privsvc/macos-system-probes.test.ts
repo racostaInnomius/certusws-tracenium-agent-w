@@ -115,3 +115,46 @@ describe("collectMacProbes — fase 5", () => {
     expect(parseProfilesStatus("MDM enrollment: No\n")).toMatchObject({ enrolled: false, userApproved: false });
   });
 });
+
+// 28-sep: Location Services se leía como root (dominio equivocado) y el check
+// fallaba en los 12 Macs, activado o no. CIS 2.6.1.1 lo lee como _locationd.
+describe("mac.locationservices", () => {
+  const mk = (over: { list?: string; read?: { stdout: string; code: number } }): MacProbeDeps => ({
+    readFile: () => null,
+    stat: () => null,
+    readdir: () => [],
+    userName: () => null,
+    groupName: () => null,
+    exec: async (bin, args) => {
+      if (bin === "/bin/launchctl") return { stdout: over.list ?? "PID\tStatus\tLabel\n120\t0\tcom.apple.locationd\n", stderr: "", code: 0 };
+      if (bin === "/usr/bin/sudo") {
+        // Como _locationd, con la lectura de CIS.
+        expect(args.slice(0, 6)).toEqual(["-n", "-u", "_locationd", "/usr/bin/osascript", "-l", "JavaScript"]);
+        expect(args[7]).toContain("initWithSuiteName('com.apple.locationd')");
+        return { stderr: "", ...(over.read ?? { stdout: "true\n", code: 0 }) };
+      }
+      return { stdout: "", stderr: "", code: 1 };
+    },
+  });
+
+  it("activado y con el daemon cargado", async () => {
+    const r = await collectMacProbes(["mac.locationservices"], mk({}));
+    expect(r.probes.mac.locationservices).toEqual({ enabled: true, daemonLoaded: true, setting: true });
+  });
+
+  it("apagado en Ajustes, o el daemon descargado", async () => {
+    expect((await collectMacProbes(["mac.locationservices"], mk({ read: { stdout: "false\n", code: 0 } }))).probes.mac.locationservices).toMatchObject({ enabled: false, setting: false });
+    expect((await collectMacProbes(["mac.locationservices"], mk({ list: "PID\tStatus\tLabel\n" }))).probes.mac.locationservices).toMatchObject({ enabled: false, daemonLoaded: false, setting: true });
+  });
+
+  it("un aviso en stderr no rompe la lectura (el envoltorio junta las dos salidas)", async () => {
+    const r = await collectMacProbes(["mac.locationservices"], mk({ read: { stdout: "osascript: some warning\n1\n", code: 0 } }));
+    expect(r.probes.mac.locationservices).toMatchObject({ enabled: true });
+  });
+
+  it("si no se puede leer como _locationd: sin evidencia y con el error, no un fail", async () => {
+    const r = await collectMacProbes(["mac.locationservices"], mk({ read: { stdout: "sudo: a password is required", code: 1 } }));
+    expect(r.probes.mac?.locationservices).toBeUndefined();
+    expect(r.errors["mac.locationservices"]).toMatch(/cannot read Location Services as _locationd/);
+  });
+});

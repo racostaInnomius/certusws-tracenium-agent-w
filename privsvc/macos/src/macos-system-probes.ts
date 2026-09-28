@@ -264,6 +264,43 @@ export async function probeLocationClients(deps: MacProbeDeps): Promise<Obj> {
   return { available: r.code === 0, clients: clients.slice(0, 100), count: clients.length };
 }
 
+/**
+ * ¿Location Services está activado? CIS 2.6.1.1 lo audita leyendo
+ * `com.apple.locationd` / `LocationServicesEnabled` COMO `_locationd`: el
+ * valor vive en el dominio ByHost de ese usuario
+ * (/var/db/locationd/Library/Preferences/ByHost/). La sonda `pref` lo leía
+ * como root, que mira el dominio de root y no lo encuentra nunca: el check
+ * fallaba en todos los Macs, activado o no (12 de 12 en prod, 27-sep).
+ *
+ * Además, el daemon tiene que estar cargado (el primer paso de CIS). Si la
+ * lectura como `_locationd` falla, se lanza: el colector lo apunta en
+ * `errors` y el check queda sin evidencia en vez de fallar a ciegas.
+ */
+export const LOCATION_SERVICES_SCRIPT =
+  "ObjC.import('Foundation'); var v = ObjC.unwrap($.NSUserDefaults.alloc.initWithSuiteName('com.apple.locationd').objectForKey('LocationServicesEnabled')); JSON.stringify(v === undefined ? null : v);";
+
+export async function probeLocationServices(deps: MacProbeDeps): Promise<Obj> {
+  const list = await deps.exec("/bin/launchctl", ["list"]);
+  const daemonLoaded = /\scom\.apple\.locationd\s*$/m.test(list.stdout);
+  const r = await deps.exec("/usr/bin/sudo", ["-n", "-u", "_locationd", "/usr/bin/osascript", "-l", "JavaScript", "-e", LOCATION_SERVICES_SCRIPT]);
+  // El envoltorio del colector junta stdout y stderr: la última línea que
+  // sea JSON es la respuesta.
+  let setting: unknown;
+  let parsed = false;
+  for (const line of r.stdout.trim().split("\n").reverse()) {
+    try {
+      setting = JSON.parse(line.trim());
+      parsed = true;
+      break;
+    } catch {
+      /* línea de aviso */
+    }
+  }
+  if (r.code !== 0 || !parsed) throw new Error(`cannot read Location Services as _locationd: ${r.stdout.trim().slice(0, 80)}`);
+  const on = setting === true || setting === 1;
+  return { enabled: daemonLoaded && on, daemonLoaded, setting: setting === null ? null : on };
+}
+
 export async function probeFullDiskAccess(deps: MacProbeDeps): Promise<Obj> {
   const r = await deps.exec("/usr/bin/sqlite3", ["/Library/Application Support/com.apple.TCC/TCC.db", 'select client from access where auth_value and service = "kTCCServiceSystemPolicyAllFiles"']);
   if (r.code !== 0) return { available: false, note: "TCC.db requires Full Disk Access for the collector" };
