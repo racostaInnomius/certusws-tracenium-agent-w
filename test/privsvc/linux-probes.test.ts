@@ -130,6 +130,25 @@ describe("collectLinuxProbes", () => {
     expect(r.probes).not.toHaveProperty("cmd");
   });
 
+  it("lines./etc/sudoers lleva detrás sudoers.d en el orden de sudo (sin los que tienen punto o acaban en ~)", async () => {
+    const f: Record<string, string> = {
+      "/etc/sudoers": "Defaults\tuse_pty\n@includedir /etc/sudoers.d\n",
+      "/etc/sudoers.d/90-cloud-init-users": "ubuntu ALL=(ALL) NOPASSWD:ALL\n",
+      "/etc/sudoers.d/10-ops": "%ops ALL=(ALL) ALL\n",
+      "/etc/sudoers.d/README": "# comments only\n",
+      "/etc/sudoers.d/old.bak": "Defaults !use_pty\n",
+      "/etc/sudoers.d/x~": "Defaults !authenticate\n",
+    };
+    const file = { mode: 0o100440, uid: 0, gid: 0, isDir: false, isFile: true };
+    const deps = fakeDeps({
+      readFile: (p: string) => f[p] ?? null,
+      stat: (p: string) => (p === "/etc/sudoers.d" ? { mode: 0o40755, uid: 0, gid: 0, isDir: true, isFile: false } : p in f ? file : null),
+      readdir: (p: string) => (p === "/etc/sudoers.d" ? ["README", "90-cloud-init-users", "old.bak", "10-ops", "x~"] : []),
+    });
+    const r = await collectLinuxProbes(["lines./etc/sudoers"], deps);
+    expect(r.probes.lines["/etc/sudoers"]).toEqual(["Defaults\tuse_pty", "@includedir /etc/sudoers.d", "%ops ALL=(ALL) ALL", "ubuntu ALL=(ALL) NOPASSWD:ALL"]);
+  });
+
   it("a probe that throws lands in errors and the rest still resolve", async () => {
     const deps = fakeDeps({ exec: async (bin) => { if (bin.endsWith("systemctl")) throw new Error("boom"); return { stdout: "", stderr: "", code: 1 }; } });
     const r = await collectLinuxProbes(["unit.x", "file./etc/passwd"], deps);

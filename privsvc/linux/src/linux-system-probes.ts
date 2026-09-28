@@ -25,13 +25,13 @@
 //
 // ── Fronteras que NO se cruzan ───────────────────────────────────────
 //
-// El perfil AppArmor del PrivSvc niega /etc/shadow, /etc/sudoers y /home
-// a propósito (es la garantía que promete su cabecera). Por eso:
+// El perfil AppArmor del PrivSvc niega /etc/shadow y /home a propósito (es
+// la garantía que promete su cabecera), y la ESCRITURA de sudoers. Por eso:
 //   · el estado de contraseñas sale de `passwd -S -a` (estado P/L/NP,
 //     fecha y días de inactividad), nunca de /etc/shadow;
 //   · el escaneo de ficheros PODA /home y /root: lo que un usuario tenga
 //     en su carpeta no es evidencia que este daemon lea;
-//   · sudoers (timestamp_timeout) queda fuera.
+//   · sudoers se lee (lines./etc/sudoers, con sudoers.d), nunca se escribe.
 // Lo que no se puede medir se declara como límite en el catálogo, no se
 // inventa.
 
@@ -795,9 +795,9 @@ export function probeListenAll(deps: ProbeDeps): Obj {
 
 // ── sudo.settings ────────────────────────────────────────────────────
 //
-// `sudo -V` imprime la configuración efectiva sin volcar sudoers, que el
-// perfil AppArmor niega a propósito; corre sin confinar (Ux), igual que el
-// `mac.sudo` de macOS.
+// `sudo -V` como root imprime la configuración efectiva, Defaults de
+// sudoers incluidos (comprobado en Ubuntu 24.04), sin volcar las reglas;
+// corre sin confinar (Ux), igual que el `mac.sudo` de macOS.
 
 export function parseSudoVersion(text: string): Obj {
   const m = text.match(/Authentication timestamp timeout:\s*(-?[\d.]+)\s*minutes/i);

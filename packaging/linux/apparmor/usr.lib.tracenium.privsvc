@@ -321,8 +321,8 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   #
   # POR QUE ES SEGURO AMPLIAR AQUI, y no en otro sitio: en AppArmor las
   # reglas `deny` GANAN sobre las `allow`, sin importar el orden. El bloque
-  # de denies del final de este archivo —/etc/shadow, /etc/sudoers,
-  # /home/**, /root/.ssh/**— sigue en pie tal cual. La garantia que promete
+  # de denies del final de este archivo —/etc/shadow, /home/**,
+  # /root/.ssh/**, y la ESCRITURA de /etc/sudoers— sigue en pie tal cual. La garantia que promete
   # la cabecera ("aunque el daemon sea comprometido, no puede leer
   # /etc/shadow") la sostienen esos denies, no la ausencia de un allow.
   # Verificado en el endpoint, no deducido: con /etc/** concedido, leer
@@ -594,8 +594,9 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
   # y el daemon no debe poder. El binario solo imprime estado; los hashes
   # nunca salen de el.
   /usr/bin/passwd                                   Ux,
-  # sudo -V: timeout efectivo del timestamp (CIS 5.2.6) sin leer sudoers,
-  # que sigue negado abajo. Sin confinar por el mismo motivo que passwd.
+  # sudo -V: timeout efectivo del timestamp (CIS 5.2.6); como root refleja
+  # los Defaults de sudoers (comprobado en Ubuntu 24.04). Sin confinar por
+  # el mismo motivo que passwd.
   /usr/bin/sudo                                     Ux,
   # augenrules --check: ¿las reglas cargadas son las de rules.d? (6.2.3.30).
   /usr/sbin/augenrules                              ix,
@@ -687,9 +688,15 @@ profile tracenium-privsvc /usr/lib/tracenium/node flags=(attach_disconnected,com
 
   deny /boot/**                                     w,
   deny /etc/shadow                                  rw,
-  deny /etc/sudoers                                 rw,
-  deny /etc/sudoers.d/                              rw,
-  deny /etc/sudoers.d/**                            rw,
+  # sudoers se LEE (28-sep): sin leerlo, los 4 checks de sudo de CIS
+  # (use_pty, logfile, NOPASSWD, !authenticate) salían en fallo en todos
+  # los Linux con «no policy found», que era falso. No guarda secretos
+  # (reglas, no contraseñas). ESCRIBIR sigue negado: un error de sintaxis en
+  # sudoers deja a todo el mundo sin sudo, y Tracenium no lo toca nunca; el
+  # fix sale como script con `visudo -cf` antes de instalar.
+  deny /etc/sudoers                                 w,
+  deny /etc/sudoers.d/                              w,
+  deny /etc/sudoers.d/**                            w,
   deny /home/**                                     rw,
   deny /root/.ssh/**                                rw,
   deny mount,

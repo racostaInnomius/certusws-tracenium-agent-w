@@ -19,7 +19,9 @@
 //   files.<dir>       stat de cada fichero regular del directorio
 //   conf.<file>:<key> "key = value" / "key value" del fichero (+ .d/*.conf)
 //   lines.<file|dir>  líneas no comentario del fichero, o de todos los
-//                     ficheros regulares del directorio (rules.d, sudoers.d)
+//                     ficheros regulares del directorio (rules.d, sudoers.d).
+//                     /etc/sudoers lleva detrás su sudoers.d, como lo lee sudo
+//                     (y como lo mira la auditoría de CIS: /etc/sudoers*)
 //   sysctl.<key>      /proc/sys/<key con / por .>
 //   sshd.<key>        `sshd -T` (una ejecución para todas las claves)
 //
@@ -137,6 +139,24 @@ export function parseKeyValue(text: string): Map<string, string> {
     const m = line.match(/^([A-Za-z_][A-Za-z0-9_.\-]*)\s*(?:=\s*|\s+)(.*)$/);
     if (!m) continue;
     out.set(m[1], m[2].trim().replace(/^["']|["']$/g, ""));
+  }
+  return out;
+}
+
+/**
+ * Los ficheros de /etc/sudoers.d en el orden en que los lee sudo: sin los
+ * que llevan un punto o acaban en `~` (sudoers(5), @includedir), que sudo
+ * se salta. Ubuntu y RHEL lo incluyen desde /etc/sudoers.
+ */
+export function sudoersIncludes(deps: Pick<ProbeDeps, "stat" | "readdir" | "readFile">): string[] {
+  const dir = "/etc/sudoers.d";
+  if (!deps.stat(dir)?.isDir) return [];
+  const out: string[] = [];
+  for (const name of deps.readdir(dir).sort()) {
+    if (name.includes(".") || name.endsWith("~")) continue;
+    if (!deps.stat(pathMod.join(dir, name))?.isFile) continue;
+    const t = deps.readFile(pathMod.join(dir, name));
+    if (t !== null) out.push(...nonCommentLines(t));
   }
   return out;
 }
@@ -334,7 +354,11 @@ export async function collectLinuxProbes(probes: string[], deps: ProbeDeps): Pro
             bucket[key] = acc.slice(0, 1000);
           } else {
             const t = deps.readFile(target);
-            if (t !== null) bucket[key] = nonCommentLines(t).slice(0, 500);
+            if (t !== null) {
+              const acc = nonCommentLines(t);
+              if (target === "/etc/sudoers") acc.push(...sudoersIncludes(deps));
+              bucket[key] = acc.slice(0, 500);
+            }
           }
           break;
         }
