@@ -96,6 +96,22 @@ type PeerSessionArgs = {
   sessionTimeoutSeconds: number;
 };
 
+/**
+ * El TIPO de un candidato ICE, de su propia línea SDP.
+ *
+ * Formato: `candidate:<foundation> <comp> <proto> <prio> <ip> <port> typ <tipo> ...`
+ * Se lee el token siguiente a `typ` en vez de buscar la palabra suelta: `host`
+ * aparece también dentro de alguna extensión, y contar eso inflaría el único
+ * número que vamos a mirar cuando algo falle.
+ */
+export function candidateKind(candidate: string): "host" | "srflx" | "relay" | "prflx" | "otro" {
+  const parts = String(candidate || "").trim().split(/\s+/);
+  const i = parts.indexOf("typ");
+  const kind = i >= 0 && i + 1 < parts.length ? parts[i + 1] : "";
+  if (kind === "host" || kind === "srflx" || kind === "relay" || kind === "prflx") return kind;
+  return "otro";
+}
+
 export class PeerSession {
   private peer: any;
   // DataChannel established by the OFFERER (browser). We don't
@@ -110,6 +126,14 @@ export class PeerSession {
   private screenSession: ScreenSession | null = null;
   private hardTimer: NodeJS.Timeout | null = null;
   private disposed = false;
+  /**
+   * Cuántos candidatos locales de cada tipo se han reunido.
+   *
+   * Es lo único que distingue las tres causas de un `ice_failed` desde el lado
+   * del agente, y no lo teníamos: ni una línea. Ver el resumen en
+   * `onStateChange`.
+   */
+  private readonly candidateTally = { host: 0, srflx: 0, relay: 0, prflx: 0, otro: 0 };
   /**
    * Separate from `disposed`, and that separation is the whole point.
    *
@@ -219,6 +243,21 @@ export class PeerSession {
 
     this.peer.onLocalCandidate((candidate: string, sdpMid: string) => {
       if (this.disposed) return;
+      // 🔴 Antes no se anotaba NADA de los candidatos, y eso convertía cada
+      // `ice_failed` en una investigación de campo.
+      //
+      // MSIG-VEEAM-SRV (T111, 28-sep-2026) costó una tarde: el segmento
+      // estaba bien —otro equipo de la misma /24 conectaba en segundos—, la
+      // pasarela estaba bien, el cortafuegos estaba en el mismo perfil, y el
+      // agente contestaba el offer en 1,2 s. Con esto habríamos visto en el
+      // primer intento qué tipos de candidato reunió cada uno y en qué se
+      // diferenciaban.
+      //
+      // Se cuenta por TIPO. El candidato entero lleva direcciones internas y
+      // va a `debug`, que es un interruptor que alguien enciende a propósito;
+      // el recuento va al resumen de abajo, que sale siempre que falla.
+      this.candidateTally[candidateKind(candidate)] += 1;
+      ctx.logger?.debug?.("[rcp] candidato local", { sessionId, candidate });
       // libdatachannel's API exposes sdpMid as a string. mlineIndex
       // isn't directly exposed; we send 0 — modern SDP with a
       // single m= line for data channels matches this. M3 (screen
@@ -228,6 +267,17 @@ export class PeerSession {
 
     this.peer.onStateChange((state: string) => {
       ctx.logger?.info?.("[rcp] peer state", { sessionId, state });
+      if (state === "failed") {
+        // El dato que convierte «no se pudo conectar» en un diagnóstico:
+        //   sin `host`     → el agente no pudo ni mirar sus interfaces;
+        //   sólo `host`    → no hay salida UDP y no se ofreció relay;
+        //   con `relay`    → el relay estaba disponible y aun así no cuajó,
+        //                    así que el problema está en el otro extremo.
+        ctx.logger?.warn?.("[rcp] ICE falló; candidatos locales reunidos", {
+          sessionId,
+          ...this.candidateTally
+        });
+      }
       if (state === "failed" || state === "closed") {
         // Schedule teardown — race against an explicit close from
         // either side, so set a flag rather than dispose
