@@ -287,7 +287,8 @@ public static class SoftwareInventory
         var ps = "powershell";
         var args =
             "-NoProfile -Command " +
-            "\"Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | " +
+            // UTF-8 en los dos extremos: nombres de apps con acentos. Ver PowerShellUtf8.
+            "\"" + PowerShellUtf8.InlinePrelude + "Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | " +
             "Select-Object @{Name='name';Expression={$_.Name}}," +
             "@{Name='version';Expression={$_.Version.ToString()}}, " +
             "@{Name='publisher';Expression={$_.Publisher}}," +
@@ -311,7 +312,7 @@ public static class SoftwareInventory
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true
-        };
+        }.ReadAsUtf8();
 
         using var proc = Process.Start(psi);
         if (proc == null) return list;

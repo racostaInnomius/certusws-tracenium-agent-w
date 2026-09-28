@@ -1380,7 +1380,9 @@ ConvertTo-Json -Depth 4 -Compress -InputObject @{ items = $items; failures = $fa
 
     private static PsResult RunPsWithTimeout(string command, int timeoutMs)
     {
-        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
+        // UTF-8 en los dos extremos: los valores con acentos de un Windows en
+        // español llegaban como «Actualizaci¢n». Ver PowerShellUtf8.
+        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(PowerShellUtf8.Prelude + command));
         return RunProcessWithTimeout(new ProcessStartInfo("powershell",
             $"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}")
         {
@@ -1388,7 +1390,7 @@ ConvertTo-Json -Depth 4 -Compress -InputObject @{ items = $items; failures = $fa
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true
-        }, timeoutMs);
+        }.ReadAsUtf8(), timeoutMs);
     }
 
     /// <summary>
