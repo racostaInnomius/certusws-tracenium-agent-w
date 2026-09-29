@@ -57,10 +57,22 @@ equivocado.
   hay relay: un equipo tras NAT simétrico o sin UDP saliente no podrá conectar
   nunca desde Internet.
 
-Por eso este documento no fija una lista de IPs. **La forma correcta de saber
-qué hay que abrir hoy** es mirar la respuesta de `POST /sessions` en las
-herramientas de desarrollo del navegador: el campo `turnConfig.iceServers`
-lleva exactamente los extremos que se van a intentar.
+Por eso este documento no fija una lista de IPs. **Hay dos formas de saber qué
+hay que abrir hoy**, y las dos dan la misma lista:
+
+1. **Desde el equipo**, con `debug.flag` puesto: desde 1.1.86 la línea
+   `[rcp] onOffer entered` trae `iceServerUrls` con los extremos exactos que
+   se van a intentar. Es la vía preferible: no necesita al operador delante ni
+   acceso al portal. Registra **sólo las urls** — `username` y `credential`
+   son credenciales TURN vivas y no salen al log a propósito.
+2. **Desde el navegador del operador**: herramientas de desarrollo → Red → el
+   `POST` a `/api/v1/remote-control/sessions` → Respuesta →
+   `turnConfig.iceServers`.
+
+⚠️ **No se puede leer desde la base de datos.** El control plane sella la
+lista en `rcp_session_routing.ice_servers_json` con `RCP_SECRETS_KEY`, así que
+una consulta a la BD devuelve un sobre `v1.…` y no las urls. El 28-sep se
+intentó ese camino primero y se perdió el rato.
 
 ## Cómo comprobarlo en un equipo
 

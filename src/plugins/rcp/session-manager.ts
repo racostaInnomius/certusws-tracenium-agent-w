@@ -57,6 +57,29 @@ function extractIceUfrag(sdp: string): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * Los extremos STUN/TURN de una lista de `RTCIceServer`, aplanados y sin
+ * repetir, para poder registrarlos.
+ *
+ * ⚠️ Devuelve SÓLO `urls`. `username` y `credential` son las credenciales
+ * TURN efímeras acuñadas por Cloudflare y no deben acabar en un log que se
+ * recoge en soporte. Un `RTCIceServer.urls` puede ser cadena o array.
+ */
+export function iceServerUrls(servers: any[]): string[] {
+  const out: string[] = [];
+  for (const s of Array.isArray(servers) ? servers : []) {
+    const raw = s?.urls;
+    for (const u of Array.isArray(raw) ? raw : [raw]) {
+      const url = String(u || "").trim();
+      // Una credencial en la url sería un `turn:user:pass@host`, que no es
+      // forma válida de RTCIceServer, pero si alguien la manda no la copiamos.
+      if (!url || url.includes("@")) continue;
+      if (!out.includes(url)) out.push(url);
+    }
+  }
+  return out;
+}
+
 export class SessionManager {
   private readonly sessions = new Map<string, PeerSession>();
 
@@ -151,7 +174,17 @@ export class SessionManager {
       capability,
       sdpLen: sdp.length,
       activeSessions: this.sessions.size,
-      iceServersCount: iceServers.length
+      iceServersCount: iceServers.length,
+      // ⚠️ SOLO las urls. `username`/`credential` son las credenciales TURN
+      // efímeras que acuña Cloudflare: no van al log.
+      //
+      // Por qué están aquí: el 28-sep-2026, para contestar «¿qué extremos
+      // tengo que abrir en el cortafuegos del cliente?» hubo que abrir las
+      // herramientas de desarrollo del navegador del operador, porque el
+      // backend sella la lista en `rcp_session_routing.ice_servers_json` y
+      // aquí sólo se contaba. La pregunta se repite en cada sitio nuevo con
+      // salida restringida; con esto se contesta desde el propio equipo.
+      iceServerUrls: iceServerUrls(iceServers)
     });
 
     if (!sessionId || !sdp || !capability) {
