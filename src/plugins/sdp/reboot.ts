@@ -83,7 +83,19 @@ export interface RebootDecision {
  * a meaning the package never assigned it.
  */
 export function rebootExitCodesFor(platform: "windows" | "macos" | "linux"): number[] {
-  return platform === "windows" ? [EXIT_REBOOT_REQUIRED, EXIT_REBOOT_INITIATED] : [];
+  return platform === "windows"
+    ? [
+        EXIT_REBOOT_REQUIRED,
+        EXIT_REBOOT_INITIATED,
+        // Los dos que llegaron con `msu` pero que NO se gatean por formato, por
+        // el mismo motivo que 3010 y 1641 no se gatean por `format === "msi"`:
+        // son códigos de Windows, y un EXE que envuelve Windows Installer o el
+        // motor de servicing puede devolverlos igual. Gatearlos por formato los
+        // perdería justo en esos casos.
+        EXIT_RESTART_REQUIRED,
+        EXIT_WU_REBOOT_REQUIRED,
+      ]
+    : [];
 }
 
 /**
@@ -105,6 +117,52 @@ export function withRebootExitCodes(
   platform: "windows" | "macos" | "linux"
 ): number[] {
   const extra = rebootExitCodesFor(platform).filter((c) => !expected.includes(c));
+  return extra.length === 0 ? expected : [...expected, ...extra];
+}
+
+/**
+ * ERROR_SUCCESS_RESTART_REQUIRED. Lo devuelve el motor de servicing (DISM/CBS)
+ * y significa, para lo que aquí se decide, lo mismo que 3010: el paquete está
+ * puesto y falta un reinicio. Se distingue de 3010 en la documentación de CBS,
+ * no en la decisión que tomamos.
+ */
+export const EXIT_RESTART_REQUIRED = 3011;
+
+/** WU_S_ALREADY_INSTALLED (0x00240006). «Ya estaba», sin ambigüedad. */
+export const EXIT_WU_ALREADY_INSTALLED = 2359302;
+
+/** WU_S_REBOOT_REQUIRED (0x00240005), su pareja por el camino de `wusa`. */
+export const EXIT_WU_REBOOT_REQUIRED = 2359301;
+
+/**
+ * Los códigos de ÉXITO que añade un formato concreto, más allá de los de
+ * reinicio que ya comparte toda la plataforma.
+ *
+ * ⚠️ EXISTE PORQUE `msu` ACTIVA UNA TRAMPA QUE HASTA AHORA ERA TEÓRICA. Un
+ * paquete de Windows Update puede salir con 2359302 — «ya estaba instalado» —
+ * que es un ÉXITO documentado y no estaba mapeado en ninguno de los dos repos.
+ * Fuera del conjunto esperado, `sdp/index.ts` lo grada `failed` con ackStatus 2,
+ * que el orquestador NO reintenta: el parche quedaría marcado como fallido de
+ * forma permanente sobre un equipo que lo tiene puesto.
+ *
+ * ⚠️ 2359302 NO va en `rebootExitCodesFor` aunque sería más corto: no habla de
+ * reinicios, y meterlo ahí haría que `decideReboot` marcara un «ya estaba» como
+ * `reboot_required`. Un servidor con un reinicio pendiente que no necesita es
+ * una ventana de mantenimiento gastada y un servicio caído sin motivo.
+ */
+export function formatSuccessExitCodes(format: string): number[] {
+  return format === "msu" ? [EXIT_WU_ALREADY_INSTALLED] : [];
+}
+
+/**
+ * Ensancha el conjunto esperado con los éxitos propios del formato.
+ *
+ * Gemela de `withRebootExitCodes`: mismo contrato —devuelve la entrada intacta
+ * cuando no hay nada que añadir, y preserva orden y unicidad— para que el valor
+ * siga siendo comparable con lo que guarda el catálogo.
+ */
+export function withSuccessExitCodes(expected: number[], format: string): number[] {
+  const extra = formatSuccessExitCodes(format).filter((c) => !expected.includes(c));
   return extra.length === 0 ? expected : [...expected, ...extra];
 }
 

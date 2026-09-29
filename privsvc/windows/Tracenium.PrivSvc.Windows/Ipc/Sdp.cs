@@ -278,7 +278,10 @@ public static class Sdp
             // Whitelist of formats this OS can install. Anything else
             // is a permanent failure — saves the cost of pulling bytes
             // we'd then refuse.
-            if (format != "msi" && format != "exe")
+            // `msu`: Windows Update standalone package, el formato de las
+            // correcciones fuera de banda de Microsoft. No llegan por WSUS, así
+            // que PMP no las ve y esta es la única vía a la flota.
+            if (format != "msi" && format != "exe" && format != "msu")
             {
                 return PrivSvcResponse.Fail(req.Id, "format_unsupported",
                     $"format {format} not supported on windows");
@@ -743,6 +746,7 @@ public static class Sdp
                 {
                     "msi" => await RunMsiInstaller(absStaging, args, timeoutSeconds),
                     "exe" => await RunExeInstaller(absStaging, args, timeoutSeconds),
+                    "msu" => await RunMsuInstaller(absStaging, args, timeoutSeconds),
                     _     => throw new InvalidOperationException($"format {format} not supported on windows"),
                 };
             }
@@ -1478,6 +1482,83 @@ public static class Sdp
         }
         var argList = UninstallCommandParse.SplitArgs(args);
         return await RunInstallerProcess(stagingPath, argList, timeoutSeconds);
+    }
+
+    /// <summary>
+    /// Instala un Windows Update standalone package (.msu) con DISM.
+    ///
+    /// ⚠️ DISM Y NO wusa, Y LA DIFERENCIA NO ES DE ESTILO. `wusa.exe` entrega el
+    /// trabajo al servicio de Windows Update y vuelve: es asíncrono, así que su
+    /// código de salida puede decir «bien» sobre una instalación que todavía no
+    /// ha ocurrido —o que va a fallar. `dism /Online /Add-Package` es sincrónico
+    /// y su código describe lo que de verdad pasó. En una tubería donde el
+    /// código de salida decide si el job se cierra como hecho, esa distinción es
+    /// la diferencia entre un estado real y uno inventado.
+    ///
+    /// ⚠️ SE LANZA DISM POR SU RUTA ABSOLUTA EN System32. Un privsvc corre como
+    /// servicio y su PATH no es el de una consola: resolver «dism.exe» por PATH
+    /// es justo la clase de dependencia que hizo fallar la lectura del registro
+    /// en DanielA-PC (ver bootstrap/registry.ts). Y en un proceso de 32 bits
+    /// `System32` se redirige a `SysWOW64`, donde el DISM de 64 no está, así que
+    /// se usa Sysnative cuando toca.
+    ///
+    /// `/NoRestart` por defecto: quién y cuándo reinicia un servidor lo decide el
+    /// orquestador con su ventana de mantenimiento, nunca el instalador. Un .msu
+    /// que reinicia solo un controlador de dominio a media mañana es exactamente
+    /// lo que este producto existe para evitar.
+    /// </summary>
+    private static async Task<InstallRunResult> RunMsuInstaller(
+        string stagingPath,
+        string? args,
+        int timeoutSeconds)
+    {
+        var argList = string.IsNullOrWhiteSpace(args)
+            ? new List<string>
+              {
+                  "/Online",
+                  "/Add-Package",
+                  // DISM quiere la ruta pegada a la opción, con dos puntos: no
+                  // acepta el valor como argumento separado.
+                  "/PackagePath:" + stagingPath,
+                  "/Quiet",
+                  "/NoRestart",
+              }
+            // El operador manda: si puso sus propios argumentos sabe algo que
+            // nosotros no (un /LogPath, un /ScratchDir en un disco con sitio).
+            : UninstallCommandParse.SplitArgs(args!);
+
+        var result = await RunInstallerProcess(ResolveSystem32("dism.exe"), argList, timeoutSeconds);
+
+        // El número crudo de un HRESULT sale con signo (`-2146498530`), y la
+        // documentación de Microsoft está toda en hexadecimal: sin traducirlo el
+        // operador no puede ni buscarlo. Se rellena SIEMPRE que no sea 0, no sólo
+        // en los fallos, porque «no aplica» tampoco es un fallo y es el caso que
+        // más explicación necesita.
+        if (result.ExitCode != 0)
+        {
+            result.InstallerDiagnosis = MsuExitCodes.Describe(result.ExitCode);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// La ruta absoluta de una herramienta de System32, correcta también en un
+    /// proceso de 32 bits.
+    ///
+    /// ⚠️ EL REDIRECCIONAMIENTO DE WOW64 ES SILENCIOSO. Un proceso de 32 bits que
+    /// abre `C:\Windows\System32\dism.exe` recibe en realidad el de `SysWOW64`,
+    /// donde el DISM de 64 bits no está — y el fallo sale como «no se encuentra
+    /// el fichero» sobre una ruta que existe y que cualquiera puede comprobar a
+    /// mano desde una consola de 64. `Sysnative` es el alias que salta esa
+    /// redirección, y sólo existe para procesos de 32 bits.
+    /// </summary>
+    private static string ResolveSystem32(string tool)
+    {
+        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var dir = Environment.Is64BitProcess || !Environment.Is64BitOperatingSystem
+            ? "System32"
+            : "Sysnative";
+        return Path.Combine(windows, dir, tool);
     }
 
     private static async Task<InstallRunResult> RunInstallerProcess(

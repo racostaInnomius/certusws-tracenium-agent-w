@@ -42,7 +42,12 @@ import {
   isPermanentUninstallError,
 } from "./mode";
 import { evaluateSignatureGate, normalizeVerifyResponse } from "./signature-gate";
-import { decideReboot, shouldSkipPostDetect, withRebootExitCodes } from "./reboot";
+import {
+  decideReboot,
+  shouldSkipPostDetect,
+  withRebootExitCodes,
+  withSuccessExitCodes,
+} from "./reboot";
 import { failureReason } from "./failure-detail";
 
 // Mirror of the backend's `InstallOutcome` enum. Keep in lockstep.
@@ -67,7 +72,10 @@ type PackageSnapshot = {
   version: string;
   platform: "windows" | "macos" | "linux";
   arch: "x64" | "arm64" | "x86" | "any";
-  format: "exe" | "msi" | "pkg" | "dmg" | "deb" | "rpm" | "tar.gz";
+  // `msu`: Windows Update standalone package. Es el formato de las correcciones
+  // FUERA DE BANDA de Microsoft, que no se distribuyen por WSUS y por tanto no
+  // llegan por PMP — la única vía es ésta. Se instala con DISM en el endpoint.
+  format: "exe" | "msi" | "msu" | "pkg" | "dmg" | "deb" | "rpm" | "tar.gz";
   downloadPath: string;
   sha256: string;
   silentInstallArgs?: string | null;
@@ -435,11 +443,19 @@ export async function runSoftwareInstall(
     // the widening a Windows installer that returns 1641 (reboot already
     // initiated — a documented SUCCESS code) falls outside the expected set and
     // is graded a permanent `failed`. See ./reboot.
-    const expectedExitCodes = withRebootExitCodes(
-      Array.isArray(snapshot.expectedExitCodes) && snapshot.expectedExitCodes.length > 0
-        ? snapshot.expectedExitCodes
-        : [0, 3010],
-      localPlatform
+    //
+    // Y ensanchada además con los éxitos propios del FORMATO: un `.msu` puede
+    // salir con 2359302 («ya estaba instalado»), que no es un código de reinicio
+    // y por eso no lo cubre la línea de arriba. Sin esto, un parche presente en
+    // el equipo se cierra como `failed` permanente.
+    const expectedExitCodes = withSuccessExitCodes(
+      withRebootExitCodes(
+        Array.isArray(snapshot.expectedExitCodes) && snapshot.expectedExitCodes.length > 0
+          ? snapshot.expectedExitCodes
+          : [0, 3010],
+        localPlatform
+      ),
+      snapshot.format
     );
 
     // `runResp` is the terminal runner response — from sdp.install for

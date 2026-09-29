@@ -9,10 +9,15 @@ import { describe, expect, it } from "vitest";
 import {
   EXIT_REBOOT_INITIATED,
   EXIT_REBOOT_REQUIRED,
+  EXIT_RESTART_REQUIRED,
+  EXIT_WU_ALREADY_INSTALLED,
+  EXIT_WU_REBOOT_REQUIRED,
   decideReboot,
+  formatSuccessExitCodes,
   rebootExitCodesFor,
   shouldSkipPostDetect,
   withRebootExitCodes,
+  withSuccessExitCodes,
 } from "../../src/plugins/sdp/reboot";
 
 const base = {
@@ -130,19 +135,24 @@ describe("decideReboot — precedence", () => {
 });
 
 describe("withRebootExitCodes", () => {
-  it("adds both Windows reboot codes to an operator list that omits them", () => {
-    expect(withRebootExitCodes([0], "windows")).toEqual([0, 3010, 1641]);
+  it("adds every Windows reboot code to an operator list that omits them", () => {
+    // 3011 y 2359301 se sumaron con `msu`, pero NO se gatean por formato: son
+    // códigos de Windows y un EXE que envuelve el motor de servicing puede
+    // devolverlos igual, exactamente por lo que 3010 no se gatea en `msi`.
+    expect(withRebootExitCodes([0], "windows")).toEqual([0, 3010, 1641, 3011, 2359301]);
   });
 
   // The catalog default is [0, 3010], so in practice the widening usually adds
   // only 1641 — the code that made a successful reboot-initiating install read
   // as a permanent failure.
   it("adds only what is missing, without duplicating", () => {
-    expect(withRebootExitCodes([0, 3010], "windows")).toEqual([0, 3010, 1641]);
+    expect(withRebootExitCodes([0, 3010], "windows")).toEqual([0, 3010, 1641, 3011, 2359301]);
   });
 
-  it("leaves a list that already covers both untouched", () => {
-    const input = [0, 1641, 3010];
+  it("leaves a list that already covers all of them untouched", () => {
+    // Identidad referencial, no sólo igualdad: el valor tiene que seguir siendo
+    // comparable con lo que guarda el catálogo.
+    const input = [0, 1641, 3010, 3011, 2359301];
     expect(withRebootExitCodes(input, "windows")).toBe(input);
   });
 
@@ -152,13 +162,15 @@ describe("withRebootExitCodes", () => {
   });
 
   it("preserves the operator's other codes", () => {
-    expect(withRebootExitCodes([0, 1605, 3010], "windows")).toEqual([0, 1605, 3010, 1641]);
+    expect(withRebootExitCodes([0, 1605, 3010], "windows")).toEqual([
+      0, 1605, 3010, 1641, 3011, 2359301,
+    ]);
   });
 });
 
 describe("rebootExitCodesFor", () => {
   it("covers Windows only", () => {
-    expect(rebootExitCodesFor("windows")).toEqual([3010, 1641]);
+    expect(rebootExitCodesFor("windows")).toEqual([3010, 1641, 3011, 2359301]);
     expect(rebootExitCodesFor("macos")).toEqual([]);
     expect(rebootExitCodesFor("linux")).toEqual([]);
   });
@@ -181,5 +193,85 @@ describe("shouldSkipPostDetect", () => {
         decideReboot({ ...base, exitCode: 0, packageRequiresReboot: true })
       )
     ).toBe(false);
+  });
+});
+
+
+// ── Los éxitos propios del FORMATO ───────────────────────────────────────────
+//
+// El caso: KB5129237 en T111. Un `.msu` puede salir con 2359302 —«ya estaba
+// instalado»— que es un ÉXITO documentado y no estaba mapeado en ninguno de los
+// dos repos. Fuera del conjunto esperado, sdp/index.ts lo grada `failed` con
+// ackStatus 2, que el orquestador NO reintenta: el parche quedaría marcado como
+// fallido para siempre sobre un equipo que lo tiene puesto.
+
+describe("formatSuccessExitCodes", () => {
+  it("añade «ya instalado» sólo para msu", () => {
+    expect(formatSuccessExitCodes("msu")).toEqual([EXIT_WU_ALREADY_INSTALLED]);
+  });
+
+  it.each(["msi", "exe", "deb", "rpm", "pkg", "dmg", "tar.gz", "unknown"])(
+    "no añade nada para %s",
+    (format) => {
+      expect(formatSuccessExitCodes(format)).toEqual([]);
+    }
+  );
+
+  // ⚠️ LA SEPARACIÓN QUE IMPORTA. 2359302 no habla de reinicios. Si estuviera en
+  // rebootExitCodesFor, `decideReboot` marcaría un «ya estaba» como
+  // reboot_required — y un reinicio pendiente que nadie necesita es una ventana
+  // de mantenimiento gastada y un servicio caído sin motivo.
+  it("«ya instalado» NO es un código de reinicio", () => {
+    expect(rebootExitCodesFor("windows")).not.toContain(EXIT_WU_ALREADY_INSTALLED);
+    const d = decideReboot({ ...base, exitCode: EXIT_WU_ALREADY_INSTALLED });
+    expect(d.rebootRequired).toBe(false);
+    expect(d.rebootInProgress).toBe(false);
+  });
+
+  // Y al revés: los dos que sí hablan de reinicio lo marcan, sin darlo por
+  // iniciado (la máquina sigue en pie, así que el post-detect sigue corriendo).
+  it.each([EXIT_RESTART_REQUIRED, EXIT_WU_REBOOT_REQUIRED])(
+    "%i pide reinicio sin haberlo empezado",
+    (code) => {
+      const d = decideReboot({ ...base, exitCode: code });
+      expect(d.rebootRequired).toBe(true);
+      expect(d.rebootInProgress).toBe(false);
+      expect(shouldSkipPostDetect(d)).toBe(false);
+    }
+  );
+});
+
+describe("withSuccessExitCodes", () => {
+  it("mete 2359302 en el conjunto esperado de un msu", () => {
+    expect(withSuccessExitCodes([0, 3010], "msu")).toEqual([0, 3010, EXIT_WU_ALREADY_INSTALLED]);
+  });
+
+  it("devuelve la entrada INTACTA cuando no hay nada que añadir", () => {
+    const input = [0, 3010];
+    expect(withSuccessExitCodes(input, "msi")).toBe(input);
+    const ya = [0, EXIT_WU_ALREADY_INSTALLED];
+    expect(withSuccessExitCodes(ya, "msu")).toBe(ya);
+  });
+
+  // La composición real del orquestador: primero los de reinicio de la
+  // plataforma, después los del formato. Es la que decide si un parche instalado
+  // se cierra como hecho o como fallido.
+  it("compuesta con withRebootExitCodes cubre los cuatro éxitos de un msu", () => {
+    const expected = withSuccessExitCodes(withRebootExitCodes([0, 3010], "windows"), "msu");
+    for (const code of [0, 3010, 1641, 3011, 2359301, 2359302]) {
+      expect(expected).toContain(code);
+    }
+    // Y no cuela un fallo de verdad.
+    expect(expected).not.toContain(1603);
+    expect(expected).not.toContain(0x800f081e);
+  });
+
+  it("en macOS y Linux un msu no ensancha nada de reinicios", () => {
+    // `msu` no existe fuera de Windows, pero si llegara, el ensanche de formato
+    // no debe inventar códigos de reinicio que esa plataforma no tiene.
+    expect(withSuccessExitCodes(withRebootExitCodes([0], "macos"), "msu")).toEqual([
+      0,
+      EXIT_WU_ALREADY_INSTALLED,
+    ]);
   });
 });
