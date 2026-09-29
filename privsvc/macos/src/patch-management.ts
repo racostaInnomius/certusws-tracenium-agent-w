@@ -1,4 +1,4 @@
-import { execFile } from "child_process";
+import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
@@ -14,6 +14,98 @@ type CommandResult = {
   code?: number;
   signal?: string;
 };
+
+/**
+ * ¿Está `softwareupdate` pidiendo una contraseña?
+ *
+ * 🔴 28-sep, JPR-MacBookPro (M3 Pro): `softwareupdate --install "macOS 27.0.1-26A434"`
+ * escribió `Password:` y se quedó una HORA esperando en una entrada que nadie
+ * iba a escribir, hasta que el tiempo límite lo mató — con el carril de PMP
+ * ocupado todo ese rato. En Apple silicon una actualización de macOS exige la
+ * contraseña de un propietario del volumen (o un comando MDM), aunque se lance
+ * como root.
+ */
+export function asksForPassword(output: string): boolean {
+  // Sólo el final: el prompt es lo último que escribe antes de esperar.
+  return /(^|\n)\s*Password:/i.test(output.slice(-200));
+}
+
+export const OWNER_AUTH_REQUIRED = "owner_authorization_required";
+
+const OWNER_AUTH_MESSAGE =
+  "softwareupdate asked for a password: on Apple silicon a macOS update needs a volume owner's " +
+  "authorization (or an MDM command), which the agent cannot give. Install it from System Settings → " +
+  "General → Software Update on the Mac.";
+
+type InstallRunResult = CommandResult & { ownerAuthRequired: boolean };
+
+/**
+ * `softwareupdate --install` sin entrada estándar, y cortado en cuanto pide
+ * contraseña. `execFile` dejaba stdin abierto: el prompt esperaba para siempre.
+ */
+export function runInstall(
+  command: string,
+  args: string[],
+  timeout: number
+): Promise<InstallRunResult> {
+  logger.info("patch.command.start", { command, args, timeout, stdin: "closed" });
+  return new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let ownerAuthRequired = false;
+    let settled = false;
+    let killed = false;
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const kill = () => {
+      killed = true;
+      child.kill("SIGTERM");
+    };
+    const timer = setTimeout(kill, timeout);
+
+    const watch = () => {
+      if (ownerAuthRequired) return;
+      if (asksForPassword(stdout) || asksForPassword(stderr)) {
+        ownerAuthRequired = true;
+        kill();
+      }
+    };
+    child.stdout?.on("data", (d) => { stdout += String(d); watch(); });
+    child.stderr?.on("data", (d) => { stderr += String(d); watch(); });
+
+    const finish = (code: number | null, signal: NodeJS.Signals | null, error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const ok = !error && code === 0 && !ownerAuthRequired;
+      const result: InstallRunResult = {
+        stdout,
+        stderr,
+        output: [stdout, stderr, error?.message || ""].map((s) => s.trim()).filter(Boolean).join("\n"),
+        ok,
+        code: code ?? undefined,
+        signal: signal ?? undefined,
+        ownerAuthRequired
+      };
+      (ok ? logger.info : logger.warn).call(logger, "patch.command.finish", {
+        command,
+        args,
+        ok,
+        code: result.code,
+        signal: result.signal,
+        ownerAuthRequired,
+        stdoutPreview: preview(stdout),
+        stderrPreview: preview(stderr)
+      });
+      resolve(result);
+    };
+    child.on("error", (err) => finish(null, null, err));
+    // Cortado por nosotros: se acaba al salir. Esperar a `close` es esperar a
+    // que se cierren las tuberías, y un nieto que las herede las mantiene
+    // abiertas lo que él viva — otra vez colgados.
+    child.on("exit", (code, signal) => { if (killed) finish(code, signal); });
+    child.on("close", (code, signal) => finish(code, signal));
+  });
+}
 
 export type MacPatchItem = {
   label: string;
@@ -379,7 +471,31 @@ export async function handlePatchInstall(req: PrivSvcRequest): Promise<PrivSvcRe
       args.push("--all");
     }
 
-    const install = await run("/usr/sbin/softwareupdate", args, 60 * 60 * 1000);
+    const install = await runInstall("/usr/sbin/softwareupdate", args, 60 * 60 * 1000);
+    if (install.ownerAuthRequired) {
+      logger.warn("patch.install.owner_auth_required", {
+        id: req.id,
+        mode,
+        labels: selectedItems.map((item) => item.label).slice(0, 20)
+      });
+      return success(req.id, {
+        status: "failed",
+        mode,
+        reason: OWNER_AUTH_REQUIRED,
+        selectedCount: selectedItems.length,
+        installedCount: 0,
+        failedCount: selectedItems.length,
+        rebootRequired: false,
+        results: selectedItems.map((item) => ({
+          updateId: item.label,
+          kb: item.label,
+          title: item.title || item.label,
+          result: "failed",
+          reason: OWNER_AUTH_REQUIRED,
+          message: OWNER_AUTH_MESSAGE
+        }))
+      });
+    }
     if (!install.ok && !install.output) {
       return fail(req.id, "patch_install_failed", "softwareupdate returned no output");
     }
