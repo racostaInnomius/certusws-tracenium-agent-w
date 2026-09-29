@@ -156,6 +156,9 @@ export type PrivSvcMethod =
   // el control remoto de teclado y ratón todavía no existe.
   | "screen.capture"
   | "input.inject"
+  // Ctrl+Alt+Supr remoto. SÓLO Windows: SendInput no puede sintetizarlo y
+  // PrivSvc llama a SendSAS como SYSTEM. macOS y Linux no tienen equivalente.
+  | "input.sas"
   // Infrastructure Gateway — vCenter credential custody. PrivSvc runs as
   // SYSTEM/root and already owns the mTLS private key, so it is the only
   // component that can open a credential envelope sealed against this

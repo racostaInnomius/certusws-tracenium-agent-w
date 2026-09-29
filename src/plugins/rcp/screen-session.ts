@@ -301,6 +301,7 @@ export class ScreenSession {
   private captureStartedAtMs = 0;
   private firstFrameWarned = false;
   private lastSilentCode = "";
+  private lastNoUserSignedIn = false;
   // Throttled stream stats — see STATS_INTERVAL_MS. Reset on each emit so
   // every line describes one window rather than the whole session.
   private statsWindowStartMs = 0;
@@ -777,7 +778,11 @@ export class ScreenSession {
             op: "screenInfo",
             width: this.lastWidth,
             height: this.lastHeight,
-            fps: this.fps
+            fps: this.fps,
+            // Sin esto el visor leería `undefined` como «ya hay alguien» en
+            // cuanto el operador moviera el deslizador de fps.
+            noUserSignedIn: this.lastNoUserSignedIn,
+            canSendSas: process.platform === "win32"
           });
         }
         // Reschedule with new interval.
@@ -807,6 +812,11 @@ export class ScreenSession {
         this.forwardInput(op, msg);
         break;
 
+      // Ctrl+Alt+Supr desde el botón del visor. Ver sendSecureAttention().
+      case "sas":
+        this.sendSecureAttention();
+        break;
+
       // El operador SOLTÓ el control (Esc o el interruptor del visor).
       //
       // ⚠️ Mensaje propio y no `releaseAll`, que también llega al perder el
@@ -828,6 +838,75 @@ export class ScreenSession {
         }
         break;
     }
+  }
+
+  /**
+   * Ctrl+Alt+Supr en el equipo remoto.
+   *
+   * 🔴 TNS-OPER-SNOC04 (29-sep-2026): la pantalla de inicio de sesión pedía
+   * «Presiona Ctrl+Alt+Supr» y el operador no podía: desde un Mac la
+   * combinación no existe, y desde Windows la intercepta el sistema del
+   * operador antes de llegar al navegador.
+   *
+   * Es ENTRADA, así que pasa por la misma puerta de control que un clic: no
+   * puede ser un atajo para actuar sobre un equipo donde el control no está
+   * concedido. Y va por su propio método de PrivSvc porque SendInput no puede
+   * sintetizar la SAS — ver SecureAttention.cs.
+   */
+  private sendSecureAttention(): void {
+    const { ctx, sessionId } = this.args;
+
+    if (process.platform !== "win32") {
+      this.send({
+        op: "error",
+        code: "sas_unsupported",
+        message: "Ctrl+Alt+Del only exists on Windows devices.",
+        terminal: false
+      });
+      return;
+    }
+
+    const gate = controlGate(this.consentRequired(), this.controlConsent);
+    if (gate.kind === "ask") {
+      this.controlConsent = "pending";
+      void this.askForControlConsent();
+      return;
+    }
+    if (gate.kind === "drop") return;
+
+    if (!this.inputSeen) {
+      this.inputSeen = true;
+      this.publishIndicator();
+    }
+    // Auditable como cualquier otra entrada, y ANTES de mandarlo.
+    this.recorder?.offerInput("sas", {});
+
+    ctx.priv
+      .call({ v: 1, id: `input.sas.${Date.now()}`, method: "input.sas", params: {} })
+      .then((res: any) => {
+        if (res?.ok === false) {
+          // ⚠️ El mensaje de PrivSvc nombra la directiva exacta que falta
+          // (SoftwareSASGeneration). Se reenvía tal cual: resumirlo en «no se
+          // pudo» es lo que convierte un ajuste de cinco minutos en un día de
+          // diagnóstico.
+          this.send({
+            op: "error",
+            code: String(res?.error?.code || "sas_failed"),
+            message: String(res?.error?.message || "Ctrl+Alt+Del could not be sent."),
+            terminal: false
+          });
+          return;
+        }
+        ctx.logger?.info?.("[rcp.screen] Ctrl+Alt+Supr enviado", { sessionId });
+      })
+      .catch((err: any) => {
+        this.send({
+          op: "error",
+          code: "sas_ipc_error",
+          message: `Ctrl+Alt+Del could not reach the device service: ${err?.message || err}`,
+          terminal: false
+        });
+      });
   }
 
   // M3.S4 — Forward an input op to PrivSvc.SendInput via IPC.
@@ -1126,9 +1205,28 @@ export class ScreenSession {
 
       if (full) this.lastKeyframeAtMs = Date.now();
 
-      // Send screenInfo on the first frame or when screen resolution changes.
-      if (this.seq === 0 || width !== this.lastWidth || height !== this.lastHeight) {
-        this.send({ op: "screenInfo", width, height, fps: this.fps });
+      // ⭐ «No hay nadie dentro»: pantalla de inicio de sesión de un servidor.
+      // Lo dice PrivSvc, que es quien eligió el escritorio. Con esto el visor
+      // arranca en control solo — decisión del usuario, 29-sep-2026: el acceso
+      // sin un usuario conectado YA implica teclado y ratón. Sólo Windows lo
+      // manda; ausente = false, que es lo seguro.
+      const noUserSignedIn = result.result?.noUserSignedIn === true;
+
+      // Send screenInfo on the first frame, when screen resolution changes, or
+      // when somebody signs in / out (the viewer's control mode depends on it).
+      if (
+        this.seq === 0 ||
+        width !== this.lastWidth ||
+        height !== this.lastHeight ||
+        noUserSignedIn !== this.lastNoUserSignedIn
+      ) {
+        this.lastNoUserSignedIn = noUserSignedIn;
+        this.send({
+          op: "screenInfo", width, height, fps: this.fps, noUserSignedIn,
+          // El visor enseña el botón de Ctrl+Alt+Supr sólo si esto es true: la
+          // página no sabe el SO del equipo, y adivinarlo allí se desincroniza.
+          canSendSas: process.platform === "win32"
+        });
 
         if (!this.auditStartedSent) {
           this.auditStartedSent = true;

@@ -71,6 +71,21 @@ internal static class ScreenCapture
     private const int SM_CXSCREEN = 0;  // primary monitor width
     private const int SM_CYSCREEN = 1;  // primary monitor height
     private const int SRCCOPY = 0x00CC0020;
+    // ⚠️ Sin CAPTUREBLT, BitBlt desde el DC del escritorio NO incluye las
+    // ventanas en capas, y la pantalla de bloqueo / inicio de sesión lo es.
+    //
+    // 🔴 TNS-OPER-SNOC04 (29-sep-2026): con el escritorio quieto el keyframe
+    // forzado cae a este GDI (Tracenium.ScreenCap, `forceFull` + no_frame), y
+    // salía un AZUL LISO — el fondo del escritorio Winlogon, sin la foto, el
+    // reloj ni «Presiona Ctrl+Alt+Supr». El operador lo tomó por roto. Hasta
+    // que pulsó «Take control»: el movimiento del ratón hizo cambiar la
+    // pantalla, DXGI —que sí captura lo compuesto— entregó un fotograma de
+    // verdad, y apareció la pantalla de bloqueo.
+    //
+    // Cuesta algo de rendimiento (obliga a componer las capas), pero este
+    // camino sólo se toma como reserva o para un keyframe de un escritorio que
+    // no cambia, y ahí lo que importa es que la imagen sea la real.
+    private const int CAPTUREBLT = 0x40000000;
 
     // Lazy-initialised JPEG encoder info.
     private static ImageCodecInfo? _jpegCodec;
@@ -111,7 +126,7 @@ internal static class ScreenCapture
             hBitmap = CreateCompatibleBitmap(hDC, width, height);
             hOld    = SelectObject(hMemDC, hBitmap);
 
-            if (!BitBlt(hMemDC, 0, 0, width, height, hDC, 0, 0, SRCCOPY))
+            if (!BitBlt(hMemDC, 0, 0, width, height, hDC, 0, 0, SRCCOPY | CAPTUREBLT))
                 return PrivSvcResponse.Fail(reqId, "screen_capture_bitblt_failed",
                     "BitBlt failed");
 

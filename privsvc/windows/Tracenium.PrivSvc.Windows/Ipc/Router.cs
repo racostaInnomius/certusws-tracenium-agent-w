@@ -289,6 +289,9 @@ public sealed class Router
             // RCP M3.S4 — synthetic input injection (mouse + keyboard)
             // forwarded from the operator's browser via the agent.
             "input.inject" => IpcGrpcHandlers.HandleInputInject(req),
+            // Ctrl+Alt+Supr remoto. NO va por input.inject: SendInput no puede
+            // sintetizar la SAS. Ver SecureAttention.cs.
+            "input.sas" => Task.FromResult(SecureAttention.Send(req)),
 
             // Relanza la bandeja si el usuario de consola se quedó sin ella.
             // Tras cada auto-actualización el MSI la cierra —tiene que, para

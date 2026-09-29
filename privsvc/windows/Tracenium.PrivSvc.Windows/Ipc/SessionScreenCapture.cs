@@ -78,6 +78,19 @@ internal static class SessionScreenCapture
     private static bool _serverConsoleAllowed;
 
     /// Último resultado del sondeo de UAC, con su momento. Ver UacPromptActive.
+    /// <summary>
+    /// ¿La última captura fue de la pantalla de inicio de sesión de un servidor
+    /// SIN NADIE DENTRO?
+    ///
+    /// ⚠️ No es lo mismo que `_helperLogonDesktop`: ese también está a true
+    /// mientras un aviso de UAC ocupa el escritorio seguro de una sesión CON
+    /// usuario. La diferencia importa para el navegador, que con esta marca
+    /// arranca en control solo — decisión del usuario, 29-sep-2026: «tu acceso
+    /// sin un usuario logueado ya implica tomar el control de teclado y
+    /// mouse». Con alguien sentado delante eso NO aplica.
+    /// </summary>
+    private static bool _noUserSignedIn;
+
     private static DateTime _lastUacCheckUtc = DateTime.MinValue;
     private static bool _uacActive;
     private static StreamReader? _stderr;
@@ -98,7 +111,15 @@ internal static class SessionScreenCapture
             ["full"] = forceFull
         });
         var (line, error) = Exchange(reqId, req);
-        return error ?? ParseHelperLine(reqId, line!);
+        if (error is not null) return error;
+
+        var response = ParseHelperLine(reqId, line!);
+        // El helper no sabe en qué sesión le pusieron; lo sabe quien lo lanzó.
+        if (response.Ok && response.Result is Dictionary<string, object?> result)
+        {
+            result["noUserSignedIn"] = _noUserSignedIn;
+        }
+        return response;
     }
 
     /// <summary>
@@ -210,6 +231,7 @@ internal static class SessionScreenCapture
                 if (picked is not null)
                 {
                     session = picked.Value;
+                    _noUserSignedIn = false;
                     // ⭐ UAC vive en el escritorio SEGURO. Mientras el aviso
                     // esté abierto el helper tiene que estar allí, o el
                     // operador ve negro justo cuando la máquina pide permiso.
@@ -273,6 +295,7 @@ internal static class SessionScreenCapture
                     }
                     session = console;
                     logonDesktop = true;
+                    _noUserSignedIn = true;
                 }
 
                 // Si el usuario cerró sesión y entró otro, el helper viejo
