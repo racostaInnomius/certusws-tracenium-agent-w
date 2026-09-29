@@ -425,6 +425,7 @@ describe("sshd — el mismo drop-in 00- que los handlers dedicados", () => {
 
 describe("line — una línea de la lista cerrada", () => {
   it("fichero nuestro: se crea con cabecera, idempotente, y el revert lo quita entero", async () => {
+    dirs.add("/etc/security/limits.d");
     const add = w({ kind: "line", file: "/etc/security/limits.d/60-tracenium.conf", line: "* hard core 0", present: true });
     expect(await applyGeneric(add, deps())).toMatchObject({ ok: true, value: { exitCode: 0 } });
     expect(files.get("/etc/security/limits.d/60-tracenium.conf")).toBe("# Managed by Tracenium — compliance fixes. Remove a line to hand it back.\n* hard core 0\n");
@@ -441,6 +442,17 @@ describe("line — una línea de la lista cerrada", () => {
     expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
     expect(files.get("/etc/security/pwquality.conf")).toBe("# enforce_for_root\nminlen = 8\nenforce_for_root\n");
     expect(files.get("/etc/security/pwquality.conf.tracenium.20260927-200000.bak")).toBe("# enforce_for_root\nminlen = 8\n");
+  });
+
+  it("⭐ sin auditd (no hay /etc/audit/rules.d) no se crea el directorio ni se da por aplicado (SRVOC-MainAgent, 29-sep)", async () => {
+    dirs.delete("/etc/audit/rules.d");
+    const r = await applyGeneric(w({ kind: "line", file: "/etc/audit/rules.d/01-tracenium-continue.rules", line: "-c", present: true }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 2, stderrExcerpt: "/etc/audit/rules.d does not exist — auditd is not installed" } });
+    expect(files.has("/etc/audit/rules.d/01-tracenium-continue.rules")).toBe(false);
+    expect(dirs.has("/etc/audit/rules.d")).toBe(false);
+    // Y una regla después, en el mismo lote, tampoco pasa.
+    const next = await applyGeneric(w({ kind: "audit_rule", line: "-w /etc/group -p wa -k tracenium", present: true }), deps());
+    expect(next).toMatchObject({ ok: true, value: { exitCode: 2 } });
   });
 
   it("auditd -c en su fichero 01-, y se recarga", async () => {

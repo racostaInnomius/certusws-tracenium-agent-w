@@ -998,6 +998,17 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
   }
   if (problems.length) return done(2);
 
+  // Líneas: el directorio de nuestro fichero tiene que existir. No se crea:
+  // /etc/audit/rules.d sin auditd daba un «applied» con reglas que nadie
+  // carga (SRVOC-MainAgent, 29-sep), y el siguiente escaneo las contaba.
+  for (const w of writes) {
+    if (w.kind !== "line" || !w.present || LINE_FILES[w.file].mode !== "ours") continue;
+    const dir = pathMod.dirname(w.file);
+    if (deps.isDir(dir)) continue;
+    problems.push(dir === AUDIT_RULES_DIR ? `${AUDIT_RULES_DIR} does not exist — auditd is not installed` : `${dir} does not exist on this machine`);
+  }
+  if (problems.length) return done(2);
+
   // sshd: la configuración de ahora tiene que ser válida (si no, `sshd -t`
   // rechazaría también la nuestra), los algoritmos que este OpenSSH no conoce
   // se quitan de la lista (salvo los que el check necesita), y el banner
@@ -1196,10 +1207,7 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
     if ((empty ? null : text) === before || (empty && before === null)) continue;
     if (policy.mode === "append") deps.copyFile(file, `${file}.tracenium.${stamp(deps.now())}.bak`);
     if (empty) deps.unlink(file);
-    else {
-      deps.mkdirp(pathMod.dirname(file));
-      deps.writeFile(file, text, policy.mode === "append" ? deps.fileMode(file) ?? policy.perms : policy.perms);
-    }
+    else deps.writeFile(file, text, policy.mode === "append" ? deps.fileMode(file) ?? policy.perms : policy.perms);
     changes.push(`${empty ? "removed" : "wrote"} ${file}`);
     if (policy.reload === "augenrules") {
       const augenrules = firstExisting(AUGENRULES, deps);
