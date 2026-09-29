@@ -8,8 +8,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { DexWindowAggregator, cpuPercent, memPercentFromFree, parseVmStat, readCpuTimes } from "../../src/plugins/dex/dex-windows";
 import {
+  MAC_CLEAN_SHUTDOWN_CAUSE,
   classifyMacReport,
   macCrashReason,
+  parseKernBoottime,
+  parseShutdownCause,
+  shutdownCauseEvent,
   parseBatteryReportXml,
   parseCoredumpctlJson,
   parseIoregBattery,
@@ -126,6 +130,13 @@ describe("Windows: registro de eventos en XML (sin texto traducido)", () => {
   it("⚠️ un pantallazo deja también un Kernel-Power 41 con bugcheck: no cuenta dos veces; sin bugcheck es apagado inesperado", () => {
     const ev = parseWevtutilXml(KP41("159", "5500") + KP41("0", "6100"), "System").map(toStabilityEvent);
     expect(ev).toEqual([null, { key: "System:6100", kind: "unexpected_shutdown", occurredAtUtc: "2026-09-19T07:59:58.000Z", app: null, detail: null }]);
+  });
+
+  it("⭐ cada arranque (Kernel-General 12) es un `restart`: la cronología sabe cuándo se reinició", () => {
+    const KG12 = `<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Kernel-General' Guid='{a68ca8b7-004f-d7b6-a698-07e2de0f1f5d}'/><EventID>12</EventID><TimeCreated SystemTime='2026-09-19T08:00:01.5000000Z'/><EventRecordID>6101</EventRecordID><Channel>System</Channel></System><EventData><Data Name='MajorVersion'>10</Data><Data Name='StartTime'>2026-09-19T08:00:00.5000000Z</Data></EventData></Event>`;
+    expect(parseWevtutilXml(KG12, "System").map(toStabilityEvent)).toEqual([
+      { key: "System:6101", kind: "restart", occurredAtUtc: "2026-09-19T08:00:01.500Z", app: null, detail: null },
+    ]);
   });
 
   it("un cursor por registro: Application al tope no hace saltar a System, y viceversa", async () => {
@@ -247,6 +258,102 @@ describe("macOS: DiagnosticReports e ioreg", () => {
     // El cuerpo (todo lo que va tras la primera línea) llega al clasificador.
     expect(r.events[0].detail).toBe("EXC_CRASH SIGKILL (Code Signature Invalid) · SIGNAL: Terminated: 15");
     expect(r.scope).toBe("collected");
+  });
+
+  describe("⭐ cómo acabó la sesión anterior (log unificado)", () => {
+    // `sysctl -n kern.boottime`, literal de un Mac con macOS 27.
+    const BOOTTIME = "{ sec = 1790663580, usec = 918279 } Tue Sep 29 00:33:00 2026";
+    const BOOT_ISO = "2026-09-29T06:33:00.000Z";
+    const BOOT_MS = Date.parse(BOOT_ISO);
+    // La FORMA es la de `log show --style json` en macOS 27 (recortada). El
+    // texto del mensaje del kernel es el público: en el Mac de desarrollo el log
+    // ya había rotado el arranque y no se pudo capturar uno propio.
+    const logJson = (msg: string) =>
+      JSON.stringify([
+        { messageType: "Default", processImagePath: "/kernel", timestamp: "2026-09-29 00:33:04.120337-0600", eventMessage: "AppleSEPManager: started" },
+        { messageType: "Default", processImagePath: "/kernel", timestamp: "2026-09-29 00:33:05.004001-0600", eventMessage: msg, bootUUID: "35DF5B4D-DA27-4D2C-9877-7E0D0160986D" },
+      ]);
+
+    const mac = (over: { log?: any; boottime?: string; now?: number } = {}) => {
+      const exec = vi.fn(async (cmd: string) => {
+        if (cmd.endsWith("sysctl")) return { code: 0, stdout: over.boottime ?? BOOTTIME, stderr: "" };
+        if (cmd.endsWith("/log")) {
+          if (over.log instanceof Error) throw over.log;
+          return over.log ?? { code: 0, stdout: logJson("Previous shutdown cause: 3"), stderr: "" };
+        }
+        throw new Error(`unexpected ${cmd}`);
+      });
+      const d = {
+        platform: "darwin",
+        exec,
+        nowMs: () => over.now ?? BOOT_MS + 3600_000,
+        readDir: async (p: string) => (p === "/Users" ? [] : []),
+        stat: async () => null,
+        readFile: async () => "",
+      } as unknown as SourceDeps;
+      return { d, exec };
+    };
+
+    it("lee el arranque exacto de kern.boottime y la causa del JSON de log show", () => {
+      expect(parseKernBoottime(BOOTTIME)).toBe(BOOT_MS);
+      expect(parseKernBoottime("")).toBeNull();
+      expect(parseShutdownCause(logJson("Previous shutdown cause: -62"))).toBe(-62);
+      expect(parseShutdownCause("[]")).toBeNull();
+      expect(parseShutdownCause("no es json")).toBeNull();
+    });
+
+    it("⭐ forzado con el botón → apagado inesperado, a la hora del arranque, con el código crudo", async () => {
+      const { d, exec } = mac();
+      const r = await readStabilityEvents(d, {}, "2026-09-22T00:00:00.000Z");
+      expect(r.events).toEqual([
+        { key: `shutdown_cause:${BOOT_ISO}`, kind: "unexpected_shutdown", occurredAtUtc: BOOT_ISO, app: null, detail: "cause 3: forced: power button held" },
+      ]);
+      expect(r.cursors.shutdown_cause).toBe(BOOT_ISO);
+      // ⚠️ Ventana ESTRECHA alrededor del arranque: un `log show` de días tarda minutos.
+      const args = exec.mock.calls.find((c) => String(c[0]).endsWith("/log"))![1] as string[];
+      expect(args[args.indexOf("--start") + 1]).toBe("2026-09-29 06:32:00+0000");
+      expect(args[args.indexOf("--end") + 1]).toBe("2026-09-29 06:43:00+0000");
+      expect(args).toContain("json");
+    });
+
+    it("apagado limpio (5) → `restart`, no inestabilidad", () => {
+      expect(shutdownCauseEvent(BOOT_MS, MAC_CLEAN_SHUTDOWN_CAUSE)).toMatchObject({ kind: "restart", detail: "previous shutdown was clean (cause 5)" });
+    });
+
+    it("un código sin etiqueta conocida sale tal cual: no se inventa el motivo", () => {
+      expect(shutdownCauseEvent(BOOT_MS, -128)).toMatchObject({ kind: "unexpected_shutdown", detail: "cause -128" });
+    });
+
+    it("⭐ UNA consulta por arranque: con el cursor ya en este arranque no se vuelve a leer el log", async () => {
+      const { d, exec } = mac();
+      const r = await readStabilityEvents(d, { shutdown_cause: BOOT_ISO }, "2026-09-22T00:00:00.000Z");
+      expect(r.events).toEqual([]);
+      expect(exec.mock.calls.some((c) => String(c[0]).endsWith("/log"))).toBe(false);
+    });
+
+    it("🔴 sin la línea en el log NO se dice «limpio»: no se emite nada", async () => {
+      // Ventana ya pasada entera: no va a aparecer, se deja de buscar.
+      const past = await readStabilityEvents(mac({ log: { code: 0, stdout: "[]", stderr: "" } }).d, {}, "2026-09-22T00:00:00.000Z");
+      expect(past.events).toEqual([]);
+      expect(past.cursors.shutdown_cause).toBe(BOOT_ISO);
+      // Recién arrancado (la ventana aún no ha terminado): se vuelve a mirar.
+      const early = await readStabilityEvents(mac({ log: { code: 0, stdout: "[]", stderr: "" }, now: BOOT_MS + 120_000 }).d, {}, "2026-09-22T00:00:00.000Z");
+      expect(early.cursors.shutdown_cause).toBeUndefined();
+    });
+
+    it("si `log show` falla se reintenta… pero no pasado un día: el log ya rotó", async () => {
+      const soon = await readStabilityEvents(mac({ log: new Error("timeout") }).d, {}, "2026-09-22T00:00:00.000Z");
+      expect(soon.cursors.shutdown_cause).toBeUndefined();
+      const late = await readStabilityEvents(mac({ log: { code: 1, stdout: "", stderr: "x" }, now: BOOT_MS + 25 * 3600_000 }).d, {}, "2026-09-22T00:00:00.000Z");
+      expect(late.cursors.shutdown_cause).toBe(BOOT_ISO);
+      expect(late.events).toEqual([]);
+    });
+
+    it("no poder leer la causa no deja a ciegas los crashes: el scope es el de DiagnosticReports", async () => {
+      const r = await readStabilityEvents(mac({ boottime: "" }).d, {}, "2026-09-22T00:00:00.000Z");
+      expect(r.scope).toBe("collected");
+      expect(r.events).toEqual([]);
+    });
   });
 
   it("⚠️ ioreg de macOS actual: cifras dentro de BatteryData y sin espacios; salud = Nominal / Design", () => {

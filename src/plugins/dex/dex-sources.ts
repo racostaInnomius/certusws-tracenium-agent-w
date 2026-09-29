@@ -15,7 +15,12 @@
 import path from "path";
 import type { ExecFn } from "../live-query/probes";
 
-export type StabilityKind = "app_crash" | "app_hang" | "os_crash" | "unexpected_shutdown";
+/**
+ * `restart` NO es inestabilidad: es el arranque, para que la cronología del
+ * equipo sepa cuándo se reinició. Un backend anterior lo descarta evento a
+ * evento (no conoce el tipo) sin tocar el resto del informe.
+ */
+export type StabilityKind = "app_crash" | "app_hang" | "os_crash" | "unexpected_shutdown" | "restart";
 export type StabilityEvent = { key: string; kind: StabilityKind; occurredAtUtc: string; app: string | null; detail: string | null };
 export type Scope = "collected" | "unsupported" | "unavailable";
 
@@ -100,13 +105,18 @@ export function toStabilityEvent(e: WinEvent): StabilityEvent | null {
     if (code !== "0" && code !== "") return null;
     return { key, kind: "unexpected_shutdown", occurredAtUtc: e.timeUtc, app: null, detail: null };
   }
+  if (e.log === "System" && e.eventId === 12 && /Kernel-General/i.test(e.provider)) {
+    // «El sistema operativo se inició»: uno por arranque. Tras un apagado
+    // inesperado llega junto al 41; la cronología los junta.
+    return { key, kind: "restart", occurredAtUtc: e.timeUtc, app: null, detail: null };
+  }
   return null;
 }
 
 const APP_QUERY = (since: string) =>
   `*[System[(EventID=1000 or EventID=1002) and TimeCreated[@SystemTime>'${since}']]]`;
 const SYSTEM_QUERY = (since: string) =>
-  `*[System[((Provider[@Name='Microsoft-Windows-WER-SystemErrorReporting'] and EventID=1001) or (Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=41)) and TimeCreated[@SystemTime>'${since}']]]`;
+  `*[System[((Provider[@Name='Microsoft-Windows-WER-SystemErrorReporting'] and EventID=1001) or (Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=41) or (Provider[@Name='Microsoft-Windows-Kernel-General'] and EventID=12)) and TimeCreated[@SystemTime>'${since}']]]`;
 
 async function windowsEvents(d: SourceDeps, cursors: Cursors, defaultSince: string): Promise<EventsResult> {
   const events: StabilityEvent[] = [];
@@ -304,7 +314,126 @@ async function macEvents(d: SourceDeps, cursors: Cursors, defaultSince: string):
       if (ev) events.push(ev);
     }
   }
-  return { scope: readAny ? "collected" : "unavailable", events, cursors: next };
+  // El `scope` sigue siendo el de DiagnosticReports: la causa del apagado es
+  // un dato más, y no poder leerla no deja a ciegas los crashes.
+  const shutdown = await macShutdownCause(d, next);
+  return { scope: readAny ? "collected" : "unavailable", events: [...events, ...shutdown.events], cursors: shutdown.cursors };
+}
+
+// ── macOS: cómo acabó la sesión anterior ─────────────────────────────
+
+/**
+ * Lo que significa cada código. ⚠️ Apple NO los documenta: es la tabla que
+ * circula entre administradores de Mac desde hace años, y por eso `detail`
+ * lleva SIEMPRE el número crudo — la etiqueta ayuda, no decide. Sólo se nombran
+ * los de lectura clara; el resto sale como «cause N».
+ */
+const MAC_SHUTDOWN_CAUSE: Record<number, string> = {
+  3: "forced: power button held",
+  0: "power lost",
+  [-61]: "watchdog: the system stopped responding",
+  [-62]: "watchdog: the system stopped responding",
+};
+/** Apagado o reinicio pedido (menú, `shutdown`, actualización): lo normal. */
+export const MAC_CLEAN_SHUTDOWN_CAUSE = 5;
+
+const SHUTDOWN_LOG_BEFORE_MS = 60_000;
+const SHUTDOWN_LOG_AFTER_MS = 10 * 60_000;
+/** Pasado esto el log unificado puede haber rotado ya el arranque: se deja de intentar. */
+const SHUTDOWN_GIVE_UP_MS = 24 * 3600_000;
+
+/** `sysctl -n kern.boottime` → «{ sec = 1789771491, usec = 918279 } Fri Sep 18 …» */
+export function parseKernBoottime(out: string): number | null {
+  const sec = Number(String(out).match(/\bsec\s*=\s*(\d+)/)?.[1]);
+  return Number.isFinite(sec) && sec > 0 ? sec * 1000 : null;
+}
+
+/** La causa, de la salida de `log show --style json` (un array de entradas). */
+export function parseShutdownCause(out: string): number | null {
+  let rows: any;
+  try {
+    rows = JSON.parse(String(out) || "[]");
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(rows)) return null;
+  for (const r of rows) {
+    const m = String(r?.eventMessage ?? "").match(/Previous shutdown cause:\s*(-?\d+)/);
+    if (m) return Number(m[1]);
+  }
+  return null;
+}
+
+/**
+ * Un evento por arranque. La hora es la del ARRANQUE: cuándo se cayó de
+ * verdad no queda escrito en ningún sitio, y el 41 de Windows hace lo mismo.
+ * La clave va por el `kern.boottime` exacto, así que releerlo no duplica.
+ */
+export function shutdownCauseEvent(bootMs: number, cause: number): StabilityEvent {
+  const occurredAtUtc = new Date(bootMs).toISOString();
+  const key = `shutdown_cause:${occurredAtUtc}`;
+  if (cause === MAC_CLEAN_SHUTDOWN_CAUSE) {
+    return { key, kind: "restart", occurredAtUtc, app: null, detail: `previous shutdown was clean (cause ${cause})` };
+  }
+  const label = MAC_SHUTDOWN_CAUSE[cause];
+  return { key, kind: "unexpected_shutdown", occurredAtUtc, app: null, detail: label ? `cause ${cause}: ${label}` : `cause ${cause}` };
+}
+
+/** «2026-09-29 06:33:00+0000»: el formato que `log show --start` acepta con zona. */
+const logTime = (ms: number) => new Date(ms).toISOString().replace("T", " ").replace(/\.\d+Z$/, "+0000");
+
+/**
+ * La causa del apagado que precedió a ESTE arranque, del log unificado.
+ *
+ * Por qué existe: cuando alguien mantiene el botón de encendido de un Mac
+ * colgado, macOS no deja nada en DiagnosticReports. La señal más clara de
+ * «estaba colgado» no llegaba a Tracenium (caso CLIFIJIMENEZlocal.local,
+ * 29-sep-2026: reinicio a las 00:34 tras dos horas lento, y no se pudo saber si
+ * fue forzado).
+ *
+ * ⚠️ UNA consulta por arranque y en una ventana ESTRECHA alrededor de él.
+ * `log show` sobre días de log tarda minutos (un mes pasó de 5 min sin
+ * terminar), y el log unificado no guarda el arranque mucho tiempo: en un Mac
+ * con 11 días encendido no quedaba ni una entrada de esos minutos. Por eso se
+ * lee en el primer envío tras arrancar y se abandona pasado un día.
+ *
+ * ⚠️ No encontrar la línea NO es «apagado limpio»: no se emite nada.
+ */
+async function macShutdownCause(d: SourceDeps, cursors: Cursors): Promise<{ events: StabilityEvent[]; cursors: Cursors }> {
+  const none = { events: [] as StabilityEvent[], cursors };
+  try {
+    const bt = await d.exec("/usr/sbin/sysctl", ["-n", "kern.boottime"]);
+    const bootMs = bt.code === 0 ? parseKernBoottime(bt.stdout) : null;
+    if (bootMs === null) return none;
+    const bootIso = new Date(bootMs).toISOString();
+    if (cursors.shutdown_cause === bootIso) return none;
+    const done: Cursors = { ...cursors, shutdown_cause: bootIso };
+    const now = d.nowMs();
+
+    const r = await d
+      .exec(
+        "/usr/bin/log",
+        [
+          "show",
+          "--style", "json",
+          "--predicate", 'eventMessage CONTAINS "Previous shutdown cause"',
+          "--start", logTime(bootMs - SHUTDOWN_LOG_BEFORE_MS),
+          "--end", logTime(bootMs + SHUTDOWN_LOG_AFTER_MS),
+        ],
+        { timeoutMs: 60_000 }
+      )
+      .catch(() => null);
+    if (!r || r.code !== 0) {
+      // Se reintenta en el próximo envío, pero no para siempre: el log rota.
+      return now - bootMs > SHUTDOWN_GIVE_UP_MS ? { events: [], cursors: done } : none;
+    }
+    const cause = parseShutdownCause(r.stdout);
+    if (cause !== null) return { events: [shutdownCauseEvent(bootMs, cause)], cursors: done };
+    // Leído y sin la línea: si la ventana ya pasó entera, no va a aparecer.
+    return now > bootMs + SHUTDOWN_LOG_AFTER_MS ? { events: [], cursors: done } : none;
+  } catch {
+    return none;
+  }
 }
 
 /**
