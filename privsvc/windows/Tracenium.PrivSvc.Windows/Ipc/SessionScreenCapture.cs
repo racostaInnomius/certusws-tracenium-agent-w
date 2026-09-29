@@ -249,8 +249,9 @@ internal static class SessionScreenCapture
                         return (null, PrivSvcResponse.Fail(reqId, "no_interactive_desktop",
                             "Nobody is signed in to this device, and the control plane has not " +
                             "marked it as a server, so there is no sign-in screen to show. " +
-                            "Check that its policy version ends in '-sv0' and that it carries " +
-                            "features.remoteServerConsole. Meanwhile a Shell session works."));
+                            "Check that its effective policy carries features.remoteServerConsole " +
+                            "(its version then ends in '-sv' plus a hash). Meanwhile a Shell " +
+                            "session works."));
                     }
                     var sku = WindowsProductType();
                     if (!IsServerProductType(sku))

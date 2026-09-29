@@ -215,6 +215,11 @@ const TERMINAL_RETRY_INTERVAL_MS = 5_000;
 // that an operator is unlikely to act on stale pixels.
 const KEYFRAME_INTERVAL_MS = 4_000;
 
+// Cuánto se espera al PRIMER fotograma antes de decir que no llega. Holgado a
+// propósito: un arranque normal lo entrega en el primer segundo, y este aviso
+// solo debe salir cuando de verdad no va a llegar solo.
+const FIRST_FRAME_GRACE_MS = 8_000;
+
 // How often to emit the throttled stream-stats line. Per-frame logging would
 // be spam at 5-15fps, but with NOTHING logged there is no way to tell from an
 // endpoint whether dirty rects are actually engaging — "the screen looked
@@ -292,6 +297,10 @@ export class ScreenSession {
   // dirty-rect streaming self-healing over an unreliable channel. Starts at 0
   // so the very first capture is a keyframe.
   private lastKeyframeAtMs = 0;
+  // Vigilancia del PRIMER fotograma — ver warnIfNoFirstFrame().
+  private captureStartedAtMs = 0;
+  private firstFrameWarned = false;
+  private lastSilentCode = "";
   // Throttled stream stats — see STATS_INTERVAL_MS. Reset on each emit so
   // every line describes one window rather than the whole session.
   private statsWindowStartMs = 0;
@@ -985,8 +994,48 @@ export class ScreenSession {
     (this.captureTimer as any).unref?.();
   }
 
+  /**
+   * Avisar cuando la sesión lleva un rato sin dar NI UN fotograma.
+   *
+   * 🔴 TNS-OPER-SNOC04 (29-sep-2026): el visor se quedó en «Waiting for first
+   * frame…» indefinidamente. Todo lo demás estaba bien —sesión `active`,
+   * `answered`, `connected setupMs:1021`— y el agente no dijo nada en ningún
+   * momento, porque la causa (escritorio quieto → `no_frame`) está en la única
+   * rama que callamos a propósito. Diagnosticarlo costó bajar a la base de
+   * datos de producción a leer los eventos de la sesión.
+   *
+   * La causa concreta ya está arreglada en el helper, pero el silencio es un
+   * defecto aparte: CUALQUIER motivo por el que no llegue el primer fotograma
+   * deja al operador mirando un cartel que no caduca. Un aviso tardío no
+   * rompe nada —si el fotograma llega después, el visor pinta y sigue— y
+   * convierte «no pasa nada» en un dato.
+   */
+  private warnIfNoFirstFrame(): void {
+    if (this.seq > 0 || this.firstFrameWarned) return;
+    if (this.captureStartedAtMs === 0) return;
+    if (Date.now() - this.captureStartedAtMs < FIRST_FRAME_GRACE_MS) return;
+
+    this.firstFrameWarned = true;
+    this.args.ctx.logger?.warn?.("[rcp.screen] sin primer fotograma", {
+      sessionId: this.args.sessionId,
+      waitedMs: Date.now() - this.captureStartedAtMs,
+      lastCode: this.lastSilentCode || "(ninguno)"
+    });
+    this.send({
+      op: "error",
+      code: "screen_capture_no_first_frame",
+      message:
+        "The device has not produced a single frame yet. Its desktop may be "
+        + "completely static, or capture may be blocked. The view will start "
+        + "on its own if a frame arrives.",
+      terminal: false
+    });
+  }
+
   private async captureFrame(): Promise<void> {
     if (this.disposed) return;
+    if (this.captureStartedAtMs === 0) this.captureStartedAtMs = Date.now();
+    this.warnIfNoFirstFrame();
     const { ctx, sessionId, sendScreenAudit } = this.args;
 
     try {
@@ -1034,13 +1083,6 @@ export class ScreenSession {
         return;
       }
 
-      // Good capture — clear the failure state so a session that recovers
-      // (user logs back in, UAC prompt dismissed) reports cleanly if it
-      // fails again later, and drops out of the slow retry cadence.
-      this.consecutiveFailures = 0;
-      this.lastReportedCode = null;
-      this.terminalBackoff = false;
-
       const data: string = String(result.result?.data ?? "");
       const width: number = Number(result.result?.width ?? 0);
       const height: number = Number(result.result?.height ?? 0);
@@ -1057,7 +1099,31 @@ export class ScreenSession {
       const rw: number = Number(result.result?.rw ?? width);
       const rh: number = Number(result.result?.rh ?? height);
 
-      if (!data) return;
+      // ⚠️ `ok` con `data` vacío es un INCUMPLIMIENTO del contrato, no un
+      // escritorio quieto — para eso está `screen_capture_no_frame`. Antes se
+      // descartaba en silencio, y como justo arriba se habían puesto a cero
+      // los contadores de fallo, ni siquiera entraba en el camino que reporta.
+      // Un `ok` vacío en bucle era invisible de punta a punta.
+      if (!data) {
+        this.reportCaptureFailure(
+          "screen_capture_empty",
+          "The capture succeeded but carried no image data."
+        );
+        return;
+      }
+
+      // Good capture — clear the failure state so a session that recovers
+      // (user logs back in, UAC prompt dismissed) reports cleanly if it
+      // fails again later, and drops out of the slow retry cadence.
+      //
+      // ⚠️ Va DESPUÉS de comprobar que hay imagen, no antes. Estaba arriba,
+      // nada más ver `ok`, así que un `ok` vacío en bucle ponía el contador a
+      // cero en cada vuelta y volvía a subirlo a 1: nunca alcanzaba el umbral
+      // y no se reportaba jamás. La prueba de `screen_capture_empty` lo pilló.
+      this.consecutiveFailures = 0;
+      this.lastReportedCode = null;
+      this.terminalBackoff = false;
+
       if (full) this.lastKeyframeAtMs = Date.now();
 
       // Send screenInfo on the first frame or when screen resolution changes.
@@ -1184,6 +1250,11 @@ export class ScreenSession {
     if (code === NO_FRAME_CODE) {
       // Deliberately not counted and not reported — an idle desktop is the
       // single most common state a monitored machine is in.
+      //
+      // ⚠️ Pero se APUNTA: si además nunca llega un primer fotograma, esto es
+      // lo único que explica por qué, y sin guardarlo el aviso de
+      // warnIfNoFirstFrame() no podría decir más que «no llega nada».
+      this.lastSilentCode = code;
       ctx.logger?.debug?.("[rcp.screen] no new frame (idle desktop)", {
         sessionId
       });

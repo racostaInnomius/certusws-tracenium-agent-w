@@ -147,7 +147,27 @@ static string CaptureOnce(int quality, bool forceFull)
     // El agente ya sabe qué hacer con esto — screen-session.ts lo trata como
     // "no hay nada nuevo que enviar" desde el arreglo de los códigos
     // colapsados. Se lo pasamos tal cual.
-    if (result is null && code == "screen_capture_no_frame")
+    // ⚠️ …salvo cuando quien llama ha pedido un fotograma COMPLETO.
+    //
+    // 🔴 TNS-OPER-SNOC04 (T1, 29-sep-2026): el visor se quedaba en «Waiting for
+    // first frame…» para siempre. Señalización, ICE y DataChannel estaban bien
+    // —la sesión quedó `active` con `connected setupMs:1021`— pero no llegaba
+    // NI UN fotograma y tampoco ningún error.
+    //
+    // La causa: un servidor sin nadie dentro enseña su pantalla de inicio de
+    // sesión, y ese escritorio NO CAMBIA NUNCA. `AcquireNextFrame` agota su
+    // espera en cada llamada, DXGI contesta `no_frame`, y el comentario de
+    // arriba —«el fotograma anterior sigue en pantalla»— es falso cuando no ha
+    // habido ninguno. En un PC de usuario nunca se vio porque siempre se mueve
+    // algo (el reloj, el cursor) y el primer fotograma entra en el primer
+    // segundo.
+    //
+    // `forceFull` significa «necesito el escritorio entero, no un delta»: lo
+    // pide el primer fotograma de la sesión y cada keyframe. Ahí el escritorio
+    // quieto no es motivo para no contestar, y GDI lo lee siempre. No mezcla
+    // semánticas —que es lo que hacía mal el fallback de antes— porque lo que
+    // devuelve es justo lo pedido: un fotograma completo.
+    if (result is null && code == "screen_capture_no_frame" && !forceFull)
     {
         return JsonSerializer.Serialize(new Dictionary<string, object?>
         {
@@ -159,7 +179,12 @@ static string CaptureOnce(int quality, bool forceFull)
 
     if (result is null)
     {
-        Console.Error.WriteLine($"DXGI falló ({code}): {message} — probando GDI");
+        // Un escritorio quieto al que se le pide un keyframe NO es un fallo, y
+        // escribirlo como tal llenaría el log de un servidor en su pantalla de
+        // login con una línea de error cada 4 s.
+        Console.Error.WriteLine(code == "screen_capture_no_frame"
+            ? "escritorio quieto y se pidió fotograma completo — lo lee GDI"
+            : $"DXGI falló ({code}): {message} — probando GDI");
         try
         {
             result = ScreenCapture.Capture("helper", quality);
