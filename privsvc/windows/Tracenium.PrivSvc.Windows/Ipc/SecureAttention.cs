@@ -53,6 +53,24 @@ public static class SecureAttention
 
     public static PrivSvcResponse Send(PrivSvcRequest req)
     {
+        // ⚠️ SÓLO en un servidor. Decisión del usuario, 29-sep-2026: «un
+        // windows endpoint requiere usuario logueado, el botón no se ocupa».
+        // Y no es sólo que sobre: en un equipo con alguien dentro, la SAS abre
+        // «Bloquear / Cambiar de usuario / Cerrar sesión» encima de la sesión
+        // de OTRA persona.
+        //
+        // El agente ya lo filtra por la clasificación del portal; esto es la
+        // misma salvaguarda técnica que la pantalla de login
+        // (SessionScreenCapture): un error clasificando no puede encenderlo en
+        // el portátil de nadie.
+        var sku = SessionScreenCapture.WindowsProductType();
+        if (!SessionScreenCapture.IsServerProductType(sku))
+        {
+            return PrivSvcResponse.Fail(req.Id, "sas_not_server",
+                $"Ctrl+Alt+Del is only sent to servers. Windows reports ProductType='{sku ?? "(unreadable)"}'; " +
+                "only 'ServerNT' or 'LanmanNT' qualify.");
+        }
+
         int? policy = null;
         try
         {

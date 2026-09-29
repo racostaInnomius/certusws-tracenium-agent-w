@@ -45,6 +45,8 @@ function makeSession(opts: {
   sas?: () => any;
   consentRequired?: boolean;
   decision?: "approved" | "denied" | "timeout";
+  /** Clasificado como servidor en el portal → la política trae remoteServerConsole. */
+  server?: boolean;
 } = {}) {
   const dc = new FakeDataChannel();
   const calls: any[] = [];
@@ -53,7 +55,9 @@ function makeSession(opts: {
     logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     trayStatus: { setRemoteSession: () => {} },
     policyRuntime: {
-      isFeatureEnabled: (f: string) => f === "remoteRequireConsent" && Boolean(opts.consentRequired)
+      isFeatureEnabled: (f: string) =>
+        (f === "remoteRequireConsent" && Boolean(opts.consentRequired)) ||
+        (f === "remoteServerConsole" && Boolean(opts.server))
     },
     consentPrompter: {
       available: () => true,
@@ -127,7 +131,7 @@ describe("el visor sabe que no hay nadie dentro", () => {
 describe("Ctrl+Alt+Supr", () => {
   it("⭐ en Windows va por input.sas, no por input.inject", async () => {
     pretendPlatform("win32");
-    const { dc, calls, session } = makeSession();
+    const { dc, calls, session } = makeSession({ server: true });
     dc.emit({ op: "sas" });
     await waitFor(() => calls.some((c) => c.method === "input.sas"));
     expect(calls.some((c) => c.method === "input.sas")).toBe(true);
@@ -140,7 +144,7 @@ describe("Ctrl+Alt+Supr", () => {
 
   it("🔴 pasa por la puerta de control: con consentimiento exigido, primero se pregunta", async () => {
     pretendPlatform("win32");
-    const { dc, calls, asked, session } = makeSession({ consentRequired: true, decision: "approved" });
+    const { dc, calls, asked, session } = makeSession({ consentRequired: true, decision: "approved", server: true });
     dc.emit({ op: "sas" });
     await waitFor(() => asked.length >= 1);
     expect(asked[0].capability).toBe("rcp.screen.control");
@@ -157,6 +161,7 @@ describe("Ctrl+Alt+Supr", () => {
       "Windows on this device does not let services send Ctrl+Alt+Del "
       + "(SoftwareSASGeneration is not configured). Enable the policy …";
     const { dc, session } = makeSession({
+      server: true,
       sas: () => ({ ok: false, error: { code: "sas_not_allowed", message: why } })
     });
     dc.emit({ op: "sas" });
@@ -167,18 +172,39 @@ describe("Ctrl+Alt+Supr", () => {
     session.dispose("test");
   });
 
-  it("screenInfo anuncia si el botón tiene sentido en este equipo", async () => {
+  it("screenInfo anuncia el botón SÓLO en un servidor Windows clasificado", async () => {
     pretendPlatform("win32");
-    const w = makeSession();
+    const w = makeSession({ server: true });
     await waitFor(() => w.dc.ofOp("screenInfo").length >= 1);
     expect(w.dc.ofOp("screenInfo")[0].canSendSas).toBe(true);
     w.session.dispose("test");
+
+    // ⭐ Decisión del usuario: «un windows endpoint requiere usuario logueado,
+    // el botón no se ocupa».
+    const e = makeSession({ server: false });
+    await waitFor(() => e.dc.ofOp("screenInfo").length >= 1);
+    expect(e.dc.ofOp("screenInfo")[0].canSendSas, "un PC con Windows no es un servidor").toBe(false);
+    e.session.dispose("test");
 
     pretendPlatform("darwin");
     const m = makeSession();
     await waitFor(() => m.dc.ofOp("screenInfo").length >= 1);
     expect(m.dc.ofOp("screenInfo")[0].canSendSas).toBe(false);
     m.session.dispose("test");
+  });
+
+  it("🔴 en un endpoint Windows NO se manda, aunque llegue el op", async () => {
+    // El botón no sale, pero el op puede llegar igual (un visor viejo, o
+    // alguien escribiendo en el canal). En un equipo con alguien dentro la SAS
+    // abre «Bloquear / Cerrar sesión» sobre la sesión de OTRA persona.
+    pretendPlatform("win32");
+    const { dc, calls, session } = makeSession({ server: false });
+    dc.emit({ op: "sas" });
+    await waitFor(() => dc.ofOp("error").length >= 1);
+    expect(dc.ofOp("error")[0].code).toBe("sas_unsupported");
+    expect(dc.ofOp("error")[0].message).toMatch(/classified as servers/);
+    expect(calls.some((c) => c.method === "input.sas")).toBe(false);
+    session.dispose("test");
   });
 
   it("fuera de Windows lo dice y no llama a PrivSvc", async () => {

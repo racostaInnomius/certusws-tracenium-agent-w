@@ -525,7 +525,7 @@ internal static class SessionScreenCapture
     /// privilegiada por no haber podido leer una cadena.
     /// </summary>
     /// El dato crudo, para poder decirlo en el mensaje. `null` = ilegible.
-    private static string? WindowsProductType()
+    internal static string? WindowsProductType()
     {
         try
         {
@@ -541,7 +541,7 @@ internal static class SessionScreenCapture
 
     /// El juicio, separado del dato: así el mensaje puede enseñar lo que leyó
     /// en vez de dejar al operador adivinando qué vio el equipo.
-    private static bool IsServerProductType(string? value)
+    internal static bool IsServerProductType(string? value)
     {
         return string.Equals(value, "ServerNT", StringComparison.OrdinalIgnoreCase)
             || string.Equals(value, "LanmanNT", StringComparison.OrdinalIgnoreCase);

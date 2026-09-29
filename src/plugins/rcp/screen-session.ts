@@ -782,7 +782,7 @@ export class ScreenSession {
             // Sin esto el visor leería `undefined` como «ya hay alguien» en
             // cuanto el operador moviera el deslizador de fps.
             noUserSignedIn: this.lastNoUserSignedIn,
-            canSendSas: process.platform === "win32"
+            canSendSas: this.sasAllowedHere()
           });
         }
         // Reschedule with new interval.
@@ -853,14 +853,39 @@ export class ScreenSession {
    * concedido. Y va por su propio método de PrivSvc porque SendInput no puede
    * sintetizar la SAS — ver SecureAttention.cs.
    */
+  /**
+   * ¿Tiene sentido Ctrl+Alt+Supr en ESTE equipo? Windows y servidor
+   * clasificado como tal en el portal.
+   *
+   * Decisión del usuario, 29-sep-2026: «un windows endpoint requiere usuario
+   * logueado, el botón no se ocupa». En un equipo con alguien dentro, además,
+   * la SAS abre «Bloquear / Cambiar de usuario / Cerrar sesión» sobre la
+   * sesión de otra persona.
+   *
+   * `remoteServerConsole` es la misma marca que habilita la pantalla de login:
+   * el backend la pone SÓLO en servidores conocidos (lista positiva; un equipo
+   * sin clasificar no la trae). PrivSvc vuelve a comprobar que Windows sea
+   * SKU de servidor.
+   */
+  private sasAllowedHere(): boolean {
+    return (
+      process.platform === "win32" &&
+      Boolean(this.args.ctx.policyRuntime?.isFeatureEnabled?.("remoteServerConsole"))
+    );
+  }
+
   private sendSecureAttention(): void {
     const { ctx, sessionId } = this.args;
 
-    if (process.platform !== "win32") {
+    if (!this.sasAllowedHere()) {
       this.send({
         op: "error",
         code: "sas_unsupported",
-        message: "Ctrl+Alt+Del only exists on Windows devices.",
+        message:
+          process.platform === "win32"
+            ? "Ctrl+Alt+Del is only available on devices classified as servers. "
+              + "On a workstation somebody is already signed in."
+            : "Ctrl+Alt+Del only exists on Windows servers.",
         terminal: false
       });
       return;
@@ -1224,8 +1249,8 @@ export class ScreenSession {
         this.send({
           op: "screenInfo", width, height, fps: this.fps, noUserSignedIn,
           // El visor enseña el botón de Ctrl+Alt+Supr sólo si esto es true: la
-          // página no sabe el SO del equipo, y adivinarlo allí se desincroniza.
-          canSendSas: process.platform === "win32"
+          // página no sabe ni el SO ni la clase del equipo. Ver sasAllowedHere().
+          canSendSas: this.sasAllowedHere()
         });
 
         if (!this.auditStartedSent) {
