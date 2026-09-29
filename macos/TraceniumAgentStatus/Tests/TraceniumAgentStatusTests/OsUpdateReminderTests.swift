@@ -172,6 +172,12 @@ final class OsUpdateReminderTests: XCTestCase {
         XCTAssertNotNil(OsUpdateReminder.softwareUpdateURL)
     }
 
+    private func findLabel(_ text: String, in v: NSView) -> NSTextField? {
+        if let t = v as? NSTextField, t.stringValue == text { return t }
+        for sub in v.subviews { if let f = findLabel(text, in: sub) { return f } }
+        return nil
+    }
+
     // MARK: Captura
 
     /// Renderiza la ventana a PNG (antes y después de la fecha) para mirarla:
@@ -187,6 +193,16 @@ final class OsUpdateReminderTests: XCTestCase {
             window.setContentSize(view.fittingSize)
             view.layoutSubtreeIfNeeded()
             XCTAssertGreaterThan(view.fittingSize.height, 150, name)
+            // 29-sep: el botón de cerrar (la ventana dibuja bajo la barra de
+            // título) tapaba «Tracenium». La marca tiene que empezar por
+            // debajo de los 28 pt de la barra.
+            if let brand = findLabel("Tracenium", in: view) {
+                let frame = brand.convert(brand.bounds, to: view)
+                let fromTop = view.isFlipped ? frame.minY : view.bounds.height - frame.maxY
+                XCTAssertGreaterThanOrEqual(fromTop, 28, "\(name): brand under the title bar")
+            } else {
+                XCTFail("no brand label")
+            }
             guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw XCTSkip("no bitmap") }
             view.cacheDisplay(in: view.bounds, to: rep)
             let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("tracenium-os-update-\(name).png")

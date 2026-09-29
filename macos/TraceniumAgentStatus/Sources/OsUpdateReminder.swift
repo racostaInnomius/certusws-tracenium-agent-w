@@ -139,6 +139,12 @@ final class OsUpdateReminder: NSObject, NSWindowDelegate {
     private static let teal = NSColor(srgbRed: 0x3C/255.0, green: 0x7C/255.0, blue: 0x7C/255.0, alpha: 1)
     private static let ink = NSColor(srgbRed: 0x1C/255.0, green: 0x20/255.0, blue: 0x27/255.0, alpha: 1)
     private static let inkSoft = NSColor(srgbRed: 0x5C/255.0, green: 0x64/255.0, blue: 0x6E/255.0, alpha: 1)
+    private static let hairline = NSColor(srgbRed: 0xD0/255.0, green: 0xD5/255.0, blue: 0xDC/255.0, alpha: 1)
+    /// Alto de la banda de marca. La ventana dibuja su contenido bajo la barra
+    /// de título (`fullSizeContentView`), así que el botón de cerrar cae
+    /// ENCIMA de la banda: con 42 pt tapaba «Tracenium» (prueba en el Mac del
+    /// piloto, 29-sep). Con 64 la marca va en la mitad baja, libre.
+    static let headerHeight: CGFloat = 64
 
     private func show(_ request: TrayOsUpdateRequest, now: Date) {
         let w = NSWindow(
@@ -186,11 +192,11 @@ final class OsUpdateReminder: NSObject, NSWindowDelegate {
         header.addSubview(brand)
         header.addSubview(slogan)
         var headerConstraints = [
-            header.heightAnchor.constraint(equalToConstant: 42),
+            header.heightAnchor.constraint(equalToConstant: headerHeight),
             brand.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 18),
-            brand.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            brand.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -14),
             slogan.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -18),
-            slogan.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            slogan.firstBaselineAnchor.constraint(equalTo: brand.firstBaselineAnchor),
         ]
         if overdue {
             let rule = NSView()
@@ -216,12 +222,14 @@ final class OsUpdateReminder: NSObject, NSWindowDelegate {
         body.textColor = inkSoft
         body.setAccessibilityIdentifier("osUpdateReminder.body")
 
-        let open = NSButton(title: "Open Software Update", target: target, action: #selector(OsUpdateReminder.openTapped))
-        open.bezelStyle = .rounded
+        // Con la forma de la marca, no el azul del sistema: el botón por
+        // defecto de macOS toma el color de acento del usuario y rompía el
+        // aspecto de Tracenium. Mismo patrón que ConsentWindow.pill.
+        let open = pill("Open Software Update", fill: teal, text: .white, border: teal,
+                        target: target, action: #selector(OsUpdateReminder.openTapped))
         open.keyEquivalent = "\r"
-        open.contentTintColor = teal
-        let later = NSButton(title: "Remind me later", target: target, action: #selector(OsUpdateReminder.laterTapped))
-        later.bezelStyle = .rounded
+        let later = pill("Remind me later", fill: .white, text: ink, border: hairline,
+                         target: target, action: #selector(OsUpdateReminder.laterTapped))
         later.keyEquivalent = "\u{1b}"
         let buttons = NSStackView(views: [NSView(), later, open])
         buttons.orientation = .horizontal
@@ -231,7 +239,9 @@ final class OsUpdateReminder: NSObject, NSWindowDelegate {
         inner.orientation = .vertical
         inner.alignment = .leading
         inner.spacing = 12
-        inner.edgeInsets = NSEdgeInsets(top: 18, left: 20, bottom: 18, right: 20)
+        // Aire entre el texto y los botones: pegados parecían parte del párrafo.
+        inner.setCustomSpacing(24, after: body)
+        inner.edgeInsets = NSEdgeInsets(top: 18, left: 20, bottom: 20, right: 20)
         inner.translatesAutoresizingMaskIntoConstraints = false
 
         let root = NSView()
@@ -253,6 +263,28 @@ final class OsUpdateReminder: NSObject, NSWindowDelegate {
             body.widthAnchor.constraint(equalTo: inner.widthAnchor, constant: -40),
         ])
         return root
+    }
+
+    /// Un botón con la forma de la marca: píldora, sin bezel de sistema.
+    static func pill(_ title: String, fill: NSColor, text: NSColor, border: NSColor,
+                     target: AnyObject?, action: Selector) -> NSButton {
+        let b = NSButton(title: title, target: target, action: action)
+        b.isBordered = false
+        b.wantsLayer = true
+        b.layer?.backgroundColor = fill.cgColor
+        b.layer?.cornerRadius = 8
+        b.layer?.borderWidth = 1
+        b.layer?.borderColor = border.cgColor
+        b.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+            .foregroundColor: text,
+        ])
+        b.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            b.heightAnchor.constraint(equalToConstant: 32),
+            b.widthAnchor.constraint(equalToConstant: ceil(b.attributedTitle.size().width) + 32),
+        ])
+        return b
     }
 
     /// Ajustes → General → Actualización de software. El ancla cambió en
