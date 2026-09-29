@@ -18,6 +18,7 @@ import { updatePmpState, isRemediateInFlight } from "../plugins/pmp/state";
 import { runRemediation } from "../plugins/pmp/remediation";
 import { planPatchReboot, planDeviceReboot, rebootAckSuffix } from "../plugins/pmp/reboot";
 import { armPatchReboot, armDeviceReboot } from "../plugins/pmp/reboot-exec";
+import { acceptNudge, parseNudgePayload } from "../plugins/pmp/os-update-nudge";
 import { buildHeartbeat } from "./heartbeat-message";
 // SDP no longer imported here — `software_install` is dispatched via
 // ctx.plugins.run("sdp.install", ...) so it goes through the
@@ -1213,6 +1214,25 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       return {
         status: 0,
         message: `device_reboot scheduled; rebootScheduled=true; rebootInSec=${Math.round(plan.graceMs / 1000)}`
+      };
+    }
+
+    case "os_update_nudge": {
+      // Pedirle al usuario del Mac que instale una actualización de macOS antes
+      // de una fecha: en Apple silicon el agente no puede (pide la contraseña
+      // de un propietario del volumen). Sólo se GUARDA y se publica a la
+      // bandeja; recordarlo es cosa suya. Ver plugins/pmp/os-update-nudge.ts.
+      if (process.platform !== "darwin") {
+        return { status: 2, message: "os_update_nudge rejected: only macOS devices take install requests" };
+      }
+      const parsed = parseNudgePayload(payload, jobId);
+      if (!parsed.ok) {
+        return { status: 2, message: `os_update_nudge rejected: ${parsed.error}` };
+      }
+      const pending = acceptNudge(ctx, parsed.nudge);
+      return {
+        status: 0,
+        message: `os_update_nudge saved; label=${parsed.nudge.label}; deadlineUtc=${parsed.nudge.deadlineUtc}; pending=${pending.length}`
       };
     }
 

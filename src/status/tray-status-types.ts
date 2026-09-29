@@ -172,6 +172,24 @@ export type TrayGatewayStatus = {
   credentialKeyNotAfter?: string | null;
 };
 
+/**
+ * Una actualización de macOS que el usuario tiene que instalar antes de una
+ * fecha (job `os_update_nudge`). En Apple silicon el agente no puede: pide la
+ * contraseña de un propietario del volumen. La bandeja decide cuándo
+ * recordarlo; el agente retira el bloque cuando el escaneo ya no la lista.
+ *
+ * Ausente casi siempre: sólo existe mientras hay una petición viva.
+ */
+export type TrayOsUpdateRequest = {
+  /** Etiqueta de `softwareupdate --list` («macOS 27.0.1-26A434»): la clave. */
+  label: string;
+  /** Lo que se le enseña a la persona («macOS 27.0.1»). */
+  title: string;
+  deadlineUtc: string;
+  /** Cuántas peticiones hay; la bandeja enseña la de fecha más cercana. */
+  pendingCount: number;
+};
+
 export type TrayStatusSnapshot = {
   updatedAtUtc: string;
   agentVersion: string;
@@ -193,4 +211,6 @@ export type TrayStatusSnapshot = {
   remoteSession?: TrayRemoteSession;
   // ADR-0013 (A). Ausente salvo en un equipo con rol de gateway.
   gateway?: TrayGatewayStatus;
+  // Ausente salvo mientras hay una petición de instalar macOS pendiente.
+  osUpdateRequest?: TrayOsUpdateRequest;
 };

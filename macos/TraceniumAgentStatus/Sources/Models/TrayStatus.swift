@@ -39,11 +39,14 @@ struct TrayStatus: Decodable {
     // Sesión de control remoto viva (ADR-0012). Ausente en agentes
     // anteriores y —lo normal— siempre que nadie esté mirando.
     var remoteSession: TrayRemoteSession?
+    // Una actualización de macOS que la persona tiene que instalar antes de una
+    // fecha (job os_update_nudge). Ausente salvo mientras hay una petición.
+    var osUpdateRequest: TrayOsUpdateRequest?
 
     private enum CodingKeys: String, CodingKey {
         case updatedAtUtc, agentVersion, coreVersion, deviceId, tenantId
         case hostname, grpc, policy, jobs, update, patch, device, catalog
-        case remoteSession
+        case remoteSession, osUpdateRequest
     }
 
     init(from decoder: Decoder) throws {
@@ -67,6 +70,54 @@ struct TrayStatus: Decodable {
         device = (try? c.decodeIfPresent(TrayDeviceInfo.self, forKey: .device)) ?? nil
         catalog = (try? c.decodeIfPresent(TrayCatalogStatus.self, forKey: .catalog)) ?? nil
         remoteSession = (try? c.decodeIfPresent(TrayRemoteSession.self, forKey: .remoteSession)) ?? nil
+        osUpdateRequest = (try? c.decodeIfPresent(TrayOsUpdateRequest.self, forKey: .osUpdateRequest)) ?? nil
+    }
+}
+
+/// Una actualización de macOS que el agente no puede instalar (Apple silicon:
+/// pide la contraseña de un propietario) y que la persona tiene que instalar
+/// antes de `deadlineUtc`. Sin etiqueta o sin fecha no hay nada que recordar:
+/// el bloque entero no decodifica y la bandeja no enseña nada.
+struct TrayOsUpdateRequest: Decodable, Equatable {
+    var label: String
+    var title: String
+    var deadlineUtc: Date
+    var pendingCount: Int
+
+    private enum CodingKeys: String, CodingKey { case label, title, deadlineUtc, pendingCount }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        label = try c.decode(String.self, forKey: .label)
+        // ⚠️ Texto, no `Date`: el agente escribe `toISOString()` —con
+        // milisegundos— y la estrategia `.iso8601` del lector los rechaza. Con
+        // `try?` eso es un `nil` silencioso; aquí sería una petición perdida.
+        let raw = try c.decode(String.self, forKey: .deadlineUtc)
+        guard let deadline = Self.parseIsoDate(raw) else {
+            throw DecodingError.dataCorruptedError(forKey: .deadlineUtc, in: c, debugDescription: "bad date \(raw)")
+        }
+        deadlineUtc = deadline
+        let t = ((try? c.decodeIfPresent(String.self, forKey: .title)) ?? nil) ?? ""
+        title = t.isEmpty ? label : t
+        pendingCount = ((try? c.decodeIfPresent(Int.self, forKey: .pendingCount)) ?? nil) ?? 1
+        if label.trimmingCharacters(in: .whitespaces).isEmpty {
+            throw DecodingError.dataCorruptedError(forKey: .label, in: c, debugDescription: "empty label")
+        }
+    }
+
+    /// ISO 8601 con o sin fracción de segundo.
+    static func parseIsoDate(_ raw: String) -> Date? {
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFraction.date(from: raw) { return d }
+        return ISO8601DateFormatter().date(from: raw)
+    }
+
+    init(label: String, title: String, deadlineUtc: Date, pendingCount: Int = 1) {
+        self.label = label
+        self.title = title
+        self.deadlineUtc = deadlineUtc
+        self.pendingCount = pendingCount
     }
 }
 

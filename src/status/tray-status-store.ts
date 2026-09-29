@@ -9,11 +9,13 @@ import {
   getLegacyAgentStatusDir,
 } from "../bootstrap/paths";
 import { loadPmpState } from "../plugins/pmp/state";
+import { loadNudges, trayRequestFrom } from "../plugins/pmp/os-update-nudge";
 import { loadUpdateState } from "../update/update-state";
 import type {
   TrayCatalogItem,
   TrayDeviceInfo,
   TrayGatewayStatus,
+  TrayOsUpdateRequest,
   TrayRemoteSession,
   TrayStatusSnapshot
 } from "./tray-status-types";
@@ -255,6 +257,14 @@ export class TrayStatusStore {
     // un par de segundos después, y sin esto la bandeja enseña "—" en ese
     // hueco cada vez que el servicio arranca.
     if (previous?.device) snapshot.device = previous.device;
+    // La petición de instalar macOS vive en su fichero de estado, no en este:
+    // se reconstruye de ahí para que un reinicio no la haga desaparecer.
+    try {
+      const osUpdateRequest = trayRequestFrom(loadNudges());
+      if (osUpdateRequest) snapshot.osUpdateRequest = osUpdateRequest;
+    } catch {
+      // Sin fichero legible no hay petición: la bandeja no enseña nada.
+    }
 
     // ⚠️ `remoteSession` NO se conserva, y es deliberado: ninguna sesión
     // remota sobrevive a un reinicio del agente. Arrastrarla dejaría la franja
@@ -449,6 +459,16 @@ export class TrayStatusStore {
       ...(current || this.emptySnapshot()),
       remoteSession: session ?? undefined
     }));
+  }
+
+  /** `null` retira el bloque: ya no queda nada que pedirle al usuario. */
+  setOsUpdateRequest(request: TrayOsUpdateRequest | null) {
+    return this.update((current) => {
+      const next = { ...(current || this.emptySnapshot()) };
+      if (request) next.osUpdateRequest = request;
+      else delete next.osUpdateRequest;
+      return next;
+    });
   }
 
   private emptySnapshot(): TrayStatusSnapshot {

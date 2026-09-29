@@ -10,6 +10,7 @@ final class StatusBarController {
     /// popover a propósito: el popover se cierra al hacer clic fuera, y esto
     /// tiene que verse SIN que la persona vaya a buscarlo.
     private let remoteBanner = RemoteSessionBanner()
+    private let osUpdateReminder = OsUpdateReminder()
     private var snapshotWatcher: SnapshotChangeWatcher?
     /// CoreLocation can only be reached from this process (signed bundle, user
     /// session) — never from the root daemon. See LocationProvider.
@@ -154,6 +155,11 @@ final class StatusBarController {
         // segundo canal para un evento que ocurre una vez por sesión no se
         // paga. handle() es idempotente: se la puede llamar en cada tick.
         ConsentPrompt.handle(ConsentRequestReader.read())
+
+        // Actualización de macOS que la persona tiene que instalar (job
+        // os_update_nudge): el agente no puede en Apple silicon. handle() es
+        // idempotente y decide él solo si toca recordarlo. Ver OsUpdateReminder.
+        osUpdateReminder.handle(status?.osUpdateRequest)
 
         // Driven straight off the snapshot poll: apply() is idempotent, so an
         // unchanged switch costs nothing and a flipped one takes effect within
