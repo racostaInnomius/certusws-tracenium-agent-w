@@ -108,6 +108,12 @@ async function runCmd(
     const { stdout, stderr } = await execFileAsync(bin, args, {
       timeout: timeoutMs,
       maxBuffer: 1 * 1024 * 1024,
+      // ⚠️ Igual que en security-posture y en patch-management: lo que sale de
+      // aquí se decide con expresiones en inglés (`Status: active` de ufw,
+      // `running` de firewall-cmd) y esas herramientas traducen su salida. Un
+      // equipo en español reportaría el cortafuegos deshabilitado estándolo.
+      // Visto en campo el 28-sep-2026 con el escaneo de apt en T118.
+      env: { ...process.env, LANG: "C", LC_ALL: "C" },
     });
     return { stdout: stdout || "", stderr: stderr || "", code: 0 };
   } catch (err: any) {

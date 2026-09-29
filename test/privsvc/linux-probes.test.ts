@@ -156,3 +156,69 @@ describe("collectLinuxProbes", () => {
     expect(r.probes.file["/etc/passwd"]).toMatchObject({ exists: true });
   });
 });
+
+// ── El idioma del equipo no puede cambiar el veredicto ──────────────────────
+//
+// `probeKmod` decidía SÓLO por el texto de modprobe, y kmod traduce sus
+// mensajes. En un equipo en español «Module X not found» no casa, la negación se
+// vuelve verdadera y un módulo inexistente se reporta como EXISTENTE.
+//
+// Era la única sonda de este fichero sin red: `probePkg` ya se apoya en el
+// código de salida y `probeUnit` compara contra los tokens de systemd, que no se
+// traducen. Sale del mismo incidente que el parseo de apt en T118 (28-sep-2026),
+// donde el locale hacía que dos tenants se comportaran distinto con el mismo
+// código.
+
+describe("probeKmod — el código de salida manda sobre el texto", () => {
+  /** modprobe en español: sale 1, pero el mensaje no casa con el regex inglés. */
+  const enEspanol = () =>
+    fakeDeps({
+      exec: async (bin: string) =>
+        bin.endsWith("modprobe")
+          ? {
+              stdout: "",
+              stderr: "modprobe: FATAL: Módulo nope no encontrado en el directorio /lib/modules/x",
+              code: 1,
+            }
+          : { stdout: "", stderr: "", code: 1 },
+    });
+
+  it("un módulo inexistente NO se declara existente por estar el mensaje traducido", async () => {
+    const r = await collectLinuxProbes(["kmod.nope"], enEspanol());
+    expect(r.probes.kmod.nope).toMatchObject({ exists: false });
+  });
+
+  it("y sigue funcionando con el mensaje en inglés", async () => {
+    const r = await collectLinuxProbes(["kmod.nope"], fakeDeps());
+    expect(r.probes.kmod.nope).toMatchObject({ exists: false });
+  });
+
+  // ⚠️ El respaldo por texto se conserva: modprobe puede salir 0 quejándose por
+  // stderr en algunas versiones, y ahí el mensaje es lo único que hay.
+  it("el texto sigue valiendo cuando modprobe sale 0 pero se queja", async () => {
+    const r = await collectLinuxProbes(
+      ["kmod.nope"],
+      fakeDeps({
+        exec: async (bin: string) =>
+          bin.endsWith("modprobe")
+            ? { stdout: "", stderr: "modprobe: FATAL: Module nope not found in directory /x", code: 0 }
+            : { stdout: "", stderr: "", code: 1 },
+      })
+    );
+    expect(r.probes.kmod.nope).toMatchObject({ exists: false });
+  });
+
+  // Y un módulo que SÍ existe (modprobe sale 0 y no se queja) sigue existiendo.
+  it("no convierte en inexistente un módulo bueno", async () => {
+    const r = await collectLinuxProbes(
+      ["kmod.cramfs"],
+      fakeDeps({
+        exec: async (bin: string) =>
+          bin.endsWith("modprobe")
+            ? { stdout: "insmod /lib/modules/x/cramfs.ko \n", stderr: "", code: 0 }
+            : { stdout: "", stderr: "", code: 1 },
+      })
+    );
+    expect(r.probes.kmod.cramfs).toMatchObject({ exists: true });
+  });
+});

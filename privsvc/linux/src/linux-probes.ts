@@ -179,7 +179,21 @@ async function probeKmod(mod: string, deps: ProbeDeps): Promise<Record<string, u
   const r = await deps.exec("/usr/sbin/modprobe", ["-n", "-v", mod]);
   const installFalse = modprobeShowsInstallFalse(r.stdout);
   // "Module X not found" → no existe en este kernel.
-  const exists = !/not found in directory|Module .* not found/i.test(r.stderr + r.stdout) || installFalse;
+  //
+  // ⚠️ EL CÓDIGO DE SALIDA MANDA, Y EL TEXTO ES EL RESPALDO — no al revés. Esto
+  // decidía SÓLO por el mensaje, y kmod lo traduce: en un equipo en español
+  // «Module X not found» no casa, la negación se vuelve verdadera y el módulo se
+  // reporta como EXISTENTE sin existir. Era la única de las sondas de este
+  // fichero sin red: `probePkg` ya se apoya en `r.code === 0` (y `rpm -q` sale 1
+  // cuando el paquete no está), y `probeUnit` compara contra los tokens de
+  // `systemctl is-enabled`, que systemd NO traduce.
+  //
+  // `modprobe -n -v` sale != 0 cuando el módulo no existe, y ese número no
+  // depende del idioma. El regex se conserva porque `modprobe` también puede
+  // salir 0 quejándose por stderr en algunas versiones.
+  const notFoundByCode = r.code !== 0 && r.code !== null;
+  const notFoundByText = /not found in directory|Module .* not found/i.test(r.stderr + r.stdout);
+  const exists = !(notFoundByCode || notFoundByText) || installFalse;
   const confs: string[] = [];
   for (const f of deps.readdir("/etc/modprobe.d")) {
     if (!f.endsWith(".conf")) continue;

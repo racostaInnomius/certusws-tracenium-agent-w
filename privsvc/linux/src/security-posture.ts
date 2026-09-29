@@ -84,6 +84,22 @@ async function runCheck(bin: string, args: string[], timeoutMs = CHECK_TIMEOUT_M
     const { stdout, stderr } = await execFileAsync(bin, args, {
       timeout: timeoutMs,
       maxBuffer: 4 * 1024 * 1024,
+      // ⚠️ EL IDIOMA DEL EQUIPO CAMBIA LO QUE ENTENDEMOS DE ÉL. Casi todo lo que
+      // sale de aquí se decide con expresiones en INGLÉS —`Status: active` de
+      // ufw, `running` de firewall-cmd, los mensajes de modprobe— y esas
+      // herramientas traducen su salida. En un equipo en español `ufw status`
+      // dice «Estado: activo», el regex no casa y el cortafuegos se reporta
+      // DESHABILITADO estándolo.
+      //
+      // Pasó en campo con el escaneo de parches de apt (T118, 28-sep-2026): los
+      // 23 pendientes de un portátil en español perdían la versión instalada
+      // mientras en un equipo en inglés casaban los 29. El mismo código, dos
+      // comportamientos, y la diferencia era el idioma.
+      //
+      // ⚠️ ESTE `runCheck` ALIMENTA TAMBIÉN A linux-probes Y linux-system-probes,
+      // porque `realProbeDeps` lo recibe como su ExecFn. Fijarlo aquí cubre los
+      // tres ficheros; quitarlo los rompe los tres.
+      env: { ...process.env, LANG: "C", LC_ALL: "C" },
     });
     return { stdout: stdout || "", stderr: stderr || "", code: 0 };
   } catch (err: any) {
