@@ -9,8 +9,7 @@ import XCTest
 /// agrupación, la telemetría y que no se enseñe de más.
 final class OsUpdateReminderTests: XCTestCase {
     private func decode(_ block: String) throws -> TrayStatus {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = TrayJSON.makeDecoder()
         let json = """
         { "agentVersion": "1.1.86", "hostname": "JPR-MacBookPro", "userActions": \(block) }
         """

@@ -169,12 +169,14 @@ enum ConsentRequestReader {
                 .deletingLastPathComponent()
                 .appendingPathComponent("consent-request.json")
             guard let data = try? Data(contentsOf: url) else { continue }
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            if let req = try? decoder.decode(ConsentRequest.self, from: data) {
+            if let req = decode(data) {
                 return req
             }
         }
         return nil
+    }
+
+    static func decode(_ data: Data) -> ConsentRequest? {
+        try? TrayJSON.makeDecoder().decode(ConsentRequest.self, from: data)
     }
 }

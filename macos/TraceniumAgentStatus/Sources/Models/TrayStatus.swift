@@ -99,15 +99,16 @@ struct TrayUserAction: Decodable, Equatable {
         actionId = try c.decode(String.self, forKey: .actionId)
         kind = try c.decode(String.self, forKey: .kind)
         // ⚠️ Fechas como TEXTO, no `Date`: el agente escribe `toISOString()`
-        // —con milisegundos— y la estrategia `.iso8601` del lector los rechaza.
-        // Con `try?` eso sería una acción perdida en silencio.
+        // —con milisegundos— y un decoder `.iso8601` en un macOS antiguo no
+        // lo lee. Parseadas aquí, la acción no depende de cómo esté montado el
+        // decoder que la lee (ver TrayJSON).
         let rawExpires = try c.decode(String.self, forKey: .expiresUtc)
-        guard let expires = Self.parseIsoDate(rawExpires) else {
+        guard let expires = TrayJSON.parseIsoDate(rawExpires) else {
             throw DecodingError.dataCorruptedError(forKey: .expiresUtc, in: c, debugDescription: "bad date \(rawExpires)")
         }
         expiresUtc = expires
         if let rawDeadline = (try? c.decodeIfPresent(String.self, forKey: .deadlineUtc)) ?? nil {
-            guard let d = Self.parseIsoDate(rawDeadline) else {
+            guard let d = TrayJSON.parseIsoDate(rawDeadline) else {
                 throw DecodingError.dataCorruptedError(forKey: .deadlineUtc, in: c, debugDescription: "bad date \(rawDeadline)")
             }
             deadlineUtc = d
@@ -134,14 +135,6 @@ struct TrayUserAction: Decodable, Equatable {
     }
 
     func isExpired(now: Date) -> Bool { expiresUtc <= now }
-
-    /// ISO 8601 con o sin fracción de segundo.
-    static func parseIsoDate(_ raw: String) -> Date? {
-        let withFraction = ISO8601DateFormatter()
-        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = withFraction.date(from: raw) { return d }
-        return ISO8601DateFormatter().date(from: raw)
-    }
 }
 
 /// Una acción que no se puede leer —o de un `kind` que esta bandeja no

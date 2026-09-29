@@ -7,8 +7,7 @@ import XCTest
 /// dice para qué es pedir un "sí" que no significa nada.
 final class ConsentRequestTests: XCTestCase {
     private func decode(_ json: String) throws -> ConsentRequest {
-        let d = JSONDecoder()
-        d.dateDecodingStrategy = .iso8601
+        let d = TrayJSON.makeDecoder()
         return try d.decode(ConsentRequest.self, from: Data(json.utf8))
     }
 

@@ -53,8 +53,7 @@ final class RemoteSessionUiSnapshotTests: XCTestCase {
     /// produce.
     private func decode<T: Decodable>(_ json: [String: Any]) throws -> T {
         let data = try JSONSerialization.data(withJSONObject: json)
-        let d = JSONDecoder()
-        d.dateDecodingStrategy = .iso8601
+        let d = TrayJSON.makeDecoder()
         return try d.decode(T.self, from: data)
     }
 

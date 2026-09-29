@@ -11,8 +11,7 @@ final class StatusSnapshotReader {
         let candidates = AgentStatusPaths.trayStatusCandidates()
         self.candidatePaths = snapshotPath.map { [$0] } ?? candidates
         self.snapshotPath = self.candidatePaths.first ?? AgentStatusPaths.trayStatusCandidates().first ?? ""
-        self.decoder = JSONDecoder()
-        self.decoder.dateDecodingStrategy = .iso8601
+        self.decoder = TrayJSON.makeDecoder()
     }
 
     func read() -> TrayStatus? {

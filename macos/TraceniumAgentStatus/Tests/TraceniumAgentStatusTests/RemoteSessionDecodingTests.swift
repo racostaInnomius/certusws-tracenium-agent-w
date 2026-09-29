@@ -11,8 +11,7 @@ import XCTest
 /// todo, qué NO debe encenderla.
 final class RemoteSessionDecodingTests: XCTestCase {
     private func decode(_ json: String) throws -> TrayStatus {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = TrayJSON.makeDecoder()
         return try decoder.decode(TrayStatus.self, from: Data(json.utf8))
     }
 

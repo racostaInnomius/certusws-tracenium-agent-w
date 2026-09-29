@@ -10,8 +10,7 @@ import XCTest
 /// once, not a sub-document handed to a sub-decoder).
 final class CatalogDecodingTests: XCTestCase {
     private func makeDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = TrayJSON.makeDecoder()
         return decoder
     }
 

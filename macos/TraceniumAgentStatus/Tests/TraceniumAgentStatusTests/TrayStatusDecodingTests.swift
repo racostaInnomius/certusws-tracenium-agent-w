@@ -3,8 +3,7 @@ import XCTest
 
 final class TrayStatusDecodingTests: XCTestCase {
     private func makeDecoder() -> JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = TrayJSON.makeDecoder()
         return decoder
     }
 

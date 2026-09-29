@@ -56,8 +56,7 @@ final class TabSwitchingTests: XCTestCase {
           "catalog": { "items": [\(items)] }
         }
         """
-        let d = JSONDecoder()
-        d.dateDecodingStrategy = .iso8601
+        let d = TrayJSON.makeDecoder()
         return try d.decode(TrayStatus.self, from: Data(json.utf8))
     }
 
