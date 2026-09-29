@@ -1,7 +1,8 @@
 import AppKit
 
 /// Recordarle a la persona que instale una actualización de macOS antes de una
-/// fecha (job `os_update_nudge`, 29-sep).
+/// fecha: el presentador de la acción para el usuario `os.update` (ADR-0036
+/// D1; nació como job `os_update_nudge`, 29-sep).
 ///
 /// ── Por qué existe ──────────────────────────────────────────────────
 ///
@@ -10,31 +11,35 @@ import AppKit
 /// aunque corra como root (job e4689371, 28-sep: una hora colgado esperándola).
 /// Sin MDM la única forma es que la persona la instale desde Ajustes, así que
 /// esto se lo pide — y se lo vuelve a pedir, cada vez más a menudo, hasta que
-/// lo haga. El agente retira la petición cuando el escaneo ya no la lista.
+/// lo haga. El agente retira la acción cuando el escaneo ya no la lista.
 ///
-/// ── El ritmo ────────────────────────────────────────────────────────
+/// ── El ritmo: el de TODAS las acciones para el usuario ─────────────
 ///
 ///   más de 3 días para la fecha  → una vez al día
 ///   últimos 3 días               → cada 4 horas
 ///   vencida                      → cada hora
+///   sin fecha                    → una vez al día
 ///
-/// La hora del último aviso vive en UserDefaults de ESTA sesión: es lo que vio
-/// esta persona, no algo que el agente pueda saber. Un reinicio de la bandeja
-/// no la vuelve a enseñar al instante.
+/// El servidor sólo fija la fecha, nunca el intervalo: ningún operador puede
+/// convertir la bandeja en una alarma. La hora del último aviso vive en
+/// UserDefaults de ESTA sesión: es lo que vio esta persona, no algo que el
+/// agente pueda saber. Un reinicio de la bandeja no la vuelve a enseñar al
+/// instante.
 ///
 /// No es modal ni se puede silenciar para siempre: «Remind me later» sólo la
 /// cierra hasta el siguiente turno.
-enum OsUpdateReminderCadence {
+enum UserActionCadence {
     static let day: TimeInterval = 24 * 3600
 
-    static func interval(deadline: Date, now: Date) -> TimeInterval {
+    static func interval(deadline: Date?, now: Date) -> TimeInterval {
+        guard let deadline else { return day }
         let remaining = deadline.timeIntervalSince(now)
         if remaining <= 0 { return 3600 }
         if remaining <= 3 * day { return 4 * 3600 }
         return day
     }
 
-    static func isDue(lastShown: Date?, deadline: Date, now: Date) -> Bool {
+    static func isDue(lastShown: Date?, deadline: Date?, now: Date) -> Bool {
         guard let lastShown else { return true }
         return now.timeIntervalSince(lastShown) >= interval(deadline: deadline, now: now)
     }
@@ -74,34 +79,46 @@ enum OsUpdateReminderText {
 final class OsUpdateReminder: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var shownLabel: String?
+    private var shownActionIds: [String] = []
     private let defaults: UserDefaults
+    private let sink: (_ actionIds: [String], _ event: UserActionEventSink.Event) -> Void
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard,
+         sink: @escaping (_ actionIds: [String], _ event: UserActionEventSink.Event) -> Void = UserActionEventSink.record) {
         self.defaults = defaults
+        self.sink = sink
         super.init()
     }
 
-    /// Cerrar con la X cuenta como «más tarde». Sin esto `window` seguiría
-    /// puesta y el recordatorio no volvería a salir nunca.
+    /// Cerrar con la X cuenta como «más tarde» (y se informa como `dismissed`).
+    /// Sin esto `window` seguiría puesta y el recordatorio no volvería a salir
+    /// nunca. Los cierres programáticos quitan antes el delegado: no pasan por aquí.
     func windowWillClose(_ notification: Notification) {
+        sink(shownActionIds, .dismissed)
         window = nil
         shownLabel = nil
+        shownActionIds = []
     }
 
-    private static func key(_ label: String) -> String { "osUpdateReminder.lastShown.\(label)" }
+    /// La marca del último aviso va por la acción más urgente: una petición
+    /// nueva (otra fecha, otro actionId) empieza su propio ritmo.
+    private static func key(_ actionId: String) -> String { "userAction.lastShown.\(actionId)" }
 
-    /// Idempotente: se llama en cada refresco de la bandeja.
-    func handle(_ request: TrayOsUpdateRequest?, now: Date = Date()) {
-        guard let request else {
-            // Instalada (o retirada): si la ventana sigue abierta ya no tiene razón de ser.
+    /// Idempotente: se llama en cada refresco de la bandeja con TODAS las
+    /// acciones; esta ventana se ocupa de las `os.update`.
+    func handle(_ actions: [TrayUserAction], now: Date = Date()) {
+        guard let request = TrayOsUpdateRequest.from(actions, now: now), let lead = request.actionIds.first else {
+            // Instalada, cancelada o caducada: si la ventana sigue abierta ya no tiene razón de ser.
             close()
             return
         }
         if window != nil { return }
-        let last = defaults.object(forKey: Self.key(request.label)) as? Date
-        guard OsUpdateReminderCadence.isDue(lastShown: last, deadline: request.deadlineUtc, now: now) else { return }
-        defaults.set(now, forKey: Self.key(request.label))
-        Logger.shared.info("Showing macOS update reminder for \(request.label) (deadline \(request.deadlineUtc))")
+        let last = defaults.object(forKey: Self.key(lead)) as? Date
+        guard UserActionCadence.isDue(lastShown: last, deadline: request.deadlineUtc, now: now) else { return }
+        defaults.set(now, forKey: Self.key(lead))
+        Logger.shared.info("Showing macOS update reminder for \(request.label) (deadline \(request.deadlineUtc), \(request.pendingCount) pending)")
+        shownActionIds = request.actionIds
+        sink(request.actionIds, .shown)
         show(request, now: now)
     }
 
@@ -109,6 +126,7 @@ final class OsUpdateReminder: NSObject, NSWindowDelegate {
         let w = window
         window = nil
         shownLabel = nil
+        shownActionIds = []
         w?.delegate = nil
         w?.orderOut(nil)
     }
@@ -249,11 +267,15 @@ final class OsUpdateReminder: NSObject, NSWindowDelegate {
     @objc func openTapped() {
         if let url = Self.softwareUpdateURL { NSWorkspace.shared.open(url) }
         Logger.shared.info("macOS update reminder: user opened Software Update (\(shownLabel ?? "?"))")
+        // Telemetría: abrir Ajustes no instala nada; el agente cierra la acción
+        // cuando el escaneo deja de listarla.
+        sink(shownActionIds, .opened)
         close()
     }
 
     @objc func laterTapped() {
         Logger.shared.info("macOS update reminder: user chose later (\(shownLabel ?? "?"))")
+        sink(shownActionIds, .snoozed)
         close()
     }
 }

@@ -18,7 +18,8 @@ import { updatePmpState, isRemediateInFlight } from "../plugins/pmp/state";
 import { runRemediation } from "../plugins/pmp/remediation";
 import { planPatchReboot, planDeviceReboot, rebootAckSuffix } from "../plugins/pmp/reboot";
 import { armPatchReboot, armDeviceReboot } from "../plugins/pmp/reboot-exec";
-import { acceptNudge, parseNudgePayload } from "../plugins/pmp/os-update-nudge";
+import { acceptUserActionJob, applyEvents, commitUserActions, loadUserActions, parseUserActionPayload } from "../user-actions/user-actions";
+import { consumeUserActionEvents } from "../user-actions/user-action-events-watcher";
 import { buildHeartbeat } from "./heartbeat-message";
 // SDP no longer imported here — `software_install` is dispatched via
 // ctx.plugins.run("sdp.install", ...) so it goes through the
@@ -45,6 +46,9 @@ const HEARTBEAT_INTERVAL_MS = 60_000;
 // polling hard enough to matter at fleet scale (a stat + a JSON read,
 // only when a request file is actually present).
 const CATALOG_INSTALL_WATCH_INTERVAL_MS = 5_000;
+// Eventos de la bandeja sobre las acciones para el usuario: telemetría, sin
+// prisa (user-action-events-watcher.ts).
+const USER_ACTION_EVENTS_WATCH_INTERVAL_MS = 30_000;
 
 // Server-silence watchdog. When a backend instance dies ungracefully
 // (SIGKILL, OOM, network change, sleep/wake), the bridge layer often
@@ -1217,22 +1221,26 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       };
     }
 
-    case "os_update_nudge": {
-      // Pedirle al usuario del Mac que instale una actualización de macOS antes
-      // de una fecha: en Apple silicon el agente no puede (pide la contraseña
-      // de un propietario del volumen). Sólo se GUARDA y se publica a la
-      // bandeja; recordarlo es cosa suya. Ver plugins/pmp/os-update-nudge.ts.
+    case "user_action": {
+      // «Acción para el usuario» (ADR-0036 D1): algo que en este equipo sólo
+      // puede hacer la persona —hoy, instalar una actualización de macOS que
+      // el agente no puede en Apple silicon—. Sólo se GUARDA y se publica a la
+      // bandeja; recordarla es cosa suya y el cierre lo decide lo OBSERVADO
+      // (user-actions.ts). Hoy sólo la bandeja de macOS presenta acciones.
       if (process.platform !== "darwin") {
-        return { status: 2, message: "os_update_nudge rejected: only macOS devices take install requests" };
+        return { status: 2, message: "user_action rejected: only macOS devices present user actions" };
       }
-      const parsed = parseNudgePayload(payload, jobId);
+      const parsed = parseUserActionPayload(payload, jobId);
       if (!parsed.ok) {
-        return { status: 2, message: `os_update_nudge rejected: ${parsed.error}` };
+        return { status: 2, message: `user_action rejected: ${parsed.error}` };
       }
-      const pending = acceptNudge(ctx, parsed.nudge);
+      const pending = acceptUserActionJob(ctx, parsed);
       return {
         status: 0,
-        message: `os_update_nudge saved; label=${parsed.nudge.label}; deadlineUtc=${parsed.nudge.deadlineUtc}; pending=${pending.length}`
+        message:
+          parsed.op === "request"
+            ? `user_action saved; actionId=${parsed.action.actionId}; kind=${parsed.action.kind}; deadlineUtc=${parsed.action.deadlineUtc ?? "-"}; pending=${pending.length}`
+            : `user_action cancelled; actionId=${parsed.actionId}; pending=${pending.length}`
       };
     }
 
@@ -1875,6 +1883,10 @@ export function startGrpcStream(ctx: AgentContext) {
   // the watchdog: fixed cadence independent of stream state. Cleared in
   // stop().
   let catalogInstallWatcherTimer: NodeJS.Timeout | null = null;
+  // Recoge lo que la persona hizo con las acciones para el usuario (ADR-0036
+  // D1) y retira las caducadas. No necesita el stream: sólo toca el estado
+  // local. Cleared in stop().
+  let userActionEventsTimer: NodeJS.Timeout | null = null;
   let unsubscribeOutbox: (() => void) | null = null;
   let draining = false;
   let drainScheduled = false;
@@ -1915,6 +1927,8 @@ stream = client.Connect();
     watchdogTimer = null;
     try { if (catalogInstallWatcherTimer) clearInterval(catalogInstallWatcherTimer); } catch {}
     catalogInstallWatcherTimer = null;
+    try { if (userActionEventsTimer) clearInterval(userActionEventsTimer); } catch {}
+    userActionEventsTimer = null;
     try { stream.removeAllListeners(); } catch {}
 
     try { unsubscribeOutbox?.(); } catch {}
@@ -2168,6 +2182,30 @@ stream = client.Connect();
     (catalogInstallWatcherTimer as any)?.unref?.();
   };
 
+  // Telemetría de la bandeja + caducidad de las acciones para el usuario.
+  // Sólo macOS (la única bandeja que las presenta). Un tick que falla no
+  // afecta al stream.
+  const armUserActionEventsWatcher = () => {
+    if (stopped || process.platform !== "darwin") return;
+    if (userActionEventsTimer) {
+      clearInterval(userActionEventsTimer);
+      userActionEventsTimer = null;
+    }
+    userActionEventsTimer = setInterval(() => {
+      if (stopped) return;
+      consumeUserActionEvents()
+        .then((events) => {
+          const current = loadUserActions();
+          if (current.length === 0) return;
+          commitUserActions(ctx, events.length ? applyEvents(current, events) : current);
+        })
+        .catch((err: any) => {
+          ctx.logger?.warn?.("[user-actions] events watcher tick failed", { err: err?.message || err });
+        });
+    }, USER_ACTION_EVENTS_WATCH_INTERVAL_MS);
+    (userActionEventsTimer as any)?.unref?.();
+  };
+
   const scheduleReconnect = (reason: string) => {
     if (shutdownRequested) return;
     // Both stream.on("error") and stream.on("end") can fire for the same
@@ -2363,6 +2401,7 @@ stream = client.Connect();
         ctx.logger?.warn?.("[catalog] initial catalogRequest write failed", { err: err?.message || err });
       }
       armCatalogInstallWatcher();
+      armUserActionEventsWatcher();
       return;
     }
     // ACK

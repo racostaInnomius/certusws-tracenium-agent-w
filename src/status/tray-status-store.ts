@@ -9,13 +9,13 @@ import {
   getLegacyAgentStatusDir,
 } from "../bootstrap/paths";
 import { loadPmpState } from "../plugins/pmp/state";
-import { loadNudges, trayRequestFrom } from "../plugins/pmp/os-update-nudge";
+import { loadUserActions, trayActionsFrom } from "../user-actions/user-actions";
 import { loadUpdateState } from "../update/update-state";
 import type {
   TrayCatalogItem,
   TrayDeviceInfo,
   TrayGatewayStatus,
-  TrayOsUpdateRequest,
+  TrayUserAction,
   TrayRemoteSession,
   TrayStatusSnapshot
 } from "./tray-status-types";
@@ -257,13 +257,13 @@ export class TrayStatusStore {
     // un par de segundos después, y sin esto la bandeja enseña "—" en ese
     // hueco cada vez que el servicio arranca.
     if (previous?.device) snapshot.device = previous.device;
-    // La petición de instalar macOS vive en su fichero de estado, no en este:
-    // se reconstruye de ahí para que un reinicio no la haga desaparecer.
+    // Las acciones para la persona viven en su fichero de estado, no en este:
+    // se reconstruyen de ahí para que un reinicio no las haga desaparecer.
     try {
-      const osUpdateRequest = trayRequestFrom(loadNudges());
-      if (osUpdateRequest) snapshot.osUpdateRequest = osUpdateRequest;
+      const userActions = trayActionsFrom(loadUserActions());
+      if (userActions.length) snapshot.userActions = userActions;
     } catch {
-      // Sin fichero legible no hay petición: la bandeja no enseña nada.
+      // Sin fichero legible no hay acciones: la bandeja no enseña nada.
     }
 
     // ⚠️ `remoteSession` NO se conserva, y es deliberado: ninguna sesión
@@ -461,12 +461,12 @@ export class TrayStatusStore {
     }));
   }
 
-  /** `null` retira el bloque: ya no queda nada que pedirle al usuario. */
-  setOsUpdateRequest(request: TrayOsUpdateRequest | null) {
+  /** `null` (o vacío) retira el bloque: ya no queda nada que pedirle a la persona. */
+  setUserActions(list: TrayUserAction[] | null) {
     return this.update((current) => {
       const next = { ...(current || this.emptySnapshot()) };
-      if (request) next.osUpdateRequest = request;
-      else delete next.osUpdateRequest;
+      if (list && list.length) next.userActions = list;
+      else delete next.userActions;
       return next;
     });
   }

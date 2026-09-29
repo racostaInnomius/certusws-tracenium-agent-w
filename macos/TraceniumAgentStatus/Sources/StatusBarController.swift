@@ -156,10 +156,11 @@ final class StatusBarController {
         // paga. handle() es idempotente: se la puede llamar en cada tick.
         ConsentPrompt.handle(ConsentRequestReader.read())
 
-        // Actualización de macOS que la persona tiene que instalar (job
-        // os_update_nudge): el agente no puede en Apple silicon. handle() es
-        // idempotente y decide él solo si toca recordarlo. Ver OsUpdateReminder.
-        osUpdateReminder.handle(status?.osUpdateRequest)
+        // Acciones para la persona (ADR-0036 D1). Hoy sólo `os.update`: una
+        // actualización de macOS que el agente no puede instalar en Apple
+        // silicon. handle() es idempotente y decide él solo si toca
+        // recordarlo. Ver OsUpdateReminder.
+        osUpdateReminder.handle(status?.userActions ?? [])
 
         // Driven straight off the snapshot poll: apply() is idempotent, so an
         // unchanged switch costs nothing and a flipped one takes effect within

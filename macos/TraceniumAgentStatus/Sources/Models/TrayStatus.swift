@@ -39,14 +39,14 @@ struct TrayStatus: Decodable {
     // Sesión de control remoto viva (ADR-0012). Ausente en agentes
     // anteriores y —lo normal— siempre que nadie esté mirando.
     var remoteSession: TrayRemoteSession?
-    // Una actualización de macOS que la persona tiene que instalar antes de una
-    // fecha (job os_update_nudge). Ausente salvo mientras hay una petición.
-    var osUpdateRequest: TrayOsUpdateRequest?
+    // Acciones pendientes para la persona (ADR-0036 D1), de la más urgente a
+    // la menos. Vacío salvo mientras hay alguna. Hoy sólo `os.update`.
+    var userActions: [TrayUserAction] = []
 
     private enum CodingKeys: String, CodingKey {
         case updatedAtUtc, agentVersion, coreVersion, deviceId, tenantId
         case hostname, grpc, policy, jobs, update, patch, device, catalog
-        case remoteSession, osUpdateRequest
+        case remoteSession, userActions
     }
 
     init(from decoder: Decoder) throws {
@@ -70,40 +70,70 @@ struct TrayStatus: Decodable {
         device = (try? c.decodeIfPresent(TrayDeviceInfo.self, forKey: .device)) ?? nil
         catalog = (try? c.decodeIfPresent(TrayCatalogStatus.self, forKey: .catalog)) ?? nil
         remoteSession = (try? c.decodeIfPresent(TrayRemoteSession.self, forKey: .remoteSession)) ?? nil
-        osUpdateRequest = (try? c.decodeIfPresent(TrayOsUpdateRequest.self, forKey: .osUpdateRequest)) ?? nil
+        // Tolerante por elemento: una acción rota o de un `kind` que esta
+        // bandeja no conoce cuesta sólo esa acción, no el bloque ni el resto
+        // del estado.
+        userActions = ((try? c.decodeIfPresent([LossyUserAction].self, forKey: .userActions)) ?? nil)?
+            .compactMap { $0.value } ?? []
     }
 }
 
-/// Una actualización de macOS que el agente no puede instalar (Apple silicon:
-/// pide la contraseña de un propietario) y que la persona tiene que instalar
-/// antes de `deadlineUtc`. Sin etiqueta o sin fecha no hay nada que recordar:
-/// el bloque entero no decodifica y la bandeja no enseña nada.
-struct TrayOsUpdateRequest: Decodable, Equatable {
-    var label: String
-    var title: String
-    var deadlineUtc: Date
-    var pendingCount: Int
+/// Una «acción para el usuario» (ADR-0036 D1), tal como la publica el agente.
+/// La bandeja sólo presenta los `kind` que conoce; lo que hace cada botón lo
+/// decide ella por `kind` — nunca abre una URL que venga del servidor.
+struct TrayUserAction: Decodable, Equatable {
+    static let knownKinds: Set<String> = ["os.update"]
 
-    private enum CodingKeys: String, CodingKey { case label, title, deadlineUtc, pendingCount }
+    var actionId: String
+    var kind: String
+    var title: String
+    var deadlineUtc: Date?
+    var expiresUtc: Date
+    /// Por `kind`. os.update: `label` (la etiqueta de `softwareupdate --list`) y `title`.
+    var params: [String: String]
+
+    private enum CodingKeys: String, CodingKey { case actionId, kind, title, deadlineUtc, expiresUtc, params }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        label = try c.decode(String.self, forKey: .label)
-        // ⚠️ Texto, no `Date`: el agente escribe `toISOString()` —con
-        // milisegundos— y la estrategia `.iso8601` del lector los rechaza. Con
-        // `try?` eso es un `nil` silencioso; aquí sería una petición perdida.
-        let raw = try c.decode(String.self, forKey: .deadlineUtc)
-        guard let deadline = Self.parseIsoDate(raw) else {
-            throw DecodingError.dataCorruptedError(forKey: .deadlineUtc, in: c, debugDescription: "bad date \(raw)")
+        actionId = try c.decode(String.self, forKey: .actionId)
+        kind = try c.decode(String.self, forKey: .kind)
+        // ⚠️ Fechas como TEXTO, no `Date`: el agente escribe `toISOString()`
+        // —con milisegundos— y la estrategia `.iso8601` del lector los rechaza.
+        // Con `try?` eso sería una acción perdida en silencio.
+        let rawExpires = try c.decode(String.self, forKey: .expiresUtc)
+        guard let expires = Self.parseIsoDate(rawExpires) else {
+            throw DecodingError.dataCorruptedError(forKey: .expiresUtc, in: c, debugDescription: "bad date \(rawExpires)")
         }
-        deadlineUtc = deadline
+        expiresUtc = expires
+        if let rawDeadline = (try? c.decodeIfPresent(String.self, forKey: .deadlineUtc)) ?? nil {
+            guard let d = Self.parseIsoDate(rawDeadline) else {
+                throw DecodingError.dataCorruptedError(forKey: .deadlineUtc, in: c, debugDescription: "bad date \(rawDeadline)")
+            }
+            deadlineUtc = d
+        } else {
+            deadlineUtc = nil
+        }
+        // Sólo los valores de texto: es todo lo que un presentador necesita.
+        let raw = (try? c.decodeIfPresent([String: LossyString].self, forKey: .params)) ?? nil
+        params = (raw ?? [:]).compactMapValues { $0.value }
         let t = ((try? c.decodeIfPresent(String.self, forKey: .title)) ?? nil) ?? ""
-        title = t.isEmpty ? label : t
-        pendingCount = ((try? c.decodeIfPresent(Int.self, forKey: .pendingCount)) ?? nil) ?? 1
-        if label.trimmingCharacters(in: .whitespaces).isEmpty {
-            throw DecodingError.dataCorruptedError(forKey: .label, in: c, debugDescription: "empty label")
+        title = t.isEmpty ? (params["title"] ?? params["label"] ?? "") : t
+        if actionId.trimmingCharacters(in: .whitespaces).isEmpty {
+            throw DecodingError.dataCorruptedError(forKey: .actionId, in: c, debugDescription: "empty actionId")
         }
     }
+
+    init(actionId: String, kind: String, title: String, deadlineUtc: Date?, expiresUtc: Date, params: [String: String]) {
+        self.actionId = actionId
+        self.kind = kind
+        self.title = title
+        self.deadlineUtc = deadlineUtc
+        self.expiresUtc = expiresUtc
+        self.params = params
+    }
+
+    func isExpired(now: Date) -> Bool { expiresUtc <= now }
 
     /// ISO 8601 con o sin fracción de segundo.
     static func parseIsoDate(_ raw: String) -> Date? {
@@ -112,12 +142,57 @@ struct TrayOsUpdateRequest: Decodable, Equatable {
         if let d = withFraction.date(from: raw) { return d }
         return ISO8601DateFormatter().date(from: raw)
     }
+}
 
-    init(label: String, title: String, deadlineUtc: Date, pendingCount: Int = 1) {
+/// Una acción que no se puede leer —o de un `kind` que esta bandeja no
+/// conoce— es `nil`, no un error que tire el array.
+private struct LossyUserAction: Decodable {
+    let value: TrayUserAction?
+    init(from decoder: Decoder) throws {
+        let a = try? TrayUserAction(from: decoder)
+        value = (a.map { TrayUserAction.knownKinds.contains($0.kind) } ?? false) ? a : nil
+    }
+}
+
+private struct LossyString: Decodable {
+    let value: String?
+    init(from decoder: Decoder) throws {
+        value = try? decoder.singleValueContainer().decode(String.self)
+    }
+}
+
+/// Lo que enseña la ventana de `os.update`: todas las `os.update` pendientes
+/// en UNA ventana —Actualización de software las instala juntas—, con la
+/// fecha de la más urgente.
+struct TrayOsUpdateRequest: Equatable {
+    var label: String
+    var title: String
+    var deadlineUtc: Date
+    var pendingCount: Int
+    /// Las acciones que representa esta ventana, para la telemetría.
+    var actionIds: [String] = []
+
+    init(label: String, title: String, deadlineUtc: Date, pendingCount: Int = 1, actionIds: [String] = []) {
         self.label = label
         self.title = title
         self.deadlineUtc = deadlineUtc
         self.pendingCount = pendingCount
+        self.actionIds = actionIds
+    }
+
+    /// La ventana de las `os.update` vivas, o nil si no hay ninguna.
+    static func from(_ actions: [TrayUserAction], now: Date) -> TrayOsUpdateRequest? {
+        let updates = actions
+            .filter { $0.kind == "os.update" && !$0.isExpired(now: now) && $0.deadlineUtc != nil }
+            .sorted { ($0.deadlineUtc ?? .distantFuture) < ($1.deadlineUtc ?? .distantFuture) }
+        guard let first = updates.first, let deadline = first.deadlineUtc else { return nil }
+        return TrayOsUpdateRequest(
+            label: first.params["label"] ?? first.title,
+            title: first.title,
+            deadlineUtc: deadline,
+            pendingCount: updates.count,
+            actionIds: updates.map { $0.actionId }
+        )
     }
 }
 

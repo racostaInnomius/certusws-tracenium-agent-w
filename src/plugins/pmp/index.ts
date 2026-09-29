@@ -4,7 +4,7 @@ import type { PmpNamespace } from "../../domain/pmp-types";
 import { collectMacosPmp } from "./providers/macos";
 import { collectWindowsPmp } from "./providers/windows";
 import { collectLinuxPmp } from "./providers/linux";
-import { refreshNudgesAfterScan } from "./os-update-nudge";
+import { refreshOsUpdateActionsAfterScan } from "./os-update-action";
 
 export async function collectPMP(ctx: AgentContext): Promise<PmpNamespace> {
   const platform = os.platform();
@@ -15,13 +15,14 @@ export async function collectPMP(ctx: AgentContext): Promise<PmpNamespace> {
 
   if (platform === "darwin") {
     const ns = await collectMacosPmp(ctx);
-    // Lo que el escaneo ya no lista está instalado: deja de pedírselo al
-    // usuario. Aquí porque TODO escaneo de macOS pasa por este punto —el
-    // programado y el del job—. Un fallo no puede tirar el escaneo.
+    // Lo que el escaneo ya no lista está instalado: la acción `os.update`
+    // se cierra (ADR-0036 D1, «hecho» = observado). Aquí porque TODO escaneo
+    // de macOS pasa por este punto —el programado y el del job—. Un fallo no
+    // puede tirar el escaneo.
     try {
-      refreshNudgesAfterScan(ctx, ns);
+      refreshOsUpdateActionsAfterScan(ctx, ns);
     } catch (err) {
-      ctx.logger?.warn?.("os-update nudge refresh failed", { err });
+      ctx.logger?.warn?.("os.update user action refresh failed", { err });
     }
     return ns;
   }

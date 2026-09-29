@@ -173,21 +173,24 @@ export type TrayGatewayStatus = {
 };
 
 /**
- * Una actualización de macOS que el usuario tiene que instalar antes de una
- * fecha (job `os_update_nudge`). En Apple silicon el agente no puede: pide la
- * contraseña de un propietario del volumen. La bandeja decide cuándo
- * recordarlo; el agente retira el bloque cuando el escaneo ya no la lista.
+ * Una «acción para el usuario» (ADR-0036 D1): algo que en este equipo sólo
+ * puede hacer la persona —hoy, `os.update`: instalar una actualización de
+ * macOS que el agente no puede (Apple silicon)—. La bandeja decide cuándo
+ * recordarla y sólo presenta los `kind` que conoce; el agente la retira
+ * cuando OBSERVA que está hecha o cuando caduca.
  *
- * Ausente casi siempre: sólo existe mientras hay una petición viva.
+ * El servidor manda texto plano: la bandeja nunca abre una URL que venga
+ * aquí; lo que hace cada botón lo decide ella por `kind`.
  */
-export type TrayOsUpdateRequest = {
-  /** Etiqueta de `softwareupdate --list` («macOS 27.0.1-26A434»): la clave. */
-  label: string;
+export type TrayUserAction = {
+  actionId: string;
+  kind: string;
   /** Lo que se le enseña a la persona («macOS 27.0.1»). */
   title: string;
-  deadlineUtc: string;
-  /** Cuántas peticiones hay; la bandeja enseña la de fecha más cercana. */
-  pendingCount: number;
+  deadlineUtc?: string;
+  expiresUtc: string;
+  /** Por `kind`. os.update: `{ label, title? }` — la etiqueta de `softwareupdate --list`. */
+  params: Record<string, unknown>;
 };
 
 export type TrayStatusSnapshot = {
@@ -211,6 +214,7 @@ export type TrayStatusSnapshot = {
   remoteSession?: TrayRemoteSession;
   // ADR-0013 (A). Ausente salvo en un equipo con rol de gateway.
   gateway?: TrayGatewayStatus;
-  // Ausente salvo mientras hay una petición de instalar macOS pendiente.
-  osUpdateRequest?: TrayOsUpdateRequest;
+  // Acciones pendientes para la persona, de la más urgente a la menos
+  // (ADR-0036 D1). Ausente cuando no hay ninguna.
+  userActions?: TrayUserAction[];
 };
