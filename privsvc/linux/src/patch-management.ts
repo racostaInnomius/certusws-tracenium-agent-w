@@ -71,6 +71,26 @@ type ScanResult = {
 type ScanItem = {
   hotFixId?: string;
   title?: string;
+  /**
+   * El nombre del paquete, COMO DATO.
+   *
+   * ⚠️ NACE DE UN FALLO EN CAMPO (T118, 28-sep-2026). La instalación recuperaba
+   * este nombre parseando `title` con `/^([^:]+):/`, y `title` es un texto de
+   * PRESENTACIÓN que esta misma función escribe de dos maneras: con dos puntos
+   * cuando conoce la versión instalada y sin ellos cuando no. En una Ubuntu
+   * 26.04 donde `apt list --upgradable` no reportaba la versión vieja, 16 de 23
+   * pendientes no tenían dos puntos: el parseo no casaba, el paquete se
+   * descartaba en silencio y el job se cerraba como `completed` sin instalar
+   * nada.
+   *
+   * El comentario que justificaba aquel parseo decía que el formato con dos
+   * puntos era «always true in scan output». Lo desmentía la rama de al lado.
+   *
+   * Ausente cuando el identificador no ES un paquete: un aviso de dnf
+   * (`FEDORA-2026-…`) agrupa varios y se instala con `--advisory`, no por
+   * nombre.
+   */
+  packageName?: string;
   severity?: "critical" | "important" | "moderate" | "low" | "unknown";
   type?: "security" | "bugfix" | "enhancement" | "update";
   cveIds?: string[];
@@ -108,6 +128,21 @@ async function runCmd(bin: string, args: string[]): Promise<{ stdout: string; st
     const { stdout, stderr } = await execFileAsync(bin, args, {
       timeout: SCAN_TIMEOUT_MS,
       maxBuffer: 16 * 1024 * 1024, // 16 MB — `dnf updateinfo --list` on RHEL with 800 advisories ~3 MB
+      // ⚠️ EL IDIOMA DEL EQUIPO CAMBIABA LO QUE ENTENDÍAMOS DE ÉL. Todo lo que
+      // sale de aquí se parsea con expresiones en INGLÉS —`[upgradable from:
+      // …]` en apt, las cabeceras de `dnf check-update`— y apt y dnf traducen su
+      // salida al idioma del sistema. En un equipo en español la cadena es
+      // `[actualizable desde: …]`, el grupo opcional no casa NUNCA y la versión
+      // instalada se pierde en silencio.
+      //
+      // Visto en campo el 28-sep-2026: en `usuariohl-HP-14` (T118, Ubuntu 26.04)
+      // los 23 pendientes salían sin versión vieja, mientras en T1 —un equipo en
+      // inglés— casaban los 29. El mismo código, dos comportamientos, y la
+      // diferencia era el idioma del portátil.
+      //
+      // `runInstall` ya fijaba el locale por esto mismo, con un comentario sobre
+      // errores de apt en francés. El camino de ESCANEO nunca lo hizo.
+      env: { ...process.env, LANG: "C", LC_ALL: "C" },
     });
     return { stdout: stripAnsi(stdout || ""), stderr: stripAnsi(stderr || ""), code: 0 };
   } catch (err: any) {
@@ -157,15 +192,17 @@ function truncateItems(items: ScanItem[]): ScanItem[] {
 // Note: `apt` (the human-targeted CLI) prints a deprecation warning
 // to stderr ("WARNING: apt does not have a stable CLI...") that we
 // silence by piping stderr to /dev/null at the runCmd level. Output
-// shape on stdout is stable enough for Phase 6 use.
-async function scanApt(): Promise<ScanResult> {
-  const r = await runCmd("/usr/bin/apt", ["list", "--upgradable"]);
-
-  if (r.code !== 0 && !r.stdout) {
-    return unavailable(`apt list failed: ${r.stderr || "no output"}`);
-  }
-
-  const lines = r.stdout.split("\n").filter(l => l.trim() && !l.startsWith("Listing"));
+/**
+ * Las actualizaciones pendientes a partir de la salida de `apt list --upgradable`.
+ *
+ * ⚠️ EXPORTADA Y PURA A PROPÓSITO. Este parseo estaba enterrado dentro de
+ * `scanApt`, detrás de un `execFile`, así que NADIE podía probarlo — y lo que no
+ * se puede probar es donde vivió cinco días un fallo que cerraba jobs de parcheo
+ * como `completed` sin instalar nada (T118, 28-sep-2026). Sacarlo no es estética:
+ * es la única forma de fijar con un test lo que la salida real del comando hace.
+ */
+export function parseAptUpgradable(stdout: string): ScanItem[] {
+  const lines = stdout.split("\n").filter(l => l.trim() && !l.startsWith("Listing"));
   const items: ScanItem[] = [];
 
   for (const line of lines) {
@@ -192,6 +229,9 @@ async function scanApt(): Promise<ScanResult> {
 
     items.push({
       hotFixId: `${pkg}-${newVersion}`,
+      // El nombre va como dato. `title` sigue siendo para leerlo un humano —y
+      // por eso tiene dos formas—, pero ya no es de donde se saca el paquete.
+      packageName: pkg,
       title: oldVersion
         ? `${pkg}: ${oldVersion} → ${newVersion}`
         : `${pkg} ${newVersion}`,
@@ -204,6 +244,31 @@ async function scanApt(): Promise<ScanResult> {
     if (items.length >= MAX_ITEMS) break;
   }
 
+  return items;
+}
+
+// shape on stdout is stable enough for Phase 6 use.
+async function scanApt(): Promise<ScanResult> {
+  const r = await runCmd("/usr/bin/apt", ["list", "--upgradable"]);
+
+  if (r.code !== 0 && !r.stdout) {
+    return unavailable(`apt list failed: ${r.stderr || "no output"}`);
+  }
+
+  const items = parseAptUpgradable(r.stdout);
+  // ⚠️ UNA SEÑAL PARA QUE ESTO NO VUELVA A PASAR CALLADO. Un paquete listado por
+  // `apt list --upgradable` está instalado por definición, así que SIEMPRE trae
+  // su versión actual. Que falte no significa «no la hay»: significa que no
+  // supimos leerla —el locale se nos escapó, o apt cambió el formato— y eso hay
+  // que decirlo, porque fue lo que enmascaró el fallo de T118 durante el tiempo
+  // que estuvo activo.
+  const sinVersionVieja = items.filter(it => it.title && !it.title.includes(" → ")).length;
+  const note =
+    items.length > 0 && sinVersionVieja === items.length
+      ? `apt listed ${items.length} upgradable package(s) and NONE reported an installed version; ` +
+        `the "[upgradable from: …]" field was not parsed — apt's output format or locale may have changed`
+      : undefined;
+
   return {
     status: items.length > 0 ? "updates_available" : "healthy",
     source: "linux_apt",
@@ -211,6 +276,7 @@ async function scanApt(): Promise<ScanResult> {
     updateCount: items.length,
     securityUpdateCount: items.filter(i => i.type === "security").length,
     items: truncateItems(items),
+    ...(note ? { note } : {}),
   };
 }
 
@@ -292,6 +358,9 @@ async function scanDnf(): Promise<ScanResult> {
 
       advisoryMap.set(advisoryId, {
         hotFixId: advisoryId,
+        // Sin `packageName` A PROPÓSITO: un aviso agrupa varios paquetes y se
+        // instala con `--advisory=<id>`. Ponerle el nombre de uno de ellos
+        // instalaría una parte del aviso y lo daría por entero.
         title: `${advisoryId}: ${pkgNvr}`,
         severity,
         type,
@@ -328,6 +397,7 @@ async function scanDnf(): Promise<ScanResult> {
 
       items.push({
         hotFixId: dupKey,
+        packageName: pkgArch,
         title: `${pkgArch}: ${version}`,
         severity: "unknown",
         type: "update",
@@ -471,6 +541,18 @@ async function runInstall(
 // Result-shape helper. Centralises the "every selected item became X"
 // pattern so install paths don't repeat the same map() at three exit
 // points each.
+/**
+ * El motivo cuando un identificador pedido no se puede resolver a un paquete.
+ *
+ * ⚠️ TIENE QUE DECIR QUÉ HACER. «no se encontró» deja al operador pensando que
+ * el parche no existe; lo que suele pasar es que ya se instaló por otra vía o
+ * que el escaneo que pintó la lista es viejo, y en los dos casos la salida es la
+ * misma: volver a escanear y mirar.
+ */
+const UNRESOLVED_REASON =
+  "not present in the live upgradable list — it may already be installed, or the " +
+  "scan behind this list is stale; re-scan the device and check again";
+
 function eachAs(items: ScanItem[], result: InstallItemResult["result"], message?: string): InstallItemResult[] {
   return items.map(it => ({
     updateId: it.hotFixId,
@@ -540,6 +622,9 @@ async function installApt(
   // extra `apt list --upgradable` (~200 ms cached) and avoids the
   // ambiguous suffix-strip parser we'd otherwise need.
   let packageNames: string[] = [];
+  /** Lo que el operador pidió y NO se pudo resolver. Nunca se calla. */
+  const unresolved: ScanItem[] = [];
+
   if (selectAll) {
     // Empty kbArticleIds → "everything available". Don't enumerate;
     // pass nothing to apt-get so it picks up the full upgradeable
@@ -550,14 +635,20 @@ async function installApt(
     const byId = new Map(fresh.items.map(it => [it.hotFixId, it]));
     for (const want of selectedItems) {
       const found = want.hotFixId ? byId.get(want.hotFixId) : undefined;
-      if (!found) continue;
-      // Recover package name: hotFixId is "<pkg>-<version>" and the
-      // fresh scan's title field contains "<pkg>: <oldver> → <newver>"
-      // when oldVersion was known (always true in scan output). Pull
-      // the pkg from the title.
-      const titleMatch = found.title?.match(/^([^:]+):/);
-      if (titleMatch) {
-        packageNames.push(titleMatch[1].trim());
+      // ⚠️ EL NOMBRE SALE DEL DATO, NO DE PARSEAR `title`. Hasta el 28-sep-2026
+      // esto hacía `found.title?.match(/^([^:]+):/)` sobre un texto de
+      // presentación que el escáner escribe de DOS formas —con dos puntos sólo
+      // cuando conoce la versión instalada—, y el `if` no tenía `else`: en una
+      // Ubuntu 26.04 donde apt no reportaba la versión vieja, 16 de 23
+      // pendientes se descartaban en silencio y el job salía `completed` sin
+      // haber instalado nada (T118, job a6b4c204).
+      const name = found?.packageName?.trim();
+      if (name) {
+        packageNames.push(name);
+      } else {
+        // Ni lo encontramos en el escaneo fresco, ni el escaneo nos dio nombre.
+        // Las dos cosas son «no puedo con esto», y las dos tienen que salir.
+        unresolved.push(want);
       }
     }
     // Dedupe — agent-side bulk-install can request the same pkg from
@@ -565,14 +656,22 @@ async function installApt(
     packageNames = Array.from(new Set(packageNames));
 
     if (packageNames.length === 0) {
+      // ⚠️ ESTO NO ES `no_updates`, Y LA DIFERENCIA ES EL BUG. El operador
+      // nombró paquetes y no se resolvió ninguno: eso no es «no había nada que
+      // hacer», es «no encontré lo que pediste». Reportarlo como `no_updates`
+      // hacía que el agente lo ACKeara con éxito y el portal lo cerrara como
+      // `completed`, sobre un equipo donde el parche seguía pendiente.
+      //
+      // `no_updates` queda para lo que de verdad lo es: un `selectAll` sin nada
+      // pendiente, que no pasa por aquí.
       return {
-        status: "no_updates",
+        status: "failed",
         mode,
-        selectedCount: 0,
+        selectedCount: selectedItems.length,
         installedCount: 0,
-        failedCount: 0,
+        failedCount: selectedItems.length,
         rebootRequired: false,
-        results: [],
+        results: eachAs(selectedItems, "failed", UNRESOLVED_REASON),
       };
     }
   }
@@ -658,6 +757,32 @@ async function installApt(
       rebootRequired,
     });
     const installedCount = packageNames.length;
+
+    // ⚠️ LA SEGUNDA MITAD DE LA MENTIRA. `eachAs(selectedItems, ...)` marcaba
+    // como instalado TODO lo pedido, incluido lo que nunca se llegó a pasar a
+    // apt. Con dos paquetes buenos y uno irresoluble, apt sale 0 y los tres
+    // salían instalados. apt sólo puede responder por lo que le dimos.
+    if (unresolved.length > 0) {
+      const enviados = selectedItems.filter(it => !unresolved.includes(it));
+      logger.warn("apt_install_partial_unresolved", {
+        installed: enviados.length,
+        unresolved: unresolved.length,
+        sampleUnresolved: unresolved.slice(0, 5).map(it => it.hotFixId),
+      });
+      return {
+        status: "partial",
+        mode,
+        selectedCount: selectedItems.length,
+        installedCount,
+        failedCount: unresolved.length,
+        rebootRequired,
+        results: [
+          ...eachAs(enviados, successResult),
+          ...eachAs(unresolved, "failed", UNRESOLVED_REASON),
+        ],
+      };
+    }
+
     return {
       status: "success",
       mode,

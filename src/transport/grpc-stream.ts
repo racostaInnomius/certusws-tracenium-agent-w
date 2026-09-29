@@ -1108,11 +1108,31 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
           }
 
           const result = resp.result || {};
-          const resultStatus = String(result?.status || "").trim().toLowerCase();
+          const rawStatus = String(result?.status || "").trim().toLowerCase();
           const installedCount = Number(result?.installedCount ?? 0);
           const failedCount = Number(result?.failedCount ?? 0);
           const rebootRequired = result?.rebootRequired === true;
           const results = normalizePmpResults(result?.results);
+
+          // ⚠️ `no_updates` SOBRE UNA LISTA EXPLÍCITA NO ES UN ÉXITO, ES UN
+          // FALLO DE EMPAREJAMIENTO. Si el operador nombró paquetes y no se
+          // instaló ninguno, «no había actualizaciones» es falso: las había —
+          // están en la lista que él acaba de mirar— y no supimos encontrarlas.
+          //
+          // Pasó en campo el 28-sep-2026 (T118, job a6b4c204): el privsvc de
+          // Linux sacaba el nombre del paquete parseando un texto de
+          // presentación, no casaba, descartaba en silencio y devolvía
+          // `no_updates`. El job se cerró como `completed` en 1,15 s sobre un
+          // equipo con 23 parches pendientes.
+          //
+          // El privsvc ya no contesta eso —ahora devuelve `failed` con motivo—
+          // pero ESTA GUARDA SE QUEDA, y no por desconfianza: el agente se
+          // actualiza ANTES que el paquete del privsvc, así que durante cada
+          // despliegue hay máquinas con el privsvc viejo. Es la misma razón por
+          // la que existe `patch-selection.ts`.
+          const emparejamientoVacio =
+            rawStatus === "no_updates" && kbArticleIds.length > 0 && installedCount === 0;
+          const resultStatus = emparejamientoVacio ? "no_matching_patches" : rawStatus;
 
           updatePmpState({
             status: resultStatus === "success" || resultStatus === "no_updates"
@@ -1169,9 +1189,17 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
             };
           }
 
+          // El motivo tiene que caber en el ACK, porque es lo único que el
+          // operador va a ver en la ficha del job. «no_matching_patches» a secas
+          // se lee como un código interno; hay que decir qué pasó y qué hacer.
+          const detalle = emparejamientoVacio
+            ? `; none of the ${kbArticleIds.length} requested patch(es) matched the device's live ` +
+              `pending list — they may already be installed, or this list is stale; re-scan and check`
+            : "";
+
           return {
             status: 2,
-            message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}${rebootSuffix}`
+            message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}${rebootSuffix}${detalle}`
           };
         } catch (err: any) {
           updatePmpState({
