@@ -25,12 +25,19 @@ import {
   readBatteryForUpdate,
   UPDATE_BATTERY_DEFERRED_PREFIX
 } from "./battery-gate";
+import {
+  decideInstallerGuard,
+  findRunningInstallers,
+  formatElapsed,
+  killInstaller,
+  UPDATE_INSTALLER_RUNNING_PREFIX
+} from "./macos-installer-guard";
 
 /** Prefix of the `skipped` reason when the update yielded to a privileged operation. */
 export const UPDATE_DEFERRED_PREFIX = "privileged_operation_in_progress:";
 
 /** Skips that mean "not now, send it again", as opposed to "nothing to do". */
-const RETRY_LATER_PREFIXES = [UPDATE_DEFERRED_PREFIX, UPDATE_BATTERY_DEFERRED_PREFIX];
+const RETRY_LATER_PREFIXES = [UPDATE_DEFERRED_PREFIX, UPDATE_BATTERY_DEFERRED_PREFIX, UPDATE_INSTALLER_RUNNING_PREFIX];
 
 /**
  * Which privileged operation, if any, the privsvc is running for this
@@ -302,6 +309,32 @@ export async function runUpdateTask(
   if (lowBattery !== null) {
     logger?.warn?.("[update] deferring: battery too low to install", { percent: lowBattery });
     return { status: "skipped", reason: `${UPDATE_BATTERY_DEFERRED_PREFIX}${lowBattery}%` };
+  }
+
+  // ── macOS: un installer nuestro de un intento anterior ───────────
+  //
+  // Ver macos-installer-guard.ts: el iMac de T1 acumuló tres, parados en la
+  // cola de PackageKit, porque cada intento lanzaba otro sin mirar. Reciente →
+  // se espera (ACK_RETRY, con su pid). Pasado el límite → la cola está
+  // atascada: se matan y el intento FALLA con el motivo, en vez de apilar otro.
+  if (isMacos) {
+    const guard = decideInstallerGuard(findRunningInstallers());
+    if (guard.action === "wait") {
+      logger?.warn?.("[update] deferring: our installer from a previous attempt is still running", guard);
+      return {
+        status: "skipped",
+        reason: `${UPDATE_INSTALLER_RUNNING_PREFIX}pid=${guard.pid},${formatElapsed(guard.elapsedSec)}`
+      };
+    }
+    if (guard.action === "stalled") {
+      for (const pid of guard.pids) killInstaller(pid);
+      const error =
+        `installer_stalled: ${guard.pids.length} installer(s) waiting on the macOS package queue ` +
+        `(PackageKit) for up to ${formatElapsed(guard.oldestSec)}; killed. Restart the Mac to clear the queue`;
+      markUpdateFailed(error);
+      logger?.error?.("[update] macOS installer stalled; killed", { pids: guard.pids, oldestSec: guard.oldestSec });
+      return { status: "failed", error };
+    }
   }
 
   // ── Fast-path: job payload override ───────────────────────────────

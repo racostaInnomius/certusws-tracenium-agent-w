@@ -60,6 +60,7 @@ const NON_LINUX = new Set([
   "/usr/bin/profiles", // macOS: estado de enrolamiento MDM
   "/usr/bin/vmmap", // macOS: imágenes de la caché compartida de dyld (librerías por proceso)
   "/usr/bin/log", // macOS: log unificado, causa del apagado anterior (DEX)
+  "/bin/ps", // macOS: installers nuestros aún vivos antes del self-update (macos-installer-guard)
 ]);
 
 const BIN_RE = /"((?:\/usr\/bin|\/usr\/sbin|\/bin|\/sbin)\/[a-zA-Z0-9._-]+)"/g;

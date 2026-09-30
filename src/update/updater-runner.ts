@@ -7,6 +7,7 @@ import path from "path";
 import type { RunUpdateResult } from "./update-types";
 import { updateUpdateState } from "./update-state";
 import { agentDataDir } from "../bootstrap/paths";
+import { INSTALLER_STALL_SEC, formatElapsed } from "./macos-installer-guard";
 
 /** How long a shim has to be untouched before we consider it abandoned. */
 const SHIM_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -408,6 +409,32 @@ export function runMacosPkgUpdate(pkgPath: string): RunUpdateResult {
 
     child.stdout?.on("data", capture(stdoutChunks));
     child.stderr?.on("data", capture(stderrChunks));
+
+    // Si PackageKit no lo atiende, `installer` espera para siempre: en el iMac
+    // de T1 (30-sep) había uno así desde hacía 8 h 40 min y nadie lo sabía.
+    // Si pasado el límite sigue vivo, se mata y el intento queda FALLIDO con el
+    // motivo, que la próxima comprobación y la consola pueden leer. Si el
+    // update sale bien, el postinstall reinicia el agente y este temporizador
+    // muere con él.
+    const stallTimer = setTimeout(() => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      console.error("[update] macOS installer stalled; killing it", {
+        pid: child.pid,
+        afterSec: INSTALLER_STALL_SEC
+      });
+      try { child.kill("SIGTERM"); } catch {}
+      try {
+        updateUpdateState({
+          updateInProgress: false,
+          status: "failed",
+          lastError:
+            `installer_stalled: no progress in ${formatElapsed(INSTALLER_STALL_SEC)} ` +
+            `waiting on the macOS package queue (PackageKit); killed`
+        });
+      } catch {}
+    }, INSTALLER_STALL_SEC * 1000);
+    stallTimer.unref();
+    child.on("exit", () => clearTimeout(stallTimer));
 
     child.on("error", (err) => {
       console.error("[update] installer spawn error", {
