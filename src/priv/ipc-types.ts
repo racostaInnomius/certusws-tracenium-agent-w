@@ -159,6 +159,9 @@ export type PrivSvcMethod =
   // Ctrl+Alt+Supr remoto. SÓLO Windows: SendInput no puede sintetizarlo y
   // PrivSvc llama a SendSAS como SYSTEM. macOS y Linux no tienen equivalente.
   | "input.sas"
+  // Fin de la sesión de pantalla (Windows): para el helper y, si se entró por
+  // la pantalla de Windows de un servidor, bloquea la consola.
+  | "screen.end"
   // Infrastructure Gateway — vCenter credential custody. PrivSvc runs as
   // SYSTEM/root and already owns the mTLS private key, so it is the only
   // component that can open a credential envelope sealed against this

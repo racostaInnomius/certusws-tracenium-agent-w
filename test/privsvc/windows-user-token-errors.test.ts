@@ -255,7 +255,7 @@ describe("captura del escritorio de inicio de sesión (sólo servidores)", () =>
 
   it("⚠️ la SKU se decide por el SO, no por nada editable desde el portal", () => {
     const sku = codeOnly(
-      text.slice(text.indexOf("private static string? WindowsProductType"),
+      text.slice(text.indexOf("static string? WindowsProductType("),
                  text.indexOf("private static uint? PickInteractiveSession"))
     );
     expect(sku).toContain("ProductOptions");
@@ -268,8 +268,8 @@ describe("captura del escritorio de inicio de sesión (sólo servidores)", () =>
     expect(sku).toContain("catch");
     expect(sku).toContain("return null;");
     const judge = codeOnly(
-      text.slice(text.indexOf("private static bool IsServerProductType"),
-                 text.indexOf("private static bool IsWindowsServerSku"))
+      text.slice(text.indexOf("static bool IsServerProductType("),
+                 text.indexOf("static bool IsWindowsServerSku("))
     );
     expect(judge).toContain("ServerNT");
     expect(judge).toContain("LanmanNT");
@@ -340,7 +340,7 @@ describe("UAC: seguir el escritorio seguro, y sólo por UAC", () => {
   function uac(): string {
     const i = text.indexOf("private static bool UacPromptActive");
     if (i < 0) return "";
-    return codeOnly(text.slice(i, text.indexOf("private static string? WindowsProductType", i)));
+    return codeOnly(text.slice(i, text.indexOf("static string? WindowsProductType(", i)));
   }
 
   it("⚠️ la señal es consent.exe, NO «perdí el escritorio»", () => {
@@ -397,5 +397,91 @@ describe("UAC: seguir el escritorio seguro, y sólo por UAC", () => {
       "la detección de UAC quedó detrás de la puerta de servidores: en un "
         + "endpoint los avisos seguirían saliendo en negro",
     ).toBeLessThan(serverGate);
+  });
+});
+
+// ── Consola BLOQUEADA y fin de sesión (29-sep-2026) ─────────────────────
+//
+// Decisiones del usuario tras recorrer el flujo entero del login de servidor:
+// la consola bloqueada se trata como «sin nadie dentro», y al terminar se
+// bloquea la consola si se entró por una pantalla de Windows. Las dos tocan
+// sesiones de otras personas, así que llevan las mismas guardas que la
+// pantalla de inicio de sesión.
+describe("consola bloqueada de un servidor", () => {
+  function method(name: string, next: string): string {
+    const i = text.indexOf(name);
+    if (i < 0) return "";
+    return codeOnly(text.slice(i, text.indexOf(next, i + name.length)));
+  }
+  const locked = () => method("private static bool ServerConsoleLocked(", "/// <summary>");
+
+  it("las mismas dos condiciones: clasificado por el portal Y SKU de servidor", () => {
+    const l = locked();
+    expect(l, "ya no existe ServerConsoleLocked").not.toBe("");
+    expect(l).toContain("_serverConsoleAllowed");
+    expect(l, "sin la SKU, un error clasificando tomaría la pantalla de bloqueo de un portátil")
+      .toContain("IsWindowsServerSku()");
+  });
+
+  it("⚠️ sólo la CONSOLA, y sólo para COMPARAR con la sesión ya elegida", () => {
+    // Una sesión RDP bloqueada es de otra persona. Y sustituir la sesión
+    // elegida por la consola reabriría el 1008.
+    expect(locked()).toContain("session == NativeMethods.WTSGetActiveConsoleSessionId()");
+  });
+
+  it("se consulta sólo cuando HAY usuario (la rama sin nadie tiene su propio camino)", () => {
+    const i = text.indexOf("private static (string? line,");
+    const exchange = codeOnly(text.slice(i, text.indexOf("StartHelperLocked(session", i)));
+    const picked = exchange.indexOf("if (picked is not null)");
+    const call = exchange.indexOf("ServerConsoleLocked(session)");
+    const otherwise = exchange.indexOf("else", call);
+    expect(call, "la consola bloqueada ya no se detecta").toBeGreaterThan(picked);
+    expect(exchange.slice(call, otherwise)).toContain("logonDesktop = true;");
+  });
+
+  it("ante la duda, NO bloqueada", () => {
+    const s = method("private static bool SessionLocked(", "private static extern bool WTSDisconnectSession");
+    expect(s).toContain("SignInScreenShape.IsLocked(");
+    expect(s.slice(s.indexOf("catch")), "un fallo leyendo WTS no puede tomar la pantalla de nadie")
+      .toContain("locked = false;");
+  });
+});
+
+describe("fin de la sesión de pantalla", () => {
+  const end = () => {
+    const i = text.indexOf("public static PrivSvcResponse EndSession(");
+    return i < 0 ? "" : codeOnly(text.slice(i, text.indexOf("private static bool HasUserToken", i)));
+  };
+
+  it("🔴 existe y para el helper — antes no lo paraba NADIE", () => {
+    const e = end();
+    expect(e, "sin EndSession el helper SYSTEM sigue en el escritorio seguro al terminar").not.toBe("");
+    // En el finally: se para aunque bloquear falle.
+    expect(e.slice(e.indexOf("finally"))).toContain("StopHelperLocked();");
+    expect(e.slice(e.indexOf("finally"))).toContain("_sawSignInScreen = false;");
+  });
+
+  it("⚠️ bloquea sólo la CONSOLA, nunca un RDP activo de otra persona", () => {
+    const e = end();
+    expect(e).toContain("WTSGetActiveConsoleSessionId()");
+    expect(e).toContain("WTSDisconnectSession(IntPtr.Zero, console,");
+    expect(e, "la decisión es la pura, con sus pruebas en C#").toContain("SignInScreenShape.ShouldLockOnEnd(");
+  });
+
+  it("lo enruta PrivSvc y lo llama el agente", () => {
+    const router = readFileSync(path.resolve(SRC, "../Router.cs"), "utf8");
+    expect(router).toContain('"screen.end" => Task.FromResult(SessionScreenCapture.EndSession(req.Id))');
+    const agent = readFileSync(path.resolve(__dirname, "../../src/plugins/rcp/screen-session.ts"), "utf8");
+    expect(agent).toContain('method: "screen.end"');
+  });
+});
+
+describe("Ctrl+Alt+Supr comprueba la SKU antes que nada", () => {
+  it("⚠️ la SKU de servidor, antes de mirar o escribir la directiva", () => {
+    const sas = codeOnly(readFileSync(path.resolve(SRC, "../SecureAttention.cs"), "utf8"));
+    const sku = sas.indexOf("SessionScreenCapture.IsServerProductType(sku)");
+    const policy = sas.indexOf("SignInScreenShape.DecideSasPolicy(policy)");
+    expect(sku, "sin la SKU, se escribiría la directiva en el portátil de alguien").toBeGreaterThan(-1);
+    expect(policy).toBeGreaterThan(sku);
   });
 });

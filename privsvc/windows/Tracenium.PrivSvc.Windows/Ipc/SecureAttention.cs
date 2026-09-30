@@ -28,10 +28,11 @@ namespace Tracenium.PrivSvc.Windows.Ipc;
 /// devuelve nada— si la directiva «Disable or enable software Secure Attention
 /// Sequence» no autoriza a los servicios. Por defecto no lo hace.
 ///
-/// ⚠️ Aquí se LEE y se informa; no se cambia. Es una directiva de seguridad
-/// del cliente, a menudo puesta por GPO, y reescribirla por nuestra cuenta
-/// pisaría una decisión que no es nuestra. Si no está, el operador recibe el
-/// nombre exacto de la directiva y del valor, no un «no funcionó».
+/// ⭐ Decisión del usuario (29-sep-2026, tras toparse con ella en campo): si
+/// la directiva NO está configurada, PrivSvc la pone a 1 (servicios). Si
+/// alguien la fijó explícitamente —casi siempre una GPO— no se pisa: se
+/// explica con el nombre exacto. La decisión pura y sus pruebas están en
+/// SignInScreenShape.DecideSasPolicy.
 /// </summary>
 public static class SecureAttention
 {
@@ -41,15 +42,6 @@ public static class SecureAttention
 
     [DllImport("sas.dll", SetLastError = false)]
     private static extern void SendSAS([MarshalAs(UnmanagedType.Bool)] bool asUser);
-
-    /// <summary>
-    /// ¿Permite la directiva que un SERVICIO genere la SAS?
-    ///
-    /// Valores documentados: 0 = nadie, 1 = servicios, 2 = aplicaciones de
-    /// accesibilidad, 3 = servicios y aplicaciones de accesibilidad. Sólo 1 y 3
-    /// sirven desde aquí. Ausente = no configurada = no.
-    /// </summary>
-    internal static bool ServicesAllowed(int? value) => value is 1 or 3;
 
     public static PrivSvcResponse Send(PrivSvcRequest req)
     {
@@ -85,15 +77,39 @@ public static class SecureAttention
                 $"Could not read {PolicyValue} to check whether Ctrl+Alt+Del can be sent: {ex.Message}");
         }
 
-        if (!ServicesAllowed(policy))
+        var configuredByUs = false;
+        switch (SignInScreenShape.DecideSasPolicy(policy))
         {
-            return PrivSvcResponse.Fail(req.Id, "sas_not_allowed",
-                "Windows on this device does not let services send Ctrl+Alt+Del " +
-                $"({PolicyValue} is {(policy is null ? "not configured" : policy.ToString())}). " +
-                "Enable the policy 'Disable or enable software Secure Attention Sequence' " +
-                "(Computer Configuration > Administrative Templates > Windows Components > " +
-                "Windows Logon Options) and set it to 'Services', or set " +
-                $@"HKLM\{PolicyKey}\{PolicyValue} = 1.");
+            case SasPolicyAction.RefuseExplicit:
+                // Alguien la fijó a propósito —casi siempre una GPO, que la
+                // reescribiría en el siguiente refresco—. No se pelea.
+                return PrivSvcResponse.Fail(req.Id, "sas_not_allowed",
+                    $"Windows on this device is explicitly configured not to let services send " +
+                    $"Ctrl+Alt+Del ({PolicyValue} = {policy}), usually by Group Policy. " +
+                    "Tracenium does not override an explicit setting. Set the policy " +
+                    "'Disable or enable software Secure Attention Sequence' (Computer Configuration > " +
+                    "Administrative Templates > Windows Components > Windows Logon Options) to " +
+                    "'Services' or 'Services and Ease of Access applications'.");
+
+            case SasPolicyAction.ConfigureThenSend:
+                // ⭐ Decisión del usuario, 29-sep-2026: en un servidor
+                // clasificado, si nadie la ha configurado, la ponemos. Autoriza
+                // a SERVICIOS, que ya corren como SYSTEM — la protección de la
+                // SAS es contra programas de usuario, y ésos siguen fuera.
+                try
+                {
+                    using var key = Registry.LocalMachine.CreateSubKey(PolicyKey, writable: true);
+                    key.SetValue(PolicyValue, 1, RegistryValueKind.DWord);
+                    configuredByUs = true;
+                    IpcLog.Write($@"[sas] HKLM\{PolicyKey}\{PolicyValue} no estaba configurada; puesta a 1 para permitir Ctrl+Alt+Supr remoto");
+                }
+                catch (Exception ex)
+                {
+                    return PrivSvcResponse.Fail(req.Id, "sas_policy_write_failed",
+                        $"{PolicyValue} is not configured and Tracenium could not set it: {ex.Message}. " +
+                        $@"Set HKLM\{PolicyKey}\{PolicyValue} = 1 to allow Ctrl+Alt+Del.");
+                }
+                break;
         }
 
         try
@@ -111,7 +127,11 @@ public static class SecureAttention
         return PrivSvcResponse.Success(req.Id, new Dictionary<string, object?>
         {
             ["sent"] = true,
-            ["policy"] = policy
+            ["policy"] = configuredByUs ? 1 : policy,
+            // Queda constancia de que la directiva la cambiamos nosotros: el
+            // agente lo registra, y es lo primero que hay que poder contestar
+            // si el cliente pregunta quién tocó su configuración.
+            ["policyConfiguredByTracenium"] = configuredByUs
         });
     }
 }

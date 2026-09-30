@@ -46,5 +46,6 @@
          El código es el del PrivSvc, incluido por referencia — un fork
          divergiría en el mapeo de coordenadas y en la tabla de teclas. -->
     <Compile Include="../Tracenium.PrivSvc.Windows/Ipc/InputInjection.cs" />
+    <Compile Include="../Tracenium.PrivSvc.Windows/Ipc/SignInScreenShape.cs" />
   </ItemGroup>
 </Project>

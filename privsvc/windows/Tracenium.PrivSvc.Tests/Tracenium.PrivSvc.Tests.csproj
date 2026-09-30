@@ -54,6 +54,7 @@
          las escrituras, las guardas y la plantilla .inf son puros
          (System.Text.Json); la escritura real queda en PmpRemediation.cs. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\GenericWriteShape.cs" />
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\SignInScreenShape.cs" />
     <!-- pmp.revert: validar el stateBefore (claves fijas, tipos JSON) y
          decidir qué se escribe es puro; el registro y PowerShell se quedan
          en PmpRemediation.cs. Un revert que valida mal escribe en el

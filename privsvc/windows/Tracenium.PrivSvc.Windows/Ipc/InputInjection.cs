@@ -85,6 +85,7 @@ internal static class InputInjection
     // KEYBDINPUT.dwFlags
     private const uint KEYEVENTF_KEYUP       = 0x0002;
     private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
+    private const uint KEYEVENTF_UNICODE     = 0x0004;
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
@@ -120,6 +121,8 @@ internal static class InputInjection
                     return DoKey(req.Id, p, down: false);
                 case "releaseAll":
                     return DoReleaseAll(req.Id);
+                case "typeText":
+                    return DoTypeText(req.Id, p);
                 default:
                     return PrivSvcResponse.Fail(req.Id, "input_unknown_op",
                         $"unknown input op: {op}");
@@ -250,6 +253,48 @@ internal static class InputInjection
         };
         return Send(reqId, new[] { inp });
     }
+
+    /// <summary>
+    /// Escribir un TEXTO, no pulsar teclas: cada carácter viaja como carácter
+    /// (KEYEVENTF_UNICODE), sin pasar por la distribución de teclado de
+    /// ninguno de los dos lados.
+    ///
+    /// 🔴 Por qué: la entrada normal manda teclas físicas, y el servidor las
+    /// interpreta con SU distribución. Desde un Mac con teclado español, `@`
+    /// es Option+2 y al servidor le llegaba Alt+2 — en el campo de contraseña,
+    /// «contraseña incorrecta» sin pista. Ver SignInScreenShape.PlanTypeText.
+    ///
+    /// ⚠️ El texto casi siempre es una credencial: aquí no se registra nunca,
+    /// ni en error. Sólo el número de caracteres.
+    /// </summary>
+    private static PrivSvcResponse DoTypeText(string reqId, Dictionary<string, object> p)
+    {
+        var (units, error) = SignInScreenShape.PlanTypeText(GetString(p, "text"));
+        if (units is null)
+            return PrivSvcResponse.Fail(reqId, "input_bad_text", error ?? "Nothing to type.");
+
+        var inputs = new List<INPUT>(units.Count * 2);
+        foreach (var u in units)
+        {
+            if (u.IsUnicode)
+            {
+                inputs.Add(KeyInput(0, u.Char, KEYEVENTF_UNICODE));
+                inputs.Add(KeyInput(0, u.Char, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
+            }
+            else
+            {
+                inputs.Add(KeyInput(u.Vk, '\0', 0));
+                inputs.Add(KeyInput(u.Vk, '\0', KEYEVENTF_KEYUP));
+            }
+        }
+        return Send(reqId, inputs.ToArray());
+    }
+
+    private static INPUT KeyInput(ushort vk, char scan, uint flags) => new INPUT
+    {
+        type = INPUT_KEYBOARD,
+        U = new INPUTUNION { ki = new KEYBDINPUT { wVk = vk, wScan = scan, dwFlags = flags } }
+    };
 
     private static PrivSvcResponse DoReleaseAll(string reqId)
     {

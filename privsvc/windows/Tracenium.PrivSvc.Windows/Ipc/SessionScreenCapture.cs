@@ -91,6 +91,36 @@ internal static class SessionScreenCapture
     /// </summary>
     private static bool _noUserSignedIn;
 
+    /// <summary>
+    /// ¿La última captura fue la pantalla de BLOQUEO de un servidor (hay
+    /// usuario, pero su sesión está bloqueada)? Viaja al navegador junto a
+    /// `_noUserSignedIn`: el visor arranca en control con cualquiera de las
+    /// dos. Dato, no conclusión — son dos situaciones distintas y el visor
+    /// puede querer decirlas distinto.
+    /// </summary>
+    private static bool _consoleLocked;
+
+    /// <summary>
+    /// ¿Se ha pasado en ESTA sesión remota por una pantalla de Windows (login
+    /// o bloqueo)? Es lo que decide si al terminar se bloquea la consola: si el
+    /// operador entró con credenciales del servidor, no se deja la sesión
+    /// abierta al irse. Se pone a false en EndSession.
+    /// </summary>
+    private static bool _sawSignInScreen;
+
+    // Caché del sondeo de bloqueo: se consulta en cada fotograma (5-8 por
+    // segundo) y la consulta WTS no hace falta tan a menudo. Mismo criterio
+    // que el de UAC.
+    private static DateTime _lastLockCheckUtc = DateTime.MinValue;
+    private static uint _lastLockSession = uint.MaxValue;
+    private static bool _lastLocked;
+
+    private const int WTSSessionInfoEx = 25;
+
+    [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool WTSQuerySessionInformationW(
+        IntPtr hServer, uint sessionId, int infoClass, out IntPtr buffer, out uint bytesReturned);
+
     private static DateTime _lastUacCheckUtc = DateTime.MinValue;
     private static bool _uacActive;
     private static StreamReader? _stderr;
@@ -118,6 +148,7 @@ internal static class SessionScreenCapture
         if (response.Ok && response.Result is Dictionary<string, object?> result)
         {
             result["noUserSignedIn"] = _noUserSignedIn;
+            result["consoleLocked"] = _consoleLocked;
         }
         return response;
     }
@@ -232,12 +263,32 @@ internal static class SessionScreenCapture
                 {
                     session = picked.Value;
                     _noUserSignedIn = false;
-                    // ⭐ UAC vive en el escritorio SEGURO. Mientras el aviso
-                    // esté abierto el helper tiene que estar allí, o el
-                    // operador ve negro justo cuando la máquina pide permiso.
-                    // Al contestarlo, `consent.exe` desaparece y la comparación
-                    // de abajo devuelve el helper al escritorio del usuario.
-                    logonDesktop = UacPromptActive(session);
+
+                    // ⭐ Consola BLOQUEADA en un servidor: se trata igual que
+                    // «sin nadie dentro» — decisión del usuario, 29-sep-2026.
+                    // Muy común en servidores: alguien entró, se fue y la
+                    // sesión se bloqueó sola. Sin esto el helper se quedaba en
+                    // el escritorio del usuario, la pantalla de bloqueo vive en
+                    // Winlogon, y el operador veía negro y tecleaba a ciegas.
+                    //
+                    // Las MISMAS dos condiciones que la pantalla de inicio de
+                    // sesión: clasificado como servidor por el portal y SKU de
+                    // servidor según Windows. En el portátil de nadie.
+                    _consoleLocked = ServerConsoleLocked(session);
+                    if (_consoleLocked)
+                    {
+                        logonDesktop = true;
+                        _sawSignInScreen = true;
+                    }
+                    else
+                    {
+                        // ⭐ UAC vive en el escritorio SEGURO. Mientras el aviso
+                        // esté abierto el helper tiene que estar allí, o el
+                        // operador ve negro justo cuando la máquina pide permiso.
+                        // Al contestarlo, `consent.exe` desaparece y la comparación
+                        // de abajo devuelve el helper al escritorio del usuario.
+                        logonDesktop = UacPromptActive(session);
+                    }
                 }
                 else
                 {
@@ -296,6 +347,8 @@ internal static class SessionScreenCapture
                     session = console;
                     logonDesktop = true;
                     _noUserSignedIn = true;
+                    _consoleLocked = false;
+                    _sawSignInScreen = true;
                 }
 
                 // Si el usuario cerró sesión y entró otro, el helper viejo
@@ -365,12 +418,6 @@ internal static class SessionScreenCapture
                 return (null, PrivSvcResponse.Fail(reqId, "screen_capture_failed", ex.Message));
             }
         }
-    }
-
-    /// <summary>Para el helper. Lo llama el cierre de la sesión de screen share.</summary>
-    public static void Stop()
-    {
-        lock (Gate) StopHelperLocked();
     }
 
     private static PrivSvcResponse ParseHelperLine(string reqId, string line)
@@ -622,6 +669,131 @@ internal static class SessionScreenCapture
             UserScopedUninstall.Native.WTSFreeMemory(buffer);
         }
         return null;
+    }
+
+    /// <summary>
+    /// ¿Es `session` la consola BLOQUEADA de un servidor clasificado?
+    ///
+    /// Las MISMAS condiciones que la pantalla de inicio de sesión, en el mismo
+    /// orden de coste: la clasificación del portal (gratis), que sea la sesión
+    /// de consola, la SKU de servidor según Windows, y por último el sondeo WTS.
+    ///
+    /// ⚠️ Sólo la sesión de CONSOLA. Una sesión RDP bloqueada es de alguien
+    /// conectado desde otro sitio; «consola bloqueada» es lo que se decidió, y
+    /// es lo que después se bloquea al salir. La consola aquí sólo se COMPARA
+    /// con la sesión ya elegida — nunca la sustituye: eso reabriría el 1008.
+    /// </summary>
+    private static bool ServerConsoleLocked(uint session) =>
+        _serverConsoleAllowed
+        && session == NativeMethods.WTSGetActiveConsoleSessionId()
+        && IsWindowsServerSku()
+        && SessionLocked(session);
+
+    /// <summary>
+    /// ¿Está bloqueada esta sesión? WTSINFOEX nivel 1, `SessionFlags`.
+    /// Cacheado 500 ms salvo `fresh`. Cualquier fallo cuenta como NO
+    /// bloqueada: ante la duda no se toma la pantalla de bloqueo de nadie.
+    /// La disposición de la estructura está fijada por una prueba — ver
+    /// SignInScreenShape.
+    /// </summary>
+    private static bool SessionLocked(uint session, bool fresh = false)
+    {
+        var now = DateTime.UtcNow;
+        if (!fresh && session == _lastLockSession &&
+            (now - _lastLockCheckUtc).TotalMilliseconds < 500)
+        {
+            return _lastLocked;
+        }
+
+        var locked = false;
+        var buf = IntPtr.Zero;
+        try
+        {
+            if (WTSQuerySessionInformationW(IntPtr.Zero, session, WTSSessionInfoEx,
+                                            out buf, out _) && buf != IntPtr.Zero)
+            {
+                var info = Marshal.PtrToStructure<WtsInfoEx>(buf);
+                if (info.Level == 1) locked = SignInScreenShape.IsLocked(info.Data.SessionFlags);
+            }
+        }
+        catch
+        {
+            locked = false;
+        }
+        finally
+        {
+            if (buf != IntPtr.Zero) UserScopedUninstall.Native.WTSFreeMemory(buf);
+        }
+
+        _lastLockSession = session;
+        _lastLockCheckUtc = now;
+        _lastLocked = locked;
+        return locked;
+    }
+
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    private static extern bool WTSDisconnectSession(IntPtr hServer, uint sessionId, bool wait);
+
+    /// <summary>
+    /// Fin de la sesión de screen share: para el helper y, si el operador
+    /// entró por una pantalla de Windows, bloquea la consola.
+    ///
+    /// 🔴 Antes no lo llamaba NADIE: `Stop()` no tenía ni una llamada y el
+    /// helper tampoco caducaba, así que seguía vivo indefinidamente al
+    /// terminar la sesión — en el caso del login, un proceso SYSTEM pegado al
+    /// escritorio seguro. Ahora lo llama el agente al cerrar la última sesión
+    /// de pantalla del equipo (`screen.end`).
+    ///
+    /// «Bloquear» es `WTSDisconnectSession` sobre la consola —lo que hace
+    /// `tsdiscon`—: la sesión sigue viva con sus procesos, la consola vuelve a
+    /// «Presiona Ctrl+Alt+Supr», y entrar con ese usuario la retoma. Se hace
+    /// desde el servicio y no con LockWorkStation desde el helper porque ése
+    /// exige estar en el escritorio del usuario, y al terminar el helper puede
+    /// seguir en Winlogon.
+    /// </summary>
+    public static PrivSvcResponse EndSession(string reqId)
+    {
+        lock (Gate)
+        {
+            var locked = false;
+            string? note = null;
+            try
+            {
+                if (_sawSignInScreen)
+                {
+                    var console = NativeMethods.WTSGetActiveConsoleSessionId();
+                    var hasUser = console != 0xFFFFFFFF && console != 0 && HasUserToken(console);
+                    var isLocked = hasUser && SessionLocked(console, fresh: true);
+                    if (SignInScreenShape.ShouldLockOnEnd(true, hasUser, isLocked))
+                    {
+                        locked = WTSDisconnectSession(IntPtr.Zero, console, false);
+                        if (!locked) note = $"WTSDisconnectSession failed ({Marshal.GetLastWin32Error()})";
+                        IpcLog.Write(locked
+                            ? $"[screencap] fin de sesión: se entró por la pantalla de Windows; consola {console} bloqueada"
+                            : $"[screencap] fin de sesión: NO se pudo bloquear la consola {console}: {note}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                note = ex.Message;
+            }
+            finally
+            {
+                StopHelperLocked();
+                _sawSignInScreen = false;
+                _noUserSignedIn = false;
+                _consoleLocked = false;
+                _lastLockSession = uint.MaxValue;
+            }
+
+            return PrivSvcResponse.Success(reqId, new Dictionary<string, object?>
+            {
+                ["stopped"] = true,
+                ["consoleLocked"] = locked,
+                ["note"] = note
+            });
+        }
     }
 
     /// <summary>¿Hay un usuario con token en esta sesión? Sin efectos.</summary>

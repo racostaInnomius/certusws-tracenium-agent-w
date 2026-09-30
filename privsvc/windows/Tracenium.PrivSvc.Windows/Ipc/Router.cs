@@ -286,6 +286,10 @@ public sealed class Router
             // RCP M3.S1 — screen capture IPC (Node.js → PrivSvc).
             // PrivSvc owns the GDI+ BitBlt call; result is base64 JPEG.
             "screen.capture" => IpcGrpcHandlers.HandleScreenCapture(req),
+            // Fin de la sesión de pantalla: para el helper y, si se entró por la
+            // pantalla de Windows de un servidor, bloquea la consola. Antes no
+            // había NADA que parase el helper. Ver SessionScreenCapture.EndSession.
+            "screen.end" => Task.FromResult(SessionScreenCapture.EndSession(req.Id)),
             // RCP M3.S4 — synthetic input injection (mouse + keyboard)
             // forwarded from the operator's browser via the agent.
             "input.inject" => IpcGrpcHandlers.HandleInputInject(req),

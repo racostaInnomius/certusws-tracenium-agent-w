@@ -215,10 +215,26 @@ const TERMINAL_RETRY_INTERVAL_MS = 5_000;
 // that an operator is unlikely to act on stale pixels.
 const KEYFRAME_INTERVAL_MS = 4_000;
 
+// Sesiones de pantalla vivas en ESTE proceso. El helper de captura de Windows
+// es uno por equipo y lo comparten todas; `screen.end` (pararlo y, si se entró
+// por la pantalla de Windows, bloquear la consola) sólo puede salir al cerrar
+// la ÚLTIMA. Si no, el operador que se va le bloquearía la consola al que
+// sigue dentro.
+let liveScreenSessions = 0;
+/** Sólo para pruebas: el contador es de proceso y sobrevive entre casos. */
+export function __resetLiveScreenSessionsForTests(): void {
+  liveScreenSessions = 0;
+}
+
 // Cuánto se espera al PRIMER fotograma antes de decir que no llega. Holgado a
 // propósito: un arranque normal lo entrega en el primer segundo, y este aviso
 // solo debe salir cuando de verdad no va a llegar solo.
 const FIRST_FRAME_GRACE_MS = 8_000;
+
+// Máximo por «Type text». Igual que SignInScreenShape.TypeTextMaxChars en
+// PrivSvc: da de sobra para usuario y contraseña. Se corta también aquí para
+// no mandar por IPC lo que el otro lado va a rechazar.
+const TYPE_TEXT_MAX_CHARS = 1024;
 
 // How often to emit the throttled stream-stats line. Per-frame logging would
 // be spam at 5-15fps, but with NOTHING logged there is no way to tell from an
@@ -302,6 +318,8 @@ export class ScreenSession {
   private firstFrameWarned = false;
   private lastSilentCode = "";
   private lastNoUserSignedIn = false;
+  private lastConsoleLocked = false;
+  private privEnded = false;
   // Throttled stream stats — see STATS_INTERVAL_MS. Reset on each emit so
   // every line describes one window rather than the whole session.
   private statsWindowStartMs = 0;
@@ -313,6 +331,7 @@ export class ScreenSession {
   constructor(dc: any, args: ScreenSessionArgs) {
     this.dc = dc;
     this.args = args;
+    liveScreenSessions += 1;
 
     dc.onMessage((raw: any) => {
       if (this.disposed) return;
@@ -782,7 +801,9 @@ export class ScreenSession {
             // Sin esto el visor leería `undefined` como «ya hay alguien» en
             // cuanto el operador moviera el deslizador de fps.
             noUserSignedIn: this.lastNoUserSignedIn,
-            canSendSas: this.sasAllowedHere()
+            consoleLocked: this.lastConsoleLocked,
+            canSendSas: this.sasAllowedHere(),
+            canTypeText: this.typeTextAllowedHere()
           });
         }
         // Reschedule with new interval.
@@ -815,6 +836,11 @@ export class ScreenSession {
       // Ctrl+Alt+Supr desde el botón del visor. Ver sendSecureAttention().
       case "sas":
         this.sendSecureAttention();
+        break;
+
+      // Texto como CARACTERES, no como teclas físicas. Ver sendTypeText().
+      case "typeText":
+        this.sendTypeText(msg);
         break;
 
       // El operador SOLTÓ el control (Esc o el interruptor del visor).
@@ -932,6 +958,83 @@ export class ScreenSession {
           terminal: false
         });
       });
+  }
+
+  /**
+   * Escribe un texto en el equipo remoto como caracteres Unicode.
+   *
+   * 🔴 El siguiente tropiezo del recorrido del login, visto ANTES de llegar
+   * al campo: la entrada normal manda teclas físicas (`KeyboardEvent.code`) y
+   * el servidor las interpreta con SU distribución. Desde un Mac con teclado
+   * español, `@` es Option+2 y al servidor le llega Alt+2. En la contraseña no
+   * se ve lo que llega: «contraseña incorrecta» y ninguna pista. Y Cmd+V para
+   * pegar llegaba como Win+V.
+   *
+   * ⚠️ El texto es casi siempre una credencial. No se registra en ningún log;
+   * la grabación guarda sólo cuántos caracteres (ver redactInputEvent).
+   */
+  private sendTypeText(msg: any): void {
+    const { ctx, sessionId } = this.args;
+    const text = typeof msg?.text === "string" ? msg.text : "";
+    if (!text) return;
+
+    if (!this.typeTextAllowedHere()) {
+      this.send({
+        op: "error",
+        code: "type_text_unsupported",
+        message: "Typing text is only available on Windows devices for now.",
+        terminal: false
+      });
+      return;
+    }
+    if (text.length > TYPE_TEXT_MAX_CHARS) {
+      this.send({
+        op: "error",
+        code: "type_text_too_long",
+        message: `Text is longer than ${TYPE_TEXT_MAX_CHARS} characters.`,
+        terminal: false
+      });
+      return;
+    }
+
+    const gate = controlGate(this.consentRequired(), this.controlConsent);
+    if (gate.kind === "ask") {
+      this.controlConsent = "pending";
+      void this.askForControlConsent();
+      return;
+    }
+    if (gate.kind === "drop") return;
+
+    if (!this.inputSeen) {
+      this.inputSeen = true;
+      this.publishIndicator();
+    }
+    this.recorder?.offerInput("typeText", { text });
+
+    ctx.priv
+      .call({ v: 1, id: `input.inject.${Date.now()}`, method: "input.inject", params: { op: "typeText", text } })
+      .then((res: any) => {
+        if (res?.ok === false) {
+          this.send({
+            op: "error",
+            code: String(res?.error?.code || "type_text_failed"),
+            message: String(res?.error?.message || "The text could not be typed."),
+            terminal: false
+          });
+          return;
+        }
+        const inner = res?.result ?? res;
+        if (inner && inner.ok === false) this.reportInputBlocked(String(inner.hint || ""));
+      })
+      .catch((err: any) => {
+        // Sin el texto, ni en el mensaje de error.
+        ctx.logger?.debug?.("[rcp.screen] typeText failed", { sessionId, chars: text.length, err: err?.message });
+      });
+  }
+
+  /** «Type text» sólo donde el helper sabe hacerlo: Windows. */
+  private typeTextAllowedHere(): boolean {
+    return process.platform === "win32";
   }
 
   // M3.S4 — Forward an input op to PrivSvc.SendInput via IPC.
@@ -1236,6 +1339,10 @@ export class ScreenSession {
       // sin un usuario conectado YA implica teclado y ratón. Sólo Windows lo
       // manda; ausente = false, que es lo seguro.
       const noUserSignedIn = result.result?.noUserSignedIn === true;
+      // Consola bloqueada de un servidor: mismo trato que «sin nadie dentro»
+      // (decisión del usuario). Llega aparte porque son dos situaciones y el
+      // visor puede querer contarlas distinto.
+      const consoleLocked = result.result?.consoleLocked === true;
 
       // Send screenInfo on the first frame, when screen resolution changes, or
       // when somebody signs in / out (the viewer's control mode depends on it).
@@ -1243,14 +1350,17 @@ export class ScreenSession {
         this.seq === 0 ||
         width !== this.lastWidth ||
         height !== this.lastHeight ||
-        noUserSignedIn !== this.lastNoUserSignedIn
+        noUserSignedIn !== this.lastNoUserSignedIn ||
+        consoleLocked !== this.lastConsoleLocked
       ) {
         this.lastNoUserSignedIn = noUserSignedIn;
+        this.lastConsoleLocked = consoleLocked;
         this.send({
-          op: "screenInfo", width, height, fps: this.fps, noUserSignedIn,
+          op: "screenInfo", width, height, fps: this.fps, noUserSignedIn, consoleLocked,
           // El visor enseña el botón de Ctrl+Alt+Supr sólo si esto es true: la
           // página no sabe ni el SO ni la clase del equipo. Ver sasAllowedHere().
-          canSendSas: this.sasAllowedHere()
+          canSendSas: this.sasAllowedHere(),
+          canTypeText: this.typeTextAllowedHere()
         });
 
         if (!this.auditStartedSent) {
@@ -1440,6 +1550,7 @@ export class ScreenSession {
     // envía ni un fotograma de más, y al teardown le queda un tick de
     // setImmediate para que el mensaje salga por el canal.
     this.sendStopReason(reason);
+    this.endPrivSession();
 
     if (this.auditStartedSent) {
       this.args.sendScreenAudit({
@@ -1483,9 +1594,44 @@ export class ScreenSession {
         errorMessage: ""
       });
     }
+    this.endPrivSession();
     this.args.ctx.logger?.info?.("[rcp.screen] session disposed", {
       sessionId: this.args.sessionId,
       reason
     });
+  }
+
+  /**
+   * Avisa a PrivSvc de que ya no queda sesión de pantalla: para el helper y,
+   * si en ella se entró por la pantalla de Windows de un servidor, bloquea la
+   * consola (decisión del usuario, 29-sep-2026).
+   *
+   * 🔴 Antes nada paraba el helper: seguía vivo al terminar la sesión — en el
+   * caso del login, un proceso SYSTEM pegado al escritorio seguro.
+   *
+   * Una vez por sesión (hay dos caminos de salida: stopCapture y dispose), y
+   * `screen.end` sólo con la ÚLTIMA sesión viva. Sólo Windows: el helper y la
+   * pantalla de Windows no existen en macOS/Linux.
+   */
+  private endPrivSession(): void {
+    if (this.privEnded) return;
+    this.privEnded = true;
+    liveScreenSessions = Math.max(0, liveScreenSessions - 1);
+    if (liveScreenSessions > 0 || process.platform !== "win32") return;
+
+    const { ctx, sessionId } = this.args;
+    Promise.resolve()
+      .then(() => ctx.priv.call({ v: 1, id: `screen.end.${Date.now()}`, method: "screen.end", params: {} }))
+      .then((res: any) => {
+        const r = res?.result ?? {};
+        if (r.consoleLocked) {
+          ctx.logger?.info?.("[rcp.screen] se entró por la pantalla de Windows; consola bloqueada al salir", { sessionId });
+        } else if (r.note) {
+          ctx.logger?.warn?.("[rcp.screen] no se pudo bloquear la consola al salir", { sessionId, note: r.note });
+        }
+      })
+      .catch((err: any) => {
+        ctx.logger?.warn?.("[rcp.screen] screen.end falló", { sessionId, err: err?.message || String(err) });
+      });
   }
 }

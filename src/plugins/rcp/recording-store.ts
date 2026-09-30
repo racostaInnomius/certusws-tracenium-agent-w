@@ -283,6 +283,13 @@ export function redactInputEvent(op: string, msg: any): Record<string, unknown> 
     return base;
   }
   if (op === "releaseAll") return base;
+  // ⚠️ «Type text» es casi siempre una credencial. Antes caía por casualidad
+  // en la rama del ratón, que sólo copia coordenadas; ahora es explícito y lo
+  // fija una prueba: se guarda CUÁNTOS caracteres, nunca cuáles.
+  if (op === "typeText") {
+    base.chars = typeof msg?.text === "string" ? msg.text.length : 0;
+    return base;
+  }
   // Ratón y rueda: coordenadas y botón, que es lo que el vídeo ya enseña.
   if (msg?.x !== undefined) base.x = Number(msg.x) || 0;
   if (msg?.y !== undefined) base.y = Number(msg.y) || 0;
