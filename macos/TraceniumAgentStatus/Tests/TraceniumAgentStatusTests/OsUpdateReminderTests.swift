@@ -120,6 +120,39 @@ final class OsUpdateReminderTests: XCTestCase {
         XCTAssertTrue(events.isEmpty)
     }
 
+    /// 30-sep, JPR-MacBookPro: la ventana de las 06:43 se quedó abierta hasta
+    /// las 12:42; «Remind me later» a las 12:42:23 y volvió a salir a las
+    /// 12:42:26. El siguiente aviso cuenta desde la respuesta, no desde que se
+    /// enseñó.
+    func testRemindMeLaterRestartsTheCadenceFromTheAnswer() {
+        let defaults = freshDefaults()
+        let shownAt = deadline.addingTimeInterval(-2 * UserActionCadence.day) // últimos 3 días: cada 4 h
+        let answeredAt = shownAt.addingTimeInterval(6 * 3600)                 // persona fuera 6 h
+        var clockNow = answeredAt
+        var events: [UserActionEventSink.Event] = []
+        let reminder = OsUpdateReminder(defaults: defaults, sink: { _, e in events.append(e) }, clock: { clockNow })
+        defaults.set(shownAt, forKey: "userAction.lastShown.act-00000001")
+        reminder.shownActionIds = ["act-00000001"]   // la ventana de las 06:43, abierta
+
+        reminder.laterTapped()
+        clockNow = answeredAt.addingTimeInterval(3)
+        reminder.handle([update("act-00000001", label: "macOS 27.0.1-26A434")], now: clockNow)
+        XCTAssertEqual(events, [.snoozed], "a los 3 s de «más tarde» no puede volver a salir")
+
+        // Pasado el intervalo desde la RESPUESTA, sí toca.
+        XCTAssertEqual(defaults.object(forKey: "userAction.lastShown.act-00000001") as? Date, answeredAt)
+    }
+
+    func testClosingWithTheXAlsoRestartsTheCadence() {
+        let defaults = freshDefaults()
+        let answeredAt = deadline.addingTimeInterval(-2 * UserActionCadence.day)
+        let reminder = OsUpdateReminder(defaults: defaults, sink: { _, _ in }, clock: { answeredAt })
+        defaults.set(answeredAt.addingTimeInterval(-6 * 3600), forKey: "userAction.lastShown.act-00000001")
+        reminder.shownActionIds = ["act-00000001"]
+        reminder.windowWillClose(Notification(name: NSWindow.willCloseNotification))
+        XCTAssertEqual(defaults.object(forKey: "userAction.lastShown.act-00000001") as? Date, answeredAt)
+    }
+
     func testNoActionsNothingShown() {
         var events: [UserActionEventSink.Event] = []
         let reminder = OsUpdateReminder(defaults: freshDefaults()) { _, event in events.append(event) }

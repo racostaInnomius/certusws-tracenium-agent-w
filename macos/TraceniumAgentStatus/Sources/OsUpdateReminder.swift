@@ -79,14 +79,19 @@ enum OsUpdateReminderText {
 final class OsUpdateReminder: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var shownLabel: String?
-    private var shownActionIds: [String] = []
+    /// Interno (no privado) para que los tests puedan simular una ventana
+    /// enseñada sin crear un NSWindow.
+    var shownActionIds: [String] = []
     private let defaults: UserDefaults
     private let sink: (_ actionIds: [String], _ event: UserActionEventSink.Event) -> Void
+    private let clock: () -> Date
 
     init(defaults: UserDefaults = .standard,
-         sink: @escaping (_ actionIds: [String], _ event: UserActionEventSink.Event) -> Void = UserActionEventSink.record) {
+         sink: @escaping (_ actionIds: [String], _ event: UserActionEventSink.Event) -> Void = UserActionEventSink.record,
+         clock: @escaping () -> Date = Date.init) {
         self.defaults = defaults
         self.sink = sink
+        self.clock = clock
         super.init()
     }
 
@@ -95,9 +100,21 @@ final class OsUpdateReminder: NSObject, NSWindowDelegate {
     /// nunca. Los cierres programáticos quitan antes el delegado: no pasan por aquí.
     func windowWillClose(_ notification: Notification) {
         sink(shownActionIds, .dismissed)
+        restartCadence()
         window = nil
         shownLabel = nil
         shownActionIds = []
+    }
+
+    /// El siguiente aviso cuenta desde que la persona RESPONDIÓ, no desde que
+    /// se le enseñó. Medido 30-sep en JPR-MacBookPro: la ventana de las 06:43
+    /// se quedó abierta hasta las 12:42 (persona fuera); «Remind me later» a
+    /// las 12:42:23 y a los 3 s volvió a salir, porque desde las 06:43 ya
+    /// habían pasado más de las 4 h del intervalo. «Más tarde» tiene que ser
+    /// más tarde.
+    private func restartCadence() {
+        guard let lead = shownActionIds.first else { return }
+        defaults.set(clock(), forKey: Self.key(lead))
     }
 
     /// La marca del último aviso va por la acción más urgente: una petición
@@ -314,12 +331,14 @@ final class OsUpdateReminder: NSObject, NSWindowDelegate {
         // Telemetría: abrir Ajustes no instala nada; el agente cierra la acción
         // cuando el escaneo deja de listarla.
         sink(shownActionIds, .opened)
+        restartCadence()
         close()
     }
 
     @objc func laterTapped() {
         Logger.shared.info("macOS update reminder: user chose later (\(shownLabel ?? "?"))")
         sink(shownActionIds, .snoozed)
+        restartCadence()
         close()
     }
 }
