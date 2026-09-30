@@ -4,7 +4,10 @@
 # Talks to the local privsvc daemon over /run/tracenium/privsvc.sock.
 # Never opens the network directly — every gRPC, REST, or system-
 # privilege op flows through privsvc. Runs as user `tracenium`,
-# which is in group `tracenium` (granting socket connect access).
+# which is in group `tracenium` (granting socket connect access)
+# and, where it exists, `systemd-journal` (boot history for DEX —
+# added by preinstall.sh with usermod, NOT SupplementaryGroups= here:
+# a missing group would stop the unit from starting at all).
 Description=Tracenium Agent
 Documentation=https://tracenium.com
 # Hard requirement on privsvc: without the IPC socket the agent

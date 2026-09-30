@@ -187,6 +187,42 @@ if ! getent passwd tracenium >/dev/null; then
     echo "  created user tracenium"
 fi
 
+# ── BEGIN journal-access ───────────────────────────────────────────
+# Lectura del journal del sistema: de ahí saca el agente los arranques
+# anteriores y cómo terminó cada uno (DEX: `restart` /
+# `unexpected_shutdown`). Sin este grupo journald le contesta «No journal
+# files were opened due to insufficient permissions» (medido en
+# tracenium-grpc, 29-sep-2026).
+#
+# ⚠️ Da lectura de TODO el journal del sistema, también el de otros
+# servicios. Es una decisión de permisos tomada a propósito, no un
+# efecto colateral.
+#
+# ⚠️ Con usermod y NO con SupplementaryGroups= en la unidad: si el grupo no
+# existe, systemd se niega a arrancar el servicio (216/GROUP), y un equipo
+# sin agente es peor que un agente sin journal. Aquí, sin el grupo, no pasa
+# nada.
+#
+# ⚠️ Fuera del bloque de useradd: en una ACTUALIZACIÓN el usuario ya existe
+# y ese bloque no corre. Y nunca aborta la instalación (el script corre con
+# `set -e`): si `tracenium` viene de un directorio (LDAP/AD), usermod falla,
+# y eso no puede dejar el equipo sin agente.
+#
+# Surte efecto al arrancar el servicio: en una actualización se para más
+# abajo y el postinstall lo vuelve a arrancar con el grupo nuevo.
+if getent group systemd-journal >/dev/null 2>&1; then
+    if id -nG tracenium 2>/dev/null | tr ' ' '\n' | grep -qx systemd-journal; then
+        echo "  tracenium already in systemd-journal"
+    elif usermod -a -G systemd-journal tracenium; then
+        echo "  added tracenium to systemd-journal (journal read access)"
+    else
+        echo "  WARNING: could not add tracenium to systemd-journal — the agent will not read boot history"
+    fi
+else
+    echo "  no systemd-journal group on this host — skipping journal access"
+fi
+# ── END journal-access ─────────────────────────────────────────────
+
 # ── Stop existing services if upgrading ────────────────────────────
 # An upgrade replaces /usr/lib/tracenium/node and the bundle .js
 # files. If the daemons are still using them, the unpack works
