@@ -9,6 +9,7 @@ import {
   postDetectFailureReason,
   identityForUninstall,
   skipIsTransient,
+  isPermanentInstallError,
   isPermanentUninstallError,
 } from "../../src/plugins/sdp/mode";
 
@@ -235,5 +236,21 @@ describe("identityForUninstall — instalada POR USUARIO (ADR-0019 paso 3)", () 
   it("⭐ sin sesión o sin desinstalador silencioso es permanente: reintentar da lo mismo", () => {
     expect(isPermanentUninstallError("user_not_logged_on")).toBe(true);
     expect(isPermanentUninstallError("no_silent_uninstall")).toBe(true);
+  });
+});
+
+
+describe("isPermanentInstallError", () => {
+  it("🔴 `os_too_old` es permanente: el Mac no se va a actualizar solo", () => {
+    // Chrome 154 exige macOS 13.0 y el iMac de T1 corre 12.7.6. Reintentar
+    // daría la misma negativa; lo que cambia el resultado es actualizar el Mac
+    // o publicar una versión que soporte ese macOS.
+    expect(isPermanentInstallError("os_too_old")).toBe(true);
+  });
+
+  it("⚠️ lo transitorio sigue siendo `failed`: no se deja de reintentar lo que sí vale", () => {
+    expect(isPermanentInstallError("install_failed")).toBe(false);
+    expect(isPermanentInstallError("install_timeout")).toBe(false);
+    expect(isPermanentInstallError(undefined)).toBe(false);
   });
 });

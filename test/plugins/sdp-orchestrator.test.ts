@@ -176,6 +176,41 @@ describe("runSoftwareInstall — install pipeline", () => {
     expect(methodsCalled(calls)).not.toContain("sdp.install");
   });
 
+  it("🔴 un Mac demasiado viejo para la app sale como RECHAZO permanente, con el motivo", async () => {
+    // Campo 30-sep: Chrome 154 (exige macOS 13.0) a un iMac con 12.7.6. Antes
+    // salía exit 0 y un navegador roto; con la guarda la privsvc responde
+    // `os_too_old`, y aquí tiene que llegar como `rejected` —reintentar no lo
+    // arregla— y con el mensaje, que es lo que le dice al operador qué hacer.
+    const { ctx } = makeCtx({
+      "sdp.detect": DETECT(false),
+      "sdp.download": OK_DOWNLOAD,
+      "sdp.install": {
+        ok: false,
+        error: {
+          code: "os_too_old",
+          message: "Google Chrome.app requires macOS 13.0; this Mac runs 12.7.6",
+        },
+      },
+    });
+    const ack = await runSoftwareInstall(ctx, "job-os", { deploymentId: 7, packageSnapshot: snap() });
+    expect(ack.outcome).toBe("rejected");
+    expect(ack.ackStatus).toBe(2);
+    const reason = String(parseAck(ack.ackMessage).fields.reason);
+    expect(reason).toMatch(/os_too_old/);
+    expect(reason).toMatch(/13\.0/);
+  });
+
+  it("⚠️ un fallo de instalación cualquiera sigue siendo `failed`", async () => {
+    // La guarda no puede convertir en permanente lo que no lo es.
+    const { ctx } = makeCtx({
+      "sdp.detect": DETECT(false),
+      "sdp.download": OK_DOWNLOAD,
+      "sdp.install": { ok: false, error: { code: "install_failed", message: "boom" } },
+    });
+    const ack = await runSoftwareInstall(ctx, "job-if", { deploymentId: 7, packageSnapshot: snap() });
+    expect(ack.outcome).toBe("failed");
+  });
+
   it("maps a network download failure to a transient retry", async () => {
     const { ctx } = makeCtx({
       "sdp.detect": DETECT(false),

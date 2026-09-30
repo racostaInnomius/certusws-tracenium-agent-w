@@ -39,6 +39,7 @@ import {
   postDetectIsFailure,
   postDetectFailureReason,
   identityForUninstall,
+  isPermanentInstallError,
   isPermanentUninstallError,
 } from "./mode";
 import { evaluateSignatureGate, normalizeVerifyResponse } from "./signature-gate";
@@ -724,7 +725,18 @@ export async function runSoftwareInstall(
         // Distinguish runner-side timeouts so the backend can decide
         // whether to retry (Phase 1 we don't auto-retry; future:
         // the retry-engine can read this).
-        outcome = errCode === "install_timeout" ? "timed_out" : "failed";
+        //
+        // ⚠️ Y las negativas permanentes (`os_too_old`: el Mac es más viejo de
+        // lo que la app exige) salen como `rejected`, no como `failed`. Es el
+        // mismo criterio que la fase de descarga aplica a un sha256 que no
+        // cuadra: lo que hay que arreglar es el objetivo o el catálogo, no
+        // reintentar.
+        outcome =
+          errCode === "install_timeout"
+            ? "timed_out"
+            : isPermanentInstallError(errCode)
+              ? "rejected"
+              : "failed";
         // Carry what privsvc actually said. Keeping only the code sent every
         // real-world failure to the dashboard as a bare `install_failed` with
         // no exit code and no stderr — literally "it broke, and nothing said

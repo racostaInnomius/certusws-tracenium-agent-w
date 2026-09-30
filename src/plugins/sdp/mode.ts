@@ -215,3 +215,21 @@ const PERMANENT_UNINSTALL_ERRORS: ReadonlySet<string> = new Set([
 export function isPermanentUninstallError(code: unknown): boolean {
   return PERMANENT_UNINSTALL_ERRORS.has(String(code ?? ""));
 }
+
+/**
+ * Errores de `sdp.install` que reintentar no arregla → `rejected`, no `failed`.
+ *
+ * El gemelo de `isPermanentUninstallError`. Hasta el 30-sep no existía: en la
+ * fase de instalación cualquier error que no fuera un timeout salía como
+ * `failed`, que se lee como «algo falló, vuelve a probar».
+ *
+ * 🔴 `os_too_old` — la app de un DMG declara un `LSMinimumSystemVersion` mayor
+ * que el macOS del equipo (Chrome 154 exige 13.0; el iMac de T1 corre 12.7.6).
+ * Volver a mandarlo daría la misma negativa: lo que cambia el resultado es
+ * actualizar el Mac o publicar una versión que soporte ese macOS.
+ */
+const PERMANENT_INSTALL_ERRORS: ReadonlySet<string> = new Set(["os_too_old"]);
+
+export function isPermanentInstallError(code: unknown): boolean {
+  return PERMANENT_INSTALL_ERRORS.has(String(code ?? ""));
+}

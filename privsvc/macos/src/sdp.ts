@@ -28,6 +28,9 @@
 //   download_failed        transient (network)
 //   install_failed         default (mapped to outcome=failed)
 //   install_timeout        transient (mapped to outcome=timed_out)
+//   os_too_old             permanent (mapped to outcome=rejected) — la app de un
+//                          DMG declara un `LSMinimumSystemVersion` mayor que el
+//                          macOS del equipo. Ver runDmgInstaller.
 
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -39,6 +42,9 @@ import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
 import { DATA_DIR, certPaths } from "./paths";
+// Se movió a su propio módulo para compartirlo con la guarda de SO del DMG y
+// poder probarlo sin arrastrar logger ni execFile.
+import { compareSemver, osTooOld } from "./mac-version";
 
 const execFileAsync = promisify(execFile);
 
@@ -143,25 +149,6 @@ function sha256OfFile(filePath: string): Promise<string> {
 // proper semver but real-world installer versions are messy
 // ("17.0.1 (52431)"); we only need to know "is the installed version
 // >= the rule's minVersion".
-function compareSemver(a: string, b: string): number {
-  const parse = (v: string) =>
-    String(v || "")
-      .split(/[.-]/)
-      .map((seg) => {
-        const m = /^\d+/.exec(seg);
-        return m ? Number(m[0]) : 0;
-      });
-  const av = parse(a);
-  const bv = parse(b);
-  const n = Math.max(av.length, bv.length);
-  for (let i = 0; i < n; i++) {
-    const ai = av[i] ?? 0;
-    const bi = bv[i] ?? 0;
-    if (ai !== bi) return ai > bi ? 1 : -1;
-  }
-  return 0;
-}
-
 function meetsMinVersion(installed: string, minVersion: string | undefined): boolean {
   if (!minVersion) return true;
   return compareSemver(installed, minVersion) >= 0;
@@ -719,6 +706,41 @@ async function runPkgInstaller(
   }
 }
 
+/**
+ * Una clave de un Info.plist, o null si no está o no se puede leer.
+ *
+ * Con `defaults read`, lo mismo que la regla de detección `bundle_version`.
+ * ⚠️ Nunca lanza: una clave ausente es normal (muchas apps no declaran
+ * `LSMinimumSystemVersion`) y quien llama decide qué significa.
+ */
+async function readPlistKey(plistPath: string, key: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/defaults", ["read", plistPath, key], {
+      timeout: 5_000,
+    });
+    const v = stdout.trim();
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+
+/** La versión de macOS de este equipo (`sw_vers -productVersion`), o null. */
+async function currentMacOsVersion(): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/sw_vers", ["-productVersion"], {
+      timeout: 5_000,
+    });
+    const v = stdout.trim();
+    return v || null;
+  } catch {
+    // ⚠️ Sin versión no se puede comparar, y `osTooOld` deja pasar. Bloquear
+    // todas las instalaciones de Mac porque `sw_vers` falló sería peor que el
+    // caso que la guarda evita.
+    return null;
+  }
+}
+
 async function runDmgInstaller(
   stagingPath: string,
   timeoutSeconds: number
@@ -791,6 +813,31 @@ async function runDmgInstaller(
     const sourceApp = path.join(mountPoint, app);
     const targetApp = path.join("/Applications", app);
 
+    // 🔴 ¿PUEDE ESTE MAC ABRIR LA APP? — ANTES DEL `rm -rf` (30-sep, T1).
+    //
+    // Chrome 154 llegó a un iMac con macOS 12.7.6 y exige 13.0. Este bloque
+    // no existía: se borró el Chrome 150 que funcionaba, se copió el nuevo y se
+    // devolvió exit 0. Navegador roto, deploy en verde.
+    //
+    // Un DMG no tiene instalador que lo compruebe —es una copia—, así que lo
+    // comprueba el agente, con la clave que la propia app declara y que es la
+    // misma que leyó el aviso del Finder.
+    //
+    // ⚠️ VA ANTES DE BORRAR, y es lo que más importa: el fallo pasa de «navegador
+    // roto» a «no instalado, requiere macOS 13.0», y la versión que funcionaba
+    // sigue en su sitio.
+    const minimumOs = await readPlistKey(
+      path.join(sourceApp, "Contents", "Info.plist"),
+      "LSMinimumSystemVersion"
+    );
+    const currentOs = await currentMacOsVersion();
+    if (osTooOld(minimumOs, currentOs)) {
+      throw Object.assign(
+        new Error(`${app} requires macOS ${minimumOs}; this Mac runs ${currentOs}`),
+        { code: "os_too_old" }
+      );
+    }
+
     // If the target already exists, remove it first. We're
     // intentionally clobbering — the SDP plugin's pre-detection rule
     // is what decides whether to install at all; if we're running
@@ -826,6 +873,11 @@ async function runDmgInstaller(
     if (err?.killed && err?.signal === "SIGTERM") {
       throw Object.assign(new Error("dmg install timeout"), { code: "install_timeout" });
     }
+    // ⚠️ La negativa por SO SUBE con su código. Este catch convierte cualquier
+    // otro error en un `exitCode: 1` genérico, y la guarda habría llegado al
+    // portal como un «failed» sin motivo — el mismo misterio que quiere evitar.
+    // El `finally` de abajo desmonta la imagen igual.
+    if (err?.code === "os_too_old") throw err;
     return {
       exitCode: Number.isFinite(Number(err?.code)) ? Number(err.code) : 1,
       stderrExcerpt: combinedExcerpt(err?.stdout, err?.stderr) || (err?.message || ""),
@@ -1181,6 +1233,12 @@ export async function handleSdpInstall(req: PrivSvcRequest): Promise<PrivSvcResp
       // shouldn't leave the binary on disk indefinitely.
       try { fs.unlinkSync(absStaging); } catch {}
       return fail(req.id, "install_timeout", err?.message || "installer timed out");
+    }
+    if (err?.code === "os_too_old") {
+      // Este Mac no puede abrir esa versión; reintentarla daría lo mismo. El
+      // binario no le sirve a este equipo, así que no se guarda.
+      try { fs.unlinkSync(absStaging); } catch {}
+      return fail(req.id, "os_too_old", err?.message || "macOS too old for this app");
     }
     return fail(req.id, "install_failed", err?.message || String(err));
   }
