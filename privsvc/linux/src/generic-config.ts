@@ -691,7 +691,7 @@ export function readEntry(w: LinuxWrite, deps: GenericDeps, ctx: ReadContext = {
       return { kind: "kmod", module: w.module, loaded: loaded.has(w.module) || loaded.has(w.module.replace(/-/g, "_")), blocked: isBlocked(deps.readFile(MODPROBE_DROPIN), w.module) };
     }
     case "audit_rule":
-      return { kind: "audit_rule", line: w.line, present: activeLines(deps.readFile(AUDIT_RULES_FILE)).includes(w.line) };
+      return { kind: "audit_rule", line: w.line, present: activeLines(deps.readFile(AUDIT_RULES_FILE)).some((l) => sameAuditRule(l, w.line)) };
     case "conf": {
       const eff = effectiveConf(w.file, w.key, deps);
       const ours = lookup(parseKeyValue(deps.readFile(confOursPath(w.file))), w.key);
@@ -852,8 +852,25 @@ export function editModprobeDropin(text: string | null, mod: string, block: bool
   return kept.join("\n") + "\n";
 }
 
+/**
+ * ¿Son la misma regla para el kernel? `-w /etc/apparmor/` y `-w /etc/apparmor`
+ * lo son: el catálogo pedía una con barra (CIS 22/24) y otra sin ella (CIS 26),
+ * y con las dos en el fichero `augenrules --load` fallaba con «Rule exists»
+ * (jobs 36c24a50 / 846f7486, 29-sep). La barra final no cuenta; la raíz sí.
+ */
+export function sameAuditRule(a: string, b: string): boolean {
+  if (a === b) return true;
+  const wa = WATCH_RULE.exec(a);
+  const wb = WATCH_RULE.exec(b);
+  if (!wa || !wb) return false;
+  const norm = (p: string) => (p.length > 1 ? p.replace(/\/+$/, "") : p);
+  return norm(wa[1]) === norm(wb[1]) && wa[2] === wb[2] && wa[3] === wb[3];
+}
+
 export function editAuditRules(text: string | null, line: string, present: boolean): string {
-  const kept = (text ?? "").split("\n").filter((l) => l.trim() !== line);
+  // Ya está (en esta forma o en la equivalente): no se toca ni se recarga.
+  if (present && text !== null && activeLines(text).some((l) => sameAuditRule(l, line))) return text;
+  const kept = (text ?? "").split("\n").filter((l) => !sameAuditRule(l.trim(), line));
   while (kept.length && kept[kept.length - 1].trim() === "") kept.pop();
   if (!kept.length) kept.push("## Managed by Tracenium — audit rules added by compliance fixes.");
   if (present) kept.push(line);
@@ -938,6 +955,23 @@ function privileged(bin: string, args: string[], deps: GenericDeps, timeoutMs = 
   return deps.exec(SYSTEMD_RUN, ["--wait", "--pipe", "--collect", "--quiet", "--", bin, ...args], timeoutMs);
 }
 
+/**
+ * Por qué falló `augenrules --load`, en una línea. auditctl escribe «Old style
+ * watch rules are slower» por CADA regla -w antes del error de verdad, así
+ * que los primeros 200 caracteres eran sólo avisos y el motivo («Rule
+ * exists», «There was an error in line 57…») no llegaba al job (36c24a50,
+ * 29-sep). Se quitan los avisos y, si hay líneas de error, sólo esas.
+ */
+export function augenrulesFailure(r: { stdout: string; stderr: string }): string {
+  const lines = `${r.stderr ?? ""}\n${r.stdout ?? ""}`
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !/^old style watch rules are slower$/i.test(l));
+  const errors = lines.filter((l) => /error|rule exists|invalid|unknown|no such|not supported|failed/i.test(l));
+  const picked = [...new Set(errors.length ? errors : lines)];
+  return picked.join(" | ").slice(0, 300) || "no output";
+}
+
 /** Motivo por el que una regla haría fallar la carga en ESTA máquina, o null. */
 export async function auditRuleProblem(line: string, deps: GenericDeps): Promise<string | null> {
   const watch = WATCH_RULE.exec(line);
@@ -992,7 +1026,7 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
     return done(2);
   }
   for (const w of auditAdds) {
-    if (activeLines(deps.readFile(AUDIT_RULES_FILE)).includes(w.line)) continue;
+    if (activeLines(deps.readFile(AUDIT_RULES_FILE)).some((l) => sameAuditRule(l, w.line))) continue;
     const p = await auditRuleProblem(w.line, deps);
     if (p) problems.push(p);
   }
@@ -1143,7 +1177,7 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
           else deps.writeFile(AUDIT_RULES_FILE, before, 0o640);
           await privileged(augenrules, ["--load"], deps);
           changes.push(`restored ${AUDIT_RULES_FILE}`);
-          problems.push(`augenrules --load failed, rules restored: ${(r.stderr || r.stdout).trim().slice(0, 200)}`);
+          problems.push(`augenrules --load failed, rules restored: ${augenrulesFailure(r)}`);
           return done(1);
         }
         changes.push("augenrules --load");
@@ -1214,7 +1248,7 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
       if (augenrules) {
         const r = await privileged(augenrules, ["--load"], deps);
         if (r.code === 0) changes.push("augenrules --load");
-        else problems.push(`augenrules --load failed: ${(r.stderr || r.stdout).trim().slice(0, 200)}`);
+        else problems.push(`augenrules --load failed: ${augenrulesFailure(r)}`);
       }
     }
   }

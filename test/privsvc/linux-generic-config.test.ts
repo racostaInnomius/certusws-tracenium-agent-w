@@ -15,6 +15,8 @@ import {
   editConf,
   sysctlBootValue,
   ausyscallMachine,
+  augenrulesFailure,
+  sameAuditRule,
   CONF_FILES,
   SYSCTL_DROPIN,
   MODPROBE_DROPIN,
@@ -215,6 +217,46 @@ describe("auditd", () => {
     const r = await applyGeneric(w(sudoers), deps());
     expect(r).toMatchObject({ ok: true, value: { exitCode: 1 } });
     expect(files.get(AUDIT_RULES_FILE)).toBe("## prev\n-w /etc/passwd -p wa -k tracenium\n");
+  });
+
+  it("el error de augenrules llega al job aunque vaya detrás de los avisos de -w (36c24a50)", async () => {
+    // Salida real: un aviso por cada regla -w y, al final, el motivo.
+    const out = [
+      ...Array(12).fill("Old style watch rules are slower"),
+      "Error sending add rule data request (Rule exists)",
+      "There was an error in line 57 of /etc/audit/audit.rules",
+    ].join("\n");
+    execImpl = (bin, args) => (bin.endsWith("augenrules") && calls.filter((c) => c.includes("augenrules")).length === 1 ? { stdout: "", stderr: out, code: 1 } : defaultExec(bin, args));
+    const r = await applyGeneric(w(sudoers), deps());
+    const excerpt = (r as any).value.stderrExcerpt as string;
+    expect(excerpt).toContain("Rule exists");
+    expect(excerpt).toContain("error in line 57");
+    expect(excerpt).not.toContain("Old style");
+    expect(augenrulesFailure({ stdout: "", stderr: "Old style watch rules are slower\nsomething odd" })).toBe("something odd");
+    expect(augenrulesFailure({ stdout: "", stderr: "" })).toBe("no output");
+  });
+
+  it("-w /ruta y -w /ruta/ son la misma regla: no se escribe la segunda (Rule exists, 846f7486)", async () => {
+    // CIS 26 escribió la regla sin barra; CIS 22/24 pedía la misma con barra.
+    files.set(AUDIT_RULES_FILE, "## Managed by Tracenium\n-w /etc/apparmor -p wa -k tracenium\n");
+    dirs.add("/etc/apparmor");
+    const slash = { kind: "audit_rule", line: "-w /etc/apparmor/ -p wa -k tracenium", present: true };
+    const state = await readGenericState(w(slash), deps());
+    expect(state).toMatchObject({ ok: true, value: { isCompliant: true } });
+    const r = await applyGeneric(w(slash), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(files.get(AUDIT_RULES_FILE)).toBe("## Managed by Tracenium\n-w /etc/apparmor -p wa -k tracenium\n");
+    expect(calls.some((c) => c.includes("augenrules"))).toBe(false);
+    // Con permisos o clave distintos NO es la misma regla, y la raíz no se normaliza.
+    expect(sameAuditRule("-w /etc/apparmor -p wa -k tracenium", "-w /etc/apparmor/ -p x -k tracenium")).toBe(false);
+    expect(sameAuditRule("-w /etc/apparmor -p wa -k tracenium", "-w /etc/apparmor/ -p wa -k ops")).toBe(false);
+    expect(sameAuditRule("-w /etc/apparmor.d -p wa -k tracenium", "-w /etc/apparmor -p wa -k tracenium")).toBe(false);
+  });
+
+  it("revert de la forma con barra quita también la sin barra", async () => {
+    files.set(AUDIT_RULES_FILE, "-w /etc/passwd -p wa -k tracenium\n-w /etc/apparmor -p wa -k tracenium\n");
+    await applyGeneric(w({ kind: "audit_rule", line: "-w /etc/apparmor/ -p wa -k tracenium", present: false }), deps());
+    expect(files.get(AUDIT_RULES_FILE)).toBe("-w /etc/passwd -p wa -k tracenium\n");
   });
 
   it("auditd inmutable (-e 2): escrito, pide reinicio, no recarga", async () => {
