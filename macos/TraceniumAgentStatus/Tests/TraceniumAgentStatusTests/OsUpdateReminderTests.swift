@@ -172,6 +172,12 @@ final class OsUpdateReminderTests: XCTestCase {
         XCTAssertNotNil(OsUpdateReminder.softwareUpdateURL)
     }
 
+    private func findView(id: String, in v: NSView) -> NSView? {
+        if v.accessibilityIdentifier() == id { return v }
+        for sub in v.subviews { if let f = findView(id: id, in: sub) { return f } }
+        return nil
+    }
+
     private func findLabel(_ text: String, in v: NSView) -> NSTextField? {
         if let t = v as? NSTextField, t.stringValue == text { return t }
         for sub in v.subviews { if let f = findLabel(text, in: sub) { return f } }
@@ -186,6 +192,13 @@ final class OsUpdateReminderTests: XCTestCase {
         let request = TrayOsUpdateRequest(label: "macOS 27.0.1-26A434", title: "macOS 27.0.1", deadlineUtc: deadline, pendingCount: 1)
         for (name, now) in [("before", deadline.addingTimeInterval(-5 * 86400)), ("overdue", deadline.addingTimeInterval(3600))] {
             let view = OsUpdateReminder.content(request, now: now, target: nil)
+            // En la app el logo sale de Bundle.main; aquí el main es el runner
+            // de XCTest, así que para la captura se carga desde Resources.
+            let logo = findView(id: "os-update-brand-logo", in: view) as? NSImageView
+            XCTAssertNotNil(logo, "\(name): brand logo")
+            logo?.image = NSImage(contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Resources/tracenium_logo_color.png"))
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)
             window.appearance = NSAppearance(named: .aqua)
             window.contentView = view
@@ -200,6 +213,14 @@ final class OsUpdateReminderTests: XCTestCase {
                 let frame = brand.convert(brand.bounds, to: view)
                 let fromTop = view.isFlipped ? frame.minY : view.bounds.height - frame.maxY
                 XCTAssertGreaterThanOrEqual(fromTop, 28, "\(name): brand under the title bar")
+                // 30-sep: el logo de marca va DELANTE del nombre, y también bajo la barra.
+                if let logo {
+                    let lf = logo.convert(logo.bounds, to: view)
+                    XCTAssertLessThanOrEqual(lf.maxX, frame.minX, "\(name): logo before the name")
+                    XCTAssertEqual(lf.midY, frame.midY, accuracy: 1.5, "\(name): logo centred on the name")
+                    let logoFromTop = view.isFlipped ? lf.minY : view.bounds.height - lf.maxY
+                    XCTAssertGreaterThanOrEqual(logoFromTop, 28, "\(name): logo under the title bar")
+                }
             } else {
                 XCTFail("no brand label")
             }

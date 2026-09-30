@@ -182,6 +182,13 @@ final class OsUpdateReminder: NSObject, NSWindowDelegate {
         header.wantsLayer = true
         header.layer?.backgroundColor = chrome.cgColor
         header.translatesAutoresizingMaskIntoConstraints = false
+        // El logo de marca delante del nombre, como en el aviso de consentimiento.
+        let logo = NSImageView()
+        logo.imageScaling = .scaleProportionallyUpOrDown
+        logo.image = Bundle.main.url(forResource: "tracenium_logo_color", withExtension: "png")
+            .flatMap { NSImage(contentsOf: $0) }
+        logo.setAccessibilityIdentifier("os-update-brand-logo")
+        logo.translatesAutoresizingMaskIntoConstraints = false
         let brand = NSTextField(labelWithString: "Tracenium")
         brand.font = .systemFont(ofSize: 13, weight: .bold)
         brand.textColor = NSColor(srgbRed: 0xF2/255.0, green: 0xF4/255.0, blue: 0xF7/255.0, alpha: 1)
@@ -189,11 +196,16 @@ final class OsUpdateReminder: NSObject, NSWindowDelegate {
         let slogan = NSTextField(labelWithString: "")
         slogan.attributedStringValue = ConsentWindow.sloganAttributed()
         slogan.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(logo)
         header.addSubview(brand)
         header.addSubview(slogan)
         var headerConstraints = [
             header.heightAnchor.constraint(equalToConstant: headerHeight),
-            brand.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 18),
+            logo.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 18),
+            logo.centerYAnchor.constraint(equalTo: brand.centerYAnchor),
+            logo.widthAnchor.constraint(equalToConstant: 22),
+            logo.heightAnchor.constraint(equalToConstant: 22),
+            brand.leadingAnchor.constraint(equalTo: logo.trailingAnchor, constant: 10),
             brand.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -14),
             slogan.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -18),
             slogan.firstBaselineAnchor.constraint(equalTo: brand.firstBaselineAnchor),
