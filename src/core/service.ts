@@ -1,5 +1,6 @@
 // src/core/service.ts
 import { bootstrapContext } from "./bootstrap";
+import { createResumeDetector } from "./resume-detector";
 import { scheduler } from "./scheduler";
 import { logger } from "../bootstrap/logger";
 import { startGrpcStream } from "../transport/grpc-stream";
@@ -570,10 +571,27 @@ export async function startService() {
     // defense: if every other recovery mechanism fails because the
     // event loop itself is wedged, this exits the process so launchd
     // restarts us. See the constants above for rationale.
+    const livenessResume = createResumeDetector(LIVENESS_CHECK_INTERVAL_MS);
+    let livenessResumedAtMs = 0;
     livenessWatchdogTimer = setInterval(async () => {
       if (shuttingDown) return;
       const sinceStartupMs = Date.now() - livenessStartedAtMs;
       if (sinceStartupMs < LIVENESS_STARTUP_GRACE_MS) return;
+
+      // Tras una suspensión, el estado de la bandeja está "viejo" porque el
+      // equipo dormía, no porque el loop esté colgado (AquilesF, T111,
+      // 29-sep: "stale for 14245s" = horas de Modern Standby). Se da la misma
+      // gracia que al arrancar antes de volver a juzgar: al despertar, disco
+      // y red tardan y la sonda de 2 s podría fallar sin que nada esté roto.
+      const suspendedMs = livenessResume.check();
+      if (suspendedMs !== null) {
+        livenessResumedAtMs = Date.now();
+        logger.info("Liveness watchdog: resumed after a suspension; grace before the next check", {
+          gapSec: Math.round(suspendedMs / 1000)
+        });
+        return;
+      }
+      if (Date.now() - livenessResumedAtMs < LIVENESS_STARTUP_GRACE_MS) return;
 
       try {
         const lastWriteMs = currentCtx?.trayStatus?.getLastWriteMs?.();

@@ -25,6 +25,7 @@ import { buildHeartbeat } from "./heartbeat-message";
 // ctx.plugins.run("sdp.install", ...) so it goes through the
 // PluginManager policy gate uniformly with the other plugins.
 import { runUpdateTask, ackForUpdateOutcome } from "../update/update-task";
+import { createResumeDetector } from "../core/resume-detector";
 // Imports nothing itself, so it cannot join the cycle that forces the lazy
 // `require("../update/update-task")` further down.
 import { describeError } from "../update/describe-error";
@@ -209,9 +210,29 @@ let lastReconnectCountSeen = 0;
 
 function armConnectivitySupervisor(ctx: AgentContext) {
   if (connectivitySupervisorTimer) return; // already armed (first stream only)
+  const resume = createResumeDetector(CONNECTIVITY_CHECK_INTERVAL_MS);
   connectivitySupervisorTimer = setInterval(() => {
     try {
       if (shutdownRequested) return;
+
+      // ── Suspensión ≠ loop colgado ────────────────────────────────
+      //
+      // Si este tick llega con un hueco de varias veces el intervalo, el
+      // equipo estuvo dormido: el reloj de pared siguió, los reintentos no
+      // (no había CPU). AquilesF (T111, 29-sep) se mató así al despertar un
+      // momento, con "stalled 14245s" que eran horas de Modern Standby. Se
+      // reinician los relojes y se deja al loop reintentar ya despierto;
+      // si de verdad está colgado, el umbral vuelve a cumplirse despierto.
+      const suspendedMs = resume.check();
+      if (suspendedMs !== null) {
+        lastProgressAtMs = Date.now();
+        lastReconnectCountSeen = grpcMetrics.reconnectCount;
+        ctx.logger?.info?.("gRPC stream: resumed after a suspension; supervisor clocks reset", {
+          gapSec: Math.round(suspendedMs / 1000),
+          connected: grpcMetrics.connectedSinceUtc != null
+        });
+        return;
+      }
       // connectedSinceUtc is non-null exactly while a gRPC stream is READY
       // (set on READY, cleared to null on every teardown). While connected,
       // keep the clock fresh so a later disconnect measures from "now".

@@ -789,3 +789,65 @@ describe("rotateCert (ADR-0015)", () => {
     );
   });
 });
+
+// 🔴 AquilesF (T111, Surface Pro, Modern Standby), 29-sep: el supervisor de
+// conectividad midió "reconnect loop stalled for 14245s" al despertar un
+// momento y mató el agente. Eran horas de suspensión: el reloj de pared corrió
+// y los reintentos no, porque no había CPU.
+describe("grpc-stream — supervisor de conectividad: suspensión ≠ loop colgado", () => {
+  const SUPERVISOR_TICK_MS = 60_000;
+  const EXIT_THRESHOLD_MS = 10 * 60 * 1000;
+
+  /**
+   * Conecta (el supervisor se arma en el primer READY), se rompe, y la
+   * reconexión abre un stream que nunca llega a READY ni falla: desde ahí el
+   * loop no progresa — la firma del wedge que el supervisor persigue.
+   */
+  async function wedged() {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((..._a: any[]) => undefined) as any);
+    await startFresh();
+    latestStream().emit("data", { connected: true });
+    await failAndReconnect();
+    return exitSpy;
+  }
+  const stalledLogged = () =>
+    ctx.logger.error.mock.calls.some((c: any[]) => String(c[0]).includes("reconnect loop stalled"));
+
+  it("un loop colgado DESPIERTO se sigue reciclando (ticks puntuales)", async () => {
+    const exitSpy = await wedged();
+    await vi.advanceTimersByTimeAsync(EXIT_THRESHOLD_MS + 2 * SUPERVISOR_TICK_MS);
+    expect(stalledLogged()).toBe(true);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("⭐ 4 h dormido: al despertar NO se mata; reinicia los relojes y lo dice", async () => {
+    const exitSpy = await wedged();
+    await vi.advanceTimersByTimeAsync(2 * SUPERVISOR_TICK_MS);
+
+    // Suspensión: el reloj de pared salta; ningún timer corre mientras tanto.
+    vi.setSystemTime(Date.now() + 14_245_000);
+    await vi.advanceTimersByTimeAsync(SUPERVISOR_TICK_MS);
+
+    expect(stalledLogged()).toBe(false);
+    expect(exitSpy).not.toHaveBeenCalled();
+    const resumed = ctx.logger.info.mock.calls.find((c: any[]) => String(c[0]).includes("resumed after a suspension"));
+    expect(resumed?.[1]?.gapSec).toBeGreaterThanOrEqual(14_245);
+
+    // Y despierto, un rato por debajo del umbral, tampoco.
+    await vi.advanceTimersByTimeAsync(EXIT_THRESHOLD_MS - 2 * SUPERVISOR_TICK_MS);
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("si tras despertar el loop sigue sin progresar el umbral entero, entonces sí recicla", async () => {
+    const exitSpy = await wedged();
+    vi.setSystemTime(Date.now() + 3 * 3600_000);
+    await vi.advanceTimersByTimeAsync(SUPERVISOR_TICK_MS);
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(EXIT_THRESHOLD_MS + 2 * SUPERVISOR_TICK_MS);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(stalledLogged()).toBe(true);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+});
