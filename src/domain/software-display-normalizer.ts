@@ -460,6 +460,10 @@ function humanizeTechnicalId(value: string): string {
   result = splitCamelCase(result);
   result = toTitleCase(result);
   result = titleKnownAcronyms(result);
+  // El fabricante dos veces: `com.microsoft.package.Microsoft_Excel.app` daba
+  // «Microsoft Microsoft Excel» (el dominio y el nombre del producto empiezan
+  // igual). Se ve en la ficha y en Activity junto a la app «Microsoft Excel».
+  result = result.replace(/^(\S+) \1(?= |$)/i, "$1");
 
   return result || value;
 }
