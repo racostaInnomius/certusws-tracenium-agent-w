@@ -11,7 +11,9 @@ import {
   MAC_CLEAN_SHUTDOWN_CAUSE,
   classifyMacReport,
   macCrashReason,
+  normalizeBootId,
   parseKernBoottime,
+  parseProcBtime,
   parseShutdownCause,
   shutdownCauseEvent,
   parseBatteryReportXml,
@@ -378,6 +380,52 @@ describe("Linux", () => {
     expect((await readStabilityEvents(missing, {}, "2026-09-14T00:00:00.000Z")).scope).toBe("unsupported");
     const none = { platform: "linux", exec: async () => ({ code: 1, stdout: "", stderr: "No coredumps found." }) } as unknown as SourceDeps;
     expect(await readStabilityEvents(none, {}, "2026-09-14T00:00:00.000Z")).toMatchObject({ scope: "collected", events: [] });
+  });
+
+  describe("⭐ el arranque, de /proc (el journal no se le abre al usuario `tracenium`)", () => {
+    // Leídos como `tracenium` en tracenium-grpc (Ubuntu, systemd 255) el 29-sep-2026.
+    // `journalctl --list-boots` como root daba para el arranque 0 el id
+    // d53acc78347e47689131c048b9d1b411 y primera entrada 05:32:05 UTC.
+    const PROC_STAT = "cpu  1234 0 567 89012 0 0 0 0 0 0\ncpu0 617 0 283 44506 0 0 0 0 0 0\nintr 123456\nctxt 987654\nbtime 1790400718\nprocesses 4321\n";
+    const BOOT_ID = "d53acc78-347e-4768-9131-c048b9d1b411\n";
+    const linux = (files: Record<string, string>) =>
+      ({
+        platform: "linux",
+        exec: async () => ({ code: 1, stdout: "", stderr: "No coredumps found." }),
+        readFile: async (p: string) => {
+          if (!(p in files)) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+          return files[p];
+        },
+      }) as unknown as SourceDeps;
+    const REAL = { "/proc/stat": PROC_STAT, "/proc/sys/kernel/random/boot_id": BOOT_ID };
+
+    it("btime y boot_id: el id es el MISMO que usa journald", () => {
+      expect(parseProcBtime(PROC_STAT)).toBe(Date.parse("2026-09-26T05:31:58Z"));
+      expect(parseProcBtime("cpu 1 2 3\n")).toBeNull();
+      expect(normalizeBootId(BOOT_ID)).toBe("d53acc78347e47689131c048b9d1b411");
+      expect(normalizeBootId("basura")).toBeNull();
+    });
+
+    it("⭐ el arranque en curso sale como `restart`, con clave por boot_id", async () => {
+      const r = await readStabilityEvents(linux(REAL), {}, "2026-09-14T00:00:00.000Z");
+      expect(r.events).toEqual([
+        { key: "boot:d53acc78347e47689131c048b9d1b411", kind: "restart", occurredAtUtc: "2026-09-26T05:31:58.000Z", app: null, detail: null },
+      ]);
+      expect(r.cursors.boot).toBe("d53acc78347e47689131c048b9d1b411");
+      expect(r.scope).toBe("collected");
+    });
+
+    it("una vez por arranque: aunque btime se mueva un segundo (ajuste de reloj), no se repite", async () => {
+      const moved = { ...REAL, "/proc/stat": PROC_STAT.replace("1790400718", "1790400719") };
+      const r = await readStabilityEvents(linux(moved), { boot: "d53acc78347e47689131c048b9d1b411" }, "2026-09-14T00:00:00.000Z");
+      expect(r.events).toEqual([]);
+    });
+
+    it("sin /proc legible no se inventa nada, y los crashes siguen leyéndose", async () => {
+      const r = await readStabilityEvents(linux({}), {}, "2026-09-14T00:00:00.000Z");
+      expect(r).toMatchObject({ scope: "collected", events: [] });
+      expect(r.cursors.boot).toBeUndefined();
+    });
   });
 });
 

@@ -17,8 +17,9 @@ import type { ExecFn } from "../live-query/probes";
 
 /**
  * `restart` NO es inestabilidad: es el arranque, para que la cronología del
- * equipo sepa cuándo se reinició. Un backend anterior lo descarta evento a
- * evento (no conoce el tipo) sin tocar el resto del informe.
+ * equipo sepa cuándo se reinició (Windows: Kernel-General 12; macOS: apagado
+ * previo limpio; Linux: el arranque en curso, de /proc). Un backend anterior lo
+ * descarta evento a evento (no conoce el tipo) sin tocar el resto del informe.
  */
 export type StabilityKind = "app_crash" | "app_hang" | "os_crash" | "unexpected_shutdown" | "restart";
 export type StabilityEvent = { key: string; kind: StabilityKind; occurredAtUtc: string; app: string | null; detail: string | null };
@@ -488,7 +489,60 @@ export function parseCoredumpctlJson(out: string): StabilityEvent[] {
   });
 }
 
+/** `/proc/stat` → «btime 1790400718»: el arranque, en segundos desde 1970. */
+export function parseProcBtime(stat: string): number | null {
+  const sec = Number(String(stat).match(/^btime\s+(\d+)\s*$/m)?.[1]);
+  return Number.isFinite(sec) && sec > 0 ? sec * 1000 : null;
+}
+
+/** `/proc/sys/kernel/random/boot_id` sin guiones: el mismo id de arranque que usa journald. */
+export function normalizeBootId(raw: string): string | null {
+  const id = String(raw).trim().replace(/-/g, "").toLowerCase();
+  return /^[0-9a-f]{32}$/.test(id) ? id : null;
+}
+
+/**
+ * El arranque ACTUAL como `restart`, una vez por arranque.
+ *
+ * ⚠️ De `/proc`, no de `journalctl --list-boots`: el agente de Linux corre como
+ * `tracenium`, sin los grupos `adm`/`systemd-journal`, y el journal del sistema
+ * no se le abre («No journal files were opened due to insufficient
+ * permissions», medido en tracenium-grpc el 29-sep-2026). `/proc` es legible
+ * por cualquiera. Como el agente arranca con el equipo, informar del arranque
+ * en curso en el primer envío cubre todos los reinicios de aquí en adelante;
+ * lo que no da es el historial de ANTES de instalar el agente.
+ *
+ * La clave es el `boot_id` del kernel, no la hora: `btime` se recalcula en cada
+ * lectura y un ajuste del reloj lo mueve un segundo, lo que con una clave por
+ * hora duplicaría el reinicio.
+ *
+ * Sin la causa del apagado anterior: en Linux eso vive en el journal, que el
+ * agente no puede leer.
+ */
+async function linuxRestart(d: SourceDeps, cursors: Cursors): Promise<{ events: StabilityEvent[]; cursors: Cursors }> {
+  const none = { events: [] as StabilityEvent[], cursors };
+  try {
+    const bootMs = parseProcBtime(await d.readFile("/proc/stat"));
+    const id = normalizeBootId(await d.readFile("/proc/sys/kernel/random/boot_id"));
+    if (bootMs === null || id === null || cursors.boot === id) return none;
+    return {
+      events: [{ key: `boot:${id}`, kind: "restart", occurredAtUtc: new Date(bootMs).toISOString(), app: null, detail: null }],
+      cursors: { ...cursors, boot: id },
+    };
+  } catch {
+    return none;
+  }
+}
+
 async function linuxEvents(d: SourceDeps, cursors: Cursors, defaultSince: string): Promise<EventsResult> {
+  const core = await linuxCoredumps(d, cursors, defaultSince);
+  // El `scope` sigue siendo el de coredumpctl: el arranque es un dato más, y
+  // no poder leerlo no deja a ciegas los crashes (ni al revés).
+  const boot = await linuxRestart(d, core.cursors);
+  return { scope: core.scope, events: [...core.events, ...boot.events], cursors: boot.cursors };
+}
+
+async function linuxCoredumps(d: SourceDeps, cursors: Cursors, defaultSince: string): Promise<EventsResult> {
   const sinceIso = cursors.coredump ?? defaultSince;
   const since = sinceIso.replace("T", " ").replace(/\.\d+Z$/, "").replace("Z", "") + " UTC";
   const r = await d.exec("coredumpctl", ["list", "--no-pager", "--json=short", `--since=${since}`]).catch(() => null);
