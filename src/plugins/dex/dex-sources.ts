@@ -18,7 +18,7 @@ import type { ExecFn } from "../live-query/probes";
 /**
  * `restart` NO es inestabilidad: es el arranque, para que la cronología del
  * equipo sepa cuándo se reinició (Windows: Kernel-General 12; macOS: apagado
- * previo limpio; Linux: el arranque en curso, de /proc). Un backend anterior lo
+ * previo limpio; Linux: del journal, o de /proc sin él). Un backend anterior lo
  * descarta evento a evento (no conoce el tipo) sin tocar el resto del informe.
  */
 export type StabilityKind = "app_crash" | "app_hang" | "os_crash" | "unexpected_shutdown" | "restart";
@@ -502,43 +502,145 @@ export function normalizeBootId(raw: string): string | null {
 }
 
 /**
- * El arranque ACTUAL como `restart`, una vez por arranque.
+ * `journalctl --list-boots --utc -q`, del más antiguo al más reciente.
  *
- * ⚠️ De `/proc`, no de `journalctl --list-boots`: el agente de Linux corre como
- * `tracenium`, sin los grupos `adm`/`systemd-journal`, y el journal del sistema
- * no se le abre («No journal files were opened due to insufficient
- * permissions», medido en tracenium-grpc el 29-sep-2026). `/proc` es legible
- * por cualquiera. Como el agente arranca con el equipo, informar del arranque
- * en curso en el primer envío cubre todos los reinicios de aquí en adelante;
- * lo que no da es el historial de ANTES de instalar el agente.
- *
- * La clave es el `boot_id` del kernel, no la hora: `btime` se recalcula en cada
- * lectura y un ajuste del reloj lo mueve un segundo, lo que con una clave por
- * hora duplicaría el reinicio.
- *
- * Sin la causa del apagado anterior: en Linux eso vive en el journal, que el
- * agente no puede leer.
+ * Dos formatos según la versión de systemd: con espacios entre la primera y
+ * la última entrada (255) o con una raya («UTC—Thu», las antiguas). Sólo se usa
+ * la PRIMERA entrada, y el día de la semana (que sí se traduce) se salta.
  */
-async function linuxRestart(d: SourceDeps, cursors: Cursors): Promise<{ events: StabilityEvent[]; cursors: Cursors }> {
-  const none = { events: [] as StabilityEvent[], cursors };
-  try {
-    const bootMs = parseProcBtime(await d.readFile("/proc/stat"));
-    const id = normalizeBootId(await d.readFile("/proc/sys/kernel/random/boot_id"));
-    if (bootMs === null || id === null || cursors.boot === id) return none;
-    return {
-      events: [{ key: `boot:${id}`, kind: "restart", occurredAtUtc: new Date(bootMs).toISOString(), app: null, detail: null }],
-      cursors: { ...cursors, boot: id },
-    };
-  } catch {
-    return none;
+export function parseListBoots(out: string): Array<{ id: string; firstMs: number }> {
+  const rows: Array<{ id: string; firstMs: number }> = [];
+  for (const line of String(out).split("\n")) {
+    const m = line.match(/^\s*-?\d+\s+([0-9a-f]{32})\s+\S+\s+(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) UTC/);
+    if (!m) continue;
+    const t = Date.parse(`${m[2]}T${m[3]}Z`);
+    if (Number.isFinite(t)) rows.push({ id: m[1], firstMs: t });
   }
+  return rows.sort((a, b) => a.firstMs - b.firstMs);
+}
+
+/**
+ * Lo que deja en el journal un apagado ORDENADO, sin depender del idioma:
+ *   · `SYSLOG_IDENTIFIER=systemd-shutdown`: lo último que corre en cualquier
+ *     apagado o reinicio pedido, lo pida quien lo pida;
+ *   · `MESSAGE_ID=98268866…` («System shutdown initiated»), de systemd-logind.
+ * Cualquiera de las dos (el `+` de journalctl es un OR). Un corte de luz, un
+ * reset forzado o un kernel panic no dejan ninguna. Medido en tracenium-grpc
+ * (Ubuntu, systemd 255): las dos aparecen al final de sus dos reinicios.
+ */
+const ORDERLY_SHUTDOWN_MATCHES = ["SYSLOG_IDENTIFIER=systemd-shutdown", "+", "MESSAGE_ID=98268866d1d54a499c4e98921d93bc40"];
+/** En la primera lectura, como mucho estos arranques hacia atrás (cada uno es una consulta). */
+const MAX_BOOTS_PER_READ = 20;
+
+/**
+ * true = el arranque terminó con apagado ordenado; false = no; null = no se
+ * pudo preguntar.
+ *
+ * ⚠️ Sólo para arranques que ESTÁN en `--list-boots`: journalctl contesta vacío
+ * y con código 0 también por un arranque que no existe, igual que por uno que
+ * terminó sucio.
+ */
+async function endedInOrder(d: SourceDeps, bootId: string): Promise<boolean | null> {
+  const r = await d
+    .exec("journalctl", ["-b", bootId, ...ORDERLY_SHUTDOWN_MATCHES, "-o", "json", "-n", "1", "-q", "--no-pager"], { timeoutMs: 30_000 })
+    .catch(() => null);
+  if (!r || r.code !== 0) return null;
+  return r.stdout.trim().length > 0;
+}
+
+/**
+ * ¿Este equipo deja marcas de apagado ordenado en su journal? Se mira en otros
+ * arranques ya terminados. Si ninguno las tiene, su ausencia no prueba nada.
+ */
+async function hostRecordsOrderlyShutdowns(d: SourceDeps, boots: Array<{ id: string }>, skipId: string): Promise<boolean> {
+  const finished = boots.slice(0, -1).filter((b) => b.id !== skipId).slice(-5);
+  for (const b of finished) if ((await endedInOrder(d, b.id)) === true) return true;
+  return false;
+}
+
+function linuxBootEvent(bootId: string, atMs: number, previousInOrder: boolean | null): StabilityEvent {
+  const base = { key: `boot:${bootId}`, occurredAtUtc: new Date(atMs).toISOString(), app: null };
+  if (previousInOrder === false) {
+    return { ...base, kind: "unexpected_shutdown", detail: "no orderly shutdown in the previous boot's journal" };
+  }
+  return { ...base, kind: "restart", detail: previousInOrder === true ? "previous shutdown was clean" : null };
+}
+
+/**
+ * Los arranques de Linux como `restart` / `unexpected_shutdown`, una vez cada uno.
+ *
+ * Con el journal (el preinstall mete a `tracenium` en `systemd-journal`,
+ * e2968be): el historial de arranques y, para cada uno, si la sesión ANTERIOR
+ * terminó con un apagado ordenado. Sin él —equipo aún sin ese paquete, sin
+ * systemd, o sin permiso—, el arranque en curso de `/proc`, sin causa: `/proc`
+ * lo lee cualquiera y el agente arranca con el equipo, así que ningún reinicio
+ * de aquí en adelante se pierde.
+ *
+ * La clave es el `boot_id` del kernel, el mismo que usa journald, así que las
+ * dos fuentes no duplican. No la hora: `btime` se recalcula en cada lectura y
+ * un ajuste de reloj lo mueve un segundo.
+ *
+ * ⚠️ «Inesperado» sólo si el equipo ha DEMOSTRADO que registra las marcas de
+ * apagado (en este u otro arranque). Un equipo que no las deja nunca haría
+ * parecer inesperados todos sus reinicios, y dos en siete días disparan la
+ * señal «System crashes» de DEX. En ese caso sale `restart` sin causa: no se
+ * sabe, y se dice así.
+ *
+ * El journal sólo se consulta cuando hay un arranque nuevo: con el cursor ya
+ * en el arranque en curso, no se ejecuta nada.
+ */
+async function linuxRestart(d: SourceDeps, cursors: Cursors, defaultSince: string): Promise<{ events: StabilityEvent[]; cursors: Cursors }> {
+  const none = { events: [] as StabilityEvent[], cursors };
+  let procId: string | null = null;
+  let procBootMs: number | null = null;
+  try {
+    procBootMs = parseProcBtime(await d.readFile("/proc/stat"));
+    procId = normalizeBootId(await d.readFile("/proc/sys/kernel/random/boot_id"));
+  } catch {
+    /* sin /proc legible: sólo el journal, si lo hay */
+  }
+  if (procId !== null && cursors.boot === procId) return none;
+
+  const listed = await d
+    .exec("journalctl", ["--list-boots", "--utc", "--no-pager", "-q"], { timeoutMs: 30_000 })
+    .then((r) => (r.code === 0 ? parseListBoots(r.stdout) : []))
+    .catch(() => [] as Array<{ id: string; firstMs: number }>);
+
+  if (listed.length === 0) {
+    if (procId === null || procBootMs === null) return none;
+    return { events: [linuxBootEvent(procId, procBootMs, null)], cursors: { ...cursors, boot: procId } };
+  }
+
+  const known = listed.findIndex((b) => b.id === cursors.boot);
+  let fresh = known >= 0 ? listed.slice(known + 1) : listed.filter((b) => b.firstMs >= Date.parse(defaultSince));
+  // Journal volátil o ya rotado: el arranque en curso puede no estar.
+  if (procId !== null && procBootMs !== null && !listed.some((b) => b.id === procId)) fresh = [...fresh, { id: procId, firstMs: procBootMs }];
+  fresh = fresh.slice(-MAX_BOOTS_PER_READ);
+
+  let recordsMarkers = cursors.journal_markers === "1";
+  const events: StabilityEvent[] = [];
+  for (const b of fresh) {
+    const i = listed.findIndex((x) => x.id === b.id);
+    const prev = i > 0 ? listed[i - 1] : null;
+    let inOrder = prev ? await endedInOrder(d, prev.id) : null;
+    if (inOrder === true) recordsMarkers = true;
+    if (inOrder === false && !recordsMarkers && prev) recordsMarkers = await hostRecordsOrderlyShutdowns(d, listed, prev.id);
+    if (inOrder === false && !recordsMarkers) inOrder = null;
+    events.push(linuxBootEvent(b.id, b.id === procId && procBootMs !== null ? procBootMs : b.firstMs, inOrder));
+  }
+
+  const last = procId ?? fresh[fresh.length - 1]?.id ?? cursors.boot;
+  const next: Cursors = { ...cursors };
+  if (last) next.boot = last;
+  if (recordsMarkers) next.journal_markers = "1";
+  return { events, cursors: next };
 }
 
 async function linuxEvents(d: SourceDeps, cursors: Cursors, defaultSince: string): Promise<EventsResult> {
   const core = await linuxCoredumps(d, cursors, defaultSince);
   // El `scope` sigue siendo el de coredumpctl: el arranque es un dato más, y
   // no poder leerlo no deja a ciegas los crashes (ni al revés).
-  const boot = await linuxRestart(d, core.cursors);
+  const boot = await linuxRestart(d, core.cursors, defaultSince);
   return { scope: core.scope, events: [...core.events, ...boot.events], cursors: boot.cursors };
 }
 

@@ -13,6 +13,7 @@ import {
   macCrashReason,
   normalizeBootId,
   parseKernBoottime,
+  parseListBoots,
   parseProcBtime,
   parseShutdownCause,
   shutdownCauseEvent,
@@ -419,6 +420,95 @@ describe("Linux", () => {
       const moved = { ...REAL, "/proc/stat": PROC_STAT.replace("1790400718", "1790400719") };
       const r = await readStabilityEvents(linux(moved), { boot: "d53acc78347e47689131c048b9d1b411" }, "2026-09-14T00:00:00.000Z");
       expect(r.events).toEqual([]);
+    });
+
+    describe("⭐ con el journal (tracenium en systemd-journal): historial y cómo acabó la sesión anterior", () => {
+      // `journalctl --list-boots --utc -q` literal, como tracenium con el grupo, en tracenium-grpc.
+      const LIST = [
+        "-2 14862c5f3b684838b4df9e770f0500b4 Mon 2026-09-14 02:23:02 UTC Thu 2026-09-24 00:15:26 UTC",
+        "-1 973db7374d604253880479c17fd9f7af Thu 2026-09-24 00:15:51 UTC Sat 2026-09-26 05:31:41 UTC",
+        " 0 d53acc78347e47689131c048b9d1b411 Sat 2026-09-26 05:32:05 UTC Wed 2026-09-30 03:02:59 UTC",
+      ].join("\n");
+      const NEW_BOOT = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+      // Lo que devuelve la consulta de marcas: una línea JSON si hubo apagado ordenado, nada si no.
+      const MARK = '{"SYSLOG_IDENTIFIER":"systemd-shutdown","MESSAGE":"Syncing filesystems and block devices."}\n';
+
+      const withJournal = (o: { list: string; ordered: Record<string, boolean>; proc?: Record<string, string> }) => {
+        const exec = vi.fn(async (cmd: string, args: string[]) => {
+          if (cmd === "coredumpctl") return { code: 1, stdout: "", stderr: "No coredumps found." };
+          if (args[0] === "--list-boots") return { code: 0, stdout: o.list, stderr: "" };
+          if (args[0] === "-b") return { code: 0, stdout: o.ordered[args[1]] ? MARK : "", stderr: "" };
+          throw new Error(`unexpected ${cmd} ${args.join(" ")}`);
+        });
+        const d = {
+          platform: "linux",
+          exec,
+          readFile: async (p: string) => {
+            const files = o.proc ?? REAL;
+            if (!(p in files)) throw new Error("EACCES");
+            return files[p];
+          },
+        } as unknown as SourceDeps;
+        return { d, exec };
+      };
+
+      it("lee los dos formatos de --list-boots (con espacios, y con la raya de las versiones antiguas)", () => {
+        expect(parseListBoots(LIST).map((b) => b.id)).toEqual(["14862c5f3b684838b4df9e770f0500b4", "973db7374d604253880479c17fd9f7af", "d53acc78347e47689131c048b9d1b411"]);
+        expect(parseListBoots("-1 973db7374d604253880479c17fd9f7af jue 2026-09-24 00:15:51 UTC—sáb 2026-09-26 05:31:41 UTC")).toEqual([
+          { id: "973db7374d604253880479c17fd9f7af", firstMs: Date.parse("2026-09-24T00:15:51Z") },
+        ]);
+      });
+
+      it("⭐ primera lectura: el historial, cada reinicio con si la sesión anterior terminó en orden", async () => {
+        const { d } = withJournal({ list: LIST, ordered: { "14862c5f3b684838b4df9e770f0500b4": true, "973db7374d604253880479c17fd9f7af": true } });
+        const r = await readStabilityEvents(d, {}, "2026-09-14T00:00:00.000Z");
+        expect(r.events).toEqual([
+          // El primero de la lista: de la sesión anterior no hay journal, no se sabe.
+          { key: "boot:14862c5f3b684838b4df9e770f0500b4", kind: "restart", occurredAtUtc: "2026-09-14T02:23:02.000Z", app: null, detail: null },
+          { key: "boot:973db7374d604253880479c17fd9f7af", kind: "restart", occurredAtUtc: "2026-09-24T00:15:51.000Z", app: null, detail: "previous shutdown was clean" },
+          // El en curso, a la hora EXACTA de /proc (btime), no a la primera entrada del journal.
+          { key: "boot:d53acc78347e47689131c048b9d1b411", kind: "restart", occurredAtUtc: "2026-09-26T05:31:58.000Z", app: null, detail: "previous shutdown was clean" },
+        ]);
+        expect(r.cursors).toMatchObject({ boot: "d53acc78347e47689131c048b9d1b411", journal_markers: "1" });
+      });
+
+      it("con el cursor ya en el arranque en curso no se ejecuta NADA contra el journal", async () => {
+        const { d, exec } = withJournal({ list: LIST, ordered: {} });
+        const r = await readStabilityEvents(d, { boot: "d53acc78347e47689131c048b9d1b411" }, "2026-09-14T00:00:00.000Z");
+        expect(r.events).toEqual([]);
+        expect(exec.mock.calls.filter((c) => c[0] === "journalctl")).toHaveLength(0);
+      });
+
+      it("⭐ un reinicio sin apagado ordenado detrás → apagado inesperado", async () => {
+        const list = `${LIST}\n 1 ${NEW_BOOT} Wed 2026-09-30 04:00:10 UTC Wed 2026-09-30 05:00:00 UTC`;
+        const proc = { "/proc/stat": "btime 1790740805\n", "/proc/sys/kernel/random/boot_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n" };
+        const { d } = withJournal({ list, ordered: {}, proc });
+        const r = await readStabilityEvents(d, { boot: "d53acc78347e47689131c048b9d1b411", journal_markers: "1" }, "2026-09-14T00:00:00.000Z");
+        expect(r.events).toEqual([
+          { key: `boot:${NEW_BOOT}`, kind: "unexpected_shutdown", occurredAtUtc: new Date(1790740805_000).toISOString(), app: null, detail: "no orderly shutdown in the previous boot's journal" },
+        ]);
+        expect(r.cursors.boot).toBe(NEW_BOOT);
+      });
+
+      it("🔴 un equipo que NUNCA deja marcas no convierte cada reinicio en «inesperado»: no se sabe", async () => {
+        // Sin esto, dos reinicios normales en 7 días dispararían la señal «System crashes».
+        const { d } = withJournal({ list: LIST, ordered: {} });
+        const r = await readStabilityEvents(d, {}, "2026-09-14T00:00:00.000Z");
+        expect(r.events.map((e) => [e.kind, e.detail])).toEqual([["restart", null], ["restart", null], ["restart", null]]);
+        expect(r.cursors.journal_markers).toBeUndefined();
+      });
+
+      it("…pero si el equipo SÍ las deja en otro arranque, su ausencia cuenta", async () => {
+        const { d } = withJournal({ list: LIST, ordered: { "14862c5f3b684838b4df9e770f0500b4": true } });
+        const r = await readStabilityEvents(d, {}, "2026-09-14T00:00:00.000Z");
+        expect(r.events.map((e) => e.kind)).toEqual(["restart", "restart", "unexpected_shutdown"]);
+      });
+
+      it("journal volátil o rotado: el arranque en curso que no está en la lista sale de /proc", async () => {
+        const { d } = withJournal({ list: LIST.split("\n").slice(0, 2).join("\n"), ordered: { "14862c5f3b684838b4df9e770f0500b4": true } });
+        const r = await readStabilityEvents(d, { boot: "973db7374d604253880479c17fd9f7af" }, "2026-09-14T00:00:00.000Z");
+        expect(r.events).toEqual([{ key: "boot:d53acc78347e47689131c048b9d1b411", kind: "restart", occurredAtUtc: "2026-09-26T05:31:58.000Z", app: null, detail: null }]);
+      });
     });
 
     it("sin /proc legible no se inventa nada, y los crashes siguen leyéndose", async () => {
