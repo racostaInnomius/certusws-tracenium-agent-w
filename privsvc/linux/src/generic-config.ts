@@ -198,7 +198,11 @@ export const LINE_FILES: Readonly<Record<string, LinePolicy>> = Object.freeze({
  * sentido que la lleva; el sentido contrario se deja (es el revert), pero
  * pasa por la misma simulación de apt.
  */
-type PkgRule = { install?: { guard?: string }; remove?: { guard?: string } };
+type PkgRule = {
+  /** `acceptable`: cede si la escritura trae `accepted: true` (el operador aceptó el aviso en el portal). */
+  install?: { guard?: string; acceptable?: boolean };
+  remove?: { guard?: string };
+};
 
 export const PKG_POLICY: Readonly<Record<string, PkgRule>> = Object.freeze({
   aide: { install: { guard: "AIDE needs aideinit first" } },
@@ -211,7 +215,9 @@ export const PKG_POLICY: Readonly<Record<string, PkgRule>> = Object.freeze({
   sudo: { install: {} },
   "rsyslog-gnutls": { install: {} },
   "systemd-journal-remote": { install: {} },
-  "libpam-pwquality": { install: { guard: "turns password-quality checks on in PAM" } },
+  // Aceptable: el portal lo ofrece como requisito de los ajustes de
+  // pwquality.conf, con el aviso de PAM delante. Ninguna otra guarda cede.
+  "libpam-pwquality": { install: { guard: "turns password-quality checks on in PAM", acceptable: true } },
   telnet: { remove: {} },
   "inetutils-telnet": { remove: {} },
   "telnet-ssl": { remove: {} },
@@ -380,8 +386,9 @@ export function parseWrites(params: unknown): Check<LinuxWrite[]> {
         const policy = typeof w.name === "string" && Object.prototype.hasOwnProperty.call(PKG_POLICY, w.name) ? PKG_POLICY[w.name] : undefined;
         if (!policy) return { ok: false, message: `${at}: package not on the list Tracenium may install or remove` };
         if (typeof w.installed !== "boolean") return { ok: false, message: `${at}: installed must be boolean` };
-        const guard = (w.installed ? policy.install : policy.remove)?.guard;
-        if (guard) return { ok: false, message: `${at}: guarded (${guard})` };
+        const rule = w.installed ? policy.install : policy.remove;
+        const accepted = w.installed && policy.install?.acceptable === true && w.accepted === true;
+        if (rule?.guard && !accepted) return { ok: false, message: `${at}: guarded (${rule.guard})` };
         out.push({ kind: "pkg", name: w.name, installed: w.installed });
         break;
       }

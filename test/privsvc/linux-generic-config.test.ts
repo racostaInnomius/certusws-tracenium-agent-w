@@ -91,6 +91,17 @@ describe("parseWrites — la lista cerrada y las guardas se repiten aquí", () =
     expect(parseWrites(w({ kind: "conf", file: "/etc/security/faillock.conf", key: "deny", value: "5" }))).toMatchObject({ ok: false });
   });
 
+  it("libpam-pwquality: la guarda cede con `accepted` (requisito aceptado en el portal); ninguna otra", () => {
+    expect(parseWrites(w({ kind: "pkg", name: "libpam-pwquality", installed: true }))).toMatchObject({ ok: false, message: expect.stringMatching(/guarded \(turns password-quality/) });
+    expect(parseWrites(w({ kind: "pkg", name: "libpam-pwquality", installed: true, accepted: true }))).toEqual({
+      ok: true,
+      value: [{ kind: "pkg", name: "libpam-pwquality", installed: true }],
+    });
+    expect(parseWrites(w({ kind: "pkg", name: "libpam-pwquality", installed: true, accepted: "yes" })).ok).toBe(false);
+    expect(parseWrites(w({ kind: "pkg", name: "aide", installed: true, accepted: true })).ok).toBe(false);
+    expect(parseWrites(w({ kind: "pkg", name: "gdm3", installed: false, accepted: true })).ok).toBe(false);
+  });
+
   it("pero deja deshacer: devolver el reenvío o desbloquear no es lo guardado", () => {
     expect(parseWrites(w({ kind: "sysctl", key: "net.ipv4.ip_forward", value: "1", persist: false })).ok).toBe(true);
     expect(parseWrites(w({ kind: "kmod", module: "squashfs", disable: false })).ok).toBe(true);
