@@ -15,6 +15,7 @@ import { normalizeApp } from "../../../domain/normalize-app";
 import { installedOnFromDate, installedOnFromEpochSeconds } from "../../../domain/install-date";
 import { parseBundleInfo } from "../../../domain/macos-bundle-info";
 import { computeSoftwareDelta, toBaselineOps } from "../../../domain/software-inventory-delta";
+import { carryOverUnreadReceipts, type ReceiptReadGap } from "../../../domain/macos-receipt-carryover";
 import { collectCupsPrinters } from "./printers-cups";
 import {
   buildPrinterInventoryWithBaseline,
@@ -413,7 +414,13 @@ export function collapseReceiptsByName(
   return salida;
 }
 
-async function collectMacSoftware(): Promise<SoftwareApplication[]> {
+/**
+ * El inventario de software del Mac, y lo que NO se pudo leer (recibos de
+ * pkgutil). `apps: null` = el colector entero falló: no se sabe nada, que no es
+ * lo mismo que «no hay nada» (ver macos-receipt-carryover).
+ */
+async function collectMacSoftware(): Promise<{ apps: SoftwareApplication[] | null; receiptGap: ReceiptReadGap }> {
+  const receiptGap: ReceiptReadGap = { all: false, ids: new Set<string>() };
   try {
     const appDirs = [
       "/Applications",
@@ -592,13 +599,26 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
     }
 
     // --- pkgutil packages ---
+    //
+    // ⚠️ Si `pkgutil --pkgs` falla (la cola de PackageKit atascada lo cuelga
+    // y salta el timeout) NO se sabe qué recibos hay: se DICE en `receiptGap`
+    // y el proveedor conserva los de la línea base. Antes el `catch` los
+    // descartaba en silencio y el delta los daba por desinstalados
+    // (iMac T1, 30-sep 05:33Z: 18 de golpe).
+    let pkgList: string | null = null;
     try {
       const { stdout } = await execFileAsync("/usr/sbin/pkgutil", ["--pkgs"], {
         maxBuffer: 1024 * 1024 * 5,
         timeout: 5000
       });
+      pkgList = stdout;
+    } catch (err: any) {
+      receiptGap.all = true;
+      console.warn("[MACOS] pkgutil --pkgs failed; keeping the known receipts this cycle", err?.message || err);
+    }
 
-      const allPkgs = stdout.split("\n").map(p => p.trim()).filter(Boolean);
+    if (pkgList !== null) try {
+      const allPkgs = pkgList.split("\n").map(p => p.trim()).filter(Boolean);
 
       // Filter Apple system noise + arch-tagged sub-component receipts
       // BEFORE the orphan-receipt check so we don't burn execs on
@@ -689,8 +709,12 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
             installLocationExists
           };
         } catch {
-          // pkg-info itself failed — receipt is corrupt or vanished
-          // between --pkgs and --pkg-info. Treat as orphan.
+          // ⚠️ NO es un huérfano: no se pudo LEER (timeout con PackageKit
+          // atascado, o se fue entre --pkgs y --pkg-info). Huérfano es el que
+          // se lee y cuya ruta ya no existe. Se anota y el proveedor conserva
+          // lo que sabía; si de verdad desapareció, el siguiente --pkgs ya no
+          // lo lista y entonces sí se va.
+          receiptGap.ids.add(canonicalizePkgutilId(pkgId).canonical);
           return null;
         }
       }
@@ -781,10 +805,12 @@ async function collectMacSoftware(): Promise<SoftwareApplication[]> {
     //   - homebrew has a version string.
     //   - pkgutil is last-resort identification for things that aren't
     //     bundles (drivers, kexts, receipts for deleted apps).
-    return mergeMacAppsBySource(results);
+    return { apps: mergeMacAppsBySource(results), receiptGap };
   } catch (err) {
+    // ⚠️ null, no []: una lista vacía se leía como «este Mac no tiene
+    // software» y la rama EMPTY INVENTORY borraba la línea base entera.
     console.warn("[MACOS] enterprise collector failed", err);
-    return [];
+    return { apps: null, receiptGap };
   }
 }
 
@@ -906,7 +932,18 @@ export const macProvider = {
     };
 
     try {
-      const apps = await collectMacSoftware();
+      const collected = await collectMacSoftware();
+      if (collected.apps === null) {
+        // El colector falló: este ciclo no se sabe nada del software. Se deja
+        // como está (sin delta) en vez de declararlo vacío.
+        throw new Error("software collector unavailable this cycle");
+      }
+      const previousForGap = collected.receiptGap.all || collected.receiptGap.ids.size > 0 ? loadSoftwareBaseline() ?? [] : [];
+      const conservados = carryOverUnreadReceipts(collected.apps, previousForGap, collected.receiptGap);
+      if (conservados.carried > 0) {
+        console.warn(`[MACOS] kept ${conservados.carried} pkgutil receipts that could not be read this cycle`);
+      }
+      const apps = conservados.apps;
 
       if (!apps || apps.length === 0) {
         console.warn("[MACOS] EMPTY INVENTORY");
