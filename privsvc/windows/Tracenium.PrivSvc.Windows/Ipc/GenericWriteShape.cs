@@ -454,7 +454,28 @@ public sealed class RegistryWriteBlockedException : Exception
         Where = where;
     }
 
+    /// <summary>
+    /// Bloqueada la escritura directa Y fallido el respaldo por política local
+    /// (ver LocalPolicy.cs): se dice por qué falló éste también.
+    /// </summary>
+    public RegistryWriteBlockedException(string where, Exception inner, string policyFailure)
+        : base(DescribePolicyFailed(where, policyFailure), inner)
+    {
+        Where = where;
+    }
+
     public string Where { get; }
+
+    /// <summary>
+    /// Mismo presupuesto de 200 que Describe: el motivo del respaldo se
+    /// recorta a 50 para que el valor siga entrando entero.
+    /// </summary>
+    public static string DescribePolicyFailed(string where, string policyFailure)
+    {
+        var why = (policyFailure ?? "").Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (why.Length > 50) why = why[..50];
+        return $"blocked by Windows; local Group Policy also failed ({why}): {where}";
+    }
 
     /// <summary>
     /// Lo accionable DELANTE: el agente recorta el motivo a 200 caracteres

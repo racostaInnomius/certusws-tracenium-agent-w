@@ -54,6 +54,10 @@
          las escrituras, las guardas y la plantilla .inf son puros
          (System.Text.Json); la escritura real queda en PmpRemediation.cs. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\GenericWriteShape.cs" />
+    <!-- Política local como respaldo de una escritura que Windows bloquea:
+         el formato de Registry.pol (MS-GPREG) y gpt.ini es puro; abrir los
+         ficheros y lanzar gpupdate queda en LocalPolicy.cs. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\LocalPolicyShape.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\SignInScreenShape.cs" />
     <!-- pmp.revert: validar el stateBefore (claves fijas, tipos JSON) y
          decidir qué se escribe es puro; el registro y PowerShell se quedan

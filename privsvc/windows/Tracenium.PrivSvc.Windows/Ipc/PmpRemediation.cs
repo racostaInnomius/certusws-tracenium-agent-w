@@ -997,9 +997,12 @@ public static class PmpRemediation
                     }
                     // La clave se abrió para escritura: si aun así se deniega, no es
                     // su ACL (ver RegistryWriteBlockedException).
-                    try { existing.DeleteValue(w.ValueName, throwOnMissingValue: false); }
-                    catch (UnauthorizedAccessException uae) { throw new RegistryWriteBlockedException(where, uae); }
-                    changes.Add(where + " (deleted)");
+                    try
+                    {
+                        existing.DeleteValue(w.ValueName, throwOnMissingValue: false);
+                        changes.Add(where + " (deleted)");
+                    }
+                    catch (UnauthorizedAccessException uae) { changes.Add(ViaLocalPolicy(w, where, uae)); }
                     continue;
                 }
                 using var key = t.Root.CreateSubKey(t.Prefix + w.SubKey, writable: true)
@@ -1012,13 +1015,51 @@ public static class PmpRemediation
                 };
                 // La clave ya se abrió para escritura (arriba): si Windows deniega
                 // el VALOR, no es su ACL sino un filtro del kernel.
-                try { key.SetValue(w.ValueName, value, KindOf(w.Kind)); }
-                catch (UnauthorizedAccessException uae) { throw new RegistryWriteBlockedException(where, uae); }
-                changes.Add(w.Hive == RegistryHiveKind.Users ? where + " = " + w.Describe().Split('=', 2).Last() : w.Describe());
+                try
+                {
+                    key.SetValue(w.ValueName, value, KindOf(w.Kind));
+                    changes.Add(w.Hive == RegistryHiveKind.Users ? where + " = " + w.Describe().Split('=', 2).Last() : w.Describe());
+                }
+                catch (UnauthorizedAccessException uae) { changes.Add(ViaLocalPolicy(w, where, uae)); }
             }
         }
         sw.Stop();
         return new RemediateResult { ExitCode = 0, DurationMs = sw.ElapsedMilliseconds, RequiresReboot = false, ChangesApplied = changes };
+    }
+
+    /// <summary>
+    /// Windows denegó el VALOR con la clave abierta para escritura (ver
+    /// RegistryWriteBlockedException): se reintenta como política de grupo
+    /// local, que el cliente de directivas sí puede aplicar. Comprobado en
+    /// W11-JPR-LAB02 el 1-oct-2026 con LGPO: el mismo `EnableFeeds` que
+    /// `reg add` no podía escribir quedó en 0.
+    ///
+    /// Sólo HKLM: la política local de USUARIO vale para todos los usuarios,
+    /// no para los perfiles cargados que pide una escritura HKU.
+    ///
+    /// Lo que decide es el registro DESPUÉS de gpupdate, no que gpupdate
+    /// acabe bien: en un equipo de dominio una GPO del dominio sobre el mismo
+    /// ajuste gana a la local.
+    /// </summary>
+    private static string ViaLocalPolicy(RegistryWriteSpec w, string where, UnauthorizedAccessException blocked)
+    {
+        if (w.Hive != RegistryHiveKind.LocalMachine) throw new RegistryWriteBlockedException(where, blocked);
+        try
+        {
+            LocalPolicy.ApplyMachineEntry(LocalPolicyShape.EntryFor(w));
+        }
+        catch (Exception ex)
+        {
+            throw new RegistryWriteBlockedException(where, blocked, ex.Message);
+        }
+
+        using var check = Registry.LocalMachine.OpenSubKey(w.SubKey);
+        var raw = check?.GetValue(w.ValueName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+        var applied = w.Kind == GenericValueKind.Delete
+            ? raw is null
+            : raw is not null && GenericWriteShape.RegistryValueMatches(w, RegistryProbeShape.Normalize(raw));
+        if (!applied) throw new RegistryWriteBlockedException(where, blocked, "not applied after gpupdate");
+        return w.Describe() + " (via local Group Policy: Windows blocked the direct write)";
     }
 
     private static RegistryValueKind KindOf(GenericValueKind k) => k switch
