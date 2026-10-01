@@ -328,6 +328,21 @@ describe("⚠️ el arranque no puede borrar lo que no sabe recuperar", () => {
     expect(afterRestart.remoteSession).toBeUndefined();
   });
 
+  it("⭐ lo del último escaneo de parches sobrevive al reinicio (antes volvía el «failed» de pmp-state)", () => {
+    const store = new TrayStatusStore();
+    store.setPatch({ status: "Up to date", lastScanAtUtc: "2026-10-01T03:16:59.831Z", rebootRequired: false });
+
+    const afterRestart = store.writeStartupSnapshot(ctx);
+
+    expect(afterRestart.patch).toEqual({ status: "Up to date", lastScanAtUtc: "2026-10-01T03:16:59.831Z", rebootRequired: false });
+  });
+
+  it("sin escaneo previo, el bloque sale de la última instalación, como antes", () => {
+    const store = new TrayStatusStore();
+    const snapshot = store.writeStartupSnapshot(ctx);
+    expect(snapshot.patch?.lastScanAtUtc).toBeUndefined();
+  });
+
   it("y sin nada previo no inventa un catálogo", () => {
     const store = new TrayStatusStore();
     const snapshot = store.writeStartupSnapshot(ctx);

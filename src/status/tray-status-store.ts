@@ -15,6 +15,7 @@ import type {
   TrayCatalogItem,
   TrayDeviceInfo,
   TrayGatewayStatus,
+  TrayPatchStatus,
   TrayUserAction,
   TrayRemoteSession,
   TrayStatusSnapshot
@@ -242,12 +243,17 @@ export class TrayStatusStore {
         lastCompletedAtUtc: updateState.lastCompletedAtUtc,
         lastError: updateState.lastError
       },
-      patch: {
-        status: patchState.status,
-        lastScanAtUtc: undefined,
-        rebootRequired: patchState.rebootRequired,
-        lastError: patchState.lastError
-      }
+      // Lo del último escaneo si lo hay (setPatch): es el estado del equipo y
+      // sigue valiendo tras reiniciar el agente. Sin escaneo previo, la última
+      // instalación, como antes.
+      patch: previous?.patch?.lastScanAtUtc
+        ? previous.patch
+        : {
+            status: patchState.status,
+            lastScanAtUtc: undefined,
+            rebootRequired: patchState.rebootRequired,
+            lastError: patchState.lastError
+          }
     };
 
     // El catálogo sobrevive al reinicio: es información del servidor, no del
@@ -462,6 +468,14 @@ export class TrayStatusStore {
   }
 
   /** `null` (o vacío) retira el bloque: ya no queda nada que pedirle a la persona. */
+  /** Lo que dijo el último escaneo de parches (trayPatchFromScan). */
+  setPatch(patch: TrayPatchStatus) {
+    return this.update((current) => ({
+      ...(current || this.emptySnapshot()),
+      patch
+    }));
+  }
+
   setUserActions(list: TrayUserAction[] | null) {
     return this.update((current) => {
       const next = { ...(current || this.emptySnapshot()) };

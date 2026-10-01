@@ -5,8 +5,25 @@ import { collectMacosPmp } from "./providers/macos";
 import { collectWindowsPmp } from "./providers/windows";
 import { collectLinuxPmp } from "./providers/linux";
 import { refreshOsUpdateActionsAfterScan } from "./os-update-action";
+import { trayPatchFromScan } from "../../status/tray-patch";
 
+/**
+ * Todo escaneo de parches —el programado y el de un job, en los tres
+ * sistemas— pasa por aquí: la bandeja dice lo que vio ESTE escaneo, no el
+ * resultado de la última instalación congelado al arrancar (1-oct). Un fallo
+ * al escribirlo no puede tirar el escaneo.
+ */
 export async function collectPMP(ctx: AgentContext): Promise<PmpNamespace> {
+  const ns = await collectForPlatform(ctx);
+  try {
+    ctx.trayStatus?.setPatch(trayPatchFromScan(ns));
+  } catch (err) {
+    ctx.logger?.warn?.("tray patch status update failed", { err });
+  }
+  return ns;
+}
+
+async function collectForPlatform(ctx: AgentContext): Promise<PmpNamespace> {
   const platform = os.platform();
 
   if (platform === "win32") {
