@@ -79,7 +79,47 @@ export async function probeUserpref(key: string, users: LocalUser[], deps: MacPr
 
 // ── profile.<Key> ────────────────────────────────────────────────────
 
-/** Aplana los payloads de system_profiler -json: clave → valor escalar (última gana). */
+// Una línea `clave = valor;` del texto de un payload: clave y valor, cada uno
+// entre comillas o sin ellas. Un valor que abre `{` o `(` no es escalar y no
+// casa (sus hijos van en sus propias líneas y casan solos).
+const PAYLOAD_LINE = /^\s*(?:"((?:[^"\\]|\\.)*)"|([A-Za-z0-9_$+/:.-]+))\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^"{(;]*?))\s*;\s*$/;
+
+const unescape = (s: string) =>
+  s.replace(/\\(U[0-9a-fA-F]{4}|.)/g, (_m, c: string) =>
+    c.length === 5 ? String.fromCharCode(parseInt(c.slice(1), 16)) : c === "n" ? "\n" : c === "t" ? "\t" : c);
+
+/**
+ * `spconfigprofile_payload_data`: system_profiler NO da el payload como JSON
+ * sino como TEXTO, la descripción de NSDictionary (plist antiguo):
+ *
+ *   {\n    ShowFullURLInSmartSearchField = 1;\n    "WebKitPreferences.storageBlockingPolicy" = 1;\n}
+ *
+ * Los booleanos salen 1/0 (el catálogo acepta [1, true]); un número sin
+ * comillas pasa a número; el resto, texto. Clave → escalar, a cualquier
+ * profundidad (última gana), como el resto de flattenProfiles.
+ */
+export function parsePayloadData(text: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const line of String(text).split("\n")) {
+    const m = line.match(PAYLOAD_LINE);
+    if (!m) continue;
+    const key = m[1] !== undefined ? unescape(m[1]) : m[2];
+    if (m[3] !== undefined) out[key] = unescape(m[3]);
+    else if (/^-?\d+(\.\d+)?$/.test(m[4])) out[key] = Number(m[4]);
+    else if (m[4]) out[key] = m[4];
+  }
+  return out;
+}
+
+/**
+ * Aplana los perfiles de system_profiler -json: clave → valor escalar
+ * (última gana). Las claves de cada payload vienen como texto en
+ * `spconfigprofile_payload_data` (parsePayloadData).
+ *
+ * ⚠️ 1-oct-2026: antes sólo se recorrían objetos JSON, y esas claves no
+ * llegaban nunca: ningún check `profile.*` (los 8 de Safari) podía pasar
+ * con un perfil instalado de verdad. El test usaba una forma inventada.
+ */
 export function flattenProfiles(json: unknown): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const walk = (v: unknown) => {
@@ -87,7 +127,8 @@ export function flattenProfiles(json: unknown): Record<string, unknown> {
     if (!v || typeof v !== "object") return;
     for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
       if (k.startsWith("_")) { walk(val); continue; }
-      if (val && typeof val === "object") walk(val);
+      if (k === "spconfigprofile_payload_data" && typeof val === "string") Object.assign(out, parsePayloadData(val));
+      else if (val && typeof val === "object") walk(val);
       else out[k] = val;
     }
   };

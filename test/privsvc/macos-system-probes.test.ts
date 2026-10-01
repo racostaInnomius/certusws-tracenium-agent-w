@@ -11,6 +11,36 @@ import {
   flattenProfiles, localUsers, parseDiskutilInfo, parseDiskutilList, parseHints, parseProfilesStatus, parseTimeMachine, parseUserprefKey,
 } from "../../privsvc/macos/src/macos-system-probes";
 
+/**
+ * Recorte de `system_profiler -json SPConfigurationProfileDataType` en el Mac
+ * de pruebas con el perfil de la organización instalado (identificadores
+ * cambiados). El texto de cada payload va tal cual lo escribe macOS.
+ */
+const SYSTEM_PROFILER_REAL = {
+  SPConfigurationProfileDataType: [{
+    _name: "spconfigprofile_section_deviceconfigprofiles",
+    _items: [
+      {
+        _name: "Acme — macOS settings (Tracenium)",
+        spconfigprofile_profile_identifier: "com.tracenium.policy.t7.macos",
+        spconfigprofile_verification_state: "unsigned",
+        _items: [
+          { _name: "com.apple.Safari", spconfigprofile_payload_identifier: "com.tracenium.policy.t7.macos.com.apple.Safari",
+            spconfigprofile_payload_data: "{\n    AutoOpenSafeDownloads = 0;\n    ShowOverlayStatusBar = 1;\n    \"WebKitPreferences.storageBlockingPolicy\" = 1;\n}" },
+          { _name: "com.apple.loginwindow", spconfigprofile_payload_data: "{\n    \"com.apple.login.mcx.DisableAutoLoginClient\" = 1;\n    LoginwindowText = \"Authorized use only. \\\"Monitored\\\"\";\n}" },
+        ],
+      },
+      {
+        _name: "Enrollment",
+        _items: [
+          { _name: "com.apple.security.acme",
+            spconfigprofile_payload_data: "{\n    Attest = 1;\n    DirectoryURL = \"https://mdm.example.com/acme/t/7/directory\";\n    KeyType = ECSECPrimeRandom;\n    Subject =     (\n                (\n                        (\n                O,\n                \"Acme\"\n            )\n        )\n    );\n}" },
+        ],
+      },
+    ],
+  }],
+};
+
 function deps(): MacProbeDeps {
   const st = (mode: number, uid = 0, gid = 0) => ({ mode, uid, gid, isDir: (mode & 0o170000) === 0o040000, isFile: (mode & 0o170000) === 0o100000 });
   const stats: Record<string, ReturnType<typeof st>> = {
@@ -18,7 +48,9 @@ function deps(): MacProbeDeps {
     "/Library/Security/PolicyBanner.txt": st(0o100644), "/Users/Guest/x": st(0o100644),
   };
   const dirs: Record<string, string[]> = { "/Users": ["Shared", "alice", "bob", "Guest", ".localized"], "/Library/Security": ["PolicyBanner.txt", "audit"] };
-  const profilesJson = JSON.stringify({ SPConfigurationProfileDataType: [{ _name: "spconfigprofile_section_systemprofiles", _items: [{ _name: "Safari", _items: [{ _name: "com.apple.Safari", AutoOpenSafeDownloads: 0, "WebKitPreferences.storageBlockingPolicy": 1, nested: { ShowOverlayStatusBar: 1 } }] }] }] });
+  // La forma REAL de system_profiler (macOS 27, 1-oct-2026): cada payload
+  // trae sus claves como TEXTO en `spconfigprofile_payload_data`.
+  const profilesJson = JSON.stringify(SYSTEM_PROFILER_REAL);
   return {
     readFile: () => null,
     stat: (p) => stats[p] ?? (p in dirs ? st(0o40755) : null),
@@ -64,6 +96,30 @@ describe("parsers", () => {
   });
   it("profiles flatten, last wins, nested payloads walked", () => {
     expect(flattenProfiles({ a: [{ _name: "x", _items: [{ K: 1, nested: { J: "v" } }, { K: 2 }] }] })).toEqual({ K: 2, J: "v" });
+  });
+  it("❗ las claves de un payload salen del TEXTO de spconfigprofile_payload_data (forma real de system_profiler)", () => {
+    const flat = flattenProfiles(SYSTEM_PROFILER_REAL);
+    expect(flat).toMatchObject({
+      AutoOpenSafeDownloads: 0,
+      ShowOverlayStatusBar: 1,
+      "WebKitPreferences.storageBlockingPolicy": 1,
+      "com.apple.login.mcx.DisableAutoLoginClient": 1,
+      LoginwindowText: 'Authorized use only. "Monitored"',
+      Attest: 1,
+      DirectoryURL: "https://mdm.example.com/acme/t/7/directory",
+      KeyType: "ECSECPrimeRandom",
+    });
+    // El texto en sí no es una clave, y lo anidado (Subject) no se inventa.
+    expect(flat).not.toHaveProperty("spconfigprofile_payload_data");
+    expect(flat).not.toHaveProperty("Subject");
+    expect(flat).not.toHaveProperty("O");
+  });
+  it("parsePayloadData: números a número, comillas a texto, lo que no es escalar se salta", async () => {
+    const { parsePayloadData } = await import("../../privsvc/macos/src/macos-system-probes");
+    expect(parsePayloadData('{\n    A = 1;\n    B = -2;\n    C = 0.5;\n    D = "1";\n    E = word;\n    F = {length = 32, bytes = 0x00ff};\n    G =     (\n        x\n    );\n    "H.I" = "a\\\\b\\nc";\n}')).toEqual({
+      A: 1, B: -2, C: 0.5, D: "1", E: "word", "H.I": "a\\b\nc",
+    });
+    expect(parsePayloadData("")).toEqual({});
   });
   it("time machine, hints, diskutil", () => {
     expect(parseTimeMachine("AutoBackup = 1;\nDestinationID = A;\nLastKnownEncryptionState = NotEncrypted;\nDestinationID = B;\nLastKnownEncryptionState = Encrypted;\n")).toEqual({ autoBackup: true, destinations: 2, notEncrypted: 1 });
