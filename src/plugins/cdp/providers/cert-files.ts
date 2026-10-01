@@ -358,6 +358,15 @@ export function defaultFileDiscoveryRoots(
         "/Library/Java",              // JVMs: sus cacerts los lee el proveedor Java
         "/Library/Keychains",         // keychains: proveedor macOS
         "/Library/Application Support/Tracenium",
+        // Caché de la inspección HTTPS de AVG: una copia de cada certificado
+        // de las webs que se visitan (`*.facebook.com`…), firmada por la CA
+        // de AVG, sin clave. No es inventario: nadie la renueva. Medido el
+        // 2026-09-30 en un Mac de T1: 94 certificados, que además empujaban
+        // el escaneo hacia el tope y lo dejaban truncado. La CA de AVG no
+        // vive aquí (está en el keychain del sistema), así que no se pierde.
+        // El control plane también las descarta al ingerir
+        // (crypto-discovery/antivirus-tls-cache.ts), para agentes viejos.
+        "/Library/Application Support/AVGAntivirus/config/CA/trusted",
         "/opt/homebrew"               // el árbol de Homebrew; su etc/ es raíz propia
       ]
     };

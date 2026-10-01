@@ -310,3 +310,40 @@ describe("matchLooseKeys", () => {
     expect(storeItem.hasPrivateKey).toBe(false);
   });
 });
+
+describe("macOS: la caché de inspección HTTPS de AVG no es inventario", () => {
+  // AVG guarda una copia de cada certificado de las webs visitadas, firmada
+  // por su CA y sin clave. T1, 2026-09-30: 94 en un Mac, que empujaban el
+  // escaneo hacia el tope. Se recorre un /Library falso con la lista de
+  // exclusiones REAL de macOS, re-enraizada en un temporal.
+  let tmp: string;
+  const lib = () => path.join(tmp, "Library");
+  const put = (rel: string) => {
+    fs.mkdirSync(path.dirname(path.join(lib(), rel)), { recursive: true });
+    fs.writeFileSync(path.join(lib(), rel), FIXTURE_CERT);
+  };
+
+  beforeAll(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cdp-avg-"));
+    put("Application Support/AVGAntivirus/config/CA/trusted/191814A32ADFB3E2D731F2A4256D09019E407F8774B1F3D2FD7C71FE47ECE57C.pem");
+    put("Application Support/Blackmagic Design/DaVinci Resolve/Certificates/server.pem");
+  });
+  afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+  const darwinExcludes = () =>
+    defaultFileDiscoveryRoots("darwin")
+      .exclude.filter((e) => e.startsWith("/Library/"))
+      .map((e) => path.join(tmp, e));
+
+  it("⭐ no se recorre: la caché de AVG no aparece y la carpeta vecina sí", async () => {
+    const r = await collectCertFiles([{ path: lib(), origin: "default" }], { excludePaths: darwinExcludes() });
+    const stores = r.items.map((i) => i.store.name);
+    expect(stores.some((s) => s.includes("AVGAntivirus"))).toBe(false);
+    expect(stores.some((s) => s.includes("DaVinci Resolve"))).toBe(true);
+  });
+
+  it("…y sin la exclusión se inventariaría (el test mira lo que dice mirar)", async () => {
+    const r = await collectCertFiles([{ path: lib(), origin: "default" }], { excludePaths: [] });
+    expect(r.items.some((i) => i.store.name.includes("AVGAntivirus"))).toBe(true);
+  });
+});
