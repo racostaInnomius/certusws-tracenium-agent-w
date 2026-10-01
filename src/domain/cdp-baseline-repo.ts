@@ -39,6 +39,16 @@ function getDb(): Database.Database {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    -- Lo que se aplicará cuando el backend confirme la entrega (ver
+    -- stageCdpDelivery). seq propio y no el id del outbox: si el outbox se
+    -- recrea, sus ids vuelven a empezar; el orden de los escaneos no.
+    CREATE TABLE IF NOT EXISTS cdp_delivery_pending (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      outbox_id INTEGER NOT NULL,
+      commit_json TEXT NOT NULL,
+      staged_at_utc TEXT NOT NULL
+    );
   `);
 
   return dbInstance;
@@ -106,7 +116,8 @@ export function loadCdpBaselineHashes(): Map<string, string> {
 
 /**
  * Diff current items against the stored baseline. Does NOT mutate the
- * baseline — call commitCdpBaseline() after the snapshot is enqueued.
+ * baseline — it moves only when the backend confirms the send that carried
+ * the scan (stageCdpDelivery → promoteCdpDelivery).
  * Returns null when the baseline is empty (first run → send full items[]).
  */
 export function computeCdpDelta(items: CdpCertItem[]): CdpDelta | null {
@@ -141,6 +152,10 @@ export function computeCdpDelta(items: CdpCertItem[]): CdpDelta | null {
 /** Replace the baseline with the current scan (single transaction). */
 export function commitCdpBaseline(items: CdpCertItem[]) {
   const db = getDb();
+  db.transaction(() => applyBaseline(db, items))();
+}
+
+function applyBaseline(db: Database.Database, current: CdpCertItem[]) {
   const nowUtc = new Date().toISOString();
 
   const upsert = db.prepare(`
@@ -152,31 +167,117 @@ export function commitCdpBaseline(items: CdpCertItem[]) {
       detected_at_utc = COALESCE(cdp_certificate_baseline.detected_at_utc, excluded.detected_at_utc)
   `);
 
-  const tx = db.transaction((current: CdpCertItem[]) => {
-    const ids = current.map((item) => item.id);
+  const ids = current.map((item) => item.id);
 
-    if (ids.length === 0) {
-      db.exec(`DELETE FROM cdp_certificate_baseline`);
-    } else {
-      // Deleting rows absent from the current scan keeps the baseline
-      // an exact mirror, so the next diff's `removed` list stays honest.
-      const placeholders = ids.map(() => "?").join(",");
-      db.prepare(
-        `DELETE FROM cdp_certificate_baseline WHERE cert_id NOT IN (${placeholders})`
-      ).run(...ids);
-    }
+  if (ids.length === 0) {
+    db.exec(`DELETE FROM cdp_certificate_baseline`);
+  } else {
+    // Deleting rows absent from the current scan keeps the baseline
+    // an exact mirror, so the next diff's `removed` list stays honest.
+    const placeholders = ids.map(() => "?").join(",");
+    db.prepare(
+      `DELETE FROM cdp_certificate_baseline WHERE cert_id NOT IN (${placeholders})`
+    ).run(...ids);
+  }
 
-    for (const item of current) {
-      upsert.run({
-        certId: item.id,
-        contentHash: hashCdpItem(item),
-        itemJson: JSON.stringify(item),
-        detectedAtUtc: nowUtc
-      });
-    }
-  });
+  for (const item of current) {
+    upsert.run({
+      certId: item.id,
+      contentHash: hashCdpItem(item),
+      itemJson: JSON.stringify(item),
+      detectedAtUtc: nowUtc
+    });
+  }
+}
 
-  tx(items);
+// ── Entrega confirmada (2026-10-01) ──────────────────────────────────
+//
+// ⚠️ La línea base es «lo que el control plane YA TIENE»: el siguiente
+// escaneo sólo manda lo que difiere de ella. Se guardaba al recoger, ANTES
+// de entregar — y un envío que no llegaba (payload por encima del límite
+// gRPC, proyección que fallaba y respondía OK) quedaba dado por entregado
+// para siempre. 5 equipos acabaron con 500–2000 certificados que el
+// servidor nunca tuvo; uno de ellos, sin su primer baseline completo.
+//
+// Ahora el plugin no escribe nada al recoger: deja un paquete (la base, los
+// digests de los bloques laterales y los cursores de AD CS) que el llamador
+// asocia al id del outbox, y que se aplica sólo con el ACK_OK de ese envío.
+// Sin ACK, el siguiente escaneo vuelve a diffear contra la base anterior y
+// reenvía los mismos cambios — idempotentes en el servidor.
+
+export type CdpDeliveryCommit = {
+  baseline: CdpCertItem[];
+  /** Claves de cdp_meta: digests de bloques laterales, cursores de AD CS, pin de anclas. */
+  meta: Record<string, string>;
+};
+
+const DELIVERY_ACKED_KEY = "delivery_acked";
+const DELIVERY_LAST_SEQ_KEY = "delivery_last_seq";
+/** Un paquete sin ACK en una semana es de un envío que no llegará. */
+const STAGE_MAX_AGE_DAYS = 7;
+
+function readMeta(db: Database.Database, key: string): string | null {
+  const row = db.prepare(`SELECT value FROM cdp_meta WHERE key = ?`).get(key) as { value?: string } | undefined;
+  return row?.value ?? null;
+}
+
+function writeMeta(db: Database.Database, key: string, value: string) {
+  db.prepare(
+    `INSERT INTO cdp_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(key, value);
+}
+
+/** Asocia el paquete de un escaneo al envío que lo lleva. */
+export function stageCdpDelivery(outboxId: number, commit: CdpDeliveryCommit): void {
+  const db = getDb();
+  db.transaction(() => {
+    // El outbox deduplica payloads idénticos devolviendo el id existente:
+    // el paquete más reciente para ese id es el que vale.
+    db.prepare(`DELETE FROM cdp_delivery_pending WHERE outbox_id = ?`).run(outboxId);
+    db.prepare(
+      `DELETE FROM cdp_delivery_pending WHERE staged_at_utc < ?`
+    ).run(new Date(Date.now() - STAGE_MAX_AGE_DAYS * 86_400_000).toISOString());
+    db.prepare(
+      `INSERT INTO cdp_delivery_pending (outbox_id, commit_json, staged_at_utc) VALUES (?, ?, ?)`
+    ).run(outboxId, JSON.stringify(commit), new Date().toISOString());
+  })();
+}
+
+/**
+ * ACK_OK del envío `outboxId`: aplica su paquete. Un ACK que llega DESPUÉS
+ * del de un escaneo posterior ya aplicado no retrocede la base
+ * («superseded»). «none»: ese envío no llevaba CDP.
+ */
+export function promoteCdpDelivery(outboxId: number): "promoted" | "superseded" | "none" {
+  const db = getDb();
+  return db.transaction(() => {
+    const row = db
+      .prepare(`SELECT seq, commit_json AS commitJson FROM cdp_delivery_pending WHERE outbox_id = ? ORDER BY seq DESC LIMIT 1`)
+      .get(outboxId) as { seq: number; commitJson: string } | undefined;
+    if (!row) return "none" as const;
+
+    db.prepare(`DELETE FROM cdp_delivery_pending WHERE seq <= ?`).run(row.seq);
+    const lastSeq = Number(readMeta(db, DELIVERY_LAST_SEQ_KEY) ?? 0);
+    if (row.seq <= lastSeq) return "superseded" as const;
+
+    const commit = JSON.parse(row.commitJson) as CdpDeliveryCommit;
+    applyBaseline(db, Array.isArray(commit.baseline) ? commit.baseline : []);
+    for (const [key, value] of Object.entries(commit.meta ?? {})) writeMeta(db, key, String(value));
+    writeMeta(db, DELIVERY_LAST_SEQ_KEY, String(row.seq));
+    writeMeta(db, DELIVERY_ACKED_KEY, "1");
+    return "promoted" as const;
+  })();
+}
+
+/**
+ * ¿Ha aplicado este agente alguna vez una base CONFIRMADA? Un agente que
+ * viene de una versión que guardaba la base sin confirmar no lo sabe: su
+ * base puede decir que el servidor tiene certificados que nunca llegaron.
+ * Mientras sea false, el plugin manda la lista completa (una vez: al primer
+ * ACK queda en true).
+ */
+export function isCdpDeliveryAcked(): boolean {
+  return readMeta(getDb(), DELIVERY_ACKED_KEY) === "1";
 }
 
 /**

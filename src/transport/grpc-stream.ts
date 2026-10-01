@@ -38,6 +38,7 @@ import {
 import { getAspRunStore } from "../plugins/asp/run-store";
 import { consumePendingCatalogInstallRequest } from "../status/catalog-install-request-watcher";
 import type { TrayCatalogItem } from "../status/tray-status-types";
+import { stageAttachedCdpDelivery } from "../domain/cdp-delivery";
 
 const ACK_TIMEOUT_MS = 60_000;
 const MAX_IN_FLIGHT = 3;
@@ -502,6 +503,8 @@ async function collectFactsSnapshot(
     type: "FACTS_SNAPSHOT",
     payload
   });
+  // CDP: la línea base se mueve con el ACK_OK de este envío (cdp-delivery).
+  stageAttachedCdpDelivery(namespaces.cdp, outboxId);
 
   // Stamp the cooldown so a backend retry of this same job (or a
   // separate scheduler tick that lands in the next minute) is treated

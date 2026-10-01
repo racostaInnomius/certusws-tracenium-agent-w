@@ -3,6 +3,7 @@ import { EventEmitter } from "events";
 import { AgentContext } from "../core/agent-context";
 import { logger } from "../bootstrap/logger";
 import { outbox } from "../queue/sqlite-outbox";
+import { promoteCdpDelivery } from "../domain/cdp-baseline-repo";
 
 function normalizeTarget(url: string): string {
   return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
@@ -363,6 +364,16 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
               if (status === 0) {
                 outbox.markSent(outboxId);
                 ctx.logger?.info?.("[grpc-client] ACK → markSent", { eventId, outboxId });
+                // Si el envío llevaba CDP, ahora sí: el control plane lo
+                // tiene, y la línea base puede avanzar (cdp-delivery).
+                try {
+                  const promoted = promoteCdpDelivery(outboxId);
+                  if (promoted !== "none") ctx.logger?.info?.("[grpc-client] CDP baseline", { outboxId, result: promoted });
+                } catch (err: any) {
+                  // La base no avanza: el siguiente escaneo reenvía los
+                  // mismos cambios. Peor sería perderlos.
+                  ctx.logger?.warn?.("[grpc-client] CDP baseline promote failed", { outboxId, error: err?.message || String(err) });
+                }
               } else if (status === 1) {
                 outbox.markFailed(outboxId, message || "ACK requested retry");
                 ctx.logger?.warn?.("[grpc-client] ACK → retry", { eventId, outboxId, status });

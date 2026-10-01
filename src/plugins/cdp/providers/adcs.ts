@@ -25,11 +25,17 @@ import type { AgentContext } from "../../../core/agent-context";
 import { hostMatches, thisHostname } from "../../../core/host-match";
 import type { CdpAdcsReport } from "../../../domain/cdp-types";
 import { parseCertutilDump } from "../adcs-csv";
-import { readAdcsCursor, writeAdcsCursor } from "../../../domain/cdp-adcs-repo";
+import { adcsCursorKey, readAdcsCursor, writeAdcsCursor } from "../../../domain/cdp-adcs-repo";
 
 type Options = {
   /** Test seam. */
   call?: (params: { sinceRequestId: number; maxRows: number }) => Promise<any>;
+  /**
+   * El cursor dice «hasta aquí lo tiene el control plane». Con esto, el
+   * plugin lo guarda junto a la línea base y sólo con el ACK_OK del envío;
+   * sin él (llamadas sueltas, tests) se escribe en el acto, como antes.
+   */
+  deferCursor?: (key: string, value: string) => void;
   /** Test seam: el nombre de este equipo. */
   hostname?: string;
 };
@@ -83,8 +89,13 @@ export async function collectAdcs(ctx: AgentContext, options: Options = {}): Pro
     ctx.logger?.warn?.("CDP/ADCS: cabecera de certutil no reconocida", { header: parsed.header.slice(0, 12), stderr: res.stderr });
   }
   if (parsed.lastRequestId > 0) {
-    writeAdcsCursor("*", parsed.lastRequestId);
-    writeAdcsCursor(caName, parsed.lastRequestId);
+    if (options.deferCursor) {
+      options.deferCursor(adcsCursorKey("*"), String(parsed.lastRequestId));
+      options.deferCursor(adcsCursorKey(caName), String(parsed.lastRequestId));
+    } else {
+      writeAdcsCursor("*", parsed.lastRequestId);
+      writeAdcsCursor(caName, parsed.lastRequestId);
+    }
   }
   ctx.logger?.info?.("CDP/ADCS: emisiones leidas", {
     caName, since: sinceFirst, rows: res.rows, issued: parsed.issued.length, parseFailures: parsed.parseFailures, truncated: res.truncated === true

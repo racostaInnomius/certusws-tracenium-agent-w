@@ -34,12 +34,12 @@ import type {
 } from "../../domain/cdp-types";
 import {
   cdpAnchorDigestChanged,
-  commitCdpAnchorDigest,
-  commitCdpBaseline,
   computeCdpDelta,
   hashCdpAnchorState,
+  isCdpDeliveryAcked,
   loadCdpBaselineItemsByStore
 } from "../../domain/cdp-baseline-repo";
+import { attachCdpDelivery } from "../../domain/cdp-delivery";
 import { collectWindowsCdp } from "./providers/windows";
 import { collectMacosCdp } from "./providers/macos";
 import { collectLinuxCdp } from "./providers/linux";
@@ -191,6 +191,17 @@ async function collectOnce(
     collector: { plugin: "cdp", version: ctx.config.agentVersion },
     collectedAt: new Date().toISOString()
   };
+
+  // Nada de lo que recuerda «qué tiene ya el control plane» se escribe al
+  // recoger: digests, cursores de AD CS y línea base van a un paquete que
+  // se aplica con el ACK_OK del envío (cdp-baseline-repo, «Entrega
+  // confirmada»). Escribirlos aquí daba por entregado lo que no llegó.
+  const deliveryMeta: Record<string, string> = {};
+
+  // Un agente que nunca ha visto una entrega confirmada (recién instalado,
+  // o que viene de una versión que guardaba la base sin confirmar) no sabe
+  // qué tiene el servidor: manda la lista completa, una vez.
+  const full = options?.full === true || !isCdpDeliveryAcked();
 
   let result: ProviderResult;
 
@@ -525,7 +536,7 @@ async function collectOnce(
   if (platform === "win32" && ctx.policyRuntime.getCdpAdcs?.()?.enabled) {
     try {
       const { collectAdcs } = await import("./providers/adcs");
-      adcs = await collectAdcs(ctx);
+      adcs = await collectAdcs(ctx, { deferCursor: (key, value) => { deliveryMeta[key] = value; } });
     } catch (err: any) {
       ctx.logger?.warn?.("CDP/ADCS: conector fallo (no fatal)", { error: err?.message || String(err) });
     }
@@ -539,16 +550,16 @@ async function collectOnce(
   if (ctx.policyRuntime.gatewayConfig?.()?.readCertificates === true) {
     try {
       const { collectVcenter } = await import("./providers/vcenter");
-      const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
+      const { readCdpMeta } = await import("../../domain/cdp-adcs-repo");
       const read = await collectVcenter(ctx);
       if (read) {
         // El digest ignora `readAt`: si nada cambio, no viaja por la hora.
         const { readAt: _t, ...stable } = read;
         const digest = crypto.createHash("sha256").update(JSON.stringify(stable)).digest("hex");
-        if (options?.full === true || readCdpMeta("vcenter_digest") !== digest) {
+        if (full || readCdpMeta("vcenter_digest") !== digest) {
           vcenter = read;
           vcenterChanged = true;
-          writeCdpMeta("vcenter_digest", digest);
+          deliveryMeta.vcenter_digest = digest;
         }
       }
     } catch (err: any) {
@@ -566,14 +577,14 @@ async function collectOnce(
   let osTlsChanged = false;
   try {
     const { measureOsTlsCapability } = await import("./providers/os-tls-capability");
-    const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
+    const { readCdpMeta } = await import("../../domain/cdp-adcs-repo");
     const measured = await measureOsTlsCapability();
     const { measuredAt: _t, ...stable } = measured;
     const digest = crypto.createHash("sha256").update(JSON.stringify(stable)).digest("hex");
-    if (options?.full === true || readCdpMeta("os_tls_digest") !== digest) {
+    if (full || readCdpMeta("os_tls_digest") !== digest) {
       osTls = measured;
       osTlsChanged = true;
-      writeCdpMeta("os_tls_digest", digest);
+      deliveryMeta.os_tls_digest = digest;
     }
   } catch (err: any) {
     ctx.logger?.warn?.("CDP/OS TLS: la medicion fallo (no fatal)", { error: err?.message || String(err) });
@@ -603,7 +614,7 @@ async function collectOnce(
   let sshUserKeys: CdpSshUserKeys | undefined;
   try {
     const { collectSshUserKeys, sshUserKeysDigest } = await import("./providers/ssh-user-keys");
-    const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
+    const { readCdpMeta } = await import("../../domain/cdp-adcs-repo");
     // ⚠️ El alcance lo decide la policy y el defecto NO abre ningun
     // fichero de clave privada: hacerlo dispara detecciones de acceso a
     // credenciales en los EDR (medido con CrowdStrike el 22-sep-2026).
@@ -616,10 +627,10 @@ async function collectOnce(
     // porque ahi el bloque es la afirmacion «ya no hay concesiones» y es
     // lo unico que permite retirarlas.
     const nothingEverSeen = previous === null && block.keys.length === 0 && block.privateKeys.length === 0;
-    if (!nothingEverSeen && (options?.full === true || previous !== digest)) {
+    if (!nothingEverSeen && (full || previous !== digest)) {
       sshUserKeys = block;
-      writeCdpMeta("ssh_userkeys_digest", digest);
-      if (options?.full !== true) sideChanged = true;
+      deliveryMeta.ssh_userkeys_digest = digest;
+      if (!full) sideChanged = true;
     }
     if (block.unreadable > 0) {
       ctx.logger?.warn?.("CDP: ficheros de claves SSH de usuario no leidos", { unreadable: block.unreadable });
@@ -639,7 +650,7 @@ async function collectOnce(
   if (ctx.policyRuntime.getCdpScanTlsListeners()) {
     try {
       const { collectProcessLibraries } = await import("./providers/process-libraries");
-      const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
+      const { readCdpMeta } = await import("../../domain/cdp-adcs-repo");
       const block = await collectProcessLibraries({
         // Linux: el agente no es root; el PrivSvc lee /proc por él. En un
         // PrivSvc anterior el método no existe → null → el bloque lo dice.
@@ -670,10 +681,10 @@ async function collectOnce(
       // Mismo criterio que las claves SSH de usuario: un equipo que nunca
       // ha tenido nada que decir no gasta un tick diciendolo.
       const nothingEverSeen = previous === null && block.libraries.length === 0;
-      if (!nothingEverSeen && (options?.full === true || previous !== digest)) {
+      if (!nothingEverSeen && (full || previous !== digest)) {
         processLibraries = block;
-        writeCdpMeta("process_libs_digest", digest);
-        if (options?.full !== true) sideChanged = true;
+        deliveryMeta.process_libs_digest = digest;
+        if (!full) sideChanged = true;
       }
     } catch (err: any) {
       ctx.logger?.warn?.("CDP: librerias por proceso fallaron (no fatal)", { error: err?.message || String(err) });
@@ -686,21 +697,20 @@ async function collectOnce(
       const listening = await listListeningPorts();
       const { collectSshHostKeys } = await import("./providers/ssh-host-keys");
       const { collectOutboundTlsCandidates } = await import("./providers/outbound-tls");
-      const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
+      const { readCdpMeta } = await import("../../domain/cdp-adcs-repo");
       const ssh = await collectSshHostKeys({ listeningPorts: listening });
       const cands = await collectOutboundTlsCandidates({ localListening: listening });
       const digest = (v: unknown) => crypto.createHash("sha256").update(JSON.stringify(v)).digest("hex");
       const sshDigest = digest({ host: ssh.host, listening: ssh.listening, keys: ssh.keys });
       const candDigest = digest(cands);
-      const full = options?.full === true;
       if (full || readCdpMeta("ssh_hostkeys_digest") !== sshDigest) {
         sshHostKeys = { host: ssh.host, listening: ssh.listening, keys: ssh.keys };
-        writeCdpMeta("ssh_hostkeys_digest", sshDigest);
+        deliveryMeta.ssh_hostkeys_digest = sshDigest;
         if (!full) sideChanged = true;
       }
       if (full || readCdpMeta("probe_candidates_digest") !== candDigest) {
         probeCandidates = cands;
-        writeCdpMeta("probe_candidates_digest", candDigest);
+        deliveryMeta.probe_candidates_digest = candDigest;
         if (!full) sideChanged = true;
       }
       if (ssh.unreadable > 0) ctx.logger?.warn?.("CDP: claves de host SSH no leidas", { unreadable: ssh.unreadable });
@@ -747,13 +757,13 @@ async function collectOnce(
   }
   if (looseKeysPending) {
     try {
-      const { readCdpMeta, writeCdpMeta } = await import("../../domain/cdp-adcs-repo");
+      const { readCdpMeta } = await import("../../domain/cdp-adcs-repo");
       const digest = crypto.createHash("sha256").update(JSON.stringify(looseKeysPending)).digest("hex");
-      if (options?.full === true || readCdpMeta("loose_keys_digest") !== digest) {
+      if (full || readCdpMeta("loose_keys_digest") !== digest) {
         looseKeysOut = { keys: looseKeysPending };
-        writeCdpMeta("loose_keys_digest", digest);
-        writeCdpMeta("loose_keys_last", JSON.stringify(looseKeysPending));
-        if (options?.full !== true) sideChanged = true;
+        deliveryMeta.loose_keys_digest = digest;
+        deliveryMeta.loose_keys_last = JSON.stringify(looseKeysPending);
+        if (!full) sideChanged = true;
       }
     } catch (err: any) {
       ctx.logger?.warn?.("CDP: claves sueltas no registradas (no fatal)", { error: err?.message || String(err) });
@@ -775,7 +785,7 @@ async function collectOnce(
   // items[]. That is not a special case bolted on — "send everything you
   // have" is exactly what the baseline path already means, so `full`
   // reuses it instead of introducing a third shape on the wire.
-  const delta = options?.full ? null : computeCdpDelta(items);
+  const delta = full ? null : computeCdpDelta(items);
 
   // A capped scan cannot claim anything was removed.
   //
@@ -846,21 +856,22 @@ async function collectOnce(
       delta.removed.length > 0 ||
       delta.updated.length > 0;
 
-  // Commit AFTER diffing so `removed` is computed against the previous
-  // scan. Committing here (vs after enqueue) mirrors AMP: the outbox is
-  // local SQLite and its enqueue effectively cannot fail.
-  if (hasChanges) {
-    // Los arrastrados siguen en la baseline: cuando el almacen vuelva a
-    // leerse, lo que siga igual no sera alta y lo que falte si sera baja.
-    commitCdpBaseline(carried.length > 0 ? [...items, ...carried] : items);
-    // El digest se confirma junto a la línea base y solo cuando de
-    // verdad se va a enviar: adelantarlo haría que un envío descartado
-    // aguas arriba se diera por reportado, y el cambio de pin se
-    // perdería para siempre.
-    if (anchorPin) commitCdpAnchorDigest(hashCdpAnchorState(anchorPin));
-  }
+  // Lo que se aplicará si ESTE envío llega (ver arriba): no se toca la
+  // línea base hasta el ACK_OK. Sin cambios no hay envío, y no hay nada
+  // que aplicar.
+  const delivery = hasChanges
+    ? {
+        // Los arrastrados siguen en la baseline: cuando el almacen vuelva a
+        // leerse, lo que siga igual no sera alta y lo que falte si sera baja.
+        baseline: carried.length > 0 ? [...items, ...carried] : items,
+        meta: {
+          ...deliveryMeta,
+          ...(anchorPin ? { anchor_pin_digest: hashCdpAnchorState(anchorPin) } : {})
+        }
+      }
+    : null;
 
-  return {
+  const namespace: CdpNamespace = {
     ...base,
     hasChanges,
     truncated,
@@ -883,6 +894,8 @@ async function collectOnce(
     ...(fileDiscovery ? { fileDiscovery } : {}),
     ...(probeSweep ? { probeSweep } : {})
   };
+  if (delivery) attachCdpDelivery(namespace, delivery);
+  return namespace;
 }
 
 /**

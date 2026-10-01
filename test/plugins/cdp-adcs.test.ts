@@ -16,7 +16,8 @@ import { FIXTURE_CERT } from "./tls-fixture";
 const cursors = new Map<string, number>();
 vi.mock("../../src/domain/cdp-adcs-repo", () => ({
   readAdcsCursor: (k: string) => cursors.get(k) ?? 0,
-  writeAdcsCursor: (k: string, v: number) => cursors.set(k, v)
+  writeAdcsCursor: (k: string, v: number) => cursors.set(k, v),
+  adcsCursorKey: (ca: string) => `adcs_last_request_id:${ca}`
 }));
 
 import { collectAdcs } from "../../src/plugins/cdp/providers/adcs";
@@ -175,6 +176,24 @@ describe("collectAdcs", () => {
     expect(r?.issued.length).toBe(3);
     expect(cursors.get("*")).toBe(23);
     expect(cursors.get("MSIG-RADIUS-CA")).toBe(23);
+  });
+
+  it("⭐ con deferCursor el cursor NO avanza al leer: se entrega al plugin para el ACK", async () => {
+    // El cursor dice «hasta aquí lo tiene el control plane». Avanzarlo antes
+    // de entregar perdía para siempre las emisiones de un envío que no llegaba.
+    cursors.set("*", 100);
+    const deferred: Record<string, string> = {};
+    await collectAdcs(ctx(true), {
+      ...ME,
+      call: async () => ({ ok: true, result: { isCa: true, caName: "MSIG-RADIUS-CA", dump: DUMP, rows: 5, truncated: false } }),
+      deferCursor: (k, v) => { deferred[k] = v; }
+    });
+    expect(cursors.get("*")).toBe(100);
+    expect(cursors.has("MSIG-RADIUS-CA")).toBe(false);
+    expect(deferred).toEqual({
+      "adcs_last_request_id:*": "23",
+      "adcs_last_request_id:MSIG-RADIUS-CA": "23"
+    });
   });
 
   it("cabecera no reconocida → warn con la cabecera, cursor intacto", async () => {

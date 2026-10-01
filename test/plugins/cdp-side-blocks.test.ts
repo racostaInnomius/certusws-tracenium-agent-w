@@ -17,7 +17,9 @@ vi.mock("../../src/domain/cdp-baseline-repo", () => ({
   loadCdpBaselineItemsByStore: vi.fn(() => []),
   cdpAnchorDigestChanged: vi.fn(() => false),
   commitCdpAnchorDigest: vi.fn(),
-  hashCdpAnchorState: vi.fn(() => "h")
+  hashCdpAnchorState: vi.fn(() => "h"),
+  // Un agente que ya confirma sus entregas: sin esto, todo escaneo sería completo.
+  isCdpDeliveryAcked: () => true
 }));
 const meta = new Map<string, string>();
 vi.mock("../../src/domain/cdp-adcs-repo", () => ({
@@ -52,7 +54,23 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 
-import { collectCDP } from "../../src/plugins/cdp";
+import { collectCDP as collectCDPRaw } from "../../src/plugins/cdp";
+import { peekCdpDelivery } from "../../src/domain/cdp-delivery";
+
+// La línea base y los digests ya no se escriben al recoger: se aplican con el
+// ACK_OK del envío (cdp-baseline-repo, «Entrega confirmada»). Estos tests
+// asumen que cada envío LLEGA, así que se simula ese ACK aplicando el paquete
+// a los mismos dobles de antes. Lo que pasa cuando NO llega se prueba en
+// cdp-delivery.test.ts.
+const collectCDP: typeof collectCDPRaw = async (...args) => {
+  const ns = await collectCDPRaw(...args);
+  const delivery = peekCdpDelivery(ns);
+  if (delivery) {
+    commitCdpBaseline(delivery.baseline);
+    for (const [k, v] of Object.entries(delivery.meta)) meta.set(k, v);
+  }
+  return ns;
+};
 
 const sysStore = { id: "mac/system", name: "System", scope: "machine" as const };
 const item = (id: string) => ({ id, fingerprint256: id.padStart(64, "0"), store: sysStore, source: "store" as const, hasPrivateKey: false, isCA: false });

@@ -19,7 +19,9 @@ function getDb(): Database.Database {
   return db;
 }
 
-const keyFor = (ca: string) => `adcs_last_request_id:${ca}`;
+/** Clave en cdp_meta del cursor de una CA («*»: el anónimo de la primera llamada). */
+export const adcsCursorKey = (ca: string) => `adcs_last_request_id:${ca}`;
+const keyFor = adcsCursorKey;
 
 export function readAdcsCursor(ca: string): number {
   const row = getDb().prepare(`SELECT value FROM cdp_meta WHERE key = ?`).get(keyFor(ca)) as { value?: string } | undefined;

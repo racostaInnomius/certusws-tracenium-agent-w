@@ -32,6 +32,7 @@ import {
   STARTUP_STEP_CAP_MS,
   startupPatchDelayMs,
 } from "./startup-sequence";
+import { stageAttachedCdpDelivery } from "../domain/cdp-delivery";
 
 // Force-clear threshold for the *Running guard flags. If a worker has
 // been "running" for longer than this, we assume it's hung on some
@@ -987,10 +988,13 @@ class Scheduler {
 
       const facts = await buildDeviceFacts(ctx, namespaces);
 
-      outbox.enqueue({
+      const outboxId = outbox.enqueue({
         type: "FACTS_SNAPSHOT",
         payload: facts
       });
+      // La línea base se mueve con el ACK_OK de ESTE envío, no ahora
+      // (cdp-baseline-repo, «Entrega confirmada»).
+      stageAttachedCdpDelivery(namespaces.cdp, outboxId);
       try {
         outbox.setState("lastSentFactsAt:cdp", String(Date.now()));
       } catch (err) {
