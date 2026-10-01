@@ -16,6 +16,14 @@
       "title": "Enabled user accounts have a password that never expires",
       "section": "Accounts",
       "severity": "medium",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 2,
+        "discoverability": 3
+      },
+      "weight": 5,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -56,6 +64,14 @@
       "title": "User accounts store their password with reversible encryption",
       "section": "Accounts",
       "severity": "high",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 2,
+        "discoverability": 3
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -96,6 +112,14 @@
       "title": "Enabled user accounts are allowed to have an empty password",
       "section": "Accounts",
       "severity": "high",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 2,
+        "discoverability": 3
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -131,6 +155,14 @@
       "title": "Enabled user accounts have not signed in for more than 180 days",
       "section": "Accounts",
       "severity": "medium",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 1,
+        "discoverability": 2
+      },
+      "weight": 4,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -171,6 +203,14 @@
       "title": "Objects carry SID history",
       "section": "Accounts",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -207,6 +247,14 @@
       "title": "The built-in Administrator password is older than 365 days",
       "section": "Accounts",
       "severity": "medium",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 5,
       "requires": "member",
       "query": {
         "kind": "ldap_object",
@@ -252,6 +300,14 @@
       "title": "The built-in Guest account is enabled",
       "section": "Accounts",
       "severity": "high",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 2,
+        "discoverability": 3
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "ldap_object",
@@ -292,6 +348,14 @@
       "title": "Privileged accounts have a password older than 365 days",
       "section": "Accounts",
       "severity": "medium",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 5,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -328,6 +392,14 @@
       "title": "Anonymous LDAP operations are enabled (dSHeuristics)",
       "section": "Domain configuration",
       "severity": "high",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "ldap_object",
@@ -374,6 +446,14 @@
       "title": "Any authenticated user can join computers to the domain (ms-DS-MachineAccountQuota > 0)",
       "section": "Domain configuration",
       "severity": "low",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 2,
+        "discoverability": 3
+      },
+      "weight": 3,
       "requires": "member",
       "query": {
         "kind": "ldap_object",
@@ -416,6 +496,14 @@
       "title": "The forest functional level is below Windows Server 2016",
       "section": "Domain configuration",
       "severity": "low",
+      "dread": {
+        "damage": 1,
+        "reproducibility": 1,
+        "exploitability": 1,
+        "affectedUsers": 2,
+        "discoverability": 3
+      },
+      "weight": 2,
       "requires": "member",
       "query": {
         "kind": "rootdse",
@@ -452,6 +540,14 @@
       "title": "The domain password policy allows passwords shorter than 14 characters",
       "section": "Domain configuration",
       "severity": "medium",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 5,
       "requires": "member",
       "query": {
         "kind": "ldap_object",
@@ -494,6 +590,14 @@
       "title": "LAPS is not deployed (no LAPS attribute in the schema)",
       "section": "Domain configuration",
       "severity": "medium",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 5,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -536,6 +640,14 @@
       "title": "Group Policy Preferences in SYSVOL contain stored passwords (cpassword)",
       "section": "Domain configuration",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 10,
       "requires": "member",
       "query": {
         "kind": "sysvol_files",
@@ -584,6 +696,14 @@
       "title": "Fine-grained password policies allow passwords shorter than 14 characters",
       "section": "Domain configuration",
       "severity": "medium",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 1,
+        "discoverability": 2
+      },
+      "weight": 4,
       "requires": "privileged",
       "query": {
         "kind": "ldap_search",
@@ -619,6 +739,14 @@
       "title": "Outbound trusts to external domains do not filter SID history",
       "section": "Domain configuration",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 1,
+        "exploitability": 1,
+        "affectedUsers": 3,
+        "discoverability": 1
+      },
+      "weight": 6,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -659,6 +787,14 @@
       "title": "The domain does not lock out accounts after repeated failed sign-ins",
       "section": "Domain configuration",
       "severity": "medium",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 5,
       "requires": "member",
       "query": {
         "kind": "ldap_object",
@@ -696,6 +832,14 @@
       "title": "The forest functional level is below Windows Server 2012",
       "section": "Domain configuration",
       "severity": "high",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 1,
+        "exploitability": 1,
+        "affectedUsers": 2,
+        "discoverability": 3
+      },
+      "weight": 6,
       "requires": "member",
       "query": {
         "kind": "rootdse",
@@ -732,6 +876,14 @@
       "title": "The domain controller does not require LDAP signing",
       "section": "Domain controller hardening",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 7,
       "requires": "dc_registry",
       "query": {
         "kind": "registry",
@@ -781,6 +933,14 @@
       "title": "The domain controller does not enforce LDAP channel binding",
       "section": "Domain controller hardening",
       "severity": "medium",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 5,
       "requires": "dc_registry",
       "query": {
         "kind": "registry",
@@ -823,6 +983,14 @@
       "title": "SMBv1 is enabled on the domain controller",
       "section": "Domain controller hardening",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 7,
       "requires": "dc_registry",
       "query": {
         "kind": "registry",
@@ -879,6 +1047,14 @@
       "title": "The Print Spooler service is not disabled on the domain controller",
       "section": "Domain controller hardening",
       "severity": "medium",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 5,
       "requires": "dc_registry",
       "query": {
         "kind": "registry",
@@ -926,6 +1102,14 @@
       "title": "The domain controller accepts LM and NTLMv1 responses (LmCompatibilityLevel below 5)",
       "section": "Domain controller hardening",
       "severity": "medium",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 5,
       "requires": "dc_registry",
       "query": {
         "kind": "registry",
@@ -974,6 +1158,14 @@
       "title": "UAC admin approval mode is disabled for the built-in Administrator on the domain controller",
       "section": "Domain controller hardening",
       "severity": "medium",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 1,
+        "discoverability": 2
+      },
+      "weight": 4,
       "requires": "dc_registry",
       "query": {
         "kind": "registry",
@@ -1015,6 +1207,14 @@
       "title": "The domain controller stores the LAN Manager hash of passwords",
       "section": "Domain controller hardening",
       "severity": "high",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 7,
       "requires": "dc_registry",
       "query": {
         "kind": "registry",
@@ -1056,6 +1256,14 @@
       "title": "The krbtgt account password has not been reset in the last 180 days",
       "section": "Kerberos",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 2,
+        "exploitability": 1,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 9,
       "requires": "member",
       "query": {
         "kind": "ldap_object",
@@ -1107,6 +1315,14 @@
       "title": "Privileged accounts have a service principal name (Kerberoastable)",
       "section": "Kerberos",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -1147,6 +1363,14 @@
       "title": "Enabled accounts do not require Kerberos pre-authentication (AS-REP roastable)",
       "section": "Kerberos",
       "severity": "high",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 2,
+        "discoverability": 3
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -1183,6 +1407,14 @@
       "title": "Accounts other than domain controllers are trusted for unconstrained delegation",
       "section": "Kerberos",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 10,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -1224,6 +1456,14 @@
       "title": "Accounts are trusted for constrained delegation with protocol transition",
       "section": "Kerberos",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 2,
+        "discoverability": 2
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -1261,6 +1501,14 @@
       "title": "Accounts with a service principal name allow RC4 or weaker Kerberos encryption",
       "section": "Kerberos",
       "severity": "high",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 2,
+        "discoverability": 3
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -1303,6 +1551,14 @@
       "title": "Accounts are enabled for DES-only Kerberos encryption",
       "section": "Kerberos",
       "severity": "high",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 1,
+        "discoverability": 2
+      },
+      "weight": 6,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -1339,6 +1595,14 @@
       "title": "Domain Admins has more than 10 members",
       "section": "Privileged access",
       "severity": "medium",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 1,
+        "exploitability": 1,
+        "affectedUsers": 2,
+        "discoverability": 3
+      },
+      "weight": 4,
       "requires": "member",
       "query": {
         "kind": "group_members",
@@ -1382,6 +1646,14 @@
       "title": "Schema Admins or Enterprise Admins have permanent members",
       "section": "Privileged access",
       "severity": "medium",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 1,
+        "exploitability": 1,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 5,
       "requires": "member",
       "query": {
         "kind": "group_members",
@@ -1423,6 +1695,14 @@
       "title": "The Protected Users group is empty",
       "section": "Privileged access",
       "severity": "low",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 2,
+        "discoverability": 3
+      },
+      "weight": 3,
       "requires": "member",
       "query": {
         "kind": "group_members",
@@ -1466,6 +1746,14 @@
       "title": "Built-in operator groups (Account, Server, Print, Backup Operators) have members",
       "section": "Privileged access",
       "severity": "medium",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 5,
       "requires": "member",
       "query": {
         "kind": "group_members",
@@ -1506,6 +1794,14 @@
       "title": "AdminSDHolder grants write access to non-default principals",
       "section": "Privileged access",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 10,
       "requires": "member",
       "query": {
         "kind": "acl",
@@ -1562,6 +1858,14 @@
       "title": "Non-default principals hold replication rights on the domain (DCSync)",
       "section": "Privileged access",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 10,
       "requires": "member",
       "query": {
         "kind": "acl",
@@ -1612,6 +1916,14 @@
       "title": "Non-default principals can reset passwords or take over privileged accounts",
       "section": "Privileged access",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 10,
       "requires": "member",
       "query": {
         "kind": "acl_search",
@@ -1675,6 +1987,14 @@
       "title": "Non-default principals can change the membership of privileged groups",
       "section": "Privileged access",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 10,
       "requires": "member",
       "query": {
         "kind": "acl_search",
@@ -1735,6 +2055,14 @@
       "title": "Non-default principals have dangerous control over domain controller objects",
       "section": "Privileged access",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 10,
       "requires": "member",
       "query": {
         "kind": "acl_search",
@@ -1801,6 +2129,14 @@
       "title": "Non-default principals can modify Group Policy Objects",
       "section": "Privileged access",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "acl_search",
@@ -1852,6 +2188,14 @@
       "title": "Non-default principals hold partial directory replication rights",
       "section": "Privileged access",
       "severity": "high",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 2,
+        "discoverability": 2
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "acl",
@@ -1901,6 +2245,14 @@
       "title": "Enabled accounts keep adminCount=1 but are no longer in a protected group",
       "section": "Privileged access",
       "severity": "medium",
+      "dread": {
+        "damage": 1,
+        "reproducibility": 2,
+        "exploitability": 1,
+        "affectedUsers": 1,
+        "discoverability": 2
+      },
+      "weight": 4,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -1937,6 +2289,14 @@
       "title": "Non-default principals can write delegation or key credentials on the krbtgt account",
       "section": "Privileged access",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 10,
       "requires": "member",
       "query": {
         "kind": "acl",
@@ -1995,6 +2355,14 @@
       "title": "Non-default principals can write userAccountControl at the domain root",
       "section": "Privileged access",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 1
+      },
+      "weight": 9,
       "requires": "member",
       "query": {
         "kind": "acl",
@@ -2049,6 +2417,14 @@
       "title": "Privileged objects or domain controllers are owned by a non-administrator",
       "section": "Privileged access",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "owner_search",
@@ -2099,6 +2475,14 @@
       "title": "Membership of a privileged group changed in the last 7 days",
       "section": "Recent changes",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 1,
+        "exploitability": 1,
+        "affectedUsers": 3,
+        "discoverability": 1
+      },
+      "weight": 6,
       "requires": "member",
       "query": {
         "kind": "repl_metadata",
@@ -2153,6 +2537,14 @@
       "title": "The AdminSDHolder permissions changed in the last 90 days",
       "section": "Recent changes",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 1,
+        "exploitability": 1,
+        "affectedUsers": 3,
+        "discoverability": 1
+      },
+      "weight": 9,
       "requires": "member",
       "query": {
         "kind": "repl_metadata",
@@ -2204,6 +2596,14 @@
       "title": "The domain permissions changed in the last 90 days",
       "section": "Recent changes",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 1,
+        "exploitability": 1,
+        "affectedUsers": 3,
+        "discoverability": 1
+      },
+      "weight": 9,
       "requires": "member",
       "query": {
         "kind": "repl_metadata",
@@ -2255,6 +2655,14 @@
       "title": "The krbtgt account was modified in the last 7 days",
       "section": "Recent changes",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 1,
+        "exploitability": 1,
+        "affectedUsers": 3,
+        "discoverability": 1
+      },
+      "weight": 9,
       "requires": "member",
       "query": {
         "kind": "repl_metadata",
@@ -2309,6 +2717,14 @@
       "title": "The forest-wide dSHeuristics setting changed in the last 90 days",
       "section": "Recent changes",
       "severity": "high",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 1,
+        "exploitability": 1,
+        "affectedUsers": 3,
+        "discoverability": 1
+      },
+      "weight": 6,
       "requires": "member",
       "query": {
         "kind": "repl_metadata",
@@ -2360,6 +2776,14 @@
       "title": "A published certificate template lets an unprivileged requester choose the subject and issue without approval (ESC1)",
       "section": "Certificate services",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 10,
       "requires": "member",
       "query": {
         "kind": "adcs_templates",
@@ -2418,6 +2842,14 @@
       "title": "An unprivileged principal can modify a published certificate template (ESC4)",
       "section": "Certificate services",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 10,
       "requires": "member",
       "query": {
         "kind": "adcs_templates",
@@ -2471,6 +2903,14 @@
       "title": "A published certificate template issues for any purpose or as an enrolment agent, without approval (ESC2 / ESC3)",
       "section": "Certificate services",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 3
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "adcs_templates",
@@ -2527,6 +2967,14 @@
       "title": "Non-default principals can modify the certification authority objects or the NTAuth store (ESC5)",
       "section": "Certificate services",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 10,
       "requires": "member",
       "query": {
         "kind": "acl_search",
@@ -2583,6 +3031,14 @@
       "title": "The Cert Publishers group contains accounts that are not certification authority computers",
       "section": "Certificate services",
       "severity": "high",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 2,
+        "exploitability": 1,
+        "affectedUsers": 2,
+        "discoverability": 2
+      },
+      "weight": 6,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -2619,6 +3075,14 @@
       "title": "A privileged account has key credentials that could be used to authenticate as it (Shadow Credentials)",
       "section": "Credential paths",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 2,
+        "discoverability": 2
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -2661,6 +3125,14 @@
       "title": "A privileged account accepts an explicit certificate mapping (altSecurityIdentities)",
       "section": "Credential paths",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 2,
+        "discoverability": 1
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -2708,6 +3180,14 @@
       "title": "The krbtgt account has key credentials (never legitimate)",
       "section": "Credential paths",
       "severity": "critical",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 10,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -2751,6 +3231,14 @@
       "title": "A group managed service account has not changed its password in more than 90 days",
       "section": "Service accounts",
       "severity": "medium",
+      "dread": {
+        "damage": 1,
+        "reproducibility": 1,
+        "exploitability": 1,
+        "affectedUsers": 1,
+        "discoverability": 2
+      },
+      "weight": 4,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -2798,6 +3286,14 @@
       "title": "A group managed service account keeps its password for longer than 90 days",
       "section": "Service accounts",
       "severity": "medium",
+      "dread": {
+        "damage": 1,
+        "reproducibility": 1,
+        "exploitability": 1,
+        "affectedUsers": 1,
+        "discoverability": 2
+      },
+      "weight": 4,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -2838,6 +3334,14 @@
       "title": "A group managed service account is a member of a privileged group",
       "section": "Service accounts",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 2,
+        "exploitability": 2,
+        "affectedUsers": 2,
+        "discoverability": 2
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "ldap_search",
@@ -2885,6 +3389,14 @@
       "title": "Everyone in a broad group can retrieve a group managed service account's password",
       "section": "Service accounts",
       "severity": "high",
+      "dread": {
+        "damage": 3,
+        "reproducibility": 3,
+        "exploitability": 3,
+        "affectedUsers": 3,
+        "discoverability": 2
+      },
+      "weight": 7,
       "requires": "member",
       "query": {
         "kind": "gmsa_retrievers",
@@ -2955,6 +3467,14 @@
       "title": "An unprivileged user account can retrieve a group managed service account's password",
       "section": "Service accounts",
       "severity": "medium",
+      "dread": {
+        "damage": 2,
+        "reproducibility": 3,
+        "exploitability": 2,
+        "affectedUsers": 1,
+        "discoverability": 2
+      },
+      "weight": 5,
       "requires": "member",
       "query": {
         "kind": "gmsa_retrievers",
