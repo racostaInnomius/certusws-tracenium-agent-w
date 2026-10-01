@@ -142,6 +142,26 @@ function sanitize(v: unknown, max = 200): string {
     .slice(0, max);
 }
 
+/**
+ * El motivo de un fallo del PrivSvc: el código Y el mensaje.
+ *
+ * ⚠️ Antes se mandaba sólo el código. El PrivSvc de Windows SÍ devuelve el
+ * mensaje de la excepción (PmpRemediation.cs: `Fail(id, "remediate_failed",
+ * ex.Message)`), pero aquí se tiraba, y el portal enseñaba «failed ·
+ * remediate_failed» sin un porqué. Caso: job 3799974e (1-oct-2026),
+ * `Windows Feeds\EnableFeeds` en W11-JPR-LAB02 — tres intentos fallidos, y el
+ * motivo sólo existía en el log local del equipo.
+ *
+ * `sanitize()` lo recorta y quita `;`, `=` y saltos de línea, que romperían el
+ * formato del acuse.
+ */
+export function privFailureReason(resp: unknown, fallback: string): { code: string; reason: string } {
+  const err = (resp as any)?.error;
+  const code = typeof err?.code === "string" && err.code ? err.code : fallback;
+  const msg = typeof err?.message === "string" ? err.message.trim().slice(0, 300) : "";
+  return { code, reason: msg ? `${code}: ${msg}` : code };
+}
+
 // B3 forensics — max length of a single base64url-encoded state
 // snapshot we'll put on the wire. Mirrors the backend PMP ack parser
 // (remediation-result-reducer.ts:decodeJsonB64), which rejects any
@@ -464,9 +484,9 @@ async function runOne(
         meta: { tenantId: ctx.enrollment.tenantId, deviceId: ctx.enrollment.deviceId },
       });
       if (!revertResp?.ok) {
-        const code = (revertResp as any)?.error?.code || "revert_failed";
+        const { code, reason } = privFailureReason(revertResp, "revert_failed");
         outcome = code === "revert_timeout" ? "timed_out" : code === "unsupported_check" ? "rejected" : "failed";
-        return ackFor(outcome, remediationId, { checkId, duration: Date.now() - revertStart, reason: code }, buildForensics());
+        return ackFor(outcome, remediationId, { checkId, duration: Date.now() - revertStart, reason }, buildForensics());
       }
       const r = revertResp.result || {};
       exitCode = Number(r.exitCode);
@@ -550,14 +570,21 @@ async function runOne(
     });
 
     if (!applyResp?.ok) {
-      const code = (applyResp as any)?.error?.code || "remediate_failed";
+      const { code, reason } = privFailureReason(applyResp, "remediate_failed");
       outcome = code === "remediate_timeout" ? "timed_out" : "failed";
-      extraReason = code;
-      return ackFor(outcome, remediationId, {
-        checkId,
-        duration: Date.now() - applyStart,
-        reason: extraReason,
-      });
+      extraReason = reason;
+      // Con el estado de ANTES: sin él, un fallo no decía ni qué había en la
+      // clave cuando se intentó escribir.
+      return ackFor(
+        outcome,
+        remediationId,
+        {
+          checkId,
+          duration: Date.now() - applyStart,
+          reason: extraReason,
+        },
+        buildForensics()
+      );
     }
 
     const applyResult = applyResp.result || {};

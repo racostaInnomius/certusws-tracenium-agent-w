@@ -58,6 +58,7 @@ import os from "os";
 import type { AgentContext } from "../core/agent-context";
 import type { SecurityPolicy, SecurityMode } from "../core/policy-runtime";
 import { tryStartRemediate, finishRemediate } from "../plugins/pmp/state";
+import { privFailureReason } from "../plugins/pmp/remediation";
 import { outbox } from "../queue/sqlite-outbox";
 import { buildDeviceFacts } from "../domain/device-facts-builder";
 
@@ -635,7 +636,8 @@ export async function runSecurityEnforce(
       });
 
       if (!applyResp?.ok) {
-        const code = (applyResp as any)?.error?.code || "remediate_failed";
+        // El código Y el mensaje del PrivSvc (ver privFailureReason).
+        const { reason } = privFailureReason(applyResp, "remediate_failed");
         results.push({
           checkId: entry.checkId,
           capability: entry.capability,
@@ -643,7 +645,7 @@ export async function runSecurityEnforce(
           mode,
           outcome: "drift_remediation_failed",
           durationMs: Date.now() - itemStart,
-          detail: code,
+          detail: reason,
         });
         continue;
       }

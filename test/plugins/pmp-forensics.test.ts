@@ -256,3 +256,39 @@ describe("PMP B3 forensics — emit stateBefore/stateAfter", () => {
     );
   });
 });
+
+// Job 3799974e (1-oct-2026): `Windows Feeds\EnableFeeds` falló tres veces en
+// W11-JPR-LAB02 y el portal sólo decía «failed · remediate_failed». El PrivSvc
+// de Windows SÍ devolvía el mensaje de la excepción; el agente lo tiraba.
+describe("un fallo del PrivSvc llega con su PORQUÉ", () => {
+  const failing = (error: Record<string, unknown>) => async (req: any) => {
+    if (req.method === "pmp.read_check_state") return { ok: true, result: { isCompliant: false, snapshot: { present: false } } };
+    if (req.method === "pmp.remediate") return { ok: false, error };
+    return { ok: false, error: { code: "unexpected_method" } };
+  };
+
+  it("⭐ el mensaje viaja en `reason`, saneado (sin `;` ni `=` que rompan el acuse)", async () => {
+    const { ctx } = makeCtx(
+      failing({ code: "remediate_failed", message: "Access to the registry key 'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Feeds' is denied; a=b" })
+    );
+    const ack = await runRemediation(ctx, "job-f1", makePayload());
+    expect(ack.outcome).toBe("failed");
+    const reason = extractAckKey(ack.ackMessage, "reason");
+    expect(reason).toMatch(/^remediate_failed: Access to the registry key .*Windows Feeds' is denied/);
+    expect(reason).not.toMatch(/[;=]/);
+  });
+
+  it("y con el estado de ANTES: qué había cuando se intentó escribir", async () => {
+    const { ctx } = makeCtx(failing({ code: "remediate_failed", message: "boom" }));
+    const ack = await runRemediation(ctx, "job-f2", makePayload());
+    expect(backendDecodeJsonB64(extractAckKey(ack.ackMessage, "stateBefore"))).toEqual({ present: false });
+  });
+
+  it("sin mensaje, el código solo (como antes); y un timeout sigue siendo timed_out", async () => {
+    const a = await runRemediation(makeCtx(failing({ code: "remediate_failed" })).ctx, "job-f3", makePayload());
+    expect(extractAckKey(a.ackMessage, "reason")).toBe("remediate_failed");
+    const b = await runRemediation(makeCtx(failing({ code: "remediate_timeout", message: "took 540 s" })).ctx, "job-f4", makePayload());
+    expect(b.outcome).toBe("timed_out");
+    expect(extractAckKey(b.ackMessage, "reason")).toBe("remediate_timeout: took 540 s");
+  });
+});
