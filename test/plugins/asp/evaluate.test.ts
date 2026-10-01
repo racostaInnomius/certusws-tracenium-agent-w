@@ -506,6 +506,62 @@ describe("catálogo 1.8.0 — quién puede recuperar la contraseña de un gMSA",
   });
 });
 
+describe("catálogo 1.9.0 — Group Policy", () => {
+  const cat190 = require("./fixtures/asp-ad-1.9.0.json");
+  function ind190(id: string): AgentIndicator {
+    const i = (cat190.indicators as any[]).find((x) => x.controlId === id);
+    if (!i) throw new Error(id);
+    return { controlId: i.controlId, severity: i.severity, requires: i.requires, query: i.query, derive: i.derive ?? [], predicate: i.predicate, onFail: i.onFail, whenMissing: i.whenMissing ?? "not_assessed" };
+  }
+  const gpo = (extra: Record<string, unknown>) => ({
+    ok: true as const,
+    data: { found: true, count: 0, sample: [], objectsScanned: 14, gposLinked: 6, filesScanned: 4, unreadable: 0, unreadableSample: [], population: [], ...extra }
+  });
+
+  it("⭐ Domain Users en Administrators por una GPO enlazada → fail crítico, con dónde está enlazada", () => {
+    const r = evaluateIndicator(
+      ind190("ASP-AD-GPO-005"),
+      gpo({ count: 1, sample: [{ gpo: "Workstation admins", guid: "{AAAA}", linkedAt: ["OU=Workstations,DC=m"], links: 1, entries: [{ group: "S-1-5-32-544", member: "S-1-5-21-1-2-3-513", via: "Members" }] }] }),
+      DC,
+      opts
+    );
+    expect(r).toMatchObject({ status: "fail", severity: "critical", affectedCount: 1 });
+    expect((r.evidence as any).sample[0].linkedAt).toEqual(["OU=Workstations,DC=m"]);
+    expect((r.evidence as any).gposLinked).toBe(6);
+  });
+
+  it("un derecho peligroso a un principal no por defecto → needs_review", () => {
+    const r = evaluateIndicator(
+      ind190("ASP-AD-GPO-004"),
+      gpo({ count: 1, sample: [{ gpo: "Servers", entries: [{ right: "SeDebugPrivilege", principal: "S-1-5-21-1-2-3-1105", resolved: true }] }] }),
+      DC,
+      opts
+    );
+    expect(r.status).toBe("needs_review");
+  });
+
+  it("⭐ leyó la Default Domain Policy y no hay nada → pass, con cuántas GPO enlazadas miró", () => {
+    const r = evaluateIndicator(ind190("ASP-AD-GPO-006"), gpo({}), DC, opts);
+    expect(r.status).toBe("pass");
+    expect(r.evidence).toMatchObject({ gposLinked: 6, filesScanned: 4 });
+  });
+
+  it("🔴 un GptTmpl.inf ilegible (o la Default Domain Policy sin leer) convierte el cero en not_assessed", () => {
+    const r = evaluateIndicator(ind190("ASP-AD-GPO-006"), gpo({ unreadable: 1, unreadableSample: ["Default Domain Policy"] }), DC, opts);
+    expect(r).toMatchObject({ status: "not_assessed", reason: "insufficient_read:1" });
+  });
+
+  it("⚠️ ciego a medias pero con hallazgo: el hallazgo gana", () => {
+    const r = evaluateIndicator(
+      ind190("ASP-AD-GPO-006"),
+      gpo({ count: 1, unreadable: 1, sample: [{ gpo: "Legacy", entries: [{ key: "ClearTextPassword", value: "1" }] }] }),
+      DC,
+      opts
+    );
+    expect(r.status).toBe("fail");
+  });
+});
+
 describe("el dominio del spike (MSIG-TSPDC, ADR §Fase 0)", () => {
   const spike: Record<string, { data: any; expect: string }> = {
     "ASP-AD-KRB-002": { data: { count: 2, sample: ["CN=Administrator,CN=Users,DC=m", "CN=next gsys,OU=IT,DC=m"] }, expect: "fail" },

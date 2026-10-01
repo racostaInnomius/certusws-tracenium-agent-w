@@ -867,6 +867,236 @@ function AspGmsaRetrievers($query, $ctx, [int]$limit) {
   }
 }
 
+# Lo que casa en las lineas de UN GptTmpl.inf, segun `$spec` (ver AspGpoSettings).
+# Puro -- sin LDAP ni disco -- para poder probarlo con pwsh fuera de Windows.
+function AspGptTmplMatches([string[]]$lines, $spec) {
+  # Parseo minimo de un .inf: [Seccion] y clave = valor.
+  $current = ''
+  $entries = New-Object System.Collections.Generic.List[object]
+  foreach ($raw in $lines) {
+    $line = $raw.Trim()
+    if ($line.Length -eq 0 -or $line.StartsWith(';')) { continue }
+    if ($line.StartsWith('[') -and $line.EndsWith(']')) { $current = $line.Substring(1, $line.Length - 2); continue }
+    $eq = $line.IndexOf('=')
+    if ($eq -lt 1) { continue }
+    $k = $line.Substring(0, $eq).Trim()
+    $v = $line.Substring($eq + 1).Trim()
+    $members = @($v.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
+    if ($spec.mode -eq 'privilege' -and $current -eq 'Privilege Rights' -and $spec.rights.ContainsKey($k.ToLowerInvariant())) {
+      foreach ($mbr in $members) {
+        $isSid = $mbr.StartsWith('*')
+        $sid = $mbr.TrimStart('*')
+        if ($isSid -and $spec.allowed.ContainsKey($sid)) { continue }
+        $okPrefix = $false
+        if ($isSid) { foreach ($p in $spec.prefixes) { if ($sid.StartsWith($p)) { $okPrefix = $true; break } } }
+        if ($okPrefix) { continue }
+        $entries.Add([ordered]@{ right = $k; principal = $sid; resolved = $isSid })
+      }
+    } elseif ($spec.mode -eq 'value' -and $current -eq $spec.section -and $k -eq $spec.key) {
+      if ($spec.values.ContainsKey($v)) { $entries.Add([ordered]@{ key = $k; value = $v }) }
+    } elseif ($spec.mode -eq 'groupMembers' -and $current -eq 'Group Membership') {
+      # *S-1-5-32-544__Members = *S-1-5-11   o   *S-1-5-11__Memberof = *S-1-5-32-544
+      $sep = $k.LastIndexOf('__')
+      if ($sep -lt 1) { continue }
+      $subject = $k.Substring(0, $sep).TrimStart('*')
+      $rel = $k.Substring($sep + 2).ToLowerInvariant()
+      if ($rel -eq 'members' -and $spec.groups.ContainsKey($subject)) {
+        foreach ($mbr in $members) {
+          $sid = $mbr.TrimStart('*')
+          if ($spec.forbidden.ContainsKey($sid)) { $entries.Add([ordered]@{ group = $subject; member = $sid; via = 'Members' }) }
+        }
+      } elseif ($rel -eq 'memberof' -and $spec.forbidden.ContainsKey($subject)) {
+        foreach ($mbr in $members) {
+          $sid = $mbr.TrimStart('*')
+          if ($spec.groups.ContainsKey($sid)) { $entries.Add([ordered]@{ group = $sid; member = $subject; via = 'Memberof' }) }
+        }
+      }
+    }
+  }
+  return ,$entries.ToArray()
+}
+
+# Lo que CONFIGURAN las GPO de seguridad (catalogo 1.9.0): el GptTmpl.inf de
+# cada GPO -- derechos de usuario, grupos restringidos, [System Access].
+#
+# ⚠️ Solo GPO ENLAZADAS y activas para equipo. Una GPO sin enlace no aplica a
+# nadie, y marcarla seria repetir el error del 1.3.0 de ADCS (6 falsos de 7 por
+# mirar plantillas que ninguna CA publicaba): forma, no riesgo.
+#   enlace  -> gPLink de la raiz del dominio, de las OU y de los sites, sin el
+#              bit 1 (enlace deshabilitado).
+#   activa  -> flags de la GPO sin el bit 2 (configuracion de equipo deshabilitada).
+#
+# ⚠️ La ceguera: si no se puede leer un GptTmpl.inf de una GPO enlazada que
+# declara la extension de seguridad, eso cuenta como `unreadable`. Y el control
+# positivo es la Default Domain Policy: existe siempre y siempre lleva plantilla
+# de seguridad (la directiva de contrasenas). Si no se ve o no se lee, todo cero
+# de este tipo es sospechoso.
+#
+# Modos:
+#   privilege    -> [Privilege Rights]: un derecho de `rights` concedido a un SID
+#                   fuera de `allowedSids` / `allowedSidPrefixes`. Un nombre sin
+#                   '*' (no resuelto al escribir la GPO) cuenta como no permitido.
+#   value        -> `section` / `key` con un valor de `values`.
+#   groupMembers -> [Group Membership]: un SID de `forbiddenSids` metido en un
+#                   grupo de `groupSids`, por __Members o por __Memberof.
+function AspGpoSettings($query, $ctx, [int]$limit) {
+  $SECURITY_CSE = '{827D319E-6EAC-11D2-A4EA-00C04F79F83A}'
+  $DDP = '{31B2F340-016D-11D2-945F-00C04FB984F9}'
+  $setOf = {
+    param($name)
+    $h = @{}
+    foreach ($s in @(AspProp $query $name)) { if ($s) { $h[(AspExpand ([string]$s) $ctx)] = $true } }
+    return $h
+  }
+  $rights = @{}
+  foreach ($r in @(AspProp $query 'rights')) { if ($r) { $rights[([string]$r).ToLowerInvariant()] = $true } }
+  $values = @{}
+  foreach ($v in @(AspProp $query 'values')) { if ($null -ne $v) { $values[([string]$v).Trim()] = $true } }
+  $spec = @{
+    mode = [string](AspProp $query 'mode')
+    rights = $rights
+    allowed = (& $setOf 'allowedSids')
+    prefixes = @(AspProp $query 'allowedSidPrefixes' | Where-Object { $_ } | ForEach-Object { [string]$_ })
+    section = [string](AspProp $query 'section')
+    key = [string](AspProp $query 'key')
+    values = $values
+    groups = (& $setOf 'groupSids')
+    forbidden = (& $setOf 'forbiddenSids')
+  }
+
+  # ── Enlaces: raiz del dominio + OU (una busqueda) y sites ────────────────
+  $links = @{}
+  $addLinks = {
+    param($root, $filter, $scope)
+    $s = New-Object System.DirectoryServices.DirectorySearcher
+    $s.SearchRoot = AspEntry $root
+    $s.Filter = $filter
+    $s.SearchScope = $scope
+    $s.PageSize = 1000
+    $s.ClientTimeout = New-TimeSpan -Seconds 60
+    [void]$s.PropertiesToLoad.Add('distinguishedname')
+    [void]$s.PropertiesToLoad.Add('gplink')
+    $res = $s.FindAll()
+    try {
+      foreach ($o in $res) {
+        if (-not $o.Properties.Contains('gplink')) { continue }
+        $where = [string]$o.Properties['distinguishedname'][0]
+        foreach ($m in [regex]::Matches([string]$o.Properties['gplink'][0], '(?i)\[LDAP://[^\]]*?cn=(\{[0-9A-F-]{36}\})[^\];]*;(\d+)\]')) {
+          $guid = $m.Groups[1].Value.ToUpperInvariant()
+          # Bit 1 = enlace deshabilitado.
+          if (([int]$m.Groups[2].Value -band 1) -ne 0) { continue }
+          if (-not $links.ContainsKey($guid)) { $links[$guid] = New-Object System.Collections.Generic.List[string] }
+          $links[$guid].Add($where)
+        }
+      }
+    } finally {
+      $res.Dispose()
+    }
+  }
+  & $addLinks $ctx.domainDn '(gPLink=*)' ([System.DirectoryServices.SearchScope]::Subtree)
+  & $addLinks "CN=Sites,$($ctx.configDn)" '(&(objectClass=site)(gPLink=*))' ([System.DirectoryServices.SearchScope]::OneLevel)
+
+  # ── Las GPO ─────────────────────────────────────────────────────────────
+  $gs = New-Object System.DirectoryServices.DirectorySearcher
+  $gs.SearchRoot = AspEntry "CN=Policies,CN=System,$($ctx.domainDn)"
+  $gs.Filter = '(objectClass=groupPolicyContainer)'
+  $gs.SearchScope = [System.DirectoryServices.SearchScope]::OneLevel
+  $gs.PageSize = 1000
+  $gs.ClientTimeout = New-TimeSpan -Seconds 60
+  foreach ($a in @('cn', 'displayname', 'flags', 'gpcmachineextensionnames')) { [void]$gs.PropertiesToLoad.Add($a) }
+
+  $policies = "\\$($ctx.dnsHostName)\SYSVOL\$($ctx.dnsDomain)\Policies"
+  $hits = New-Object System.Collections.Generic.List[object]
+  $population = New-Object System.Collections.Generic.List[object]
+  $count = 0
+  $seen = 0
+  $linked = 0
+  $filesRead = 0
+  $unreadable = 0
+  $unreadableSample = New-Object System.Collections.Generic.List[string]
+  $ddpSeen = $false
+  $ddpLinked = $false
+  $ddpRead = $false
+
+  $found = $gs.FindAll()
+  try {
+    foreach ($g in $found) {
+      $seen++
+      $guid = ([string]$g.Properties['cn'][0]).ToUpperInvariant()
+      $name = $guid
+      if ($g.Properties.Contains('displayname')) { $name = [string]$g.Properties['displayname'][0] }
+      if ($guid -eq $DDP) { $ddpSeen = $true }
+      $flags = 0
+      if ($g.Properties.Contains('flags')) { $flags = [int]$g.Properties['flags'][0] }
+      # Bit 2 = configuracion de equipo deshabilitada: el GptTmpl.inf no aplica.
+      if (-not $links.ContainsKey($guid) -or ($flags -band 2) -ne 0) { continue }
+      $linked++
+      if ($guid -eq $DDP) { $ddpLinked = $true }
+      $cse = ''
+      if ($g.Properties.Contains('gpcmachineextensionnames')) { $cse = [string]$g.Properties['gpcmachineextensionnames'][0] }
+      $declaresSecurity = $cse.ToUpperInvariant().Contains($SECURITY_CSE)
+      $path = "$policies\$guid\MACHINE\Microsoft\Windows NT\SecEdit\GptTmpl.inf"
+      $lines = $null
+      try {
+        # ReadAllLines detecta el BOM: GptTmpl.inf suele ser UTF-16LE.
+        if ([System.IO.File]::Exists($path)) { $lines = [System.IO.File]::ReadAllLines($path) }
+      } catch {
+        $lines = $null
+      }
+      if ($null -eq $lines) {
+        if ($declaresSecurity) {
+          $unreadable++
+          if ($unreadableSample.Count -lt 10) { $unreadableSample.Add($name) }
+        }
+        continue
+      }
+      $filesRead++
+      if ($guid -eq $DDP) { $ddpRead = $true }
+
+      $entries = AspGptTmplMatches $lines $spec
+
+      $where = @($links[$guid].ToArray() | Select-Object -First 5)
+      if ($population.Count -lt $limit) {
+        $population.Add([ordered]@{ gpo = $name; guid = $guid; linkedAt = $where; security = $declaresSecurity; matches = $entries.Count })
+      }
+      if ($entries.Count -eq 0) { continue }
+      $count++
+      if ($hits.Count -lt $limit) {
+        $hits.Add([ordered]@{
+            gpo = $name
+            guid = $guid
+            linkedAt = $where
+            links = $links[$guid].Count
+            entries = @($entries | Select-Object -First 25)
+          })
+      }
+    }
+  } finally {
+    $found.Dispose()
+  }
+
+  # El control positivo: sin ver la Default Domain Policy -- y leerla, si esta
+  # enlazada -- ningun cero de este tipo vale.
+  if (-not $ddpSeen -or ($ddpLinked -and -not $ddpRead)) {
+    $unreadable++
+    if ($unreadableSample.Count -lt 10) { $unreadableSample.Add('Default Domain Policy') }
+  }
+
+  return [ordered]@{
+    found = $true
+    count = $count
+    sample = $hits.ToArray()
+    truncated = ($count -gt $hits.Count)
+    objectsScanned = $seen
+    gposLinked = $linked
+    filesScanned = $filesRead
+    unreadable = $unreadable
+    unreadableSample = $unreadableSample.ToArray()
+    population = $population.ToArray()
+  }
+}
+
 # Metadata de replicacion de AD. Responde "cambio hace poco?", que ningun otro
 # tipo de consulta nuestro puede preguntar, y lo hace por LDAP plano: son dos
 # atributos CONSTRUIDOS que hay que pedir por nombre.
@@ -1098,6 +1328,7 @@ foreach ($item in $request.queries) {
       'repl_metadata' { AspReplMetadata $q $ctx $limit }
       'adcs_templates' { AspAdcsTemplates $q $ctx $limit }
       'gmsa_retrievers' { AspGmsaRetrievers $q $ctx $limit }
+      'gpo_settings' { AspGpoSettings $q $ctx $limit }
       default { throw "unsupported query kind: $([string]$q.kind)" }
     }
     $output.results[$id] = [ordered]@{ ok = $true; data = $data; ms = $clock.ElapsedMilliseconds }

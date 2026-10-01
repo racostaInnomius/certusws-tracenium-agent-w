@@ -117,7 +117,7 @@ describe("asp-ad-collector.ps1 — reglas estáticas", () => {
 
   it("los tipos de consulta del script son exactamente los del catálogo", () => {
     const kinds = [...code.matchAll(/^\s*'([a-z_]+)'\s*\{\s*Asp/gm)].map((m) => m[1]).sort();
-    expect(kinds).toEqual(["acl", "acl_search", "adcs_templates", "gmsa_retrievers", "group_members", "ldap_object", "ldap_search", "owner_search", "registry", "repl_metadata", "rootdse", "sysvol_files"]);
+    expect(kinds).toEqual(["acl", "acl_search", "adcs_templates", "gmsa_retrievers", "gpo_settings", "group_members", "ldap_object", "ldap_search", "owner_search", "registry", "repl_metadata", "rootdse", "sysvol_files"]);
   });
 });
 
@@ -438,5 +438,96 @@ describe.skipIf(!hasPwsh)("asp-ad-collector.ps1 — marcador {sidDn:<SID>}", () 
     const r = expand("(memberOf:1.2.840.113556.1.4.1941:={sidDn:{rootDomainSid}-519})", {});
     expect(r.ok).toBe(false);
     expect(r.out).toContain("sidDn: no object for S-1-5-21-1-2-3-519");
+  });
+});
+
+describe.skipIf(!hasPwsh)("asp-ad-collector.ps1 — AspGptTmplMatches (lo que configura una GPO)", () => {
+  // El parseo del GptTmpl.inf es lo único del tipo `gpo_settings` que se puede
+  // probar fuera de Windows: no toca LDAP ni ACL. Lo de los enlaces se valida en
+  // el DC con el kit.
+  function run(lines: string[], spec: string): unknown[] {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "asp-gpo-"));
+    try {
+      const literals = lines.map((v) => `'${v.replace(/'/g, "''")}'`).join(", ");
+      const runner = path.join(dir, "run.ps1");
+      fs.writeFileSync(
+        runner,
+        [
+          `$t = $null; $e = $null`,
+          `$ast = [System.Management.Automation.Language.Parser]::ParseFile('${SCRIPT}', [ref]$t, [ref]$e)`,
+          `$fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'AspGptTmplMatches' }, $true) | Select-Object -First 1`,
+          `. ([scriptblock]::Create($fn.Extent.Text))`,
+          `$set = { param($xs) $h = @{}; foreach ($x in $xs) { $h[$x] = $true }; return $h }`,
+          `$spec = ${spec}`,
+          `$r = AspGptTmplMatches @(${literals}) $spec`,
+          `ConvertTo-Json -Compress -Depth 4 -InputObject @($r)`
+        ].join("\n")
+      );
+      const r = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", runner], { encoding: "utf8", timeout: 60_000 });
+      expect(r.status, r.stderr).toBe(0);
+      return JSON.parse(r.stdout) as unknown[];
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const INF = [
+    "[Unicode]",
+    "Unicode=yes",
+    "[System Access]",
+    "MinimumPasswordLength = 7",
+    "ClearTextPassword = 1",
+    "LSAAnonymousNameLookup = 0",
+    "[Privilege Rights]",
+    "SeDebugPrivilege = *S-1-5-32-544,*S-1-5-21-1-2-3-1105",
+    "SeBackupPrivilege = *S-1-5-32-544,*S-1-5-32-551",
+    "SeImpersonatePrivilege = *S-1-5-32-544,*S-1-5-6,*S-1-5-80-3139157870-2983391045",
+    "SeTcbPrivilege = svc_legacy",
+    "SeInteractiveLogonRight = *S-1-5-32-545",
+    "[Group Membership]",
+    "*S-1-5-32-544__Memberof =",
+    "*S-1-5-32-544__Members = *S-1-5-21-1-2-3-512,*S-1-5-21-1-2-3-513",
+    "*S-1-5-11__Memberof = *S-1-5-32-555,*S-1-5-32-544",
+    "[Version]",
+    'signature="$CHICAGO$"'
+  ];
+
+  it("⭐ privilege: casa un derecho peligroso a un SID no permitido, y un nombre sin resolver", () => {
+    const out = run(
+      INF,
+      `@{ mode = 'privilege'; rights = (& $set @('sedebugprivilege','sebackupprivilege','seimpersonateprivilege','setcbprivilege')); allowed = (& $set @('S-1-5-32-544','S-1-5-32-551','S-1-5-6')); prefixes = @('S-1-5-80-'); groups = @{}; forbidden = @{}; values = @{} }`
+    );
+    expect(out).toEqual([
+      { right: "SeDebugPrivilege", principal: "S-1-5-21-1-2-3-1105", resolved: true },
+      { right: "SeTcbPrivilege", principal: "svc_legacy", resolved: false }
+    ]);
+  });
+
+  it("⚠️ un derecho que no está en la lista no cuenta, aunque lo tenga Users", () => {
+    const out = run(INF, `@{ mode = 'privilege'; rights = (& $set @('sedebugprivilege')); allowed = (& $set @('S-1-5-32-544')); prefixes = @(); groups = @{}; forbidden = @{}; values = @{} }`);
+    expect(out.map((x: any) => x.right)).toEqual(["SeDebugPrivilege"]);
+  });
+
+  it("⭐ value: ClearTextPassword = 1 en [System Access], y no en otra sección", () => {
+    expect(run(INF, `@{ mode = 'value'; section = 'System Access'; key = 'ClearTextPassword'; values = (& $set @('1')); rights = @{}; allowed = @{}; prefixes = @(); groups = @{}; forbidden = @{} }`)).toEqual([
+      { key: "ClearTextPassword", value: "1" }
+    ]);
+    expect(run(INF, `@{ mode = 'value'; section = 'Privilege Rights'; key = 'ClearTextPassword'; values = (& $set @('1')); rights = @{}; allowed = @{}; prefixes = @(); groups = @{}; forbidden = @{} }`)).toEqual([]);
+    expect(run(INF, `@{ mode = 'value'; section = 'System Access'; key = 'LSAAnonymousNameLookup'; values = (& $set @('1')); rights = @{}; allowed = @{}; prefixes = @(); groups = @{}; forbidden = @{} }`)).toEqual([]);
+  });
+
+  it("⭐ groupMembers: Domain Users por __Members y Authenticated Users por __Memberof en Administrators", () => {
+    const out = run(
+      INF,
+      `@{ mode = 'groupMembers'; groups = (& $set @('S-1-5-32-544')); forbidden = (& $set @('S-1-5-21-1-2-3-513','S-1-5-11')); rights = @{}; allowed = @{}; prefixes = @(); values = @{} }`
+    );
+    expect(out).toEqual([
+      { group: "S-1-5-32-544", member: "S-1-5-21-1-2-3-513", via: "Members" },
+      { group: "S-1-5-32-544", member: "S-1-5-11", via: "Memberof" }
+    ]);
+  });
+
+  it("un fichero vacío o sin secciones no casa nada", () => {
+    expect(run([], `@{ mode = 'privilege'; rights = (& $set @('sedebugprivilege')); allowed = @{}; prefixes = @(); groups = @{}; forbidden = @{}; values = @{} }`)).toEqual([]);
+    expect(run(["SeDebugPrivilege = *S-1-1-0"], `@{ mode = 'privilege'; rights = (& $set @('sedebugprivilege')); allowed = @{}; prefixes = @(); groups = @{}; forbidden = @{}; values = @{} }`)).toEqual([]);
   });
 });

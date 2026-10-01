@@ -159,9 +159,9 @@ export function buildEvidence(
       // consulta miró de verdad — un cero sin `lastWrite` es sospechoso.
       if (data?.lastWrite && typeof data.lastWrite === "object") ev.lastWrite = data.lastWrite;
       if (typeof data?.notFound === "number" && data.notFound > 0) ev.notFound = data.notFound;
-      // gmsa_retrievers: cuántos descriptores se leyeron de verdad. Un `pass`
-      // con `aceCount: 0` sobre varios gMSA se lee distinto que uno con 12 ACE.
-      for (const k of ["withoutAttribute", "aceCount", "retrieversSeen"] as const) {
+      // gmsa_retrievers / gpo_settings: cuánto se leyó de verdad. Un `pass` con
+      // `aceCount: 0` sobre varios gMSA, o con 0 GPO enlazadas, no prueba nada.
+      for (const k of ["withoutAttribute", "aceCount", "retrieversSeen", "gposLinked"] as const) {
         if (typeof data?.[k] === "number") ev[k] = data[k];
       }
     }
