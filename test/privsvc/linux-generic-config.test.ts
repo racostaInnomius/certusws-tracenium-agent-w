@@ -17,6 +17,9 @@ import {
   ausyscallMachine,
   augenrulesFailure,
   sameAuditRule,
+  splitCollateral,
+  parseDpkgDepends,
+  REMOVED_META_FILE,
   CONF_FILES,
   SYSCTL_DROPIN,
   MODPROBE_DROPIN,
@@ -538,6 +541,97 @@ describe("line — una línea de la lista cerrada", () => {
 // ── Paquetes y unidades ────────────────────────────────────────────
 // apt y systemd simulados: dpkg-query dice lo instalado, `apt-get -s` enseña
 // lo que haría (ubuntu-standard depende de telnet), systemctl lleva el estado.
+// Job f6029718 (VPS 24.04, 1-oct): «ftp client is not installed» fallaba con
+// «removing ftp, tnftp would also remove ubuntu-standard — not done».
+// ubuntu-standard exige «ftp | tnftp»: CIS 2.2.6 no se cumple sin quitarlo.
+describe("metapaquete de rebote — ubuntu-standard al quitar ftp + tnftp", () => {
+  let installed: Set<string>;
+  let aptMarkFails: boolean;
+  function exec(bin: string, args: string[]) {
+    if (bin.endsWith("systemd-run")) {
+      const i = args.indexOf("--");
+      return exec(args[i + 1], args.slice(i + 2));
+    }
+    if (bin === "/usr/bin/dpkg-query") {
+      if (args[1] === "-f=${Depends}, ${Recommends}") return { stdout: "ftp | tnftp | ftp-ssl, less, vim-tiny (>= 2), lsof:any, ", stderr: "", code: 0 };
+      const names = args.slice(2);
+      const lines = names.filter((n) => installed.has(n)).map((n) => `${n}\tinstall ok installed`);
+      return { stdout: lines.join("\n") + "\n", stderr: "", code: lines.length === names.length ? 0 : 1 };
+    }
+    if (bin === "/usr/bin/apt-mark") return aptMarkFails ? { stdout: "", stderr: "E: boom", code: 100 } : { stdout: "", stderr: "", code: 0 };
+    if (bin === "/usr/bin/apt-get") {
+      const sim = args[0] === "-s";
+      const verb = sim ? args[1] : args[0];
+      const names = args.filter((a) => /^[a-z][a-z0-9+.-]+$/.test(a) && !["install", "remove"].includes(a));
+      if (verb === "remove") {
+        let gone = names.filter((n) => installed.has(n));
+        // ubuntu-standard cae sólo si no queda NINGÚN cliente ftp.
+        if (installed.has("ubuntu-standard") && ["ftp", "tnftp"].every((c) => !installed.has(c) || names.includes(c))) gone = [...new Set([...gone, "ubuntu-standard"])];
+        if (sim) return { stdout: gone.map((g) => `Remv ${g} [1.0]`).join("\n"), stderr: "", code: 0 };
+        gone.forEach((g) => installed.delete(g));
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      if (sim) return { stdout: names.map((n) => `Inst ${n} (1.0 Ubuntu)`).join("\n"), stderr: "", code: 0 };
+      names.forEach((n) => installed.add(n));
+      return { stdout: "", stderr: "", code: 0 };
+    }
+    return defaultExec(bin, args);
+  }
+  const removeFtp = w({ kind: "pkg", name: "ftp", installed: false }, { kind: "pkg", name: "tnftp", installed: false });
+  beforeEach(() => {
+    installed = new Set(["ubuntu-standard", "ftp", "tnftp", "less", "vim-tiny", "lsof", "telnet"]);
+    aptMarkFails = false;
+    bins.add("/usr/bin/apt-get");
+    dirs.add("/var/lib/tracenium");
+    execImpl = exec;
+  });
+
+  it("⭐ se quita, con sus dependencias marcadas a mano antes, y se apunta para el revert", async () => {
+    const r = await applyGeneric(removeFtp, deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    const mark = calls.findIndex((c) => c.startsWith("/usr/bin/apt-mark manual"));
+    const remove = calls.findIndex((c) => c.startsWith("/usr/bin/apt-get remove -y"));
+    expect(mark).toBeGreaterThanOrEqual(0);
+    expect(mark).toBeLessThan(remove);
+    // Las instaladas, sin las que se quitan ni las que no están (ftp-ssl).
+    expect(calls[mark]).toBe("/usr/bin/apt-mark manual less vim-tiny lsof");
+    expect(calls[remove].endsWith("ftp tnftp ubuntu-standard")).toBe(true);
+    expect(installed.has("ubuntu-standard")).toBe(false);
+    expect(JSON.parse(files.get(REMOVED_META_FILE)!)).toEqual({ "ubuntu-standard": { removedAt: "2026-09-27T20:00:00.000Z", with: ["ftp", "tnftp"] } });
+  });
+
+  it("el revert (instalar ftp + tnftp) lo reinstala y borra la nota", async () => {
+    await applyGeneric(removeFtp, deps());
+    const r = await applyGeneric(w({ kind: "pkg", name: "ftp", installed: true }, { kind: "pkg", name: "tnftp", installed: true }), deps());
+    expect(r).toMatchObject({ ok: true, value: { exitCode: 0 } });
+    expect(calls.some((c) => c.startsWith("/usr/bin/apt-get install -y") && c.endsWith("ftp tnftp ubuntu-standard"))).toBe(true);
+    expect(installed.has("ubuntu-standard")).toBe(true);
+    expect(JSON.parse(files.get(REMOVED_META_FILE)!)).toEqual({});
+  });
+
+  it("si apt-mark falla, no se quita nada", async () => {
+    aptMarkFails = true;
+    const r = await applyGeneric(removeFtp, deps());
+    expect((r as any).value.exitCode).not.toBe(0);
+    expect((r as any).value.stderrExcerpt).toMatch(/apt-mark manual .*ubuntu-standard.* failed/);
+    expect(installed.has("ftp")).toBe(true);
+    expect(installed.has("ubuntu-standard")).toBe(true);
+    expect(calls.some((c) => c.startsWith("/usr/bin/apt-get remove -y"))).toBe(false);
+  });
+
+  it("la excepción es SÓLO esa: telnet (u otra cosa junto a ftp) sigue sin poder llevárselo", () => {
+    expect(splitCollateral(["ftp", "tnftp"], ["ubuntu-standard"])).toEqual({ allowed: ["ubuntu-standard"], blocked: [] });
+    expect(splitCollateral(["telnet"], ["ubuntu-standard"])).toEqual({ allowed: [], blocked: ["ubuntu-standard"] });
+    expect(splitCollateral(["ftp", "telnet"], ["ubuntu-standard"])).toEqual({ allowed: [], blocked: ["ubuntu-standard"] });
+    expect(splitCollateral(["ftp", "tnftp"], ["ubuntu-standard", "openssh-client"])).toEqual({ allowed: ["ubuntu-standard"], blocked: ["openssh-client"] });
+  });
+
+  it("parseDpkgDepends: alternativas, versiones y arquitectura", () => {
+    expect(parseDpkgDepends("ftp | tnftp | ftp-ssl, less, vim-tiny (>= 2), lsof:any, ")).toEqual(["ftp", "tnftp", "ftp-ssl", "less", "vim-tiny", "lsof"]);
+    expect(parseDpkgDepends("")).toEqual([]);
+  });
+});
+
 describe("pkg y unit — lista cerrada, y apt simulado antes de tocar nada", () => {
   let installed: Set<string>;
   let unitState: Map<string, { enabled: string; active: string }>;

@@ -936,6 +936,68 @@ const APT_GET = "/usr/bin/apt-get";
 // confinar (Ux en el perfil), como el parcheo.
 const APT_ENV = { DEBIAN_FRONTEND: "noninteractive", LANG: "C", LC_ALL: "C" };
 
+// ── Metapaquetes que caen de rebote ──────────────────────────────────
+//
+// Quitar algo que apt no pidió quitar no se hace (se rechaza antes). Con UNA
+// excepción medida: `ubuntu-standard` exige «ftp | tnftp», así que CIS 2.2.6
+// («ftp client is not installed») no se puede cumplir sin quitarlo — el propio
+// `apt purge ftp tnftp` de CIS lo quita (job f6029718, VPS, 1-oct). Es un
+// metapaquete vacío: en ubuntu:24.04, de 201 dependencias automáticas, 0 quedaron
+// para autoremove. Aun así, antes de quitarlo sus dependencias instaladas se
+// marcan como instaladas a mano, para que ningún `autoremove` futuro se lleve
+// nada en ningún servidor; y se apunta, para que el revert lo reinstale.
+
+/** Metapaquete → los ÚNICOS paquetes cuya retirada puede arrastrarlo. */
+export const METAPACKAGE_COLLATERAL: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "ubuntu-standard": ["ftp", "tnftp"],
+});
+
+/** De lo que apt quitaría además de `names`, qué se acepta y qué no. */
+export function splitCollateral(names: readonly string[], extra: readonly string[]): { allowed: string[]; blocked: string[] } {
+  const allowed: string[] = [];
+  const blocked: string[] = [];
+  for (const p of extra) {
+    const only = METAPACKAGE_COLLATERAL[p];
+    (only && names.length > 0 && names.every((n) => only.includes(n)) ? allowed : blocked).push(p);
+  }
+  return { allowed, blocked };
+}
+
+/** «a, b | c (>= 1), d:any» → [a, b, c, d]. */
+export function parseDpkgDepends(field: string): string[] {
+  const out = new Set<string>();
+  for (const alt of field.split(/[,|]/)) {
+    const name = alt.trim().split(/[\s(]/)[0]?.replace(/:[a-z0-9]+$/, "");
+    if (name && /^[a-z0-9][a-z0-9+.-]*$/.test(name)) out.add(name);
+  }
+  return [...out];
+}
+
+export const REMOVED_META_FILE = "/var/lib/tracenium/pmp-removed-metapackages.json";
+const DPKG_QUERY = "/usr/bin/dpkg-query";
+const APT_MARK = "/usr/bin/apt-mark";
+
+type RemovedMeta = Record<string, { removedAt: string; with: string[] }>;
+function readRemovedMeta(deps: GenericDeps): RemovedMeta {
+  try {
+    const v = JSON.parse(deps.readFile(REMOVED_META_FILE) ?? "{}");
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Sus dependencias instaladas (Depends + Recommends), sin las que se van a quitar. */
+async function installedDepsOf(meta: string, except: readonly string[], deps: GenericDeps): Promise<string[] | null> {
+  const f = await deps.exec(DPKG_QUERY, ["-W", "-f=${Depends}, ${Recommends}", meta], 30_000, APT_ENV);
+  if (f.code !== 0) return null;
+  const wanted = parseDpkgDepends(f.stdout).filter((n) => !except.includes(n));
+  if (!wanted.length) return [];
+  // Los que no existen hacen que dpkg-query salga con error, pero lista los demás.
+  const st = await deps.exec(DPKG_QUERY, ["-W", "-f=${Package}\t${Status}\n", ...wanted], 30_000, APT_ENV);
+  return st.stdout.split("\n").filter((l) => /\tinstall ok installed$/.test(l)).map((l) => l.split("\t")[0]);
+}
+
 /** Paquetes que `apt-get -s` quitaría (líneas «Remv <paquete> …»). */
 export function aptRemovals(simOutput: string): string[] {
   const out: string[] = [];
@@ -1103,6 +1165,8 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
 
   // Paquetes: sólo apt, y lo que apt haría se mira antes (simulación, sin tocar nada).
   const pkgWrites = writes.filter((w): w is Extract<LinuxWrite, { kind: "pkg" }> => w.kind === "pkg");
+  // Metapaquetes que se aceptan de rebote (METAPACKAGE_COLLATERAL).
+  const collateral: string[] = [];
   if (pkgWrites.length) {
     if (deps.fileMode(APT_GET) === null) {
       problems.push("only apt (Debian/Ubuntu) is supported for package fixes");
@@ -1115,8 +1179,10 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
         problems.push(`apt-get -s ${verb} ${names.join(" ")} failed: ${(sim.stderr || sim.stdout).trim().slice(0, 200)}`);
         continue;
       }
-      const removed = aptRemovals(sim.stdout).filter((p) => verb === "install" || !names.includes(p));
-      if (removed.length) problems.push(`${verb === "install" ? "installing" : "removing"} ${names.join(", ")} would also remove ${removed.slice(0, 8).join(", ")}${removed.length > 8 ? "…" : ""} — not done`);
+      const extra = aptRemovals(sim.stdout).filter((p) => verb === "install" || !names.includes(p));
+      const { allowed, blocked } = verb === "remove" ? splitCollateral(names, extra) : { allowed: [], blocked: extra };
+      if (blocked.length) problems.push(`${verb === "install" ? "installing" : "removing"} ${names.join(", ")} would also remove ${blocked.slice(0, 8).join(", ")}${blocked.length > 8 ? "…" : ""} — not done`);
+      else collateral.push(...allowed);
     }
     if (problems.length) return done(2);
   }
@@ -1312,8 +1378,28 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
   }
 
   // ── paquetes ──
-  for (const [verb, names] of [["install", pkgWrites.filter((w) => w.installed).map((w) => w.name)], ["remove", pkgWrites.filter((w) => !w.installed).map((w) => w.name)]] as const) {
-    if (!names.length) continue;
+  const removedMeta = readRemovedMeta(deps);
+  for (const [verb, asked] of [["install", pkgWrites.filter((w) => w.installed).map((w) => w.name)], ["remove", pkgWrites.filter((w) => !w.installed).map((w) => w.name)]] as const) {
+    if (!asked.length) continue;
+    let names: string[] = [...asked];
+    // Revert: un metapaquete que quitamos con estos vuelve con ellos.
+    const reinstall = verb === "install" ? Object.keys(removedMeta).filter((m) => removedMeta[m].with.some((n) => asked.includes(n))) : [];
+    if (verb === "install") names = [...names, ...reinstall];
+    if (verb === "remove" && collateral.length) {
+      // Antes de quitarlo, lo que traía queda como instalado a mano: ningún
+      // autoremove posterior se lo lleva.
+      let marked = true;
+      for (const meta of collateral) {
+        const keep = await installedDepsOf(meta, asked, deps);
+        if (keep === null) { marked = false; problems.push(`could not read the dependencies of ${meta} — not removed`); break; }
+        if (!keep.length) continue;
+        const m = await deps.exec(APT_MARK, ["manual", ...keep], 120_000, APT_ENV);
+        if (m.code !== 0) { marked = false; problems.push(`apt-mark manual (dependencies of ${meta}) failed: ${(m.stderr || m.stdout).trim().slice(0, 200)}`); break; }
+        changes.push(`apt-mark manual ${keep.length} dependencies of ${meta}`);
+      }
+      if (!marked) continue;
+      names = [...names, ...collateral];
+    }
     const args = [
       verb, "-y",
       ...(verb === "install" ? ["--no-install-recommends"] : []),
@@ -1323,8 +1409,16 @@ export async function applyGeneric(params: unknown, deps: GenericDeps = realDeps
       ...names,
     ];
     const r = await deps.exec(APT_GET, args, 900_000, APT_ENV);
-    if (r.code === 0) changes.push(`apt-get ${verb} ${names.join(" ")}`);
-    else problems.push(`apt-get ${verb} ${names.join(" ")} failed: ${(r.stderr || r.stdout).trim().split("\n").slice(-3).join(" ").slice(0, 300)}`);
+    if (r.code === 0) {
+      changes.push(`apt-get ${verb} ${names.join(" ")}`);
+      const before = JSON.stringify(removedMeta);
+      if (verb === "remove") for (const meta of collateral) removedMeta[meta] = { removedAt: deps.now().toISOString(), with: [...asked] };
+      for (const meta of reinstall) delete removedMeta[meta];
+      if (JSON.stringify(removedMeta) !== before) {
+        deps.mkdirp(pathMod.dirname(REMOVED_META_FILE));
+        deps.writeFile(REMOVED_META_FILE, JSON.stringify(removedMeta, null, 1) + "\n", 0o600);
+      }
+    } else problems.push(`apt-get ${verb} ${names.join(" ")} failed: ${(r.stderr || r.stdout).trim().split("\n").slice(-3).join(" ").slice(0, 300)}`);
   }
 
   // ── unidades ── (después de instalar: auditd tiene que existir para arrancarlo)
