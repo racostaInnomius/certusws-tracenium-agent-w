@@ -215,6 +215,15 @@ const TERMINAL_RETRY_INTERVAL_MS = 5_000;
 // that an operator is unlikely to act on stale pixels.
 const KEYFRAME_INTERVAL_MS = 4_000;
 
+// ⚠️ …pero sólo hace falta si se mandó algún PARCIAL desde el último completo:
+// un parcial perdido es lo único que deja un rectángulo mal. Con la pantalla
+// quieta no sale ninguno, y el keyframe de cada 4 s era un JPEG entero para
+// repintar exactamente lo mismo — medido en TNS-OPER-SNOC04 (1-oct-2026):
+// ~44 KB/s entrando con la pantalla de login quieta. Sin parciales, el
+// completo pasa a ser una red de seguridad cada 30 s, y además el navegador
+// PIDE uno en cuanto detecta un fotograma perdido (op `keyframe`).
+const STATIC_KEYFRAME_INTERVAL_MS = 30_000;
+
 // Sesiones de pantalla vivas en ESTE proceso. El helper de captura de Windows
 // es uno por equipo y lo comparten todas; `screen.end` (pararlo y, si se entró
 // por la pantalla de Windows, bloquear la consola) sólo puede salir al cerrar
@@ -313,6 +322,10 @@ export class ScreenSession {
   // dirty-rect streaming self-healing over an unreliable channel. Starts at 0
   // so the very first capture is a keyframe.
   private lastKeyframeAtMs = 0;
+  // Parciales enviados desde el último completo, y si el navegador pidió uno
+  // porque detectó una pérdida. Ver STATIC_KEYFRAME_INTERVAL_MS.
+  private partialsSinceKeyframe = 0;
+  private keyframeRequested = false;
   // Vigilancia del PRIMER fotograma — ver warnIfNoFirstFrame().
   private captureStartedAtMs = 0;
   private firstFrameWarned = false;
@@ -838,6 +851,12 @@ export class ScreenSession {
         this.sendSecureAttention();
         break;
 
+      // El navegador detectó un fotograma perdido (hueco en la secuencia,
+      // uno incompleto o uno viejo que llegó tarde): el siguiente, completo.
+      case "keyframe":
+        this.keyframeRequested = true;
+        break;
+
       // Texto como CARACTERES, no como teclas físicas. Ver sendTypeText().
       case "typeText":
         this.sendTypeText(msg);
@@ -1250,7 +1269,12 @@ export class ScreenSession {
       // forces one after a duplication-chain re-init, where its dirty rects
       // have nothing to diff against.
       const now = Date.now();
-      const wantKeyframe = now - this.lastKeyframeAtMs >= KEYFRAME_INTERVAL_MS;
+      const sinceKeyframe = now - this.lastKeyframeAtMs;
+      const wantKeyframe =
+        this.lastKeyframeAtMs === 0 ||
+        this.keyframeRequested ||
+        sinceKeyframe >= STATIC_KEYFRAME_INTERVAL_MS ||
+        (this.partialsSinceKeyframe > 0 && sinceKeyframe >= KEYFRAME_INTERVAL_MS);
 
       const result = await ctx.priv.call({
         v: 1,
@@ -1331,7 +1355,13 @@ export class ScreenSession {
       this.lastReportedCode = null;
       this.terminalBackoff = false;
 
-      if (full) this.lastKeyframeAtMs = Date.now();
+      if (full) {
+        this.lastKeyframeAtMs = Date.now();
+        this.partialsSinceKeyframe = 0;
+        this.keyframeRequested = false;
+      } else {
+        this.partialsSinceKeyframe += 1;
+      }
 
       // ⭐ «No hay nadie dentro»: pantalla de inicio de sesión de un servidor.
       // Lo dice PrivSvc, que es quien eligió el escritorio. Con esto el visor
