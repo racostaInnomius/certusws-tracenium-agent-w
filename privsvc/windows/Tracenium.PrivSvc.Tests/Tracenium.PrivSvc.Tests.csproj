@@ -190,6 +190,11 @@
     <!-- Leer listas del resultado de otro handler: la de CAs emisoras se
          perdía entre crypto.cert.install y crypto.cert.renew. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\IpcResultRead.cs" />
+    <!-- Cuándo el PrivSvc vuelve a arrancar AgentCore (T111, 29-sep: el
+         reinicio del SCM falló con el equipo en Modern Standby y nadie volvió
+         a intentarlo). La decisión es pura; mirar el SCM y llamar a Start()
+         se queda en AgentCoreKeeper.cs. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\AgentCoreKeeperShape.cs" />
   </ItemGroup>
 
   <ItemGroup>

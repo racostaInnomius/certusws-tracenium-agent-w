@@ -30,6 +30,13 @@ public sealed class Worker : BackgroundService
         // already-deployed hosts without needing an upgrade.
         ServiceRecovery.EnsureConfigured(_logger);
 
+        // Y lo que esa política no cubre: un arranque FALLIDO. Las failure
+        // actions del SCM sólo actúan cuando un servicio en marcha muere; si el
+        // reinicio que programan falla al arrancar (T111, 29-sep: 7009 + 7000
+        // con el equipo en Modern Standby), nadie vuelve a intentarlo y
+        // AgentCore se queda parado hasta el próximo arranque de Windows.
+        _ = Task.Run(() => AgentCoreKeeper.RunAsync(_logger, stoppingToken), stoppingToken);
+
         // Relight the DP blob server if this endpoint holds a cache. The
         // listener only ever started from a prefetch, so every restart left a
         // designated DP holding its files and serving none of them until the
