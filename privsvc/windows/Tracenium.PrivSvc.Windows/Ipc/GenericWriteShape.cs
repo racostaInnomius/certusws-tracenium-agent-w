@@ -429,3 +429,38 @@ public static class GenericWriteShape
     private static string? Str(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 }
+
+/// <summary>
+/// Windows denegó escribir (o borrar) un VALOR cuya clave SÍ se abrió para
+/// escritura.
+///
+/// Eso no lo hace la ACL: en el registro los permisos van por clave, y si la
+/// ACL negara la escritura habría fallado ya al abrirla (con «Access to the
+/// registry key '…' is denied»). Lo que deniega el valor es un filtro del
+/// kernel — UCPD (User Choice Protection Driver) de Microsoft u otro
+/// controlador de seguridad — y lo hace con cualquiera: en W11-JPR-LAB02
+/// (Windows 11 26300, 1-oct-2026) `reg add` como administrador también dio
+/// «Access is denied» sobre `Windows Feeds\EnableFeeds`, con la ACL normal.
+///
+/// Antes salía como `remediate_failed` con el texto genérico de .NET
+/// («Attempted to perform an unauthorized operation.»), y el operador lo
+/// reintentaba: tres veces en ese equipo. Con su propio código, `write_blocked`,
+/// lo distingue incluso un agente que todavía no reenvía el mensaje.
+/// </summary>
+public sealed class RegistryWriteBlockedException : Exception
+{
+    public RegistryWriteBlockedException(string where, Exception inner) : base(Describe(where), inner)
+    {
+        Where = where;
+    }
+
+    public string Where { get; }
+
+    /// <summary>
+    /// Lo accionable DELANTE: el agente recorta el motivo a 200 caracteres
+    /// (con «write_blocked: » delante), y el valor va al final porque es lo
+    /// único que puede ser largo.
+    /// </summary>
+    public static string Describe(string where) =>
+        $"blocked by Windows, not by the key's permissions (e.g. UCPD); apply it via Group Policy: {where}";
+}

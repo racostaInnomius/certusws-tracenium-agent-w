@@ -262,4 +262,26 @@ public class GenericWriteShapeAuditpolTests
         Assert.Empty(w.Auditpol);
         Assert.Contains(reason, w.Rejected[0]);
     }
+
+    // W11-JPR-LAB02, 1-oct-2026: la clave se abrió para escritura y Windows
+    // denegó el VALOR (también a `reg add` como administrador). Ni la ACL ni
+    // un reintento lo arreglan: hay que decir que vaya por directiva.
+    [Fact]
+    public void A_blocked_value_write_says_what_to_do_and_fits_the_agent_budget()
+    {
+        const string where = @"HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds:EnableFeeds";
+        var inner = new UnauthorizedAccessException();
+        var ex = new RegistryWriteBlockedException(where, inner);
+
+        Assert.StartsWith("blocked by Windows, not by the key's permissions", ex.Message);
+        Assert.Contains("Group Policy", ex.Message);
+        Assert.EndsWith(where, ex.Message);
+        Assert.Same(inner, ex.InnerException);
+        Assert.Equal(where, ex.Where);
+
+        // El agente manda «write_blocked: <mensaje>» y lo recorta a 200: el
+        // caso real entra ENTERO, y lo accionable entra siempre (va delante).
+        Assert.True(("write_blocked: " + ex.Message).Length <= 200);
+        Assert.True(("write_blocked: " + RegistryWriteBlockedException.Describe("")).Length < 120);
+    }
 }

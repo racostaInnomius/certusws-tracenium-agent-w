@@ -144,6 +144,11 @@ public static class PmpRemediation
         {
             return PrivSvcResponse.Fail(req.Id, "remediate_timeout", tex.Message);
         }
+        catch (RegistryWriteBlockedException bex)
+        {
+            // Reintentar no sirve: hay que aplicarlo por directiva de grupo.
+            return PrivSvcResponse.Fail(req.Id, "write_blocked", bex.Message);
+        }
         catch (Exception ex)
         {
             return PrivSvcResponse.Fail(req.Id, "remediate_failed", ex.Message);
@@ -990,7 +995,10 @@ public static class PmpRemediation
                         changes.Add(where + " (deleted) — already absent");
                         continue;
                     }
-                    existing.DeleteValue(w.ValueName, throwOnMissingValue: false);
+                    // La clave se abrió para escritura: si aun así se deniega, no es
+                    // su ACL (ver RegistryWriteBlockedException).
+                    try { existing.DeleteValue(w.ValueName, throwOnMissingValue: false); }
+                    catch (UnauthorizedAccessException uae) { throw new RegistryWriteBlockedException(where, uae); }
                     changes.Add(where + " (deleted)");
                     continue;
                 }
@@ -1002,7 +1010,10 @@ public static class PmpRemediation
                     GenericValueKind.String => w.StringValue ?? "",
                     _ => w.MultiValue ?? Array.Empty<string>(),
                 };
-                key.SetValue(w.ValueName, value, KindOf(w.Kind));
+                // La clave ya se abrió para escritura (arriba): si Windows deniega
+                // el VALOR, no es su ACL sino un filtro del kernel.
+                try { key.SetValue(w.ValueName, value, KindOf(w.Kind)); }
+                catch (UnauthorizedAccessException uae) { throw new RegistryWriteBlockedException(where, uae); }
                 changes.Add(w.Hive == RegistryHiveKind.Users ? where + " = " + w.Describe().Split('=', 2).Last() : w.Describe());
             }
         }
