@@ -203,3 +203,63 @@ describe("el helper de captura contesta a un keyframe aunque nada se mueva", () 
     ).toBeGreaterThan(guard);
   });
 });
+
+/**
+ * 🔴 Segunda vuelta (1-oct-2026, agente 1.1.88): con CAPTUREBLT y todo, la
+ * pantalla de inicio de sesión de SNOC04 salió AZUL hasta que el operador movió
+ * el cursor. El fotograma completo de un escritorio quieto no puede depender
+ * de GDI. Dos piezas, y GDI queda como último recurso:
+ *
+ *   · DXGI conserva su textura de staging — siempre la última imagen real — y
+ *     un fotograma completo sin cambios se re-codifica desde ahí;
+ *   · si aún no hay ninguna imagen, en el escritorio de Windows el helper
+ *     mueve el ratón un píxel y vuelta (lo mismo que arregló el operador) y
+ *     reintenta DXGI.
+ */
+describe("un fotograma completo de un escritorio quieto NO sale de GDI", () => {
+  const strip = (p: string) =>
+    readFileSync(path.resolve(__dirname, p), "utf8")
+      .split("\n")
+      .filter((l) => {
+        const t = l.trimStart();
+        return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*") && !t.startsWith("///");
+      })
+      .join("\n");
+  const DXGI = "../../privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/ScreenCaptureDxgi.cs";
+  const HELPER = "../../privsvc/windows/Tracenium.ScreenCap/Program.cs";
+  const SESSION = "../../privsvc/windows/Tracenium.PrivSvc.Windows/Ipc/SessionScreenCapture.cs";
+
+  it("⭐ sin cambios y con fotograma completo pedido, se re-codifica la última imagen de DXGI", () => {
+    const d = strip(DXGI);
+    const timeout = d.indexOf("if (hr == DXGI_ERROR_WAIT_TIMEOUT)");
+    const staged = d.indexOf("TryEncodeStagedFull(reqId, quality)", timeout);
+    const noFrame = d.indexOf('"screen_capture_no_frame"', timeout);
+    expect(staged, "sin esto el keyframe de una pantalla quieta vuelve a GDI: azul").toBeGreaterThan(timeout);
+    expect(noFrame, "no_frame sólo DESPUÉS de intentar la última imagen").toBeGreaterThan(staged);
+  });
+
+  it("la textura de staging sobrevive al fotograma (es la última imagen)", () => {
+    const d = strip(DXGI);
+    const capture = d.slice(d.indexOf("private static int TryCaptureFrame("), d.indexOf("private static PrivSvcResponse? TryEncodeStagedFull("));
+    expect(capture).toContain("_stagingValid = true;");
+    expect(capture, "liberarla en cada fotograma tira la última imagen").not.toMatch(/Release\(stagingTex\)/);
+    const cleanup = d.slice(d.indexOf("private static void Cleanup()"));
+    expect(cleanup, "al reiniciar la cadena la vieja ya no vale").toContain("Release(_staging);");
+    expect(cleanup).toContain("_stagingValid = false;");
+  });
+
+  it("⭐ sin ninguna imagen, en el escritorio de Windows: despertar y reintentar DXGI ANTES que GDI", () => {
+    const h = strip(HELPER);
+    const nudge = h.indexOf("InputInjection.Nudge();");
+    const gdi = h.indexOf('ScreenCapture.Capture("helper", quality)');
+    expect(nudge, "lo que arregló el azul fue mover el cursor").toBeGreaterThan(-1);
+    expect(gdi, "GDI va DESPUÉS, como último recurso").toBeGreaterThan(nudge);
+    const gate = h.slice(h.lastIndexOf("if (", nudge), nudge);
+    expect(gate, "sólo en el escritorio de Windows").toContain("HelperState.Logon");
+    expect(gate, "una vez por helper, no en cada keyframe").toContain("!HelperState.Nudged");
+  });
+
+  it("PrivSvc pasa --logon sólo al arrancar el helper en el escritorio de Windows", () => {
+    expect(strip(SESSION)).toContain('if (logonDesktop) cmdline.Append(" --logon");');
+  });
+});

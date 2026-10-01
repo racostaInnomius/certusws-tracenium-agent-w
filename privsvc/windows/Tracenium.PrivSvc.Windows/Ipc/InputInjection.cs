@@ -290,6 +290,36 @@ internal static class InputInjection
         return Send(reqId, inputs.ToArray());
     }
 
+    [DllImport("kernel32.dll")]
+    private static extern uint SetThreadExecutionState(uint esFlags);
+    private const uint ES_DISPLAY_REQUIRED = 0x00000002;
+
+    /// <summary>
+    /// Despierta la pantalla: el ratón un píxel y vuelta, y la pantalla
+    /// encendida.
+    ///
+    /// 🔴 TNS-OPER-SNOC04 (1-oct-2026): con la pantalla de inicio de sesión
+    /// quieta, la primera imagen salía AZUL hasta que el operador movía el
+    /// cursor; al moverlo aparecía la pantalla de bloqueo. Esto hace lo mismo
+    /// que hizo él, una sola vez al llegar, para que DXGI entregue una imagen
+    /// real. Movimiento RELATIVO y devuelto: con la aceleración del puntero
+    /// puede quedar a un píxel, nunca más.
+    ///
+    /// Sólo lo usa el helper arrancado en el escritorio de Windows (`--logon`):
+    /// sin nadie dentro, o con la consola bloqueada o un UAC. Decisión del
+    /// usuario: ese acceso ya implica teclado y ratón.
+    /// </summary>
+    public static void Nudge()
+    {
+        try { SetThreadExecutionState(ES_DISPLAY_REQUIRED); } catch { /* sólo ayuda */ }
+        var inputs = new[]
+        {
+            new INPUT { type = INPUT_MOUSE, U = new INPUTUNION { mi = new MOUSEINPUT { dx = 1,  dy = 0, dwFlags = MOUSEEVENTF_MOVE } } },
+            new INPUT { type = INPUT_MOUSE, U = new INPUTUNION { mi = new MOUSEINPUT { dx = -1, dy = 0, dwFlags = MOUSEEVENTF_MOVE } } },
+        };
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    }
+
     private static INPUT KeyInput(ushort vk, char scan, uint flags) => new INPUT
     {
         type = INPUT_KEYBOARD,

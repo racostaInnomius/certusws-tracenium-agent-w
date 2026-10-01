@@ -994,6 +994,10 @@ internal static class SessionScreenCapture
             si.hStdError = childStderrWrite;
 
             var cmdline = new StringBuilder($"\"{exe}\" --serve");
+            // En el escritorio de Windows (login, bloqueo, UAC) el helper
+            // despierta la pantalla antes de la primera imagen. Ver
+            // InputInjection.Nudge.
+            if (logonDesktop) cmdline.Append(" --logon");
 
             var created = NativeMethods.CreateProcessAsUser(
                 primaryToken,

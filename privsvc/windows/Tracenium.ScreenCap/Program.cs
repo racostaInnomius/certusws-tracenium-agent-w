@@ -93,6 +93,10 @@ for (var i = 0; i < args.Length; i++)
         case "--serve":
             serve = true;
             break;
+        case "--logon":
+            // Arrancado en el escritorio de Windows (login, bloqueo, UAC).
+            HelperState.Logon = true;
+            break;
     }
 }
 
@@ -134,6 +138,44 @@ static string CaptureOnce(int quality, bool forceFull)
     {
         code = "screen_capture_failed";
         message = ex.Message;
+    }
+
+    // ⭐ Pantalla de Windows y DXGI sin NINGUNA imagen todavía: se despierta
+    // la pantalla y se reintenta DXGI antes de pensar en GDI.
+    //
+    // 🔴 TNS-OPER-SNOC04 (1-oct-2026): con CAPTUREBLT y todo, GDI sacó un azul
+    // liso de la pantalla de inicio de sesión, y la pantalla real apareció en
+    // cuanto el operador movió el cursor. Esto hace lo mismo, UNA vez por
+    // helper. A partir de la primera imagen ya no hace falta: DXGI conserva la
+    // última y los fotogramas completos salen de ahí (ver
+    // ScreenCaptureDxgi._staging).
+    if (result is null && code == "screen_capture_no_frame" && forceFull &&
+        HelperState.Logon && !HelperState.Nudged)
+    {
+        HelperState.Nudged = true;
+        Console.Error.WriteLine("pantalla de Windows sin imagen todavía — se despierta (1 px) y se reintenta DXGI");
+        InputInjection.Nudge();
+        // La pantalla de bloqueo tarda un momento en volver a dibujarse;
+        // cada intento ya espera hasta 100 ms a que DXGI tenga algo.
+        for (var attempt = 0; attempt < 5 && result is null; attempt++)
+        {
+            try
+            {
+                var retry = ScreenCaptureDxgi.Capture("helper", quality, true);
+                if (retry is { Ok: true }) { result = retry; code = null; message = null; }
+                else if (retry?.Error?.Code != "screen_capture_no_frame")
+                {
+                    code = retry?.Error?.Code ?? code;
+                    message = retry?.Error?.Message ?? message;
+                    break;
+                }
+            }
+            catch (Exception ex)
+            {
+                message = ex.Message;
+                break;
+            }
+        }
     }
 
     // `no_frame` NO es un fallo: es la señal de que el escritorio no ha
@@ -183,7 +225,7 @@ static string CaptureOnce(int quality, bool forceFull)
         // escribirlo como tal llenaría el log de un servidor en su pantalla de
         // login con una línea de error cada 4 s.
         Console.Error.WriteLine(code == "screen_capture_no_frame"
-            ? "escritorio quieto y se pidió fotograma completo — lo lee GDI"
+            ? "sin ninguna imagen de DXGI todavía (ni tras despertar la pantalla) — último recurso: GDI"
             : $"DXGI falló ({code}): {message} — probando GDI");
         try
         {
@@ -397,3 +439,12 @@ while ((line = Console.In.ReadLine()) != null)
 }
 
 return 0;
+
+/// <summary>Estado de proceso del helper. Un helper = una sesión de pantalla.</summary>
+static class HelperState
+{
+    /// <summary>Arrancado con `--logon`: escritorio de Windows.</summary>
+    public static bool Logon;
+    /// <summary>Ya se despertó la pantalla una vez (ver CaptureOnce).</summary>
+    public static bool Nudged;
+}

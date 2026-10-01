@@ -240,6 +240,19 @@ internal static class ScreenCaptureDxgi
     // for this chain either. Forces one full frame, then clears.
     private static bool _needKeyframe = true;
 
+    // La textura de staging se CONSERVA entre fotogramas. DXGI entrega el
+    // escritorio ENTERO en cada fotograma y se copia aquí completo, así que
+    // siempre contiene la última imagen real de la pantalla.
+    //
+    // 🔴 Para qué: TNS-OPER-SNOC04 (1-oct-2026). En una pantalla que no cambia
+    // —la de inicio de sesión de un servidor— `AcquireNextFrame` no entrega
+    // nada, y el fotograma completo que se pide cada 4 s caía a GDI, que sacó
+    // un AZUL LISO incluso con CAPTUREBLT. Con la última imagen de DXGI a
+    // mano, un fotograma completo sin cambios se vuelve a codificar desde
+    // aquí, sin pasar por GDI. Antes se creaba y se tiraba en cada fotograma.
+    private static IntPtr _staging;
+    private static bool _stagingValid;
+
     // ── Lazy JPEG encoder reused from ScreenCapture.cs path ────────────────────
 
     private static ImageCodecInfo? _jpegCodec;
@@ -359,9 +372,16 @@ internal static class ScreenCaptureDxgi
 
                 if (hr == DXGI_ERROR_WAIT_TIMEOUT)
                 {
-                    // No new frame within the timeout window. The previous
-                    // frame is still on the screen, no need to re-encode.
-                    // Caller will retry on its own polling schedule.
+                    // Nada ha cambiado. Si se pidió un fotograma COMPLETO —el
+                    // primero de la sesión o el keyframe periódico— se vuelve a
+                    // codificar la última imagen de DXGI, que ES la pantalla
+                    // actual. Sólo si no hay ninguna todavía se contesta
+                    // no_frame (y el helper sabe qué hacer con eso).
+                    if (forceFull || _needKeyframe)
+                    {
+                        var staged = TryEncodeStagedFull(reqId, quality);
+                        if (staged != null) { _needKeyframe = false; return staged; }
+                    }
                     return PrivSvcResponse.Fail(reqId, "screen_capture_no_frame",
                         "No new frame within timeout (idle desktop)");
                 }
@@ -494,7 +514,6 @@ internal static class ScreenCaptureDxgi
                 out var desktopTex);
             if (hr != S_OK) return hr;
 
-            IntPtr stagingTex = IntPtr.Zero;
             try
             {
                 // Nada de valores por defecto: un 1920x1080 inventado sobre un
@@ -520,11 +539,16 @@ internal static class ScreenCaptureDxgi
                     MiscFlags        = 0,
                 };
 
-                hr = CreateTexture2D(_d3dDevice, ref stagingDesc, IntPtr.Zero,
-                    out stagingTex);
-                if (hr != S_OK) return hr;
+                if (_staging == IntPtr.Zero)
+                {
+                    hr = CreateTexture2D(_d3dDevice, ref stagingDesc, IntPtr.Zero,
+                        out _staging);
+                    if (hr != S_OK) { _staging = IntPtr.Zero; return hr; }
+                }
+                var stagingTex = _staging;
 
                 CopyResource(_d3dContext, stagingTex, desktopTex);
+                _stagingValid = true;
 
                 hr = Map(_d3dContext, stagingTex, 0, D3D11_MAP.Read, 0,
                     out var mapped);
@@ -614,7 +638,7 @@ internal static class ScreenCaptureDxgi
             }
             finally
             {
-                if (stagingTex != IntPtr.Zero) Release(stagingTex);
+                // La de staging NO se libera: es la última imagen, ver _staging.
                 Release(desktopTex);
             }
         }
@@ -627,8 +651,58 @@ internal static class ScreenCaptureDxgi
         return S_OK;
     }
 
+    /// <summary>
+    /// Codifica como fotograma COMPLETO la última imagen que entregó DXGI
+    /// (ver _staging). `null` si todavía no hay ninguna o no se puede leer: el
+    /// llamante contesta no_frame y el helper decide.
+    /// </summary>
+    private static PrivSvcResponse? TryEncodeStagedFull(string reqId, int quality)
+    {
+        if (!_stagingValid || _staging == IntPtr.Zero || _width == 0 || _height == 0) return null;
+        var hr = Map(_d3dContext, _staging, 0, D3D11_MAP.Read, 0, out var mapped);
+        if (hr != S_OK) return null;
+        try
+        {
+            using var bmp = new Bitmap(
+                (int)_width, (int)_height, (int)mapped.RowPitch,
+                PixelFormat.Format32bppArgb, mapped.pData);
+            using var ms = new System.IO.MemoryStream();
+            var encParams = new EncoderParameters(1);
+            encParams.Param[0] = new EncoderParameter(Encoder.Quality, (long)quality);
+            bmp.Save(ms, JpegCodec, encParams);
+
+            int cursorX = -1, cursorY = -1;
+            if (GetCursorPos(out POINT cp)) { cursorX = cp.X; cursorY = cp.Y; }
+
+            return PrivSvcResponse.Success(reqId, new
+            {
+                ok      = true,
+                data    = Convert.ToBase64String(ms.ToArray()),
+                width   = (int)_width,
+                height  = (int)_height,
+                full    = true,
+                x       = 0,
+                y       = 0,
+                rw      = (int)_width,
+                rh      = (int)_height,
+                cursorX,
+                cursorY,
+            });
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            Unmap(_d3dContext, _staging, 0);
+        }
+    }
+
     private static void Cleanup()
     {
+        if (_staging           != IntPtr.Zero) { Release(_staging);           _staging           = IntPtr.Zero; }
+        _stagingValid = false;
         if (_outputDuplication != IntPtr.Zero) { Release(_outputDuplication); _outputDuplication = IntPtr.Zero; }
         if (_d3dContext        != IntPtr.Zero) { Release(_d3dContext);        _d3dContext        = IntPtr.Zero; }
         if (_d3dDevice         != IntPtr.Zero) { Release(_d3dDevice);         _d3dDevice         = IntPtr.Zero; }
