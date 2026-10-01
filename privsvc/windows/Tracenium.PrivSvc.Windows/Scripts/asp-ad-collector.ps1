@@ -681,6 +681,192 @@ function AspAdcsTemplates($query, $ctx, [int]$limit) {
   }
 }
 
+# Quien puede RECUPERAR la contrasena de un gMSA (catalogo 1.8.0).
+#
+# Vive en msDS-GroupMSAMembership, que es un descriptor de seguridad guardado en
+# un atributo NORMAL: es lo que escribe PrincipalsAllowedToRetrieveManagedPassword.
+# Por eso es un tipo propio y no un parametro de acl_search: un colector viejo
+# que no conozca este tipo FALLA en voz alta ("unsupported query kind"), mientras
+# que uno que ignorase un parametro nuevo de acl_search leeria el
+# nTSecurityDescriptor -- el descriptor EQUIVOCADO -- en silencio.
+#
+# Semantica: CUALQUIER ACE Allow es un recuperador. No se adivina mascara: estar
+# en ese descriptor es lo que concede la recuperacion (las vueltas de ESC4 y del
+# DCSync del 14-sep fueron por adivinar mascaras). La mascara viaja en la
+# evidencia para que se pueda auditar.
+#
+#   match 'broad' -> el recuperador es un grupo amplio (Domain Users, Domain
+#                    Computers, Authenticated Users, Everyone...): cualquiera
+#                    de ese grupo obtiene la contrasena.
+#   match 'user'  -> el recuperador es una cuenta de USUARIO del dominio que no
+#                    es privilegiada (por tokenGroups, pertenencia real). Lo
+#                    normal es que recuperen equipos o grupos de equipos.
+#
+# ⚠️ La ceguera: si ningun gMSA devuelve el atributo, "nadie puede recuperar"
+# y "no puedo leer el atributo" son indistinguibles, y un gMSA sin recuperadores
+# no sirve para nada. Con uno solo legible, el resto de ausencias son reales (el
+# permiso de lectura viene del SD por defecto de la clase).
+function AspGmsaRetrievers($query, $ctx, [int]$limit) {
+  $match = @(AspProp $query 'match' | Where-Object { $_ } | ForEach-Object { [string]$_ })
+  $broad = @{}
+  foreach ($s in @(AspProp $query 'broadSids')) { if ($s) { $broad[(AspExpand ([string]$s) $ctx)] = $true } }
+  $privileged = @{}
+  foreach ($s in @(AspProp $query 'privilegedSids')) { if ($s) { $privileged[(AspExpand ([string]$s) $ctx)] = $true } }
+  $maxObjects = 2000
+  $requestedMax = AspProp $query 'maxObjects'
+  if ($null -ne $requestedMax) { $maxObjects = [int]$requestedMax }
+
+  $searcher = New-Object System.DirectoryServices.DirectorySearcher
+  $searcher.SearchRoot = AspEntry $ctx.domainDn
+  $searcher.Filter = '(objectClass=msDS-GroupManagedServiceAccount)'
+  $searcher.SearchScope = [System.DirectoryServices.SearchScope]::Subtree
+  $searcher.PageSize = 500
+  $searcher.ClientTimeout = New-TimeSpan -Seconds 60
+  foreach ($a in @('distinguishedname', 'samaccountname', 'msds-groupmsamembership')) { [void]$searcher.PropertiesToLoad.Add($a) }
+
+  # Clase y privilegio de un SID del dominio, con cache. Solo SIDs del PROPIO
+  # dominio: un SID de un dominio de confianza obligaria a salir por la red y
+  # puede bloquear (26-sep, diagnostico colgado 10 minutos por traducir SIDs).
+  $principalCache = @{}
+  $domainPrefix = "$($ctx.domainSid)-"
+
+  $hits = New-Object System.Collections.Generic.List[object]
+  # TODOS los gMSA con sus recuperadores, casen o no. El evaluador no la lee
+  # (no viaja al backend): existe para validar en un DC que el tipo ve lo que
+  # hay, que es justo lo que no hicimos con ESC4.
+  $population = New-Object System.Collections.Generic.List[object]
+  $count = 0
+  $seen = 0
+  $withoutAttribute = 0
+  $aceCount = 0
+  $retrieversSeen = @{}
+
+  $found = $searcher.FindAll()
+  try {
+    foreach ($r in $found) {
+      $seen++
+      if ($seen -gt $maxObjects) { throw "gmsa_retrievers_object_limit: more than $maxObjects gMSA" }
+      $dn = [string]$r.Properties['distinguishedname'][0]
+      $sam = $null
+      if ($r.Properties.Contains('samaccountname')) { $sam = [string]$r.Properties['samaccountname'][0] }
+      if (-not $r.Properties.Contains('msds-groupmsamembership') -or $r.Properties['msds-groupmsamembership'].Count -eq 0) {
+        $withoutAttribute++
+        if ($population.Count -lt $limit) { $population.Add([ordered]@{ dn = $dn; account = $sam; attribute = $false }) }
+        continue
+      }
+      # ::new y no New-Object -ArgumentList: con un byte[] como primer argumento,
+      # New-Object puede desenrollar el array y buscar un constructor de N bytes.
+      $sdBytes = [byte[]]$r.Properties['msds-groupmsamembership'][0]
+      $raw = [System.Security.AccessControl.RawSecurityDescriptor]::new($sdBytes, 0)
+      $allowed = [ordered]@{}
+      $denied = @{}
+      if ($null -ne $raw.DiscretionaryAcl) {
+        foreach ($ace in $raw.DiscretionaryAcl) {
+          $aceCount++
+          # Contra el enum y no contra un texto: una errata aqui no casaria
+          # nunca y daria un pass en silencio; contra el enum, falla al cargar.
+          # Un ACE de objeto (AccessAllowedObject) tambien es AccessAllowed.
+          $qual = $ace.AceQualifier
+          $sid = [string]$ace.SecurityIdentifier.Value
+          if ($qual -eq [System.Security.AccessControl.AceQualifier]::AccessDenied) { $denied[$sid] = $true; continue }
+          if ($qual -ne [System.Security.AccessControl.AceQualifier]::AccessAllowed) { continue }
+          if (-not $allowed.Contains($sid)) { $allowed[$sid] = (AspHex ([int64]$ace.AccessMask)) }
+        }
+      }
+
+      $matched = New-Object System.Collections.Generic.List[object]
+      $all = New-Object System.Collections.Generic.List[object]
+      foreach ($sid in $allowed.Keys) {
+        if ($denied.ContainsKey($sid)) { continue }
+        $retrieversSeen[$sid] = $true
+        $why = $null
+        $class = $null
+        if ($broad.ContainsKey($sid)) {
+          $class = 'broad'
+          if ($match -contains 'broad') { $why = 'broad' }
+        } elseif ($privileged.ContainsKey($sid)) {
+          $class = 'privileged'
+        } elseif ($sid.StartsWith($domainPrefix)) {
+          if (-not $principalCache.ContainsKey($sid)) {
+            $info = [ordered]@{ class = 'unresolved'; privileged = $false }
+            try {
+              $p = New-Object System.DirectoryServices.DirectorySearcher
+              $p.SearchRoot = AspEntry "<SID=$sid>"
+              $p.Filter = '(objectClass=*)'
+              $p.SearchScope = [System.DirectoryServices.SearchScope]::Base
+              $p.ClientTimeout = New-TimeSpan -Seconds 10
+              [void]$p.PropertiesToLoad.Add('objectclass')
+              [void]$p.PropertiesToLoad.Add('tokengroups')
+              $pr = $p.FindOne()
+              if ($null -ne $pr) {
+                $classes = @($pr.Properties['objectclass'] | ForEach-Object { [string]$_ })
+                $info.class = 'other'
+                if ($classes -contains 'user') { $info.class = 'user' }
+                if ($classes -contains 'group') { $info.class = 'group' }
+                # computer es subclase de user (y un gMSA, de computer): va ultimo.
+                if ($classes -contains 'computer') { $info.class = 'computer' }
+                foreach ($tg in $pr.Properties['tokengroups']) {
+                  if ($privileged.ContainsKey((AspSidString ([byte[]]$tg)))) { $info.privileged = $true; break }
+                }
+              }
+            } catch {
+              $info.class = 'unresolved'
+            }
+            $principalCache[$sid] = $info
+          }
+          $class = $principalCache[$sid].class
+          if ($principalCache[$sid].privileged) {
+            $class = "$class-privileged"
+          } elseif ($class -eq 'user' -and ($match -contains 'user')) {
+            $why = 'user'
+          }
+        } elseif ($sid.StartsWith('S-1-5-21-')) {
+          # De otro dominio (confianza): no se resuelve, ver arriba.
+          $class = 'foreign'
+        } else {
+          # Integrado o bien conocido (S-1-5-32-..., S-1-5-...) fuera de las listas.
+          $class = 'wellknown'
+        }
+        $entry = [ordered]@{ sid = $sid; class = $class; mask = $allowed[$sid] }
+        $all.Add($entry)
+        if ($null -ne $why) { $matched.Add([ordered]@{ sid = $sid; why = $why; class = $class; mask = $allowed[$sid] }) }
+      }
+
+      if ($population.Count -lt $limit) {
+        $population.Add([ordered]@{ dn = $dn; account = $sam; attribute = $true; retrievers = @($all.ToArray() | Select-Object -First 50) })
+      }
+      if ($matched.Count -eq 0) { continue }
+      $count++
+      if ($hits.Count -lt $limit) {
+        $hits.Add([ordered]@{
+            dn = $dn
+            account = $sam
+            matched = $matched.ToArray()
+            # TODOS los recuperadores, no solo los que casan: para decidir si un
+            # hallazgo es legitimo hay que ver la lista entera.
+            retrievers = @($all.ToArray() | Select-Object -First 50)
+          })
+      }
+    }
+  } finally {
+    $found.Dispose()
+  }
+
+  $readable = $seen - $withoutAttribute
+  return [ordered]@{
+    found = $true
+    count = $count
+    sample = $hits.ToArray()
+    truncated = ($count -gt $hits.Count)
+    objectsScanned = $seen
+    withoutAttribute = $withoutAttribute
+    aceCount = $aceCount
+    retrieversSeen = $retrieversSeen.Count
+    population = $population.ToArray()
+    unreadable = $(if ($seen -gt 0 -and $readable -eq 0) { $seen } else { 0 })
+  }
+}
+
 # Metadata de replicacion de AD. Responde "cambio hace poco?", que ningun otro
 # tipo de consulta nuestro puede preguntar, y lo hace por LDAP plano: son dos
 # atributos CONSTRUIDOS que hay que pedir por nombre.
@@ -911,6 +1097,7 @@ foreach ($item in $request.queries) {
       'registry' { AspRegistry $q }
       'repl_metadata' { AspReplMetadata $q $ctx $limit }
       'adcs_templates' { AspAdcsTemplates $q $ctx $limit }
+      'gmsa_retrievers' { AspGmsaRetrievers $q $ctx $limit }
       default { throw "unsupported query kind: $([string]$q.kind)" }
     }
     $output.results[$id] = [ordered]@{ ok = $true; data = $data; ms = $clock.ElapsedMilliseconds }

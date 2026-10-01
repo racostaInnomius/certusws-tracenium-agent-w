@@ -429,6 +429,83 @@ describe("catálogo 1.7.0 — gMSA", () => {
   });
 });
 
+describe("catálogo 1.8.0 — quién puede recuperar la contraseña de un gMSA", () => {
+  const cat180 = require("./fixtures/asp-ad-1.8.0.json");
+  function ind180(id: string): AgentIndicator {
+    const i = (cat180.indicators as any[]).find((x) => x.controlId === id);
+    if (!i) throw new Error(id);
+    return { controlId: i.controlId, severity: i.severity, requires: i.requires, query: i.query, derive: i.derive ?? [], predicate: i.predicate, onFail: i.onFail, whenMissing: i.whenMissing ?? "not_assessed" };
+  }
+  const gmsa = (extra: Record<string, unknown>) => ({ ok: true as const, data: { found: true, count: 0, sample: [], objectsScanned: 2, withoutAttribute: 0, aceCount: 3, retrieversSeen: 2, unreadable: 0, ...extra } });
+
+  it("⭐ Domain Computers puede recuperarla → fail alto, con TODOS los recuperadores en la evidencia", () => {
+    const r = evaluateIndicator(
+      ind180("ASP-AD-SVC-004"),
+      gmsa({
+        count: 1,
+        sample: [{
+          dn: "CN=gmsa-sql,CN=Managed Service Accounts,DC=m",
+          account: "gmsa-sql$",
+          matched: [{ sid: "S-1-5-21-1-2-3-515", why: "broad", class: "broad", mask: "0x000F01FF" }],
+          retrievers: [{ sid: "S-1-5-21-1-2-3-515", class: "broad", mask: "0x000F01FF" }, { sid: "S-1-5-21-1-2-3-1201", class: "computer", mask: "0x000F01FF" }]
+        }]
+      }),
+      DC,
+      opts
+    );
+    expect(r).toMatchObject({ status: "fail", severity: "high", affectedCount: 1 });
+    expect((r.evidence as any).sample[0].retrievers).toHaveLength(2);
+    expect((r.evidence as any).aceCount).toBe(3);
+  });
+
+  it("un usuario no privilegiado que puede recuperarla → needs_review", () => {
+    const r = evaluateIndicator(
+      ind180("ASP-AD-SVC-005"),
+      gmsa({ count: 1, sample: [{ dn: "CN=gmsa-web,DC=m", account: "gmsa-web$", matched: [{ sid: "S-1-5-21-1-2-3-1450", why: "user", class: "user", mask: "0x000F01FF" }], retrievers: [] }] }),
+      DC,
+      opts
+    );
+    expect(r.status).toBe("needs_review");
+  });
+
+  it("recuperadores sólo de equipos → pass, con la prueba de que leyó los descriptores", () => {
+    const r = evaluateIndicator(ind180("ASP-AD-SVC-004"), gmsa({}), DC, opts);
+    expect(r.status).toBe("pass");
+    expect(r.evidence).toMatchObject({ objectsScanned: 2, aceCount: 3, withoutAttribute: 0 });
+  });
+
+  it("🔴 ningún gMSA devolvió el atributo: «nadie puede» y «no pude leer» son lo mismo → not_assessed", () => {
+    // El colector lo confiesa con `unreadable` cuando no pudo leer NI UNO: un
+    // gMSA sin recuperadores no sirve para nada, así que todos vacíos es ceguera.
+    const r = evaluateIndicator(ind180("ASP-AD-SVC-004"), gmsa({ withoutAttribute: 2, aceCount: 0, retrieversSeen: 0, unreadable: 2 }), DC, opts);
+    expect(r).toMatchObject({ status: "not_assessed", reason: "insufficient_read:2" });
+  });
+
+  it("⚠️ uno legible y otro sin atributo: el vacío es real, no ceguera → pass", () => {
+    const r = evaluateIndicator(ind180("ASP-AD-SVC-004"), gmsa({ withoutAttribute: 1, aceCount: 1, retrieversSeen: 1, unreadable: 0 }), DC, opts);
+    expect(r.status).toBe("pass");
+    expect((r.evidence as any).withoutAttribute).toBe(1);
+  });
+
+  it("⚠️ un dominio sin ningún gMSA pasa los dos, igual que SVC-001..003", () => {
+    for (const id of ["ASP-AD-SVC-004", "ASP-AD-SVC-005"]) {
+      const r = evaluateIndicator(ind180(id), gmsa({ objectsScanned: 0, aceCount: 0, retrieversSeen: 0 }), DC, opts);
+      expect(r.status, id).toBe("pass");
+    }
+  });
+
+  it("🔴 un colector viejo rechaza el tipo: not_assessed con el error, nunca pass", () => {
+    const r = evaluateIndicator(
+      ind180("ASP-AD-SVC-004"),
+      { ok: false, error: { hresult: "0x80131501", type: "RuntimeException", message: "unsupported query kind: gmsa_retrievers" } },
+      DC,
+      opts
+    );
+    expect(r.status).toBe("not_assessed");
+    expect(r.reason).toMatch(/^collector_error/);
+  });
+});
+
 describe("el dominio del spike (MSIG-TSPDC, ADR §Fase 0)", () => {
   const spike: Record<string, { data: any; expect: string }> = {
     "ASP-AD-KRB-002": { data: { count: 2, sample: ["CN=Administrator,CN=Users,DC=m", "CN=next gsys,OU=IT,DC=m"] }, expect: "fail" },
