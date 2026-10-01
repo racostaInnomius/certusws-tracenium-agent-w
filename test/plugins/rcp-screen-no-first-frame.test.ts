@@ -46,7 +46,16 @@ function makeSession(results: (call: any) => any) {
       // Linux la sesión emite además `rcp.indicator.show` antes del primer
       // fotograma y las aserciones sobre `calls[n]` se volverían dependientes
       // de la plataforma del runner.
+      //
+      // ⚠️ Y el indicador se contesta AQUÍ, no con `results`. Este fichero es
+      // el primero cuyas respuestas son `ok: false` (`noFrame`): en Linux la
+      // sesión pide `rcp.indicator.show` antes de capturar, recibía ese
+      // `ok: false`, se cortaba por `indicator_unavailable` y no capturaba
+      // nunca. Y en el segundo test el indicador se comía la única respuesta
+      // con imagen. Verde en macOS, rojo en el ubuntu-latest del CI desde
+      // 1.1.86 — la misma trampa que ya documenta rcp-screen-dirty-rects.
       call: vi.fn(async (req: any) => {
+        if (String(req?.method ?? "").startsWith("rcp.indicator.")) return { ok: true };
         if (req?.method === "screen.capture") calls.push(req);
         return results(req);
       })
@@ -61,10 +70,13 @@ function makeSession(results: (call: any) => any) {
   return { dc, calls, session };
 }
 
+// ⚠️ `performance.now()`, no `Date.now()`: estos tests congelan `Date`, y con
+// él este tope no vencía nunca — una condición que no llegaba se convertía en
+// un «Test timed out in 30000ms» que no dice cuál.
 async function waitFor(cond: () => boolean, timeoutMs = 3000) {
-  const start = Date.now();
+  const start = performance.now();
   while (!cond()) {
-    if (Date.now() - start > timeoutMs) return;
+    if (performance.now() - start > timeoutMs) return;
     await new Promise((r) => setTimeout(r, 10));
   }
 }
