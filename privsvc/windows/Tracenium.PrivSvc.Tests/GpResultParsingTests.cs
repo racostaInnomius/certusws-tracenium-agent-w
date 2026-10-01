@@ -391,6 +391,43 @@ public class RsopXmlTests
         Assert.DoesNotContain("jdoe", ou);
     }
 
+    // ⭐ T111, 1-oct: en un informe REAL `Name` es `DOMINIO\EQUIPO$`, no un DN
+    // (ver EQUIPO_CON_TRES arriba). La OU viene en `SOM`, en forma canónica. Con
+    // sólo `Name`, la OU salía null en 52 de 52 equipos que sí están en una OU.
+    private static string RsopConSom(string? som) =>
+        $@"<Rsop xmlns=""{RSOP_NS}"">
+             <ComputerResults>
+               <Name>EJEMPLO\DESKTOP-1$</Name>
+               <Domain>ejemplo.local</Domain>
+               {(som is null ? "" : $"<SOM>{som}</SOM>")}
+             </ComputerResults>
+           </Rsop>";
+
+    [Fact]
+    public void OuDelEquipo_SaleDelSomCanonico_CuandoNameNoEsUnDn()
+    {
+        Assert.Equal(
+            "OU=Workstations,OU=CASTICO,DC=ejemplo,DC=local",
+            GpResultParsing.ExtractComputerOuFromRsopXml(RsopConSom("ejemplo.local/CASTICO/Workstations")));
+    }
+
+    [Theory]
+    [InlineData(null)]                         // sin SOM: no se sabe
+    [InlineData("ejemplo.local")]              // la raíz del dominio no es una OU
+    [InlineData("ejemplo.local/Computers")]    // el contenedor por defecto tampoco
+    public void SomSinOu_DevuelveNull(string? som)
+    {
+        Assert.Null(GpResultParsing.ExtractComputerOuFromRsopXml(RsopConSom(som)));
+    }
+
+    [Fact]
+    public void Som_UnaComaEnElNombreSeEscapa()
+    {
+        Assert.Equal(
+            "OU=Ventas\\, Norte,DC=ejemplo,DC=local",
+            GpResultParsing.OuPathFromCanonicalSom("ejemplo.local/Ventas, Norte"));
+    }
+
     [Fact]
     public void EquipoSinOu_DevuelveNull()
     {

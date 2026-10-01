@@ -140,7 +140,42 @@ public static class GpResultParsing
         var section = root.Element(XName.Get("ComputerResults", RSOP_NS));
         if (section is null) return null;
 
-        return OuPathFromDistinguishedName(Child(section, "Name"));
+        // ⚠️ En un informe real `Name` es `DOMINIO\EQUIPO$`, no un nombre
+        // distinguido: con sólo esto la OU salía null en TODOS los equipos
+        // (T111, 1-oct: 52 de 52, y todos están en una OU). La OU viene en
+        // `SOM`, en forma canónica. `Name` se sigue mirando primero por si
+        // alguna versión de Windows lo da como DN.
+        return OuPathFromDistinguishedName(Child(section, "Name"))
+            ?? OuPathFromCanonicalSom(Child(section, "SOM"));
+    }
+
+    /// <summary>
+    /// La ruta de OU a partir del `SOM` canónico del informe de RSOP:
+    /// `ejemplo.local/Equipos/Ventas` → `OU=Ventas,OU=Equipos,DC=ejemplo,DC=local`,
+    /// la misma forma que un nombre distinguido desde su primer `OU=`.
+    /// </summary>
+    /// <remarks>
+    /// `null` para la raíz del dominio y para el contenedor por defecto
+    /// `Computers` colgado de ella: ninguno de los dos es una OU, y la forma
+    /// canónica no deja distinguir un contenedor de una OU — se prefiere no dar
+    /// dato a inventar `OU=Computers`. Un `,` dentro de un nombre se escapa
+    /// (`\,`), como en LDAP.
+    /// </remarks>
+    public static string? OuPathFromCanonicalSom(string? som)
+    {
+        if (string.IsNullOrWhiteSpace(som)) return null;
+        var parts = som.Trim().Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length < 2) return null;
+
+        var domain = parts[0];
+        var ous = parts.Skip(1).ToArray();
+        if (ous.Length == 1 && string.Equals(ous[0], "Computers", StringComparison.OrdinalIgnoreCase)) return null;
+        if (!domain.Contains('.')) return null;
+
+        static string Esc(string v) => v.Replace(",", "\\,");
+        var ouPart = string.Join(",", ous.Reverse().Select(o => $"OU={Esc(o)}"));
+        var dcPart = string.Join(",", domain.Split('.', StringSplitOptions.RemoveEmptyEntries).Select(d => $"DC={d}"));
+        return $"{ouPart},{dcPart}";
     }
 
     /// <summary>
