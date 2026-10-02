@@ -1270,10 +1270,20 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
           // El motivo tiene que caber en el ACK, porque es lo único que el
           // operador va a ver en la ficha del job. «no_matching_patches» a secas
           // se lee como un código interno; hay que decir qué pasó y qué hacer.
+          // Un reinicio pendiente de un cambio ANTERIOR: Windows no instala nada
+          // hasta reiniciar. No reiniciamos por nuestra cuenta (planPatchReboot:
+          // lo que no instaló nada no reinicia un servidor por un cambio ajeno),
+          // pero el operador tiene que saber que el bloqueo es ESE y qué hacer
+          // (auditoría 1-oct-2026: cada reintento fallaba igual, sin explicarlo).
+          const reinicioPrevio =
+            devueltos.length > 0 && devueltos.every((r) => r.message === "reboot_pending_before_install");
           const detalle = emparejamientoVacio
             ? `; none of the ${kbArticleIds.length} requested patch(es) matched the device's live ` +
               `pending list — they may already be installed, or this list is stale; re-scan and check`
-            : "";
+            : reinicioPrevio
+              ? "; reboot_pending_before_install — Windows needs the restart from an earlier change before it " +
+                "installs anything: restart the device, then dispatch again"
+              : "";
 
           return {
             status: 2,

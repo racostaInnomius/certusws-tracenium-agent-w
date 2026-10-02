@@ -8,7 +8,7 @@
 # Scenarios:
 #   mixed          KB5066747 never downloads; KB5120708 installs (reboot);
 #                  KB5121003 fails to install with 0x80070643
-#   reboot-pending everything downloads, WUA reports a reboot pending
+#   reboot-pending WUA reports a reboot pending from an earlier change
 #   all-ok         everything downloads and installs
 #   search-throws  Search() throws 0x80070422 (Windows Update service disabled)
 #   download-throws Download() throws 0x80070070 (disk full)

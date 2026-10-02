@@ -210,3 +210,15 @@ describe("armDeviceReboot", () => {
     expect(await armDeviceReboot({ graceMs: 60_000, comment: "x" }, { platform: "win32", run: async () => ({ ok: false }) })).toBe(false);
   });
 });
+
+describe("reinicio pendiente de ANTES (auditoría 1-oct-2026)", () => {
+  it("no reinicia por su cuenta: no se instaló nada (decisión de producto, planPatchReboot)", () => {
+    expect(planPatchReboot({ ...base, installedCount: 0, failedCount: 3 }).reboot).toBe(false);
+  });
+
+  it("pero el ACK dice que el bloqueo es ESE y qué hacer", () => {
+    const src = require("fs").readFileSync(require("path").join(__dirname, "../../src/transport/grpc-stream.ts"), "utf8");
+    expect(src).toMatch(/devueltos\.every\(\(r\) => r\.message === "reboot_pending_before_install"\)/);
+    expect(src).toMatch(/restart the device, then dispatch again/);
+  });
+});

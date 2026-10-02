@@ -457,6 +457,44 @@ function Get-KbList($update) {{
 # down, and the install phase only runs on what did.
 $downloadVerdicts = @()
 
+# ⚠️ REINICIO PENDIENTE DE ANTES (auditoría 1-oct-2026). WUA no instala nada
+# mientras haya un reinicio pendiente de un cambio anterior, y esto se miraba
+# DESPUÉS de descargarlo todo: hasta 60 min de descarga para acabar en
+# 'reboot_pending_before_install'. Se mira antes, y no se descarga.
+if ($mode -eq 'install') {{
+  $preInstaller = $(try {{ $session.CreateUpdateInstaller() }} catch {{ $null }})
+  $pendingBefore = $(try {{ [bool]$preInstaller.RebootRequiredBeforeInstallation }} catch {{ $false }})
+  if ($pendingBefore) {{
+    $res = @()
+    for ($i = 0; $i -lt $updates.Count; $i++) {{
+      $u = $updates.Item($i)
+      $k = Get-KbList $u
+      $res += [pscustomobject]@{{
+        updateId = $(try {{ [string]$u.Identity.UpdateID }} catch {{ $null }})
+        kb = if ($k.Count -gt 0) {{ $k[0] }} else {{ $null }}
+        title = [string]$u.Title
+        result = 'skipped'
+        hresult = $null
+        message = 'reboot_pending_before_install'
+      }}
+    }}
+    [pscustomobject]@{{
+      status = 'failed'
+      mode = $mode
+      source = 'windows_update_agent'
+      startedAtUtc = $startedAtUtc
+      finishedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+      selectedCount = $updates.Count
+      installedCount = 0
+      failedCount = $updates.Count
+      rebootRequired = $true
+      results = $res
+      selected = $selected
+    }} | ConvertTo-Json -Depth 8
+    return
+  }}
+}}
+
 if ($mode -eq 'download' -or $mode -eq 'install') {{
   try {{
     $downloader = $session.CreateUpdateDownloader()

@@ -98,7 +98,8 @@ describe.skipIf(!pwsh)("Windows patch.install script", () => {
   it("does not call the installer at all when WUA says a reboot is pending", () => {
     const r = run("reboot-pending");
 
-    expect(r.calls).toEqual(["Download"]);
+    // 1-oct-2026: ni siquiera descarga — antes bajaba hasta 60 min para nada.
+    expect(r.calls).toEqual([]);
     expect(r.results.every((line) => line.endsWith("skipped  reboot_pending_before_install"))).toBe(true);
     expect(r).toMatchObject({ status: "failed", installedCount: 0, failedCount: 3, rebootRequired: true });
   });
