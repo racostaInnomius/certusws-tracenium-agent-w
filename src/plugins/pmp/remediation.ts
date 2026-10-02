@@ -110,10 +110,16 @@ export const LINUX_ACCEPTED_GUARD_CAPABILITY = "pmp.remediate.linux_accepted_gua
 /** Lo mismo para `macos.config.set_value`. */
 export const MAC_CONFIG_CAPABILITY = "pmp.remediate.macos_config";
 
+/**
+ * ADR-0038 F1: el agente sabe hacer la foto previa y el job `patch_verify`.
+ * El backend sólo despacha la verificación a quien lo anuncia.
+ */
+export const PATCH_VERIFY_CAPABILITY = "pmp.patch_verify";
+
 export function pmpRemediateCapabilities(platform: NodeJS.Platform = process.platform): string[] {
-  if (platform === "linux") return [...PMP_REMEDIATE_CAPABILITIES, LINUX_CONFIG_CAPABILITY, LINUX_CONFIG_V2_CAPABILITY, LINUX_ACCEPTED_GUARD_CAPABILITY];
-  if (platform === "darwin") return [...PMP_REMEDIATE_CAPABILITIES, MAC_CONFIG_CAPABILITY];
-  return [...PMP_REMEDIATE_CAPABILITIES];
+  if (platform === "linux") return [...PMP_REMEDIATE_CAPABILITIES, LINUX_CONFIG_CAPABILITY, LINUX_CONFIG_V2_CAPABILITY, LINUX_ACCEPTED_GUARD_CAPABILITY, PATCH_VERIFY_CAPABILITY];
+  if (platform === "darwin") return [...PMP_REMEDIATE_CAPABILITIES, MAC_CONFIG_CAPABILITY, PATCH_VERIFY_CAPABILITY];
+  return [...PMP_REMEDIATE_CAPABILITIES, PATCH_VERIFY_CAPABILITY];
 }
 
 /** Tope de fixes por job agrupado: el mismo que valida el backend. */

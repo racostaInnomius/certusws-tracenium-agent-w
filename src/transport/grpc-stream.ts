@@ -39,6 +39,9 @@ import { getAspRunStore } from "../plugins/asp/run-store";
 import { consumePendingCatalogInstallRequest } from "../status/catalog-install-request-watcher";
 import type { TrayCatalogItem } from "../status/tray-status-types";
 import { stageAttachedCdpDelivery } from "../domain/cdp-delivery";
+import { compareVerification, parseChecks, runCheck, snapshotServices } from "../plugins/pmp/verification";
+import { encodeVerificationAck } from "../plugins/pmp/verification-ack";
+import { loadBaseline, saveBaseline } from "../plugins/pmp/verification-store";
 
 const ACK_TIMEOUT_MS = 60_000;
 const MAX_IN_FLIGHT = 3;
@@ -1123,6 +1126,24 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
         lastError: undefined
       });
 
+      // ── Foto previa para la verificación post-cambio (ADR-0038 F1) ────────
+      // Servicios automáticos en marcha + las comprobaciones declaradas, JUSTO
+      // antes de tocar nada. Nunca bloquea la instalación: si no se puede, la
+      // verificación dirá «sin foto previa».
+      if (mode === "install") {
+        try {
+          const deps = defaultProbeDeps();
+          const checks = parseChecks(payload?.verification?.checks);
+          const [services, checksBefore] = await Promise.all([
+            snapshotServices(deps),
+            Promise.all(checks.map((c) => runCheck(deps, c))),
+          ]);
+          saveBaseline({ jobId, capturedAt: new Date().toISOString(), services, checks, checksBefore });
+        } catch (err) {
+          ctx.logger?.warn?.("[pmp] pre-install verification snapshot failed", { jobId, err: String(err) });
+        }
+      }
+
       try {
         try {
           const resp = await ctx.priv.call({
@@ -1328,6 +1349,35 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
     // decidió el control plane: un «maintenance_window» no llega fuera de
     // ella. Aquí sólo las salvaguardas del equipo: nunca a mitad de un
     // install, una remediación o una actualización del agente.
+    // ADR-0038 F1: ¿el equipo sigue haciendo su trabajo tras el parche? Lo
+    // despacha el control plane cuando el equipo volvió y se asentó. Compara la
+    // foto previa (servicios + comprobaciones) con DOS muestras separadas: una
+    // regresión cuenta sólo si se ve en todas.
+    case "patch_verify": {
+      if ((ctx as any)._patchInstallInProgress) {
+        return { status: 1, message: "patch_verify retry: patch install in progress" };
+      }
+      const patchJobId = String(payload?.patchJobId || "").trim();
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(patchJobId)) {
+        return { status: 2, message: "patch_verify rejected: invalid patchJobId" };
+      }
+      const samples = Math.min(Math.max(Number(payload?.samples) || 2, 1), 3);
+      const gapMs = Math.min(Math.max(Number(payload?.sampleGapSec) || 120, 10), 300) * 1000;
+      const deps = defaultProbeDeps();
+      const baseline = loadBaseline(patchJobId);
+      // Las comprobaciones de ahora; si no llegan, las que se midieron antes.
+      const checks = parseChecks(payload?.checks).length ? parseChecks(payload?.checks) : baseline?.checks ?? [];
+      const afterServices = [];
+      const afterChecks = [];
+      for (let i = 0; i < samples; i++) {
+        if (i > 0) await new Promise((r) => setTimeout(r, gapMs));
+        afterServices.push(await snapshotServices(deps));
+        afterChecks.push(await Promise.all(checks.map((c) => runCheck(deps, c))));
+      }
+      const result = compareVerification(patchJobId, baseline, afterServices, checks, afterChecks);
+      return { status: 0, message: encodeVerificationAck(result) };
+    }
+
     case "device_reboot": {
       if ((ctx as any)._patchInstallInProgress) {
         return { status: 1, message: "device_reboot retry: patch install in progress" };
