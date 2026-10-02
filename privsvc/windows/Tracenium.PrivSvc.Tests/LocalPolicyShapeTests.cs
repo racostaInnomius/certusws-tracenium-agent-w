@@ -156,4 +156,75 @@ public class LocalPolicyShapeTests
         var twice = LocalPolicyShape.UpdateGptIni(once);
         Assert.Single(System.Text.RegularExpressions.Regex.Matches(twice, "35378EAC").Cast<object>());
     }
+
+    // ── Los ficheros REALES de W11-JPR-LAB02 (1-oct-2026), escritos por ──
+    // LGPO.exe 3.0 de Microsoft al aplicar EnableFeeds=0 a mano. Es lo que
+    // nuestro código encontrará en ese equipo y en cualquiera donde alguien
+    // haya usado LGPO o gpedit.
+
+    private const string LgpoPolHex =
+        "50 52 65 67 01 00 00 00 5B 00 53 00 6F 00 66 00 " +
+        "74 00 77 00 61 00 72 00 65 00 5C 00 50 00 6F 00 " +
+        "6C 00 69 00 63 00 69 00 65 00 73 00 5C 00 4D 00 " +
+        "69 00 63 00 72 00 6F 00 73 00 6F 00 66 00 74 00 " +
+        "5C 00 57 00 69 00 6E 00 64 00 6F 00 77 00 73 00 " +
+        "5C 00 57 00 69 00 6E 00 64 00 6F 00 77 00 73 00 " +
+        "20 00 46 00 65 00 65 00 64 00 73 00 00 00 3B 00 " +
+        "45 00 6E 00 61 00 62 00 6C 00 65 00 46 00 65 00 " +
+        "65 00 64 00 73 00 00 00 3B 00 04 00 00 00 3B 00 " +
+        "04 00 00 00 3B 00 00 00 00 00 5D 00";
+
+    private const string LgpoGptIni =
+        "[General]\r\ngPCMachineExtensionNames=[{35378EAC-683F-11D2-A89A-00C04FBBCFA2}{DF3DC19F-F72C-4030-940E-4C2A65A6B612}]\r\nVersion=65537\r\n";
+
+    private static byte[] FromHex(string hex) =>
+        hex.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(h => Convert.ToByte(h, 16)).ToArray();
+
+    [Fact]
+    public void Reads_the_Registry_pol_that_Microsoft_LGPO_wrote_and_writes_it_back_byte_for_byte()
+    {
+        var real = FromHex(LgpoPolHex);
+        var entries = LocalPolicyShape.Parse(real);
+        var e = Assert.Single(entries);
+        Assert.Equal(FeedsKey, e.Key); // LGPO escribe «Software», no «SOFTWARE»
+        Assert.Equal("EnableFeeds", e.ValueName);
+        Assert.Equal(LocalPolicyShape.RegDword, e.Type);
+        Assert.Equal(Dword(0), e.Data);
+        Assert.Equal(real, LocalPolicyShape.Serialize(entries));
+    }
+
+    [Fact]
+    public void Our_catalog_key_in_capitals_replaces_the_LGPO_entry_instead_of_duplicating_it()
+    {
+        // El catálogo manda «SOFTWARE\Policies\…»; LGPO dejó «Software\Policies\…».
+        var entries = LocalPolicyShape.Parse(FromHex(LgpoPolHex));
+        var spec = new RegistryWriteSpec
+        {
+            SubKey = @"SOFTWARE\Policies\Microsoft\Windows\Windows Feeds",
+            ValueName = "EnableFeeds",
+            Kind = GenericValueKind.DWord,
+            DwordValue = 0,
+        };
+        var e = Assert.Single(LocalPolicyShape.Upsert(entries, LocalPolicyShape.EntryFor(spec)));
+        Assert.Equal(Dword(0), e.Data);
+        // Y un borrado (una reversión) también la sustituye, no convive con ella.
+        var del = Assert.Single(LocalPolicyShape.Upsert(entries, LocalPolicyShape.EntryFor(new RegistryWriteSpec
+        {
+            SubKey = spec.SubKey, ValueName = "EnableFeeds", Kind = GenericValueKind.Delete,
+        })));
+        Assert.Equal("**del.EnableFeeds", del.ValueName);
+    }
+
+    [Fact]
+    public void Keeps_LGPO_s_registry_extension_pair_and_only_bumps_the_machine_version()
+    {
+        // LGPO lista la extensión de registro con SU GUID de herramienta
+        // ({DF3DC19F-…}), no el de las plantillas ({D02B1F72-…}). Windows decide
+        // por el primero; añadir el nuestro sería un duplicado.
+        var updated = LocalPolicyShape.UpdateGptIni(LgpoGptIni);
+        Assert.Equal(
+            "[General]\r\ngPCMachineExtensionNames=[{35378EAC-683F-11D2-A89A-00C04FBBCFA2}{DF3DC19F-F72C-4030-940E-4C2A65A6B612}]\r\nVersion=65538\r\n",
+            updated);
+    }
 }
+
