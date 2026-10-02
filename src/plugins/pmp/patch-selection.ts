@@ -24,3 +24,25 @@ export function selectedPatchIds(payload: unknown): string[] | null {
   const ids = lista.map((item) => String(item ?? "").trim()).filter(Boolean);
   return ids.length > 0 ? ids : null;
 }
+
+/**
+ * Forma de un id de parche. Misma regla que el control plane
+ * (`isSafePatchId`), repetida aquí porque el agente es la última barrera antes
+ * del privsvc y un control plane viejo —o un payload hecho a mano— puede no
+ * haberla aplicado.
+ *
+ * ⚠️ POR QUÉ (auditoría 1-oct-2026): el PrivSvc de Windows interpola cada id
+ * dentro de una cadena de PowerShell entre comillas dobles que corre como
+ * SYSTEM, y `KB1$(…)` ejecutaba lo de dentro. En Linux un id que empiece por
+ * `-` llega a apt/dnf como opción (`-oDPkg::Pre-Invoke::=…`).
+ */
+const PATCH_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 \u00A0._:+~(),-]{0,199}$/;
+/** En Windows la selección es por artículo KB: nada más tiene sentido. */
+const WINDOWS_KB_PATTERN = /^KB\d{1,10}$/i;
+
+/** Los ids que NO tienen forma de id para esta plataforma (vacío = todos bien). */
+export function unsafePatchIds(ids: string[], platform: NodeJS.Platform = process.platform): string[] {
+  const forma = platform === "win32" ? WINDOWS_KB_PATTERN : PATCH_ID_PATTERN;
+  return ids.filter((id) => !forma.test(id));
+}
+

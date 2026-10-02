@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "fs";
 import path from "path";
-import { selectedPatchIds } from "../../src/plugins/pmp/patch-selection";
+import { selectedPatchIds, unsafePatchIds } from "../../src/plugins/pmp/patch-selection";
 
 describe("selectedPatchIds", () => {
   it("devuelve la lista limpia", () => {
@@ -38,3 +38,35 @@ describe("⚠️ el manejador de patch_install rechaza antes de llamar al privsv
     expect(llamada).toBeGreaterThan(rechazo);
   });
 });
+
+describe("🔴 unsafePatchIds — un id llega al privsvc sólo si tiene forma de id (1-oct-2026)", () => {
+  it("Windows: sólo artículos KB; una subexpresión de PowerShell no pasa", () => {
+    expect(unsafePatchIds(["KB5129195", "kb2267602"], "win32")).toEqual([]);
+    expect(unsafePatchIds(["KB1$(Restart-Computer)", 'KB1"; whoami; "', "KB1`n", "5066747"], "win32")).toHaveLength(4);
+  });
+
+  it("Linux/macOS: nombres de paquete y etiquetas reales pasan", () => {
+    const reales = [
+      "containerd.io-2.3.5-1~ubuntu.26.04~resolute",
+      "python3-distupgrade-1:26.04.25",
+      "ubuntu-virt-1:10.2.1+ds-1ubuntu3.2",
+      "macOS Tahoe \u00A026.7-25G229",
+      "Command Line Tools for Xcode 27.0-27.0",
+    ];
+    expect(unsafePatchIds(reales, "linux")).toEqual([]);
+    expect(unsafePatchIds(reales, "darwin")).toEqual([]);
+  });
+
+  it("Linux: un id que empieza por guion sería una OPCIÓN de apt/dnf", () => {
+    expect(unsafePatchIds(["-oDPkg::Pre-Invoke::=touch", "pkg;reboot", "pkg|sh", "a\nb"], "linux")).toHaveLength(4);
+  });
+
+  it("el manejador lo rechaza ANTES de llamar al privsvc", () => {
+    const src = fs.readFileSync(path.join(__dirname, "../../src/transport/grpc-stream.ts"), "utf8");
+    const rechazo = src.indexOf("patch_install rejected: invalid_patch_id");
+    const llamada = src.indexOf('method: "patch.install"');
+    expect(rechazo).toBeGreaterThan(0);
+    expect(llamada).toBeGreaterThan(rechazo);
+  });
+});
+

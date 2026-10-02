@@ -3,6 +3,7 @@ import { promisify } from "util";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
 import { logger } from "./logger";
+import { readPatchSelection } from "../../shared/patch-selection";
 
 const execFileAsync = promisify(execFile);
 
@@ -428,9 +429,14 @@ export async function handlePatchInstall(req: PrivSvcRequest): Promise<PrivSvcRe
       return fail(req.id, "bad_request", "patch.install mode must be install or download");
     }
 
-    const kbArticleIds = Array.isArray(req.params?.kbArticleIds)
-      ? req.params!.kbArticleIds.map((item: unknown) => String(item || "").trim()).filter(Boolean)
-      : [];
+    // Sin lista no se instala nada (antes: `--all`), y un id sin forma de id
+    // no llega a softwareupdate (auditoría 1-oct-2026). Ver
+    // privsvc/shared/patch-selection.ts.
+    const selection = readPatchSelection(req.params);
+    if (!selection.ok) {
+      return fail(req.id, selection.code, selection.message);
+    }
+    const kbArticleIds = selection.ids;
 
     logger.info("patch.install.request", {
       id: req.id,
@@ -441,9 +447,7 @@ export async function handlePatchInstall(req: PrivSvcRequest): Promise<PrivSvcRe
     });
 
     const available = await listAvailableUpdates();
-    const selectedItems = kbArticleIds.length > 0
-      ? available.items.filter((item) => kbArticleIds.includes(item.label))
-      : available.items;
+    const selectedItems = available.items.filter((item) => kbArticleIds.includes(item.label));
 
     logger.info("patch.install.selection", {
       id: req.id,
@@ -464,12 +468,9 @@ export async function handlePatchInstall(req: PrivSvcRequest): Promise<PrivSvcRe
       });
     }
 
+    // Nunca `--all`: la selección es explícita (1-oct-2026).
     const args = mode === "download" ? ["--download"] : ["--install"];
-    if (kbArticleIds.length > 0) {
-      args.push(...selectedItems.map((item) => item.label));
-    } else {
-      args.push("--all");
-    }
+    args.push(...selectedItems.map((item) => item.label));
 
     const install = await runInstall("/usr/sbin/softwareupdate", args, 60 * 60 * 1000);
     if (install.ownerAuthRequired) {

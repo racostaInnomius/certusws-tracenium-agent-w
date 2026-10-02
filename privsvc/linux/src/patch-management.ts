@@ -40,6 +40,7 @@ import { detectFamily } from "./distro";
 import { logger } from "./logger";
 import type { PrivSvcRequest, PrivSvcResponse } from "./protocol";
 import { fail, success } from "./protocol";
+import { readPatchSelection } from "../../shared/patch-selection";
 
 const execFileAsync = promisify(execFile);
 
@@ -596,8 +597,7 @@ async function isAptLockBusy(): Promise<{ busy: boolean; holder?: string }> {
 
 async function installApt(
   selectedItems: ScanItem[],
-  mode: "install" | "download",
-  selectAll: boolean
+  mode: "install" | "download"
 ): Promise<InstallResult> {
   // Lock probe. If something else is holding apt, fail fast with a
   // recognisable reason so the orchestrator doesn't waste 60 min
@@ -625,12 +625,10 @@ async function installApt(
   /** Lo que el operador pidió y NO se pudo resolver. Nunca se calla. */
   const unresolved: ScanItem[] = [];
 
-  if (selectAll) {
-    // Empty kbArticleIds → "everything available". Don't enumerate;
-    // pass nothing to apt-get so it picks up the full upgradeable
-    // set via dist-upgrade semantics.
-    packageNames = [];
-  } else {
+  // ⚠️ Ya no existe «lista vacía = dist-upgrade» (auditoría 1-oct-2026): el
+  // handler rechaza la lista vacía antes de llegar aquí. `dist-upgrade -y`
+  // además podía DESINSTALAR paquetes sin que nadie lo pidiera.
+  {
     const fresh = await scanApt();
     const byId = new Map(fresh.items.map(it => [it.hotFixId, it]));
     for (const want of selectedItems) {
@@ -662,8 +660,6 @@ async function installApt(
       // hacía que el agente lo ACKeara con éxito y el portal lo cerrara como
       // `completed`, sobre un equipo donde el parche seguía pendiente.
       //
-      // `no_updates` queda para lo que de verdad lo es: un `selectAll` sin nada
-      // pendiente, que no pasa por aquí.
       return {
         status: "failed",
         mode,
@@ -704,18 +700,10 @@ async function installApt(
   if (mode === "download") {
     args.push("--download-only");
   }
-  if (selectAll) {
-    // No specific packages → fall back to dist-upgrade semantics.
-    // `apt-get dist-upgrade` is the right verb when we want apt to
-    // decide what to upgrade.
-    args[0] = "dist-upgrade";
-  } else {
-    args.push(...packageNames);
-  }
+  args.push(...packageNames);
 
   logger.info("apt_install_start", {
     mode,
-    selectAll,
     packageCount: packageNames.length,
     sampleNames: packageNames.slice(0, 10),
   });
@@ -891,8 +879,7 @@ async function detectRhelRebootRequired(): Promise<boolean> {
 
 async function installDnf(
   selectedItems: ScanItem[],
-  mode: "install" | "download",
-  selectAll: boolean
+  mode: "install" | "download"
 ): Promise<InstallResult> {
   const dnfBin = fs.existsSync("/usr/bin/dnf")
     ? "/usr/bin/dnf"
@@ -912,20 +899,15 @@ async function installDnf(
     };
   }
 
-  // For "install all available", we use `dnf upgrade --security -y`
-  // when no specific items requested — Phase 6 already established
-  // that the agent-side bulk-install path filters by severity, so
-  // "all" in this context typically means "all of severity=X".
-  // We mirror the agent's intent: empty kbArticleIds → upgrade
-  // everything (NOT just security), and the orchestrator decides
-  // upstream what counts.
-  let args: string[] = ["upgrade", "-y"];
+  // Siempre con la selección explícita: un `dnf upgrade -y` sin argumentos
+  // actualiza TODO, y eso ya no se puede pedir callando (1-oct-2026).
+  const args: string[] = ["upgrade", "-y"];
 
   if (mode === "download") {
     args.push("--downloadonly");
   }
 
-  if (!selectAll) {
+  {
     const { advisories, packages } = classifyDnfHotFixIds(selectedItems);
 
     if (advisories.length === 0 && packages.length === 0) {
@@ -950,7 +932,6 @@ async function installDnf(
   logger.info("dnf_install_start", {
     bin: dnfBin,
     mode,
-    selectAll,
     args: args.slice(0, 10), // cap log line
   });
 
@@ -1019,20 +1000,18 @@ async function installZypper(selectedItems: ScanItem[], mode: "install" | "downl
 // ── Aggregate dispatcher ──────────────────────────────────────────
 async function runInstall_(
   selectedItems: ScanItem[],
-  mode: "install" | "download",
-  selectAll: boolean
+  mode: "install" | "download"
 ): Promise<InstallResult> {
   const distro = detectFamily();
   logger.info("patch_install_start", {
     family: distro.family,
     distro: distro.id,
     mode,
-    selectAll,
     selectedCount: selectedItems.length,
   });
 
-  if (distro.family === "debian") return installApt(selectedItems, mode, selectAll);
-  if (distro.family === "rhel") return installDnf(selectedItems, mode, selectAll);
+  if (distro.family === "debian") return installApt(selectedItems, mode);
+  if (distro.family === "rhel") return installDnf(selectedItems, mode);
   if (distro.family === "suse") return installZypper(selectedItems, mode);
 
   return {
@@ -1053,9 +1032,13 @@ export async function handlePatchInstall(req: PrivSvcRequest): Promise<PrivSvcRe
       return fail(req.id, "bad_request", "patch.install mode must be install or download");
     }
 
-    const kbArticleIds: string[] = Array.isArray(req.params?.kbArticleIds)
-      ? req.params!.kbArticleIds.map((item: unknown) => String(item || "").trim()).filter(Boolean)
-      : [];
+    // Sin lista no se instala nada, y un id sin forma de id no llega a apt/dnf
+    // (auditoría 1-oct-2026). Ver privsvc/shared/patch-selection.ts.
+    const selection = readPatchSelection(req.params);
+    if (!selection.ok) {
+      return fail(req.id, selection.code, selection.message);
+    }
+    const kbArticleIds = selection.ids;
 
     logger.info("patch_install_request", {
       id: req.id,
@@ -1075,12 +1058,9 @@ export async function handlePatchInstall(req: PrivSvcRequest): Promise<PrivSvcRe
       return fail(req.id, "patch_install_failed", live.note || "patch management unavailable on this distro");
     }
 
-    const selectAll = kbArticleIds.length === 0;
-    const selectedItems = selectAll
-      ? live.items
-      : live.items.filter(it => it.hotFixId && kbArticleIds.includes(it.hotFixId));
+    const selectedItems = live.items.filter(it => it.hotFixId && kbArticleIds.includes(it.hotFixId));
 
-    if (!selectAll && selectedItems.length === 0) {
+    if (selectedItems.length === 0) {
       // Operator asked for specific items, none of which are still
       // upgradeable. That's not a failure — it's a no-op success.
       return success(req.id, {
@@ -1094,7 +1074,7 @@ export async function handlePatchInstall(req: PrivSvcRequest): Promise<PrivSvcRe
       } satisfies InstallResult);
     }
 
-    const result = await runInstall_(selectedItems as ScanItem[], mode as "install" | "download", selectAll);
+    const result = await runInstall_(selectedItems as ScanItem[], mode as "install" | "download");
     logger.info("patch_install_complete", {
       status: result.status,
       mode: result.mode,

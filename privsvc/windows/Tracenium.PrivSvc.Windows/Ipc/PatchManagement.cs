@@ -259,11 +259,25 @@ $rebootPending = ($rebootWua -eq $true) -or $rebootCbs -or $rebootWu
                 );
             }
 
+            // ⚠️ SÓLO ARTÍCULOS KB, como literales entre comillas simples
+            // (auditoría 1-oct-2026): un id `KB1$(…)` se ejecutaba como SYSTEM.
+            // Ver PatchInstallShape.
+            var malformados = PatchInstallShape.MalformedKbIds(kbArticleIds);
+            if (malformados.Count > 0)
+            {
+                return Task.FromResult(
+                    PrivSvcResponse.Fail(req.Id, "patch_install_invalid_id",
+                        $"patch_install accepts only KB article ids (KB + digits); {malformados.Count} of " +
+                        $"{kbArticleIds.Count} were refused.")
+                );
+            }
+
             var modeJson = JsonSerializer.Serialize(mode);
+            var targetKbsLiteral = PatchInstallShape.PowerShellKbList(kbArticleIds);
 
             var psResult = RunPs($@"
 $mode = {modeJson}
-$targetKbs = @({string.Join(",", kbArticleIds.Select(kb => JsonSerializer.Serialize(kb)))})
+$targetKbs = @({targetKbsLiteral})
 $session = New-Object -ComObject Microsoft.Update.Session
 $searcher = $session.CreateUpdateSearcher()
 $searchResult = $searcher.Search(""IsInstalled=0 and IsHidden=0 and Type='Software'"")

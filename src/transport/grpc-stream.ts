@@ -1,5 +1,5 @@
 // src/transport/grpc-stream.ts
-import { selectedPatchIds } from "../plugins/pmp/patch-selection";
+import { selectedPatchIds, unsafePatchIds } from "../plugins/pmp/patch-selection";
 import { AgentContext } from "../core/agent-context";
 import { createGrpcClient } from "./grpc-client";
 import { outbox } from "../queue/sqlite-outbox";
@@ -1084,6 +1084,17 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
         return {
           status: 2,
           message: "patch_install rejected: no_patches_selected"
+        };
+      }
+
+      // Un id sin forma de id no llega al privsvc (auditoría 1-oct-2026): el de
+      // Windows lo mete en PowerShell como SYSTEM. Se nombran, recortados, para
+      // que el operador vea qué se rechazó sin reinyectarlo en ningún log.
+      const sinForma = unsafePatchIds(seleccion);
+      if (sinForma.length > 0) {
+        return {
+          status: 2,
+          message: `patch_install rejected: invalid_patch_id (${sinForma.length} of ${seleccion.length})`
         };
       }
 

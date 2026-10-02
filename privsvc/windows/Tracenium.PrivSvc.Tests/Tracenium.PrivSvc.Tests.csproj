@@ -79,6 +79,9 @@
          listas que imprime el script de GetInstalledSecurityPatches. Puro
          (System.Text.Json); la llamada COM se queda en SecurityCompliance.cs. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\UpdateHistoryShape.cs" />
+    <!-- patch.install: la selección validada y escrita como literal de
+         PowerShell. Puro. Un id sin validar ejecutaba código como SYSTEM. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\PatchInstallShape.cs" />
     <!-- Parseo de la salida de `gpresult`. Solo System y
          System.Collections.Generic: texto puro, sin nada de Windows
          dentro pese al namespace, asi que cumple la regla de arriba. -->
