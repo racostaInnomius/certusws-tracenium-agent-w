@@ -33,6 +33,7 @@ import { fail, success } from "./protocol";
 import { logger } from "./logger";
 import { makeCheckServerIdentity, readServerKeyPins } from "./server-pin";
 import { issuerAltSpkiFromBundle } from "../../shared/catalyst";
+import { FACTS_TOO_LARGE, MAX_FACTS_CHUNKS, MAX_FACTS_PAYLOAD_BYTES } from "../../shared/facts-limits";
 
 // Resolve the controlplane.proto. Order of preference:
 //   1. TRACENIUM_PROTO_PATH env override — escape hatch for unusual
@@ -228,6 +229,9 @@ type BridgeState = {
   chunks: Map<string, {
     totalChunks: number;
     chunks: string[];
+    // Bytes UTF-8 recibidos hasta ahora, para cortar en cuanto pase del
+    // tope sin esperar al último trozo (ver handleFactsChunk).
+    bytes: number;
     createdAt: number;
     // Namespace metadata from the first chunk is preserved across
     // reassembly so the final Facts frame has the same `namespace` /
@@ -392,10 +396,9 @@ const CHUNK_SWEEP_INTERVAL_MS = 60 * 1000;
 // (or compromised) agent-core caller could claim `totalChunks=10_000_000`
 // and force us to allocate a 10M-slot array before any sweep runs.
 //
-// Real inventory payloads currently hit ~200KB, chunked at 48KB each, so
-// 32 chunks × 64KB = 2 MB ceiling is generous headroom without being
-// abusable. Anything above this is a bug or an attack.
-const MAX_CHUNKS_PER_MESSAGE = 64;
+// El tope del envío entero es el del control plane (16 MiB), no uno propio:
+// el anterior, 64 trozos, cortaba en 2 MiB lo que el servidor aceptaba.
+// Ver shared/facts-limits.ts.
 const MAX_CHUNK_BYTES = 64 * 1024;
 
 // Cap on decoded control-plane payloads (runJob.payloadJson,
@@ -1310,9 +1313,13 @@ export async function handleFactsChunk(req: PrivSvcRequest): Promise<PrivSvcResp
   // Reject absurd totalChunks BEFORE allocating the array. Without this a
   // buggy caller could request a 10M-slot allocation that fills memory
   // before the sweeper gets a chance to GC it.
-  if (totalChunks > MAX_CHUNKS_PER_MESSAGE) {
-    logger.warn("chunks_rejected_too_many", { eventId, totalChunks, cap: MAX_CHUNKS_PER_MESSAGE });
-    return fail(req.id, "bad_request", `totalChunks ${totalChunks} exceeds cap ${MAX_CHUNKS_PER_MESSAGE}`);
+  //
+  // Es «demasiado grande», no «petición mal formada»: con ese código el
+  // agente da el envío por rechazado en vez de tirar la conexión y
+  // reenviarlo en bucle.
+  if (totalChunks > MAX_FACTS_CHUNKS) {
+    logger.warn("chunks_rejected_too_many", { eventId, totalChunks, cap: MAX_FACTS_CHUNKS });
+    return fail(req.id, FACTS_TOO_LARGE, `totalChunks ${totalChunks} exceeds cap ${MAX_FACTS_CHUNKS}`);
   }
 
   if (chunkIndex < 0 || chunkIndex >= totalChunks) {
@@ -1335,6 +1342,7 @@ export async function handleFactsChunk(req: PrivSvcRequest): Promise<PrivSvcResp
   const current = state.chunks.get(eventId) || {
     totalChunks,
     chunks: new Array<string>(totalChunks).fill(""),
+    bytes: 0,
     createdAt: Date.now(),
     namespace: incomingNamespace,
     namespaces: incomingNamespaces,
@@ -1360,7 +1368,19 @@ export async function handleFactsChunk(req: PrivSvcRequest): Promise<PrivSvcResp
     current.namespaces = incomingNamespaces;
   }
 
+  // Se cuenta al llegar cada trozo, no al reensamblar: así un envío que no
+  // cabe se corta en el primer trozo que pasa del tope y no se guarda
+  // entero en memoria para nada. Un trozo repetido reemplaza al anterior.
+  const bytes =
+    current.bytes - Buffer.byteLength(current.chunks[chunkIndex], "utf8") + Buffer.byteLength(payloadChunk, "utf8");
+  if (bytes > MAX_FACTS_PAYLOAD_BYTES) {
+    state.chunks.delete(eventId);
+    logger.warn("facts_rejected_too_large", { eventId, chunkIndex, totalChunks, bytes, cap: MAX_FACTS_PAYLOAD_BYTES });
+    return fail(req.id, FACTS_TOO_LARGE, `facts payload exceeds ${MAX_FACTS_PAYLOAD_BYTES} bytes`);
+  }
+
   current.chunks[chunkIndex] = payloadChunk;
+  current.bytes = bytes;
   state.chunks.set(eventId, current);
 
   if (current.chunks.every((chunk) => chunk.length > 0)) {

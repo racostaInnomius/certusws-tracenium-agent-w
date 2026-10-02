@@ -34,6 +34,25 @@ const MAX_FACTS_IPC_BYTES = 32 * 1024;
 
 const FACTS_CHUNK_SIZE = 32 * 1024; // 32KB: raw+escaping+wrapper stays < 64KB pipe limit
 
+// Tope de un envío de facts: el del control plane (MAX_FACTS_PAYLOAD_BYTES en
+// certusws-tracenium/modules/grpc/payload-limits.ts), en bytes UTF-8. Los
+// PrivSvc reensamblan con el mismo valor (privsvc/shared/facts-limits.ts y
+// FactsChunkAssembler.cs); un test compara los tres.
+//
+// ⚠️ «Demasiado grande» es DEFINITIVO para ese payload: reenviarlo da lo
+// mismo. Antes el rechazo del PrivSvc se lanzaba como un fallo cualquiera,
+// el stream emitía `error`, se reconectaba y el outbox reenviaba el mismo
+// evento. TNS-OPER-SNOC04 pasó así cuatro días (28-sep-2026) sin que llegara
+// un solo compliance, reenviando 17 trozos que su PrivSvc rechazaba con un
+// tope de 512 KiB. Ahora el evento se marca rechazado y la conexión sigue.
+export const MAX_FACTS_PAYLOAD_BYTES = 16 * 1024 * 1024;
+const FACTS_TOO_LARGE = "facts_too_large";
+
+function outboxIdOf(eventId: string): number {
+  const parts = eventId.split(":");
+  return Number(parts[parts.length - 1]);
+}
+
 function chunkString(str: string, size: number): string[] {
   const chunks: string[] = [];
   for (let i = 0; i < str.length; i += size) {
@@ -354,8 +373,7 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
         try {
           const eventId = normalized.eventId;
           if (eventId) {
-            const parts = eventId.split(":");
-            const outboxId = Number(parts[parts.length - 1]);
+            const outboxId = outboxIdOf(eventId);
 
             if (!isNaN(outboxId)) {
               const status = Number(normalized.status ?? 0);
@@ -678,6 +696,27 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
           const payloadSizeBytes = Buffer.byteLength(payloadJsonStr, "utf8");
           ctx.logger?.info("[grpc-client] FACTS payload size", payloadSizeBytes);
 
+          // Rechazo definitivo: el evento queda FAILED en el outbox y la
+          // conexión no se toca (ver MAX_FACTS_PAYLOAD_BYTES).
+          const rejectTooLarge = (reason: string) => {
+            inFlightEvents.delete(eventId);
+            const outboxId = outboxIdOf(eventId);
+            if (!isNaN(outboxId)) outbox.markRejected(outboxId, `${FACTS_TOO_LARGE}: ${reason}`);
+            ctx.logger?.error?.("[grpc-client] FACTS rejected: payload too large", {
+              eventId,
+              outboxId,
+              payloadSizeBytes,
+              cap: MAX_FACTS_PAYLOAD_BYTES,
+              reason
+            });
+          };
+
+          // Si no cabe en el servidor, no se manda: ni un trozo.
+          if (payloadSizeBytes > MAX_FACTS_PAYLOAD_BYTES) {
+            rejectTooLarge(`payload ${payloadSizeBytes} bytes exceeds ${MAX_FACTS_PAYLOAD_BYTES}`);
+            return;
+          }
+
           // If payload fits, send normally
           if (payloadSizeBytes <= MAX_FACTS_IPC_BYTES) {
             const resp = await (ctx.priv as any).call({
@@ -755,6 +794,13 @@ export function createGrpcClient(ctx: AgentContext): GrpcBridgeClient {
 
             if (!resp?.ok) {
               const errorMessage = String(resp?.error?.message || resp?.error || "facts.chunk failed");
+              // El PrivSvc no lo reensambla por tamaño: los trozos que
+              // faltan no cambiarían nada. Cualquier otro fallo sigue
+              // tirando la conexión, que es lo que lo hace reintentable.
+              if (String(resp?.error?.code || "") === FACTS_TOO_LARGE) {
+                rejectTooLarge(`${errorMessage} (chunkIndex=${i}/${chunks.length})`);
+                return;
+              }
               throw new Error(`FACTS_CHUNK_FAILED:${errorMessage} (chunkIndex=${i}/${chunks.length})`);
             }
 

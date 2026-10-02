@@ -58,6 +58,10 @@
          el formato de Registry.pol (MS-GPREG) y gpt.ini es puro; abrir los
          ficheros y lanzar gpupdate queda en LocalPolicy.cs. -->
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\LocalPolicyShape.cs" />
+    <!-- Reensamblado de facts troceados por IPC: tope = el del control plane
+         (16 MiB) y «demasiado grande» con su propio código. Puro; el
+         handler que lo usa está en IpcGrpcHandlers.cs. -->
+    <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\FactsChunkAssembler.cs" />
     <Compile Include="..\Tracenium.PrivSvc.Windows\Ipc\SignInScreenShape.cs" />
     <!-- pmp.revert: validar el stateBefore (claves fijas, tipos JSON) y
          decidir qué se escribe es puro; el registro y PowerShell se quedan

@@ -7,18 +7,8 @@ namespace Tracenium.PrivSvc.Windows.Ipc;
 
 public static class IpcGrpcHandlers
 {
-    // Chunk buffer: eventId -> (chunkIndex -> payloadChunk)
-    private class ChunkState
-    {
-        public int TotalChunks { get; set; }
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-        public SortedDictionary<int, string> Chunks { get; set; } = new();
-        public string? Namespace { get; set; }
-        public List<string> Namespaces { get; set; } = new();
-    }
-
-    private static readonly Dictionary<string, ChunkState> _chunkBuffer = new();
-    private static readonly Dictionary<string, object> _chunkLocks = new();
+    // Envíos de facts troceados a medias. Ver FactsChunkAssembler.cs.
+    private static readonly FactsChunkAssembler _factsChunks = new();
     private static readonly Dictionary<int, string> _pushSinkByDelegateKey = new();
     private const int MaxBufferedPushEventsPerSink = 32;
     private static readonly ConcurrentDictionary<string, ConcurrentQueue<object>> _pendingPushBySink = new();
@@ -335,96 +325,31 @@ public static class IpcGrpcHandlers
             if (!int.TryParse(totalChunksStr, out var totalChunks))
                 throw new Exception("invalid totalChunks");
 
-            if (totalChunks <= 0)
-                throw new Exception("totalChunks must be > 0");
-
-            if (chunkIndex < 0 || chunkIndex >= totalChunks)
-                throw new Exception("chunkIndex out of range");
-
-            // Cleanup stale chunks
             var now = DateTime.UtcNow;
-            var staleKeys = _chunkBuffer
-                .Where(kv => now - kv.Value.CreatedAt > TimeSpan.FromMinutes(2))
-                .Select(kv => kv.Key)
-                .ToList();
-
-            foreach (var key in staleKeys)
-            {
+            foreach (var key in _factsChunks.SweepStale(now))
                 Console.WriteLine($"[IpcGrpcHandlers] Cleaning stale chunk eventId={key}");
-                _chunkBuffer.Remove(key);
-                _chunkLocks.Remove(key);
-            }
 
             Console.WriteLine($"[IpcGrpcHandlers] FACTS chunk received eventId={eventId} chunk={chunkIndex + 1}/{totalChunks} size={payloadChunk.Length}");
 
-            bool isComplete = false;
-            string? fullPayload = null;
-            string? completeNamespace = null;
-            List<string> completeNamespaces = new();
-            object lockObj;
+            var result = _factsChunks.Add(eventId, chunkIndex, totalChunks, payloadChunk, factNamespace, namespaces, now);
 
-            lock (_chunkLocks)
+            if (result.Outcome == FactsChunkAssembler.Outcome.TooLarge)
             {
-                if (!_chunkLocks.TryGetValue(eventId, out lockObj!))
-                {
-                    lockObj = new object();
-                    _chunkLocks[eventId] = lockObj;
-                }
+                // Código propio: el agente da el envío por rechazado sin
+                // tirar la conexión. Antes era una excepción más, y el agente
+                // reconectaba y reenviaba el mismo evento en bucle.
+                Console.WriteLine($"[IpcGrpcHandlers] FACTS REJECTED eventId={eventId} chunk={chunkIndex + 1}/{totalChunks} reason={result.Reason}");
+                return Task.FromResult(PrivSvcResponse.Fail(req.Id, FactsChunkAssembler.TooLargeCode, result.Reason ?? "facts payload too large"));
             }
 
-            lock (lockObj)
+            if (result.Duplicate)
+                Console.WriteLine($"[IpcGrpcHandlers] FACTS duplicate chunk ignored eventId={eventId} chunk={chunkIndex + 1}/{totalChunks}");
+
+            var isComplete = result.Outcome == FactsChunkAssembler.Outcome.Complete;
+            if (isComplete && result.Payload != null)
             {
-                if (!_chunkBuffer.ContainsKey(eventId))
-                {
-                    _chunkBuffer[eventId] = new ChunkState
-                    {
-                        TotalChunks = totalChunks,
-                        Namespace = factNamespace,
-                        Namespaces = namespaces
-                    };
-                }
-                else
-                {
-                    if (_chunkBuffer[eventId].TotalChunks != totalChunks)
-                        throw new Exception("inconsistent totalChunks for eventId");
-                }
-
-                var state = _chunkBuffer[eventId];
-
-                // Ignore duplicates instead of overwriting silently
-                if (!state.Chunks.ContainsKey(chunkIndex))
-                {
-                    state.Chunks[chunkIndex] = payloadChunk;
-                }
-                else
-                {
-                    Console.WriteLine($"[IpcGrpcHandlers] FACTS duplicate chunk ignored eventId={eventId} chunk={chunkIndex + 1}/{totalChunks}");
-                }
-
-                if (state.Chunks.Count == state.TotalChunks)
-                {
-                    fullPayload = string.Concat(state.Chunks.Values);
-                    completeNamespace = state.Namespace;
-                    completeNamespaces = state.Namespaces;
-                    _chunkBuffer.Remove(eventId);
-                    isComplete = true;
-                }
-            }
-
-            if (isComplete && fullPayload != null)
-            {
-                Console.WriteLine($"[IpcGrpcHandlers] FACTS COMPLETE eventId={eventId} chunks={totalChunks} size={fullPayload.Length}");
-
-                const int MAX_FACTS_SIZE = 512 * 1024;
-                if (fullPayload.Length > MAX_FACTS_SIZE)
-                    throw new Exception("payload too large");
-
-                GrpcBridgeSingleton.Instance.SendFacts(eventId, fullPayload, completeNamespace, completeNamespaces);
-
-                lock (_chunkLocks)
-                {
-                    _chunkLocks.Remove(eventId);
-                }
+                Console.WriteLine($"[IpcGrpcHandlers] FACTS COMPLETE eventId={eventId} chunks={totalChunks} size={result.Payload.Length}");
+                GrpcBridgeSingleton.Instance.SendFacts(eventId, result.Payload, result.Namespace, result.Namespaces);
             }
 
             return Task.FromResult(
