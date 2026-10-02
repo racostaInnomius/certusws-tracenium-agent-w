@@ -43,11 +43,21 @@ async function readSecurityCompliance(ctx: AgentContext): Promise<any> {
   return resp.result || {};
 }
 
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function normalizePatchItems(items: any[]): PmpScanItem[] {
-  return items.map((item) => ({
+  return items.map((item) => {
+    const updateId = typeof item?.updateId === "string" && GUID.test(item.updateId) ? item.updateId.toLowerCase() : undefined;
+    return {
+    // El KB si lo tiene. Si NO (drivers, algunas definiciones, terceros por
+    // WSUS), `UID:<guid>`: antes quedaba sin id y no se podía seleccionar ni
+    // instalar desde el portal (auditoría PMP 1-oct-2026).
     hotFixId: Array.isArray(item?.kbArticleIds) && item.kbArticleIds.length > 0
       ? String(item.kbArticleIds[0])
-      : undefined,
+      : updateId
+        ? `UID:${updateId}`
+        : undefined,
+    ...(updateId ? { updateId } : {}),
     title: item?.title ? String(item.title) : undefined,
     // PrivSvc reads `IUpdate.MsrcSeverity` and forwards it as a string
     // in the `msrcSeverity` field. Older PrivSvc builds may omit it —
@@ -57,7 +67,8 @@ function normalizePatchItems(items: any[]): PmpScanItem[] {
     installedBy: undefined,
     installedOn: undefined,
     source: "windows_update_agent"
-  }));
+    };
+  });
 }
 
 /**

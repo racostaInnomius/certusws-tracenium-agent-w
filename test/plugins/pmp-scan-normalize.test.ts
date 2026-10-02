@@ -96,6 +96,20 @@ describe("PMP Windows — normalización de patch.scan (WUA/MSRC)", () => {
     expect(items.every((i) => i.source === "windows_update_agent")).toBe(true);
   });
 
+  it("🔴 sin KB pero con UpdateID → hotFixId «UID:<guid>», seleccionable (1-oct-2026)", async () => {
+    const ctx = makeCtx({
+      status: "updates_available",
+      items: [
+        { kbArticleIds: [], updateId: "3F2C9A10-1B2C-4D5E-8F90-ABCDEF123456", title: "Intel - Display - 31.0.101.5590", msrcSeverity: "" },
+        { kbArticleIds: [], updateId: "not-a-guid", title: "Raro" },
+      ],
+    });
+    const ns = await collectWindowsPmp(ctx);
+    const items = ns.scan?.items ?? [];
+    expect(items[0]).toMatchObject({ hotFixId: "UID:3f2c9a10-1b2c-4d5e-8f90-abcdef123456", updateId: "3f2c9a10-1b2c-4d5e-8f90-abcdef123456" });
+    expect(items[1].hotFixId).toBeUndefined();
+  });
+
   it("normalizeArray: un item objeto (no-array) se envuelve en [item]", async () => {
     const ctx = makeCtx({
       status: "updates_available",

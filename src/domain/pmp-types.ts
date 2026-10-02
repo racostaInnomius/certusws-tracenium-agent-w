@@ -32,6 +32,12 @@ export type PmpScanItem = {
   // stayed `hotFixId` to avoid a wire-schema break — the field is a
   // free-form identifier as far as the backend is concerned.
   hotFixId?: string;
+  /**
+   * Windows: `IUpdate.Identity.UpdateID`. Una actualización SIN artículo KB
+   * (drivers, algunas de Defender o de terceros vía WSUS) lleva como hotFixId
+   * `UID:<guid>`, para poder seleccionarla (auditoría PMP 1-oct-2026).
+   */
+  updateId?: string;
   title?: string;
   severity?: PmpSeverity;
   installedBy?: string;

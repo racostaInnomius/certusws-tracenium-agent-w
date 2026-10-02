@@ -378,8 +378,11 @@ foreach ($update in $searchResult.Updates) {{
   # vacía antes de llegar aquí; esto es para que el script no pueda volver a
   # instalar lo que nadie pidió aunque lo llame otro camino.
   $matchesKb = $false
+  # Por KB, o por UpdateID para lo que no tiene KB (1-oct-2026).
+  $uid = $(try {{ 'UID:' + [string]$update.Identity.UpdateID }} catch {{ $null }})
+  $candidates = @($kbs) + @($uid | Where-Object {{ $_ }})
   if ($targetKbs.Count -gt 0) {{
-    foreach ($candidate in $kbs) {{
+    foreach ($candidate in $candidates) {{
       if ($targetKbs -contains $candidate) {{
         $matchesKb = $true
         break

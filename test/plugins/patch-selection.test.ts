@@ -97,3 +97,16 @@ describe("🔴 unmatchedRequested — lo pedido que el privsvc no devolvió se n
   });
 });
 
+describe("Windows sin KB: «UID:<UpdateID>» (1-oct-2026)", () => {
+  it("unsafePatchIds lo acepta en Windows y rechaza un UID mal formado", () => {
+    expect(unsafePatchIds(["UID:3f2c9a10-1b2c-4d5e-8f90-abcdef123456"], "win32")).toEqual([]);
+    expect(unsafePatchIds(["UID:$(whoami)", "UID:3f2c9a10"], "win32")).toHaveLength(2);
+  });
+
+  it("unmatchedRequested casa «UID:<guid>» con el updateId del resultado", () => {
+    expect(
+      unmatchedRequested(["UID:3F2C9A10-1B2C-4D5E-8F90-ABCDEF123456"], [{ updateId: "3f2c9a10-1b2c-4d5e-8f90-abcdef123456" }])
+    ).toEqual([]);
+  });
+});
+

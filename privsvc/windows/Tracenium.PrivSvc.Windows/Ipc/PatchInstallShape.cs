@@ -20,10 +20,13 @@ namespace Tracenium.PrivSvc.Windows.Ipc;
 
 public static class PatchInstallShape
 {
+    // «KB» + dígitos, o `UID:<UpdateID>` para lo que no tiene artículo KB
+    // (drivers, algunas definiciones, terceros por WSUS; 1-oct-2026).
     private static readonly Regex KbArticlePattern =
-        new(@"^KB\d{1,10}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        new(@"^(KB\d{1,10}|UID:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    /// <summary>Los ids que no son «KB» + dígitos (vacío = todos válidos).</summary>
+    /// <summary>Los ids que no son «KB» + dígitos ni «UID:» + GUID (vacío = todos válidos).</summary>
     public static List<string> MalformedKbIds(IEnumerable<string> ids) =>
         ids.Where(id => !KbArticlePattern.IsMatch((id ?? "").Trim())).ToList();
 

@@ -41,6 +41,7 @@ interface Report {
 let scriptPath = "";
 /** El MISMO script, con la lista de KBs vacía: `$targetKbs = @()`. */
 let scriptSinLista = "";
+let scriptPorUid = "";
 
 beforeAll(() => {
   const install = extractBlocks().find((b) => b.file === "PatchManagement.cs" && b.interpolated);
@@ -56,6 +57,13 @@ beforeAll(() => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "privsvc-patch-install-"));
   scriptPath = path.join(dir, "patch-install.ps1");
   fs.writeFileSync(scriptPath, body, "utf8");
+
+  // 1-oct-2026: una actualización sin KB se pide por su UpdateID.
+  let porUid = install.body;
+  porUid = porUid.replace(HOLE, "'install'");
+  porUid = porUid.replace(HOLE, "'UID:id-KB5121003'");
+  scriptPorUid = path.join(dir, "patch-install-por-uid.ps1");
+  fs.writeFileSync(scriptPorUid, porUid, "utf8");
 
   let vacio = install.body;
   vacio = vacio.replace(HOLE, "'install'");
@@ -149,6 +157,12 @@ describe.skipIf(!pwsh)("Windows patch.install script", () => {
     const r = run("installer-busy");
     expect(r.calls).toEqual(["Download"]);
     expect(r).toMatchObject({ status: "failed", fatalStage: "install", hresult: "0x80240016" });
+  });
+
+  it("🔴 «UID:<UpdateID>» selecciona esa actualización y sólo esa (sin KB, 1-oct-2026)", () => {
+    const r = run("all-ok", scriptPorUid);
+    expect(r.calls).toEqual(["Download", "Install:KB5121003"]);
+    expect(r.installedCount).toBe(1);
   });
 });
 

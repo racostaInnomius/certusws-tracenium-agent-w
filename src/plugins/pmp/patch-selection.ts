@@ -37,8 +37,11 @@ export function selectedPatchIds(payload: unknown): string[] | null {
  * `-` llega a apt/dnf como opción (`-oDPkg::Pre-Invoke::=…`).
  */
 const PATCH_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 \u00A0._:+~(),-]{0,199}$/;
-/** En Windows la selección es por artículo KB: nada más tiene sentido. */
-const WINDOWS_KB_PATTERN = /^KB\d{1,10}$/i;
+/**
+ * En Windows la selección es por artículo KB o, para lo que no tiene KB, por
+ * `UID:<UpdateID>` (1-oct-2026). Nada más tiene sentido.
+ */
+const WINDOWS_KB_PATTERN = /^(KB\d{1,10}|UID:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
 /** Los ids que NO tienen forma de id para esta plataforma (vacío = todos bien). */
 export function unsafePatchIds(ids: string[], platform: NodeJS.Platform = process.platform): string[] {
@@ -68,7 +71,11 @@ export function unmatchedRequested(
   const covered = new Set<string>();
   for (const r of results) {
     if (r.kb) covered.add(r.kb.toLowerCase());
-    if (r.updateId) covered.add(r.updateId.toLowerCase());
+    if (r.updateId) {
+      covered.add(r.updateId.toLowerCase());
+      // Lo pedido por UpdateID (Windows sin KB) viaja como `UID:<guid>`.
+      covered.add(`uid:${r.updateId.toLowerCase()}`);
+    }
   }
   return requested.filter((id) => !covered.has(id.toLowerCase()));
 }

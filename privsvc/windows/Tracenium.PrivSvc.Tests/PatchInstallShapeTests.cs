@@ -13,6 +13,7 @@ public class PatchInstallShapeTests
     [InlineData("KB5129195")]
     [InlineData("kb2267602")]
     [InlineData(" KB4052623 ")]
+    [InlineData("UID:3f2c9a10-1b2c-4d5e-8f90-abcdef123456")]
     public void Acepta_articulos_KB(string id)
     {
         Assert.Empty(PatchInstallShape.MalformedKbIds(new[] { id }));
@@ -26,6 +27,8 @@ public class PatchInstallShapeTests
     [InlineData("KB1`n")]
     [InlineData("5066747")]
     [InlineData("python3-apt-2.7.7ubuntu5.3")]
+    [InlineData("UID:3f2c9a10")]
+    [InlineData("UID:$(whoami)")]
     [InlineData("")]
     public void Rechaza_lo_que_no_es_KB_mas_digitos(string id)
     {
