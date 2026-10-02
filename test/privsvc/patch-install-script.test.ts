@@ -27,6 +27,8 @@ import { extractBlocks, hasPwsh, HOLE } from "./embedded-powershell";
 const HARNESS = path.resolve(__dirname, "fixtures/wua-fake-harness.ps1");
 
 interface Report {
+  fatalStage?: string | null;
+  hresult?: string | null;
   scenario: string;
   calls: string[];
   status: string;
@@ -119,4 +121,33 @@ describe.skipIf(!pwsh)("Windows patch.install script", () => {
     expect(r.calls).toEqual([]); // ni descarga ni instalación
     expect(r.installedCount).toBe(0);
   });
+
+  // ── Auditoría 1-oct-2026: las excepciones de WUA no se tragan ─────────────
+  // En PS 5.1 una excepción COM termina la sentencia, no el script: seguía con
+  // $searchResult a null y decía «no_updates», o «not_started 0x0».
+  it("🔴 Search() que lanza (servicio desactivado) → failed con la fase y el HRESULT, no no_updates", () => {
+    const r = run("search-throws");
+    expect(r.calls).toEqual([]);
+    expect(r).toMatchObject({ status: "failed", fatalStage: "search", hresult: "0x80070422", failedCount: 3 });
+    expect(r.results[0]).toBe("KB5066747 failed 0x80070422 search_failed");
+  });
+
+  it("🔴 Download() que lanza (disco lleno) → failed en 'download' con 0x80070070, sin instalar", () => {
+    const r = run("download-throws");
+    expect(r.calls).toEqual(["Download"]);
+    expect(r).toMatchObject({ status: "failed", fatalStage: "download", hresult: "0x80070070", installedCount: 0 });
+  });
+
+  it("🔴 Install() que lanza (otra instalación en curso) → failed en 'install' con 0x80240016", () => {
+    const r = run("install-throws");
+    expect(r).toMatchObject({ status: "failed", fatalStage: "install", hresult: "0x80240016" });
+    expect(r.results.every((l) => l.includes("0x80240016 install_failed"))).toBe(true);
+  });
+
+  it("instalador ocupado → ni lo llama: failed en 'install' con 0x80240016", () => {
+    const r = run("installer-busy");
+    expect(r.calls).toEqual(["Download"]);
+    expect(r).toMatchObject({ status: "failed", fatalStage: "install", hresult: "0x80240016" });
+  });
 });
+

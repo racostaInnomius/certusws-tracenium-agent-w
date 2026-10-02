@@ -73,7 +73,21 @@ $lastSyncUtc = $(try {
   if ($d) { $d.ToUniversalTime() } else { $null }
 } catch { $null })
 
-$result = $searcher.Search(""IsInstalled=0 and IsHidden=0 and Type='Software'"")
+# ⚠️ Una búsqueda que LANZA no es una búsqueda vacía (auditoría 1-oct-2026).
+# En PS 5.1 la excepción COM sólo terminaba la sentencia: $result quedaba a
+# null, 0 items, y con un catálogo sincronizado hace poco eso era 'healthy'.
+$searchError = $null
+try {
+  $result = $searcher.Search(""IsInstalled=0 and IsHidden=0 and Type='Software'"")
+} catch {
+  $result = $null
+  $hr = 0
+  $e = $_.Exception
+  while ($e) { $h = $(try { [int]$e.HResult } catch { 0 }); if ($h -ne 0) { $hr = $h }; $e = $e.InnerException }
+  $msg = $(try { [string]$_.Exception.Message } catch { 'unknown error' })
+  if ($msg.Length -gt 200) { $msg = $msg.Substring(0, 200) }
+  $searchError = 'Windows Update search failed (0x' + [Convert]::ToString([int]$hr, 16) + '): ' + $msg
+}
 $items = @()
 foreach ($update in $result.Updates) {
   $categories = @()
@@ -120,7 +134,9 @@ $catalogUsable = $(if ($syncAgeDays -eq $null) { $false } else { $syncAgeDays -l
 # Zero pending updates only means 'healthy' when the catalogue behind
 # that zero is trustworthy. Otherwise say 'unknown' and explain why --
 # an honest gap beats a green row that nobody will look at again.
-$scanStatus = $(if ($items.Count -gt 0) {
+$scanStatus = $(if ($searchError) {
+  'unknown'
+} elseif ($items.Count -gt 0) {
   'updates_available'
 } elseif ($catalogUsable) {
   'healthy'
@@ -128,7 +144,9 @@ $scanStatus = $(if ($items.Count -gt 0) {
   'unknown'
 })
 
-$scanNote = $(if ($catalogUsable) {
+$scanNote = $(if ($searchError) {
+  $searchError
+} elseif ($catalogUsable) {
   $null
 } elseif ($lastSyncUtc) {
   'Windows Update last synced ' + [int]$syncAgeDays + ' days ago; cached catalogue is stale, so a count of 0 is not evidence the machine is patched.'
@@ -278,11 +296,72 @@ $rebootPending = ($rebootWua -eq $true) -or $rebootCbs -or $rebootWu
             var psResult = RunPs($@"
 $mode = {modeJson}
 $targetKbs = @({targetKbsLiteral})
-$session = New-Object -ComObject Microsoft.Update.Session
-$searcher = $session.CreateUpdateSearcher()
-$searchResult = $searcher.Search(""IsInstalled=0 and IsHidden=0 and Type='Software'"")
+
+function Format-HResult($value) {{
+  try {{ '0x' + [Convert]::ToString([int]$value, 16) }} catch {{ $null }}
+}}
+
+# ⚠️ LAS EXCEPCIONES DE WUA NO SE TRAGAN (auditoría 1-oct-2026). En PowerShell
+# 5.1 una excepción de un método COM termina la SENTENCIA, no el script: hasta
+# hoy el script seguía con $searchResult a null y respondía 'no_updates', o
+# marcaba todo 'not_started 0x0'. El servicio de Windows Update desactivado
+# (0x80070422), un WSUS caído, el disco lleno (0x80070070) o Windows ya
+# instalando (0x80240016) llegaban al portal como «no había nada» o «0x0».
+# Ahora cada fase atrapa su excepción y responde 'failed' con la fase y el
+# HRESULT real (el de la excepción más interna: la COMException de WUA).
+function Get-ErrorHResult($err) {{
+  $e = $(try {{ $err.Exception }} catch {{ $null }})
+  $hr = 0
+  while ($e) {{
+    $h = $(try {{ [int]$e.HResult }} catch {{ 0 }})
+    if ($h -ne 0) {{ $hr = $h }}
+    $e = $e.InnerException
+  }}
+  return $hr
+}}
+
+function Get-ErrorText($err) {{
+  $msg = $(try {{ [string]$err.Exception.Message }} catch {{ 'unknown error' }})
+  if ($msg.Length -gt 300) {{ $msg = $msg.Substring(0, 300) }}
+  return $msg
+}}
+
+function Write-Fatal([string]$stage, [int]$hresult, [string]$message, $kbs) {{
+  $hr = Format-HResult $hresult
+  $now = (Get-Date).ToUniversalTime().ToString('o')
+  $res = @()
+  foreach ($k in @($kbs)) {{
+    $res += [pscustomobject]@{{ kb = [string]$k; result = 'failed'; hresult = $hr; message = $stage + '_failed' }}
+  }}
+  [pscustomobject]@{{
+    status = 'failed'
+    mode = $mode
+    source = 'windows_update_agent'
+    fatalStage = $stage
+    hresult = $hr
+    error = $message
+    startedAtUtc = $now
+    finishedAtUtc = $now
+    selectedCount = @($kbs).Count
+    installedCount = 0
+    failedCount = @($kbs).Count
+    rebootRequired = $false
+    results = $res
+    selected = @()
+  }} | ConvertTo-Json -Depth 8
+}}
+
+try {{
+  $session = New-Object -ComObject Microsoft.Update.Session
+  $searcher = $session.CreateUpdateSearcher()
+  $searchResult = $searcher.Search(""IsInstalled=0 and IsHidden=0 and Type='Software'"")
+}} catch {{
+  Write-Fatal 'search' (Get-ErrorHResult $_) (Get-ErrorText $_) $targetKbs
+  return
+}}
 $updates = New-Object -ComObject Microsoft.Update.UpdateColl
 $selected = @()
+$selectedKbs = @()
 
 foreach ($update in $searchResult.Updates) {{
   $categories = @()
@@ -315,6 +394,7 @@ foreach ($update in $searchResult.Updates) {{
   }}
 
   [void]$updates.Add($update)
+  $selectedKbs += $(if ($kbs.Count -gt 0) {{ $kbs[0] }} else {{ [string]$update.Title }})
   $selected += [pscustomobject]@{{
     updateId = $(try {{ [string]$update.Identity.UpdateID }} catch {{ $null }})
     revisionNumber = $(try {{ [int]$update.Identity.RevisionNumber }} catch {{ $null }})
@@ -350,10 +430,6 @@ $installedCount = 0
 $failedCount = 0
 $downloadedCount = 0
 
-function Format-HResult($value) {{
-  try {{ '0x' + [Convert]::ToString([int]$value, 16) }} catch {{ $null }}
-}}
-
 # OperationResultCode, by name. The bare number ('4') was all the operator
 # used to get for a failed install.
 function Get-ResultCodeName($code) {{
@@ -382,9 +458,14 @@ function Get-KbList($update) {{
 $downloadVerdicts = @()
 
 if ($mode -eq 'download' -or $mode -eq 'install') {{
-  $downloader = $session.CreateUpdateDownloader()
-  $downloader.Updates = $updates
-  $downloadResult = $downloader.Download()
+  try {{
+    $downloader = $session.CreateUpdateDownloader()
+    $downloader.Updates = $updates
+    $downloadResult = $downloader.Download()
+  }} catch {{
+    Write-Fatal 'download' (Get-ErrorHResult $_) (Get-ErrorText $_) $selectedKbs
+    return
+  }}
 
   for ($i = 0; $i -lt $updates.Count; $i++) {{
     $update = $updates.Item($i)
@@ -457,7 +538,19 @@ if ($mode -eq 'install') {{
         }}
       }}
     }} else {{
-      $installResult = $installer.Install()
+      # Windows ya está instalando (sus actualizaciones automáticas, o una
+      # instalación nuestra anterior que agotó NUESTRO plazo y sigue en
+      # TrustedInstaller): Install() fallaría con 0x80240016. Se dice tal cual.
+      if ($(try {{ [bool]$installer.IsBusy }} catch {{ $false }})) {{
+        Write-Fatal 'install' -2145124330 'installer_busy: Windows Update is already installing on this device' $selectedKbs
+        return
+      }}
+      try {{
+        $installResult = $installer.Install()
+      }} catch {{
+        Write-Fatal 'install' (Get-ErrorHResult $_) (Get-ErrorText $_) $selectedKbs
+        return
+      }}
 
       for ($j = 0; $j -lt $toInstall.Count; $j++) {{
         $update = $toInstall.Item($j)

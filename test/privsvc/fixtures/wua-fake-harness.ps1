@@ -10,6 +10,10 @@
 #                  KB5121003 fails to install with 0x80070643
 #   reboot-pending everything downloads, WUA reports a reboot pending
 #   all-ok         everything downloads and installs
+#   search-throws  Search() throws 0x80070422 (Windows Update service disabled)
+#   download-throws Download() throws 0x80070070 (disk full)
+#   install-throws Install() throws 0x80240016 (another install in progress)
+#   installer-busy IUpdateInstaller.IsBusy is true
 param([string]$Scenario, [string]$ScriptPath)
 
 # Fakes for the three WUA COM objects the install script touches.
@@ -46,7 +50,13 @@ $script:DownloadOk = @{ KB5066747 = $false; KB5120708 = $true; KB5121003 = $true
 $script:InstallCode = @{ KB5120708 = 2; KB5121003 = 4 }   # OperationResultCode
 $script:InstallHResult = @{ KB5120708 = 0; KB5121003 = -2147023293 } # 0x80070643
 $script:RebootPending = $false
+$script:Throw = @{}
+$script:Busy = $false
 switch ($Scenario) {
+  'search-throws' { $script:Throw.Search = -2147023838 }        # 0x80070422
+  'download-throws' { $script:Throw.Download = -2147024784 }    # 0x80070070
+  'install-throws' { $script:DownloadOk = @{ KB5066747 = $true; KB5120708 = $true; KB5121003 = $true }; $script:Throw.Install = -2145124330 } # 0x80240016
+  'installer-busy' { $script:DownloadOk = @{ KB5066747 = $true; KB5120708 = $true; KB5121003 = $true }; $script:Busy = $true }
   'reboot-pending' { $script:DownloadOk = @{ KB5066747 = $true; KB5120708 = $true; KB5121003 = $true }; $script:RebootPending = $true }
   'all-ok' { $script:DownloadOk = @{ KB5066747 = $true; KB5120708 = $true; KB5121003 = $true }; $script:InstallCode = @{ KB5066747 = 2; KB5120708 = 2; KB5121003 = 3 }; $script:InstallHResult = @{} }
 }
@@ -55,6 +65,7 @@ function New-Downloader {
   $d = [pscustomobject]@{ Updates = $null; perUpdate = @() }
   $d | Add-Member -MemberType ScriptMethod -Name Download -Value {
     $script:Calls.Add('Download') | Out-Null
+    if ($script:Throw.Download) { throw [System.Runtime.InteropServices.COMException]::new('Exception from HRESULT', [int]$script:Throw.Download) }
     $this.perUpdate = @()
     for ($i = 0; $i -lt $this.Updates.Count; $i++) {
       $u = $this.Updates.Item($i)
@@ -71,9 +82,10 @@ function New-Downloader {
 }
 
 function New-Installer {
-  $inst = [pscustomobject]@{ Updates = $null; RebootRequiredBeforeInstallation = $script:RebootPending }
+  $inst = [pscustomobject]@{ Updates = $null; RebootRequiredBeforeInstallation = $script:RebootPending; IsBusy = $script:Busy }
   $inst | Add-Member -MemberType ScriptMethod -Name Install -Value {
     $script:Calls.Add('Install:' + (@(0..($this.Updates.Count-1) | % { 'KB' + $this.Updates.Item($_).KBArticleIDs[0] }) -join ',')) | Out-Null
+    if ($script:Throw.Install) { throw [System.Runtime.InteropServices.COMException]::new('Exception from HRESULT', [int]$script:Throw.Install) }
     $per = @()
     for ($j = 0; $j -lt $this.Updates.Count; $j++) {
       $kb = 'KB' + $this.Updates.Item($j).KBArticleIDs[0]
@@ -91,7 +103,11 @@ function New-Installer {
 $script:Session = [pscustomobject]@{}
 $script:Session | Add-Member -MemberType ScriptMethod -Name CreateUpdateSearcher -Value {
   $s = [pscustomobject]@{}
-  $s | Add-Member -MemberType ScriptMethod -Name Search -Value { param($q) return [pscustomobject]@{ Updates = $script:Updates } }
+  $s | Add-Member -MemberType ScriptMethod -Name Search -Value {
+    param($q)
+    if ($script:Throw.Search) { throw [System.Runtime.InteropServices.COMException]::new('Exception from HRESULT', [int]$script:Throw.Search) }
+    return [pscustomobject]@{ Updates = $script:Updates }
+  }
   return $s
 }
 $script:Session | Add-Member -MemberType ScriptMethod -Name CreateUpdateDownloader -Value { return (New-Downloader) }
@@ -113,5 +129,7 @@ $obj = $json | ConvertFrom-Json
   installedCount = $obj.installedCount
   failedCount = $obj.failedCount
   rebootRequired = $obj.rebootRequired
+  fatalStage = $obj.fatalStage
+  hresult = $obj.hresult
   results = @($obj.results | % { "$($_.kb) $($_.result) $($_.hresult) $($_.message)" })
 } | ConvertTo-Json -Depth 5

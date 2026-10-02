@@ -1159,6 +1159,14 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
               message: "not in the device's live pending list (already installed, superseded or no longer offered)"
             }))
           ];
+          // Fallo de una fase entera de Windows Update (buscar, descargar,
+          // instalar) con su HRESULT real: es lo único accionable que el
+          // operador verá en la ficha del job (auditoría 1-oct-2026). Sin `;`,
+          // que es el separador que lee parsePatchInstallAck en el backend.
+          const fatalSuffix = result?.fatalStage
+            ? `; stage=${String(result.fatalStage)}; hresult=${String(result.hresult ?? "unknown")}` +
+              (result?.error ? ` — ${String(result.error).replace(/[;\r\n]+/g, " ").slice(0, 200)}` : "")
+            : "";
           const sinCasarSuffix = sinCasar.length > 0
             ? `; notMatched=${sinCasar.length} (${sinCasar.slice(0, 5).join(", ")}${sinCasar.length > 5 ? ", …" : ""})`
             : "";
@@ -1248,7 +1256,7 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
 
           return {
             status: 2,
-            message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}${rebootSuffix}${emparejamientoVacio ? "" : sinCasarSuffix}${detalle}`
+            message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}${rebootSuffix}${fatalSuffix}${emparejamientoVacio ? "" : sinCasarSuffix}${detalle}`
           };
         } catch (err: any) {
           updatePmpState({
