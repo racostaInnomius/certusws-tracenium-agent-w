@@ -381,7 +381,7 @@ public static class SecurityCompliance
         try
         {
             var output = RunPs(
-                "Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, AMServiceEnabled, AntivirusEnabled, AMProductVersion, AMEngineVersion, AntivirusSignatureVersion, AntispywareSignatureVersion, QuickScanEndTime, FullScanEndTime | ConvertTo-Json -Depth 4"
+                "Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, AMServiceEnabled, AntivirusEnabled, AMProductVersion, AMEngineVersion, AntivirusSignatureVersion, AntispywareSignatureVersion, QuickScanEndTime, FullScanEndTime, AntivirusSignatureAge, AntivirusSignatureLastUpdated | ConvertTo-Json -Depth 4"
             );
 
             // Sin salida no hay lectura, y sin lectura no hay veredicto:

@@ -115,4 +115,25 @@ public class DefenderStatusShapeTests
         Assert.Null(shaped!["engineVersion"]);
         Assert.Null(shaped["signatureVersion"]);
     }
+
+    [Fact]
+    public void La_antiguedad_de_las_firmas_viaja_para_que_el_check_pueda_exigir_firmas_al_dia()
+    {
+        // ADR-0038, 2-oct-2026: el check «signatures_reported» (PCI 5.3.1)
+        // sólo miraba que hubiera una versión.
+        var d = Status(service: true, realtime: true, antivirus: true);
+        d["AntivirusSignatureAge"] = System.Text.Json.JsonDocument.Parse("12").RootElement;
+        d["AntivirusSignatureLastUpdated"] = "/Date(1727712000000)/";
+        var shaped = DefenderStatusShape.FromComputerStatus(d)!;
+        Assert.Equal(12L, shaped["signatureAgeDays"]);
+        // El formato de PowerShell 5.1, convertido a ISO UTC.
+        Assert.Equal("2024-09-30T16:00:00.0000000Z", shaped["signatureLastUpdatedUtc"]);
+    }
+
+    [Fact]
+    public void Sin_dato_de_antiguedad_el_campo_va_vacio_no_inventado()
+    {
+        var shaped = DefenderStatusShape.FromComputerStatus(Status(service: true, realtime: true, antivirus: true))!;
+        Assert.Null(shaped["signatureAgeDays"]);
+    }
 }

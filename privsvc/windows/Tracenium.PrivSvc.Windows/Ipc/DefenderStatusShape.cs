@@ -77,6 +77,13 @@ public static class DefenderStatusShape
             ["antispywareSignatureVersion"] = GetString(obj, "AntispywareSignatureVersion"),
             ["lastQuickScanUtc"] = GetDateString(obj, "QuickScanEndTime"),
             ["lastFullScanUtc"] = GetDateString(obj, "FullScanEndTime"),
+            // ADR-0038 (2-oct-2026): la ANTIGÜEDAD de las firmas. El check
+            // `windows.defender.signatures_reported` —mapeado a PCI 5.3.1
+            // «kept current»— sólo miraba que hubiera un número de versión, y
+            // las definiciones dejaron de contar como parche pendiente (que
+            // era la única pista, accidental, de unas firmas paradas).
+            ["signatureAgeDays"] = GetLong(obj, "AntivirusSignatureAge"),
+            ["signatureLastUpdatedUtc"] = GetDateString(obj, "AntivirusSignatureLastUpdated"),
         };
     }
 
@@ -103,9 +110,22 @@ public static class DefenderStatusShape
         return null;
     }
 
+    internal static long? GetLong(Dictionary<string, object> obj, string key)
+    {
+        var value = GetString(obj, key);
+        return long.TryParse(value, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : null;
+    }
+
     internal static string? GetDateString(Dictionary<string, object> obj, string key)
     {
         var value = GetString(obj, key);
+        // ⚠️ PowerShell 5.1 (el de los equipos; ver DC con PS 5.1) serializa un
+        // DateTime como «/Date(1727712345678)/», que DateTime.TryParse no
+        // entiende: el valor llegaba crudo al backend. pwsh 7 manda ISO.
+        var m = value == null ? null : System.Text.RegularExpressions.Regex.Match(value, @"^/Date\((-?\d+)(?:[+-]\d{4})?\)/$");
+        if (m is { Success: true } && long.TryParse(m.Groups[1].Value, out var ms))
+            return DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime.ToString("o");
         if (DateTime.TryParse(value, out var parsed))
             return parsed.ToUniversalTime().ToString("o");
         return value;
