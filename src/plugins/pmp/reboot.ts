@@ -37,7 +37,12 @@ export type PatchRebootReason =
   /** This run installed nothing, so there is nothing of ours to complete. */
   | "nothing_installed"
   /** Go. */
-  | "reboot_required";
+  | "reboot_required"
+  /**
+   * Restart so the install CAN happen: Windows refuses to install anything
+   * while a restart from an earlier change is pending (ADR-0038 D9).
+   */
+  | "reboot_to_install";
 
 export interface PatchRebootDecision {
   reboot: boolean;
@@ -64,12 +69,11 @@ export interface PatchRebootInput {
  * stay visible in the ACK's own counts, and a failed patch keeps its snapshot
  * by the retention rule, so nothing is hidden by restarting.
  *
- * A run that installed NOTHING never restarts, even when the machine reports a
- * pending reboot. That pending flag belongs to some earlier change, and
- * restarting a production server on the strength of somebody else's leftover —
- * when the operator's own action did nothing — is exactly the surprise this
- * feature must not produce. It stays visible as `rebootRequired` for whoever
- * owns that change.
+ * A run that installed NOTHING never restarts here, even when the machine
+ * reports a pending reboot: that flag belongs to some earlier change. The ONE
+ * exception lives in planRebootToInstall below — when that pending restart is
+ * what stops the operator's own install (decided by the user on 1-oct-2026,
+ * ADR-0038 D9).
  */
 export function planPatchReboot(input: PatchRebootInput): PatchRebootDecision {
   const graceMs = Math.max(0, input.graceMs ?? DEFAULT_REBOOT_GRACE_MS);
@@ -177,3 +181,20 @@ export function planDeviceReboot(payload: unknown): DeviceRebootPlan {
     comment: `Tracenium: restart requested by your IT administrator${reason ? ` (${reason})` : ""}`,
   };
 }
+
+/**
+ * Restart so the install can go through (ADR-0038 D9, decided 1-oct-2026).
+ *
+ * Windows will not install anything while a restart from an EARLIER change is
+ * pending (`RebootRequiredBeforeInstallation`). Until now the job failed with
+ * «restart the device, then dispatch again» and every retry failed the same
+ * way. With the operator's «restart if required», that restart is part of what
+ * they asked for: restart, and let the control plane re-send the same job
+ * (ACK_RETRY) once the device is back. Without the opt-in, nothing restarts.
+ */
+export function planRebootToInstall(rebootIfRequired: boolean, graceMs = DEFAULT_REBOOT_GRACE_MS): PatchRebootDecision {
+  return rebootIfRequired
+    ? { reboot: true, reason: "reboot_to_install", graceMs: Math.max(0, graceMs) }
+    : { reboot: false, reason: "not_requested", graceMs: Math.max(0, graceMs) };
+}
+

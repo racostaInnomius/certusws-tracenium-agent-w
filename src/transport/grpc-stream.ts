@@ -16,7 +16,7 @@ import type { Namespaces, DeviceFacts } from "../domain/device-facts";
 import type { PmpNamespace } from "../domain/pmp-types";
 import { updatePmpState, isRemediateInFlight, rememberSuccessAck, replayForRedispatch } from "../plugins/pmp/state";
 import { runRemediation } from "../plugins/pmp/remediation";
-import { planPatchReboot, planDeviceReboot, rebootAckSuffix } from "../plugins/pmp/reboot";
+import { planPatchReboot, planDeviceReboot, planRebootToInstall, rebootAckSuffix } from "../plugins/pmp/reboot";
 import { armPatchReboot, armDeviceReboot } from "../plugins/pmp/reboot-exec";
 import { acceptUserActionJob, applyEvents, commitUserActions, loadUserActions, parseUserActionPayload } from "../user-actions/user-actions";
 import { consumeUserActionEvents } from "../user-actions/user-action-events-watcher";
@@ -1249,6 +1249,27 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
           // documents the opposite failure (exit 1641): the ACK loses the race
           // with a restart it did not schedule, the job sits in `sent`, and the
           // orchestrator re-runs the whole patch ~32 minutes later.
+          // ── Reiniciar PARA PODER instalar (ADR-0038 D9, decidido 1-oct) ──────
+          // Windows no instala nada con un reinicio pendiente de un cambio
+          // ANTERIOR. Con «restart if required» ese reinicio es parte de lo que
+          // pidió el operador: se arma y se pide reintento, y el control plane
+          // reenvía el MISMO job cuando el equipo vuelve (la alerta «¿volvió?»
+          // lo vigila: el mensaje lleva rebootScheduled=true).
+          const reinicioPrevio =
+            devueltos.length > 0 && devueltos.every((r) => r.message === "reboot_pending_before_install");
+          let reinicioPrevioRechazado = false;
+          if (reinicioPrevio && rebootIfRequired) {
+            const plan = planRebootToInstall(true);
+            if (await armPatchReboot(plan, { logger: ctx.logger })) {
+              updatePmpState({ status: "idle", finishedAtUtc: new Date().toISOString(), lastError: undefined, results: [] });
+              return {
+                status: 1,
+                message: `patch_install retry: reboot_pending_before_install${rebootAckSuffix(plan, true)}`
+              };
+            }
+            reinicioPrevioRechazado = true;
+          }
+
           const rebootPlan = planPatchReboot({
             rebootIfRequired,
             rebootRequired,
@@ -1270,19 +1291,17 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
           // El motivo tiene que caber en el ACK, porque es lo único que el
           // operador va a ver en la ficha del job. «no_matching_patches» a secas
           // se lee como un código interno; hay que decir qué pasó y qué hacer.
-          // Un reinicio pendiente de un cambio ANTERIOR: Windows no instala nada
-          // hasta reiniciar. No reiniciamos por nuestra cuenta (planPatchReboot:
-          // lo que no instaló nada no reinicia un servidor por un cambio ajeno),
-          // pero el operador tiene que saber que el bloqueo es ESE y qué hacer
-          // (auditoría 1-oct-2026: cada reintento fallaba igual, sin explicarlo).
-          const reinicioPrevio =
-            devueltos.length > 0 && devueltos.every((r) => r.message === "reboot_pending_before_install");
+          // Reinicio pendiente de antes SIN «restart if required» (o que el SO no
+          // aceptó): el operador tiene que saber que el bloqueo es ESE y qué hacer.
           const detalle = emparejamientoVacio
             ? `; none of the ${kbArticleIds.length} requested patch(es) matched the device's live ` +
               `pending list — they may already be installed, or this list is stale; re-scan and check`
             : reinicioPrevio
-              ? "; reboot_pending_before_install — Windows needs the restart from an earlier change before it " +
-                "installs anything: restart the device, then dispatch again"
+              ? reinicioPrevioRechazado
+                ? "; reboot_pending_before_install — the restart that would unblock the install was refused " +
+                  "by the operating system; restart the device, then dispatch again"
+                : "; reboot_pending_before_install — Windows needs the restart from an earlier change before it " +
+                  "installs anything: restart the device (or dispatch with restart enabled), then dispatch again"
               : "";
 
           return {

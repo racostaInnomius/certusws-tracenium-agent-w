@@ -5,6 +5,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  planRebootToInstall,
   planPatchReboot,
   rebootCommandFor,
   rebootCancelCommandFor,
@@ -212,7 +213,7 @@ describe("armDeviceReboot", () => {
 });
 
 describe("reinicio pendiente de ANTES (auditoría 1-oct-2026)", () => {
-  it("no reinicia por su cuenta: no se instaló nada (decisión de producto, planPatchReboot)", () => {
+  it("planPatchReboot sigue sin reiniciar cuando no se instaló nada", () => {
     expect(planPatchReboot({ ...base, installedCount: 0, failedCount: 3 }).reboot).toBe(false);
   });
 
@@ -222,3 +223,22 @@ describe("reinicio pendiente de ANTES (auditoría 1-oct-2026)", () => {
     expect(src).toMatch(/restart the device, then dispatch again/);
   });
 });
+
+describe("🔴 reiniciar PARA PODER instalar (ADR-0038 D9, decidido 1-oct)", () => {
+  it("con «restart if required» se reinicia; sin él, no", () => {
+    expect(planRebootToInstall(true)).toEqual({ reboot: true, reason: "reboot_to_install", graceMs: 60_000 });
+    expect(planRebootToInstall(false).reboot).toBe(false);
+  });
+
+  it("el agente lo arma y pide REINTENTO del mismo job, con rebootScheduled=true para la alerta «¿volvió?»", () => {
+    const src = require("fs").readFileSync(require("path").join(__dirname, "../../src/transport/grpc-stream.ts"), "utf8");
+    const bloque = src.slice(src.indexOf("if (reinicioPrevio && rebootIfRequired)"), src.indexOf("const rebootPlan = planPatchReboot("));
+    expect(bloque).toMatch(/planRebootToInstall\(true\)/);
+    expect(bloque).toMatch(/status: 1,/);
+    expect(bloque).toMatch(/patch_install retry: reboot_pending_before_install\$\{rebootAckSuffix\(plan, true\)\}/);
+    // El ACK de reintento lo guarda el backend como `agent_retry:<mensaje>` (200
+    // caracteres) y la alerta busca `rebootScheduled=true` ahí dentro.
+    expect(`agent_retry:patch_install retry: reboot_pending_before_install; rebootScheduled=true; rebootInSec=60`.length).toBeLessThan(200);
+  });
+});
+
