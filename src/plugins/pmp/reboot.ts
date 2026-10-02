@@ -122,8 +122,19 @@ export function rebootCancelCommandFor(platform: NodeJS.Platform): { cmd: string
 }
 
 /** The ACK suffix that tells the control plane a restart is on its way. */
-export function rebootAckSuffix(d: PatchRebootDecision): string {
-  return d.reboot ? `; rebootScheduled=true; rebootInSec=${Math.round(d.graceMs / 1000)}` : "";
+/**
+ * El trozo del ACK que cuenta el reinicio.
+ *
+ * ⚠️ `armed` (auditoría 1-oct-2026): antes se decía `rebootScheduled=true` en
+ * cuanto se DECIDÍA reiniciar, aunque `shutdown` no lo aceptara (p. ej. 1190,
+ * «ya hay un apagado programado»). El backend espera entonces un arranque que
+ * no llega y el equipo se queda en «awaiting reboot». Sin armar, se dice.
+ */
+export function rebootAckSuffix(d: PatchRebootDecision, armed = true): string {
+  if (!d.reboot) return "";
+  return armed
+    ? `; rebootScheduled=true; rebootInSec=${Math.round(d.graceMs / 1000)}`
+    : "; rebootScheduled=false; rebootError=os_refused_restart";
 }
 
 // ── Reinicio bajo demanda (job `device_reboot`, 17-sep) ─────────────────────

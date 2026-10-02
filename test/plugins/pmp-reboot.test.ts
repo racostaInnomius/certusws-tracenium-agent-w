@@ -111,6 +111,12 @@ describe("rebootAckSuffix", () => {
   it("says nothing when nothing is scheduled", () => {
     expect(rebootAckSuffix(planPatchReboot({ ...base, rebootIfRequired: false }))).toBe("");
   });
+
+  it("🔴 if the OS refused the restart, it says so instead of rebootScheduled=true (1-oct-2026)", () => {
+    // parsePatchInstallAck (backend) reads rebootScheduled=false: it will not
+    // wait for a boot that is not coming.
+    expect(rebootAckSuffix(planPatchReboot(base), false)).toBe("; rebootScheduled=false; rebootError=os_refused_restart");
+  });
 });
 
 // ── the executor ───────────────────────────────────────────────────────────

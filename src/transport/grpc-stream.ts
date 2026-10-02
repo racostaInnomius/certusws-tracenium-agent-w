@@ -1255,10 +1255,10 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
             installedCount,
             failedCount
           });
-          if (rebootPlan.reboot) {
-            await armPatchReboot(rebootPlan, { logger: ctx.logger });
-          }
-          const rebootSuffix = rebootAckSuffix(rebootPlan);
+          const rebootArmed = rebootPlan.reboot
+            ? await armPatchReboot(rebootPlan, { logger: ctx.logger })
+            : false;
+          const rebootSuffix = rebootAckSuffix(rebootPlan, rebootArmed);
 
           if (resultStatus === "success" || resultStatus === "no_updates") {
             const okMessage = `patch_install ${resultStatus}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}${rebootSuffix}${sinCasarSuffix}`;

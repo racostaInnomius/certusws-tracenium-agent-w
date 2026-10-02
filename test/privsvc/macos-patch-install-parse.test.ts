@@ -119,3 +119,31 @@ describe("parseInstallOutput", () => {
     expect(parseInstallOutput([], "Software Update Tool").status).toBe("no_updates");
   });
 });
+
+// ── Auditoría PMP 1-oct-2026 ─────────────────────────────────────────────────
+describe("parseInstallOutput — reinicio sólo si algo entró", () => {
+  it("todo fallido → rebootRequired=false (antes dejaba el equipo en reboot_required)", () => {
+    const out = ["Downloading macOS Tahoe 26.6.2", "Error downloading macOS Tahoe 26.6.2: Not enough space. Restart required later."].join("\n");
+    const parsed = parseInstallOutput([ITEM], out);
+    expect(parsed.failedCount).toBe(1);
+    expect(parsed.rebootRequired).toBe(false);
+  });
+});
+
+describe("softwareupdate matado por nuestro plazo", () => {
+  const src = require("fs").readFileSync(require("path").join(__dirname, "../../privsvc/macos/src/patch-management.ts"), "utf8");
+
+  it("🔴 no se parsea como instalado: responde patch_install_timeout ANTES de parsear", () => {
+    const corte = src.indexOf("if (install.signal) {");
+    expect(corte).toBeGreaterThan(0);
+    expect(src.indexOf("parseInstallOutput(selectedItems, install.output)")).toBeGreaterThan(corte);
+  });
+
+  it("el texto casa con la firma del control plane (install-interrupted.ts → agent_timeout)", () => {
+    // Copia literal de la firma del backend; si una cambia, la otra también.
+    const FIRMA = /exceeded\s+\d+\s*min\.\s*Process was killed/i;
+    const msg = "patch_install failed: softwareupdate exceeded 60min. Process was killed (SIGTERM). macOS may still be installing: the outcome is unknown until the next scan.";
+    expect(FIRMA.test(msg)).toBe(true);
+    expect(src).toMatch(/softwareupdate exceeded \$\{Math\.round\(INSTALL_TIMEOUT_MS \/ 60_000\)\}min\. Process was killed/);
+  });
+});

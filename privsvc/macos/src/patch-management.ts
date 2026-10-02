@@ -280,6 +280,9 @@ function parseSoftwareUpdateList(output: string): MacPatchItem[] {
  * So this reads line by line and keeps track of which update the tool is
  * currently talking about, the way a person reading the log would.
  */
+/** Lo que esperamos a softwareupdate antes de dejar de esperar (no de instalar). */
+const INSTALL_TIMEOUT_MS = 60 * 60 * 1000;
+
 export function parseInstallOutput(items: MacPatchItem[], output: string) {
   type Outcome = "installed" | "downloaded" | "failed" | "skipped";
 
@@ -349,7 +352,10 @@ export function parseInstallOutput(items: MacPatchItem[], output: string) {
 
   const installedCount = results.filter((r) => r.result === "installed" || r.result === "downloaded").length;
   const failedCount = results.filter((r) => r.result === "failed").length;
-  const rebootRequired = items.some((item) => item.requiresRestart) || /restart/i.test(output.toLowerCase());
+  // Sólo si algo entró: un reinicio «requerido» por updates que fallaron todos
+  // dejaba el equipo en reboot_required (score 60) sin nada que aplicar.
+  const rebootRequired =
+    installedCount > 0 && (items.some((item) => item.requiresRestart) || /restart/i.test(output.toLowerCase()));
 
   let status: "success" | "partial" | "failed" | "no_updates" = "success";
   if (items.length === 0) {
@@ -472,7 +478,7 @@ export async function handlePatchInstall(req: PrivSvcRequest): Promise<PrivSvcRe
     const args = mode === "download" ? ["--download"] : ["--install"];
     args.push(...selectedItems.map((item) => item.label));
 
-    const install = await runInstall("/usr/sbin/softwareupdate", args, 60 * 60 * 1000);
+    const install = await runInstall("/usr/sbin/softwareupdate", args, INSTALL_TIMEOUT_MS);
     if (install.ownerAuthRequired) {
       logger.warn("patch.install.owner_auth_required", {
         id: req.id,
@@ -496,6 +502,19 @@ export async function handlePatchInstall(req: PrivSvcRequest): Promise<PrivSvcRe
           message: OWNER_AUTH_MESSAGE
         }))
       });
+    }
+    // ⚠️ softwareupdate MATADO por nuestro plazo (auditoría 1-oct-2026). Su
+    // salida se cortó a mitad y el parser contaba «Installing …» como
+    // instalado: un update a medio poner salía `installed`. Lo honesto es lo
+    // que hace Windows: «no lo sabemos», con la firma que el control plane
+    // reconoce (install-interrupted.ts) y resuelve con el escaneo posterior.
+    if (install.signal) {
+      return fail(
+        req.id,
+        "patch_install_timeout",
+        `softwareupdate exceeded ${Math.round(INSTALL_TIMEOUT_MS / 60_000)}min. Process was killed (${install.signal}). ` +
+          `macOS may still be installing: the outcome is unknown until the next scan.`
+      );
     }
     if (!install.ok && !install.output) {
       return fail(req.id, "patch_install_failed", "softwareupdate returned no output");
