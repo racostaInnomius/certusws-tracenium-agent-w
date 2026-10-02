@@ -14,7 +14,7 @@ import { PolicyStore } from "../core/policy-store";
 import { buildDeviceFacts } from "../domain/device-facts-builder";
 import type { Namespaces, DeviceFacts } from "../domain/device-facts";
 import type { PmpNamespace } from "../domain/pmp-types";
-import { updatePmpState, isRemediateInFlight } from "../plugins/pmp/state";
+import { updatePmpState, isRemediateInFlight, rememberSuccessAck, replayForRedispatch } from "../plugins/pmp/state";
 import { runRemediation } from "../plugins/pmp/remediation";
 import { planPatchReboot, planDeviceReboot, rebootAckSuffix } from "../plugins/pmp/reboot";
 import { armPatchReboot, armDeviceReboot } from "../plugins/pmp/reboot-exec";
@@ -1057,6 +1057,17 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
         };
       }
 
+      // Reenvío del MISMO job (ACK perdido, o agente reiniciado a mitad): no se
+      // reinstala a ciegas. Ver replayForRedispatch (auditoría 1-oct-2026).
+      const repetido = replayForRedispatch(jobId);
+      if (repetido) {
+        ctx.logger?.warn?.("[pmp] patch_install re-dispatched for a job already run here", {
+          jobId,
+          status: repetido.status
+        });
+        return repetido;
+      }
+
       const mode = String(payload?.mode || "install").trim().toLowerCase();
       // Opt-in, per run. Absent means NO: nothing restarts a production server
       // that was not explicitly enrolled in it.
@@ -1101,6 +1112,7 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       (ctx as any)._patchInstallInProgress = true;
       updatePmpState({
         status: "in_progress",
+        jobId,
         mode,
         startedAtUtc: new Date().toISOString(),
         selectedCount: kbArticleIds.length || undefined,
@@ -1240,10 +1252,10 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
           const rebootSuffix = rebootAckSuffix(rebootPlan);
 
           if (resultStatus === "success" || resultStatus === "no_updates") {
-            return {
-              status: 0,
-              message: `patch_install ${resultStatus}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}${rebootSuffix}${sinCasarSuffix}`
-            };
+            const okMessage = `patch_install ${resultStatus}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}${rebootSuffix}${sinCasarSuffix}`;
+            // Antes del return: si este ACK se pierde y el job vuelve, se repite.
+            rememberSuccessAck(jobId, okMessage);
+            return { status: 0, message: okMessage };
           }
 
           // El motivo tiene que caber en el ACK, porque es lo único que el

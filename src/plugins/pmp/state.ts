@@ -13,6 +13,10 @@ export interface PmpRemediationState {
   selectedCount?: number;
   lastError?: string;
   results?: NonNullable<PmpNamespace["remediation"]>["results"];
+  /** El job que escribió este estado (para reconocer un reenvío). */
+  jobId?: string;
+  /** El ACK de éxito que se mandó para `jobId`, para repetirlo si se reenvía. */
+  successAck?: { jobId: string; status: 0; message: string };
 }
 
 function ensureDir(dir: string) {
@@ -162,3 +166,42 @@ export function finishRemediate(): void {
 export function isRemediateInFlight(): boolean {
   return remediateInFlight;
 }
+
+// ── Un patch_install REENVIADO no se vuelve a ejecutar a ciegas ─────────────
+//
+// ⚠️ AUDITORÍA PMP 1-oct-2026. Si el ACK se pierde (la instalación termina en
+// mitad de una reconexión, o el agente se reinicia con el install en vuelo), el
+// backend agota el plazo del job y lo REENVÍA con el mismo jobId. Volver a
+// ejecutarlo daba un falso fallo: Windows Update ya no ofrece lo que acaba de
+// instalar → `no_updates` sobre una lista explícita → «no_matching_patches»,
+// sobre un equipo parcheado. Y con `rebootIfRequired`, otro reinicio.
+//
+//   · El job ya acabó BIEN aquí → se repite el mismo ACK de éxito.
+//   · El job se cortó porque el agente se reinició → se dice eso, con una
+//     firma que el control plane reconoce (install-interrupted.ts) y resuelve
+//     con el escaneo posterior. Una sola vez: un reintento explícito después
+//     vuelve a ejecutar.
+//   · Cualquier otro caso (un fallo, un job nuevo) → se ejecuta.
+
+export const INTERRUPTED_BY_RESTART_MESSAGE =
+  "patch_install interrupted: agent_restarted during the install; the outcome is unknown until the next scan";
+
+export function replayForRedispatch(jobId: string): { status: number; message: string } | null {
+  if (!jobId) return null;
+  const state = loadPmpState();
+  if (state.successAck && state.successAck.jobId === jobId) {
+    return { status: 0, message: state.successAck.message };
+  }
+  if (state.jobId === jobId && state.lastError === AGENT_RESTARTED_ERROR) {
+    // Una vez: si el operador lo reintenta a propósito, que se ejecute.
+    updatePmpState({ jobId: undefined });
+    return { status: 2, message: INTERRUPTED_BY_RESTART_MESSAGE };
+  }
+  return null;
+}
+
+export function rememberSuccessAck(jobId: string, message: string): void {
+  if (!jobId) return;
+  updatePmpState({ successAck: { jobId, status: 0, message } });
+}
+
