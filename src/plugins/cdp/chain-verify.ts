@@ -71,8 +71,12 @@ export function annotateStoreChains(items: CdpCertItem[], derByFingerprint: Read
     bySubject.set(node.cert.subject, list);
     // «Raíz de confianza del SO» = autofirmada en un almacén de raíces del
     // sistema operativo. NO los cacerts de Java ni NSS: son la confianza de
-    // una aplicación, no la del equipo.
-    if (item.source === "store" && item.store.scope === "system-roots" && node.selfSigned) trustedRoots.add(node.fp);
+    // una aplicación, no la del equipo. En macOS también la de System.keychain
+    // en la que el propio sistema dice confiar (`trustAnchor`, verify-cert):
+    // una CA de empresa instalada con confianza de administrador.
+    if (item.source === "store" && node.selfSigned && (item.store.scope === "system-roots" || item.trustAnchor === true)) {
+      trustedRoots.add(node.fp);
+    }
   }
 
   const memo = new Map<string, CdpChainVerdict | null>();

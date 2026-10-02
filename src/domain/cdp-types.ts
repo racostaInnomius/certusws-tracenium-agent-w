@@ -170,6 +170,17 @@ export type CdpCertItem = {
   keyStorage?: CdpKeyStorage;
   /** Ola 1.3a — ver CdpChainVerdict. */
   chain?: CdpChainVerdict;
+  /**
+   * ¿Confía el SO en esta raíz? Lo dice el propio sistema, no la presencia.
+   *
+   * Sólo macOS, sólo raíces (CA autofirmada) de System.keychain: ahí estar
+   * en el llavero NO da confianza, la dan los trust settings. Medido el
+   * 2-oct-2026: la «Tracenium Root CA» de este agente vive en System.keychain
+   * sin confianza, y `mkcert -uninstall` quita la confianza pero deja el
+   * certificado. Ausente = sin evaluar (otra plataforma, donde estar en el
+   * almacén de raíces SÍ es la confianza, o macOS no dio un veredicto claro).
+   */
+  trustAnchor?: boolean;
 
   keyUsage?: string[];
   extendedKeyUsage?: string[];

@@ -12,8 +12,17 @@
 // equivalente en macOS de los stores CurrentUser de Windows, y cerrarlo
 // aqui elimina una asimetria incomoda — teniamos visibilidad de los
 // certificados por usuario en Windows y ninguna en Mac.
+//
+// trustAnchor (2-oct-2026): estar en System.keychain NO da confianza en
+// macOS; la dan los trust settings. Contabamos cualquier raiz del llavero
+// como «en el trust store»: la «Tracenium Root CA» de este agente (sin
+// confianza) y la de mkcert tras `mkcert -uninstall` (que solo quita la
+// confianza). Ahora a cada raiz de System.keychain se le pregunta al propio
+// sistema con `security verify-cert`, que aplica todos los trust settings
+// —los de admin, los que pone un perfil— sin que tengamos que imitarlos.
 
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -115,6 +124,78 @@ export type MacosCdpResult = {
   unreadable: CdpUnreadableStore[];
 };
 
+const SYSTEM_STORE_ID = "keychain/system";
+
+/**
+ * Tope de raices a verificar por escaneo. Un System.keychain normal tiene
+ * un punado (la de Tracenium, alguna de empresa); cada verificacion es un
+ * `security` de ~20 ms. Por encima, sin veredicto: se juzga por presencia.
+ */
+export const MAX_TRUST_CHECKS = 50;
+const VERIFY_TIMEOUT_MS = 10000;
+
+/** ¿Hay que preguntarle a macOS por la confianza de este certificado? */
+export function isTrustAnchorCandidate(item: CdpCertItem): boolean {
+  return item.store?.id === SYSTEM_STORE_ID && item.isCA === true && item.selfSigned === true;
+}
+
+export type VerifyCertResult = { ok: boolean; output: string };
+
+/**
+ * El veredicto de `security verify-cert` sobre una raiz. PURO.
+ *
+ * Exito → el sistema la acepta como ancla. Solo CSSMERR_TP_NOT_TRUSTED es
+ * «no confia»: cualquier otro fallo (timeout, un error que no es de
+ * confianza) queda SIN veredicto y la raiz se sigue juzgando por presencia.
+ * Ese es el lado seguro: una raiz sin veredicto cuenta, no se esconde.
+ *
+ * No hace falta fecha: macOS no comprueba la caducidad del ancla (medido:
+ * Apple Root CA - G3 verifica igual en 2010 y en 2045).
+ */
+export function trustAnchorFromVerify(r: VerifyCertResult | null): boolean | undefined {
+  if (!r) return undefined;
+  if (r.ok) return true;
+  return /CSSMERR_TP_NOT_TRUSTED/.test(r.output) ? false : undefined;
+}
+
+/** Pregunta a macOS si confia en esta raiz. null = no hubo respuesta. */
+export async function verifyCertWithSecurity(pem: string): Promise<VerifyCertResult | null> {
+  // verify-cert solo lee de fichero. Directorio propio 0700 (mkdtemp) y se
+  // borra siempre; el contenido es un certificado, publico por naturaleza.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tracenium-cdp-trust-"));
+  const file = path.join(dir, "root.pem");
+  try {
+    fs.writeFileSync(file, pem, { mode: 0o600 });
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        SECURITY_BIN,
+        // -L: sin red. -p basic: confianza a secas, sin reglas de TLS.
+        ["verify-cert", "-c", file, "-L", "-p", "basic"],
+        { timeout: VERIFY_TIMEOUT_MS, maxBuffer: 1024 * 1024 }
+      );
+      return { ok: true, output: `${stdout}${stderr}` };
+    } catch (err: any) {
+      // Salio con codigo: hay veredicto que leer. Sin codigo (timeout,
+      // binario ausente): no hubo respuesta.
+      if (typeof err?.code !== "number") return null;
+      return { ok: false, output: `${err.stdout ?? ""}${err.stderr ?? ""}` };
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Anota `trustAnchor` en las raices de System.keychain. Muta los items. */
+export async function annotateTrustAnchors(
+  roots: Array<{ item: CdpCertItem; pem: string }>,
+  verify: (pem: string) => Promise<VerifyCertResult | null> = verifyCertWithSecurity
+): Promise<void> {
+  for (const { item, pem } of roots.slice(0, MAX_TRUST_CHECKS)) {
+    const verdict = trustAnchorFromVerify(await verify(pem).catch(() => null));
+    if (verdict !== undefined) item.trustAnchor = verdict;
+  }
+}
+
 async function readKeychainPems(keychainPath: string): Promise<string[]> {
   const { stdout } = await execFileAsync(
     SECURITY_BIN,
@@ -154,6 +235,7 @@ export async function collectMacosCdp(): Promise<MacosCdpResult> {
   let loginRead = 0;
 
   const identityHashes = await readIdentityHashes();
+  const trustCandidates: Array<{ item: CdpCertItem; pem: string }> = [];
 
   const targets: Array<{ store: CdpStoreInfo; keychainPath: string }> = [
     {
@@ -226,9 +308,12 @@ export async function collectMacosCdp(): Promise<MacosCdpResult> {
       if (item.fingerprintSha1 && identityHashes.has(item.fingerprintSha1)) {
         item.hasPrivateKey = true;
       }
+      if (isTrustAnchorCandidate(item)) trustCandidates.push({ item, pem });
       items.push(item);
     }
   }
+
+  await annotateTrustAnchors(trustCandidates);
 
   return {
     items,
