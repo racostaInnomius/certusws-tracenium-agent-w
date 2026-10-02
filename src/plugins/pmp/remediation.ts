@@ -115,11 +115,13 @@ export const MAC_CONFIG_CAPABILITY = "pmp.remediate.macos_config";
  * El backend sólo despacha la verificación a quien lo anuncia.
  */
 export const PATCH_VERIFY_CAPABILITY = "pmp.patch_verify";
+/** ADR-0038 F2: foto previa antes de SDP / remediación / reinicio cuando se pide, y `verify_discover`. */
+export const CHANGE_VERIFY_CAPABILITY = "pmp.change_verify";
 
 export function pmpRemediateCapabilities(platform: NodeJS.Platform = process.platform): string[] {
-  if (platform === "linux") return [...PMP_REMEDIATE_CAPABILITIES, LINUX_CONFIG_CAPABILITY, LINUX_CONFIG_V2_CAPABILITY, LINUX_ACCEPTED_GUARD_CAPABILITY, PATCH_VERIFY_CAPABILITY];
-  if (platform === "darwin") return [...PMP_REMEDIATE_CAPABILITIES, MAC_CONFIG_CAPABILITY, PATCH_VERIFY_CAPABILITY];
-  return [...PMP_REMEDIATE_CAPABILITIES, PATCH_VERIFY_CAPABILITY];
+  if (platform === "linux") return [...PMP_REMEDIATE_CAPABILITIES, LINUX_CONFIG_CAPABILITY, LINUX_CONFIG_V2_CAPABILITY, LINUX_ACCEPTED_GUARD_CAPABILITY, PATCH_VERIFY_CAPABILITY, CHANGE_VERIFY_CAPABILITY];
+  if (platform === "darwin") return [...PMP_REMEDIATE_CAPABILITIES, MAC_CONFIG_CAPABILITY, PATCH_VERIFY_CAPABILITY, CHANGE_VERIFY_CAPABILITY];
+  return [...PMP_REMEDIATE_CAPABILITIES, PATCH_VERIFY_CAPABILITY, CHANGE_VERIFY_CAPABILITY];
 }
 
 /** Tope de fixes por job agrupado: el mismo que valida el backend. */

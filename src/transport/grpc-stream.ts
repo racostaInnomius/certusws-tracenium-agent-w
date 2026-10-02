@@ -41,7 +41,10 @@ import type { TrayCatalogItem } from "../status/tray-status-types";
 import { stageAttachedCdpDelivery } from "../domain/cdp-delivery";
 import { compareVerification, parseChecks, runCheck, snapshotServices } from "../plugins/pmp/verification";
 import { encodeVerificationAck } from "../plugins/pmp/verification-ack";
-import { loadBaseline, saveBaseline } from "../plugins/pmp/verification-store";
+import { loadBaseline } from "../plugins/pmp/verification-store";
+import { captureChangeBaseline, wantsBaseline } from "../plugins/pmp/change-baseline";
+import { encodeDiscoverAck } from "../plugins/pmp/verification-ack";
+import { observeListeners } from "../plugins/pmp/listeners";
 
 const ACK_TIMEOUT_MS = 60_000;
 const MAX_IN_FLIGHT = 3;
@@ -1130,18 +1133,8 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       // Servicios automáticos en marcha + las comprobaciones declaradas, JUSTO
       // antes de tocar nada. Nunca bloquea la instalación: si no se puede, la
       // verificación dirá «sin foto previa».
-      if (mode === "install") {
-        try {
-          const deps = defaultProbeDeps();
-          const checks = parseChecks(payload?.verification?.checks);
-          const [services, checksBefore] = await Promise.all([
-            snapshotServices(deps),
-            Promise.all(checks.map((c) => runCheck(deps, c))),
-          ]);
-          saveBaseline({ jobId, capturedAt: new Date().toISOString(), services, checks, checksBefore });
-        } catch (err) {
-          ctx.logger?.warn?.("[pmp] pre-install verification snapshot failed", { jobId, err: String(err) });
-        }
+      if (wantsBaseline("patch_install", payload)) {
+        await captureChangeBaseline(jobId, payload, { logger: ctx.logger });
       }
 
       try {
@@ -1378,6 +1371,14 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       return { status: 0, message: encodeVerificationAck(result) };
     }
 
+    case "verify_discover": {
+      // ADR-0038 F2 (D4): qué escucha y qué servicios automáticos corren, para
+      // SUGERIR comprobaciones. Sólo lectura; nada se guarda en el equipo.
+      const deps = defaultProbeDeps();
+      const [listeners, services] = await Promise.all([observeListeners(deps), snapshotServices(deps)]);
+      return { status: 0, message: encodeDiscoverAck({ listeners, services }) };
+    }
+
     case "device_reboot": {
       if ((ctx as any)._patchInstallInProgress) {
         return { status: 1, message: "device_reboot retry: patch install in progress" };
@@ -1392,6 +1393,11 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       const plan = planDeviceReboot(payload);
       if (!plan.ok) {
         return { status: 2, message: `device_reboot rejected: ${plan.error}` };
+      }
+
+      // ADR-0038 F2: la foto previa, si el control plane va a verificar.
+      if (wantsBaseline("device_reboot", payload)) {
+        await captureChangeBaseline(jobId, payload, { logger: ctx.logger });
       }
 
       // Mismo orden que tras un parche: el temporizador del SO se arma ANTES
@@ -1436,6 +1442,10 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       // lock; envelope + outcome encoding follow the same pattern
       // as software_install (see runRemediation in
       // plugins/pmp/remediation.ts).
+      // ADR-0038 F2: la foto previa (los ensayos no cambian nada: no la piden).
+      if (wantsBaseline("patch_remediate", payload)) {
+        await captureChangeBaseline(jobId, payload, { logger: ctx.logger });
+      }
       try {
         const ack = await runRemediation(ctx, jobId, payload);
         return { status: ack.ackStatus, message: ack.ackMessage };
@@ -1468,6 +1478,10 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
       // in the ack message as `software_install:<outcome>;...` so the
       // backend's P1-G ack handler can update software_install_results
       // without needing a new gRPC field.
+      // ADR-0038 F2: la foto previa, si el control plane va a verificar.
+      if (wantsBaseline("software_install", payload)) {
+        await captureChangeBaseline(jobId, payload, { logger: ctx.logger });
+      }
       try {
         const ack = await ctx.plugins.run("sdp.install", {
           jobId,

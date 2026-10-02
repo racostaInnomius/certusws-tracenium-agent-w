@@ -31,6 +31,7 @@ import net from "net";
 import http from "http";
 import https from "https";
 import { runProbe, type ProbeDeps } from "../live-query/probes";
+import type { ObservedListener } from "./listeners";
 
 // ── Nivel 1: servicios ───────────────────────────────────────────────────────
 
@@ -258,6 +259,8 @@ export interface VerificationBaseline {
   services: ServiceSnapshot;
   checks: VerificationCheck[];
   checksBefore: CheckOutcome[];
+  /** F2: qué escuchaba antes del cambio (base de las sugerencias). */
+  listeners?: ObservedListener[];
 }
 
 export interface VerificationResult {
@@ -269,6 +272,11 @@ export interface VerificationResult {
     | { level: 1; status: "unavailable"; reason: string };
   checks: Array<{ id: string; kind: string; before: boolean | null; after: boolean; regression: boolean; alreadyFailing: boolean; detail: string }>;
   samples: number;
+  /**
+   * F2: lo que escuchaba el equipo ANTES del cambio, cuando estaba sano. El
+   * control plane lo guarda para sugerir comprobaciones (D4).
+   */
+  observed?: { listeners: ObservedListener[] };
 }
 
 /**
@@ -319,5 +327,6 @@ export function compareVerification(
     services,
     checks: rows,
     samples: afterServices.length,
+    ...(baseline?.listeners ? { observed: { listeners: baseline.listeners } } : {}),
   };
 }
