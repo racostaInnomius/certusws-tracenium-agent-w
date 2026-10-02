@@ -174,8 +174,9 @@ describe("varios fixes en UN job", () => {
   it("el agente anuncia las dos capacidades", () => {
     expect(PMP_REMEDIATE_CAPABILITIES).toEqual(["pmp.remediate.batch", "pmp.remediate.revert"]);
     // El genérico de Linux sólo se anuncia en Linux.
-    expect(pmpRemediateCapabilities("linux")).toEqual(["pmp.remediate.batch", "pmp.remediate.revert", "pmp.remediate.linux_config", "pmp.remediate.linux_config_v2", "pmp.remediate.linux_accepted_guard"]);
-    expect(pmpRemediateCapabilities("win32")).toEqual(["pmp.remediate.batch", "pmp.remediate.revert"]);
-    expect(pmpRemediateCapabilities("darwin")).toEqual(["pmp.remediate.batch", "pmp.remediate.revert", "pmp.remediate.macos_config"]);
+    // pmp.patch_verify (ADR-0038 F1): la verificación post-cambio, en las tres.
+    expect(pmpRemediateCapabilities("linux")).toEqual(["pmp.remediate.batch", "pmp.remediate.revert", "pmp.remediate.linux_config", "pmp.remediate.linux_config_v2", "pmp.remediate.linux_accepted_guard", "pmp.patch_verify"]);
+    expect(pmpRemediateCapabilities("win32")).toEqual(["pmp.remediate.batch", "pmp.remediate.revert", "pmp.patch_verify"]);
+    expect(pmpRemediateCapabilities("darwin")).toEqual(["pmp.remediate.batch", "pmp.remediate.revert", "pmp.remediate.macos_config", "pmp.patch_verify"]);
   });
 });
