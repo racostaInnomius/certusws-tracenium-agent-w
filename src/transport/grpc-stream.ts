@@ -1156,6 +1156,15 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
 
           const result = resp.result || {};
           const rawStatus = String(result?.status || "").trim().toLowerCase();
+
+          // El candado de apt/dpkg lo tenía otro (apt-daily, unattended-upgrades):
+          // no es un fallo, es «ahora no». ACK_RETRY y el backend lo reintenta con
+          // backoff (auditoría 1-oct-2026; antes acababa en failed definitivo).
+          if (rawStatus === "busy") {
+            const quien = String(result?.results?.[0]?.message || "package manager busy").slice(0, 120);
+            updatePmpState({ status: "idle", finishedAtUtc: new Date().toISOString(), lastError: undefined, results: [] });
+            return { status: 1, message: `patch_install retry: ${quien}` };
+          }
           const installedCount = Number(result?.installedCount ?? 0);
           const failedCount = Number(result?.failedCount ?? 0);
           const rebootRequired = result?.rebootRequired === true;

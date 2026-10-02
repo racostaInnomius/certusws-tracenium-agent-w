@@ -505,7 +505,8 @@ type InstallItemResult = {
 };
 
 type InstallResult = {
-  status: "success" | "partial" | "failed" | "no_updates";
+  /** `busy`: el candado de apt/dpkg lo tiene otro; se reintenta, no es un fallo. */
+  status: "success" | "partial" | "failed" | "no_updates" | "busy";
   mode: "install" | "download";
   selectedCount: number;
   installedCount: number;
@@ -518,11 +519,11 @@ type InstallResult = {
 // but with the install-scoped timeout and an env override slot so
 // callers can drop in DEBIAN_FRONTEND=noninteractive (apt) without
 // polluting the privsvc's own environment.
-async function runInstall(
+async function runInstallDirect(
   bin: string,
   args: string[],
   env?: Record<string, string>
-): Promise<{ stdout: string; stderr: string; code: number | null }> {
+): Promise<{ stdout: string; stderr: string; code: number | null; spawnError?: string }> {
   try {
     const { stdout, stderr } = await execFileAsync(bin, args, {
       timeout: INSTALL_TIMEOUT_MS,
@@ -535,8 +536,73 @@ async function runInstall(
       stdout: stripAnsi(err?.stdout || ""),
       stderr: stripAnsi(err?.stderr || ""),
       code: typeof err?.code === "number" ? err.code : null,
+      // ENOENT/EACCES: el binario no se pudo EJECUTAR (no es un fallo de apt).
+      ...(typeof err?.code === "string" ? { spawnError: err.code } : {}),
     };
   }
+}
+
+/**
+ * La orden que lanza un gestor de paquetes en un scope de systemd PROPIO. PURO.
+ *
+ * ⚠️ POR QUÉ (auditoría PMP 1-oct-2026). apt/dnf corrían como hijos del privsvc,
+ * y la unidad usa KillMode=control-group: si el privsvc se reinicia a mitad
+ * (un agent_update, un crash, systemd), systemd mata también a dpkg en plena
+ * configuración y deja la base de paquetes rota — «dpkg was interrupted» en
+ * todos los jobs siguientes. Es el mismo problema que agent-install.ts ya
+ * resolvió así. `systemd-run --scope` hace exec en el mismo proceso: la salida,
+ * el código de salida y el timeout siguen funcionando igual.
+ */
+export function scopedInstallCommand(bin: string, args: string[], unit: string): { bin: string; args: string[] } {
+  return {
+    bin: "/usr/bin/systemd-run",
+    args: ["--scope", "--collect", "--quiet", "--slice=system.slice", `--unit=${unit}`, "--", bin, ...args],
+  };
+}
+
+async function runInstall(
+  bin: string,
+  args: string[],
+  env?: Record<string, string>
+): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  // Sólo con systemd de verdad como PID 1: sin él, systemd-run falla con un
+  // código que se confundiría con un fallo del gestor de paquetes.
+  if (fs.existsSync("/run/systemd/system")) {
+    const unit = `tracenium-patch-${process.pid}-${Date.now()}.scope`;
+    const scoped = scopedInstallCommand(bin, args, unit);
+    const r = await runInstallDirect(scoped.bin, scoped.args, env);
+    if (!r.spawnError) return r;
+    logger.warn("patch_install_scope_unavailable", { spawnError: r.spawnError });
+  }
+  return runInstallDirect(bin, args, env);
+}
+
+/**
+ * Entorno de apt para instalar. PURO.
+ *
+ * ⚠️ needrestart (Ubuntu 22.04+) corre como hook de apt y, en modo no
+ * interactivo, REINICIA los servicios afectados: tras actualizar libc o
+ * libstdc++, también tracenium-privsvc y tracenium-agent, en mitad de su propia
+ * instalación — el resultado se pierde y el job vuelve a ejecutarse.
+ * NEEDRESTART_SUSPEND lo aparca; el reinicio que haga falta lo decide el
+ * operador (rebootIfRequired). Auditoría PMP 1-oct-2026.
+ */
+export function aptInstallEnv(): Record<string, string> {
+  return {
+    DEBIAN_FRONTEND: "noninteractive",
+    NEEDRESTART_SUSPEND: "1",
+    NEEDRESTART_MODE: "l",
+    // LANG=C ensures parseable English output regardless of
+    // operator-set locales — French apt errors break our regex
+    // matching for "E: Could not get lock".
+    LANG: "C",
+    LC_ALL: "C",
+  };
+}
+
+/** ¿`dpkg --audit` dice que hay paquetes a medio instalar? PURO. */
+export function dpkgNeedsRepair(audit: { stdout: string; code: number | null }): boolean {
+  return audit.stdout.trim().length > 0;
 }
 
 // Result-shape helper. Centralises the "every selected item became X"
@@ -605,8 +671,12 @@ async function installApt(
   const lock = await isAptLockBusy();
   if (lock.busy) {
     logger.warn("apt_install_lock_busy", { holder: lock.holder });
+    // ⚠️ `busy`, no `failed` (auditoría 1-oct-2026): apt-daily o
+    // unattended-upgrades tienen el candado unos minutos. El agente lo
+    // convierte en ACK_RETRY y el backend lo reintenta con backoff; antes era
+    // un fallo definitivo que el operador tenía que relanzar a mano.
     return {
-      status: "failed",
+      status: "busy",
       mode,
       selectedCount: selectedItems.length,
       installedCount: 0,
@@ -614,6 +684,33 @@ async function installApt(
       rebootRequired: false,
       results: eachAs(selectedItems, "failed", `lock_busy:${lock.holder || "unknown"}`),
     };
+  }
+
+  // dpkg interrumpido (un apt matado, un corte de luz): mientras no se
+  // configure lo pendiente, CUALQUIER apt-get falla con «dpkg was
+  // interrupted». Antes nada lo detectaba ni lo reparaba (1-oct-2026).
+  if (mode === "install") {
+    const audit = await runCmd("/usr/bin/dpkg", ["--audit"]);
+    if (dpkgNeedsRepair(audit)) {
+      logger.warn("dpkg_interrupted_repairing", { audit: audit.stdout.slice(0, 500) });
+      const repair = await runInstall(
+        "/usr/bin/dpkg",
+        ["--configure", "-a", "--force-confdef", "--force-confold"],
+        aptInstallEnv()
+      );
+      if (repair.code !== 0) {
+        const tail = (repair.stderr || repair.stdout).trim().split("\n").slice(-5).join(" | ");
+        return {
+          status: "failed",
+          mode,
+          selectedCount: selectedItems.length,
+          installedCount: 0,
+          failedCount: selectedItems.length,
+          rebootRequired: false,
+          results: eachAs(selectedItems, "failed", `dpkg_interrupted_repair_failed: ${tail}`.slice(0, 300)),
+        };
+      }
+    }
   }
 
   // Build the package name list. apt's hotFixId is `<pkg>-<version>`
@@ -696,6 +793,9 @@ async function installApt(
     "--no-install-recommends",
     "-o", "Dpkg::Options::=--force-confdef",
     "-o", "Dpkg::Options::=--force-confold",
+    // Si el candado lo coge alguien entre la sonda y aquí (TOCTOU), esperar
+    // hasta 2 min en vez de abortar al instante.
+    "-o", "DPkg::Lock::Timeout=120",
   ];
   if (mode === "download") {
     args.push("--download-only");
@@ -708,14 +808,7 @@ async function installApt(
     sampleNames: packageNames.slice(0, 10),
   });
 
-  const r = await runInstall("/usr/bin/apt-get", args, {
-    DEBIAN_FRONTEND: "noninteractive",
-    // LANG=C ensures parseable English output regardless of
-    // operator-set locales — French apt errors break our regex
-    // matching for "E: Could not get lock".
-    LANG: "C",
-    LC_ALL: "C",
-  });
+  const r = await runInstall("/usr/bin/apt-get", args, aptInstallEnv());
 
   // Detect post-install reboot requirement. apt-listchanges drops
   // /var/run/reboot-required when a package needs a reboot (kernel
