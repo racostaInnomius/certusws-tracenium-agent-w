@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "fs";
 import path from "path";
-import { selectedPatchIds, unsafePatchIds } from "../../src/plugins/pmp/patch-selection";
+import { selectedPatchIds, unmatchedRequested, unsafePatchIds } from "../../src/plugins/pmp/patch-selection";
 
 describe("selectedPatchIds", () => {
   it("devuelve la lista limpia", () => {
@@ -67,6 +67,33 @@ describe("🔴 unsafePatchIds — un id llega al privsvc sólo si tiene forma de
     const llamada = src.indexOf('method: "patch.install"');
     expect(rechazo).toBeGreaterThan(0);
     expect(llamada).toBeGreaterThan(rechazo);
+  });
+});
+
+describe("🔴 unmatchedRequested — lo pedido que el privsvc no devolvió se nombra (1-oct-2026)", () => {
+  it("Windows: por KB, sin distinguir mayúsculas", () => {
+    expect(
+      unmatchedRequested(["KB5129195", "KB2267602", "KB4052623"], [{ kb: "kb5129195" }, { kb: "KB2267602" }])
+    ).toEqual(["KB4052623"]);
+  });
+
+  it("Linux: por el id pedido (`kb`) aunque se instalara una versión más nueva (`updateId`)", () => {
+    expect(
+      unmatchedRequested(
+        ["openssl-3.0.13-0ubuntu3.6", "curl-8.5.0-2ubuntu10.7"],
+        [{ kb: "openssl-3.0.13-0ubuntu3.6", updateId: "openssl-3.0.13-0ubuntu3.7" }]
+      )
+    ).toEqual(["curl-8.5.0-2ubuntu10.7"]);
+  });
+
+  it("privsvc viejo (Linux sin `kb`): casa por updateId", () => {
+    expect(unmatchedRequested(["openssl-3.0.13-0ubuntu3.7"], [{ updateId: "openssl-3.0.13-0ubuntu3.7" }])).toEqual([]);
+  });
+
+  it("el ACK lleva notMatched y los resultados una fila por cada uno", () => {
+    const src = fs.readFileSync(path.join(__dirname, "../../src/transport/grpc-stream.ts"), "utf8");
+    expect(src).toContain("unmatchedRequested(kbArticleIds, devueltos)");
+    expect(src).toContain("notMatched=${sinCasar.length}");
   });
 });
 

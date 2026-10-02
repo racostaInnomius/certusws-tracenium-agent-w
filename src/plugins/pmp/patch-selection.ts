@@ -46,3 +46,30 @@ export function unsafePatchIds(ids: string[], platform: NodeJS.Platform = proces
   return ids.filter((id) => !forma.test(id));
 }
 
+/**
+ * Lo pedido que el privsvc NO devolvió en `results` (ni instalado, ni fallido,
+ * ni saltado). PURO.
+ *
+ * ⚠️ AUDITORÍA PMP 1-oct-2026: «pido 23, casan 5» acababa en
+ * `success; installed=5` y los 18 restantes no aparecían en ningún sitio. No
+ * se convierte en fallo —en Windows lo habitual es que ya se instalara solo
+ * (las definiciones de Defender) o que otro KB lo sustituya, y el escaneo
+ * posterior es quien decide si sigue pendiente—, pero se NOMBRA: en el ACK y
+ * en los resultados del equipo.
+ *
+ * Se casa por `kb` (Windows: el KB; macOS: la etiqueta; Linux: el id pedido,
+ * aunque se instalara una versión más nueva) o por `updateId`, sin distinguir
+ * mayúsculas.
+ */
+export function unmatchedRequested(
+  requested: string[],
+  results: Array<{ kb?: string; updateId?: string }>
+): string[] {
+  const covered = new Set<string>();
+  for (const r of results) {
+    if (r.kb) covered.add(r.kb.toLowerCase());
+    if (r.updateId) covered.add(r.updateId.toLowerCase());
+  }
+  return requested.filter((id) => !covered.has(id.toLowerCase()));
+}
+

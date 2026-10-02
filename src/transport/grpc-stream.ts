@@ -1,5 +1,5 @@
 // src/transport/grpc-stream.ts
-import { selectedPatchIds, unsafePatchIds } from "../plugins/pmp/patch-selection";
+import { selectedPatchIds, unmatchedRequested, unsafePatchIds } from "../plugins/pmp/patch-selection";
 import { AgentContext } from "../core/agent-context";
 import { createGrpcClient } from "./grpc-client";
 import { outbox } from "../queue/sqlite-outbox";
@@ -1147,7 +1147,21 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
           const installedCount = Number(result?.installedCount ?? 0);
           const failedCount = Number(result?.failedCount ?? 0);
           const rebootRequired = result?.rebootRequired === true;
-          const results = normalizePmpResults(result?.results);
+          const devueltos = normalizePmpResults(result?.results) ?? [];
+          // Lo pedido que el privsvc ni instaló ni rechazó: se nombra, no se
+          // calla (auditoría 1-oct-2026). Ver unmatchedRequested.
+          const sinCasar = unmatchedRequested(kbArticleIds, devueltos);
+          const results = [
+            ...devueltos,
+            ...sinCasar.map((id) => ({
+              kb: id,
+              result: "skipped" as const,
+              message: "not in the device's live pending list (already installed, superseded or no longer offered)"
+            }))
+          ];
+          const sinCasarSuffix = sinCasar.length > 0
+            ? `; notMatched=${sinCasar.length} (${sinCasar.slice(0, 5).join(", ")}${sinCasar.length > 5 ? ", …" : ""})`
+            : "";
 
           // ⚠️ `no_updates` SOBRE UNA LISTA EXPLÍCITA NO ES UN ÉXITO, ES UN
           // FALLO DE EMPAREJAMIENTO. Si el operador nombró paquetes y no se
@@ -1220,7 +1234,7 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
           if (resultStatus === "success" || resultStatus === "no_updates") {
             return {
               status: 0,
-              message: `patch_install ${resultStatus}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}${rebootSuffix}`
+              message: `patch_install ${resultStatus}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}${rebootSuffix}${sinCasarSuffix}`
             };
           }
 
@@ -1234,7 +1248,7 @@ async function executeRunJob(ctx: AgentContext, runJob: any) {
 
           return {
             status: 2,
-            message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}${rebootSuffix}${detalle}`
+            message: `patch_install ${resultStatus || "failed"}; installed=${installedCount}; failed=${failedCount}; rebootRequired=${rebootRequired}${rebootSuffix}${emparejamientoVacio ? "" : sinCasarSuffix}${detalle}`
           };
         } catch (err: any) {
           updatePmpState({

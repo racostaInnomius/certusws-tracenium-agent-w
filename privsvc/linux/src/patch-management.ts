@@ -997,6 +997,53 @@ async function installZypper(selectedItems: ScanItem[], mode: "install" | "downl
   };
 }
 
+// ── Qué de lo pedido sigue pendiente ─────────────────────────────
+//
+// ⚠️ AUDITORÍA PMP 1-oct-2026. El id de apt es `<paquete>-<versión>`, así que si
+// el repositorio publica una versión nueva entre el escaneo que vio el operador
+// y la instalación, el id pedido ya no existe aunque el PAQUETE siga pendiente.
+// Antes se descartaba en silencio: «pido 23, casan 5» terminaba en
+// `success; installed=5` y los 18 restantes no aparecían en ningún sitio.
+//
+// Ahora, si no casa exacto, se casa por NOMBRE de paquete —lo que el operador
+// aprobó es actualizar ese paquete— con dos cautelas: lo que sigue al nombre
+// tiene que parecer una versión (empezar por dígito: `python3-apt-2.7` no es
+// una versión de `python3`), y gana el nombre más largo. Lo que no casa de
+// ninguna forma se devuelve en `unmatched` para que el agente lo nombre.
+export function matchRequestedItems(
+  live: ScanItem[],
+  requested: string[]
+): { selected: ScanItem[]; requestedFor: Map<ScanItem, string>; unmatched: string[] } {
+  const selected: ScanItem[] = [];
+  const requestedFor = new Map<ScanItem, string>();
+  const unmatched: string[] = [];
+  const byId = new Map(live.filter((it) => it.hotFixId).map((it) => [it.hotFixId as string, it]));
+
+  for (const want of requested) {
+    let hit = byId.get(want);
+    if (!hit) {
+      let bestLen = 0;
+      for (const it of live) {
+        const name = it.packageName;
+        if (!name || name.length <= bestLen) continue;
+        if (want.startsWith(name + "-") && /^\d/.test(want.slice(name.length + 1))) {
+          hit = it;
+          bestLen = name.length;
+        }
+      }
+    }
+    if (!hit) {
+      unmatched.push(want);
+      continue;
+    }
+    if (!requestedFor.has(hit)) {
+      selected.push(hit);
+      requestedFor.set(hit, want);
+    }
+  }
+  return { selected, requestedFor, unmatched };
+}
+
 // ── Aggregate dispatcher ──────────────────────────────────────────
 async function runInstall_(
   selectedItems: ScanItem[],
@@ -1058,7 +1105,10 @@ export async function handlePatchInstall(req: PrivSvcRequest): Promise<PrivSvcRe
       return fail(req.id, "patch_install_failed", live.note || "patch management unavailable on this distro");
     }
 
-    const selectedItems = live.items.filter(it => it.hotFixId && kbArticleIds.includes(it.hotFixId));
+    const { selected: selectedItems, requestedFor, unmatched } = matchRequestedItems(live.items, kbArticleIds);
+    if (unmatched.length > 0) {
+      logger.warn("patch_install_unmatched", { count: unmatched.length, sample: unmatched.slice(0, 10) });
+    }
 
     if (selectedItems.length === 0) {
       // Operator asked for specific items, none of which are still
@@ -1075,6 +1125,22 @@ export async function handlePatchInstall(req: PrivSvcRequest): Promise<PrivSvcRe
     }
 
     const result = await runInstall_(selectedItems as ScanItem[], mode as "install" | "download");
+    // Cada resultado dice QUÉ id pidió el operador (`kb`), también cuando se
+    // instaló la versión más nueva del mismo paquete: el agente casa lo pedido
+    // con lo devuelto por ese campo.
+    const wantedByLiveId = new Map(
+      [...requestedFor].map(([it, want]) => [it.hotFixId as string, want])
+    );
+    for (const r of result.results) {
+      const want = r.updateId ? wantedByLiveId.get(r.updateId) : undefined;
+      if (!want) continue;
+      r.kb = want;
+      if (want !== r.updateId) {
+        r.message = [r.message, `requested ${want}; a newer version was pending: ${r.updateId}`]
+          .filter(Boolean)
+          .join("; ");
+      }
+    }
     logger.info("patch_install_complete", {
       status: result.status,
       mode: result.mode,
