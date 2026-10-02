@@ -706,6 +706,40 @@ function AspAdcsTemplates($query, $ctx, [int]$limit) {
 # y "no puedo leer el atributo" son indistinguibles, y un gMSA sin recuperadores
 # no sirve para nada. Con uno solo legible, el resto de ausencias son reales (el
 # permiso de lectura viene del SD por defecto de la clase).
+# Los ACE del descriptor de msDS-GroupMSAMembership: quien tiene Allow (con su
+# mascara) y quien tiene Deny. Puro -- sin LDAP -- para poder probarlo en un
+# Windows con descriptores sinteticos sin crear ningun gMSA: en MSIG-DOMAIN01
+# no hay ninguno (1-oct) y esta parte no llego a ejecutarse en el kit.
+function AspGmsaAces([byte[]]$bytes) {
+  # ::new y no New-Object -ArgumentList: con un byte[] como primer argumento,
+  # New-Object puede desenrollar el array y buscar un constructor de N bytes.
+  $raw = [System.Security.AccessControl.RawSecurityDescriptor]::new($bytes, 0)
+  $allowed = [ordered]@{}
+  $denied = @{}
+  $n = 0
+  # 🔴 Una DACL NULA no es "nadie": es "todo el mundo". Windows concede todo
+  # acceso cuando el descriptor no tiene DACL, asi que se cuenta como Everyone.
+  # Tratarla como vacia daria un pass justo en el peor caso.
+  if ($null -eq $raw.DiscretionaryAcl) {
+    $allowed['S-1-1-0'] = 'null-dacl'
+    return @{ allowed = $allowed; denied = $denied; aceCount = 0; nullDacl = $true }
+  }
+  if ($null -ne $raw.DiscretionaryAcl) {
+    foreach ($ace in $raw.DiscretionaryAcl) {
+      $n++
+      # Contra el enum y no contra un texto: una errata aqui no casaria nunca y
+      # daria un pass en silencio; contra el enum, falla al cargar. Un ACE de
+      # objeto (AccessAllowedObject) tambien es AccessAllowed.
+      $qual = $ace.AceQualifier
+      $sid = [string]$ace.SecurityIdentifier.Value
+      if ($qual -eq [System.Security.AccessControl.AceQualifier]::AccessDenied) { $denied[$sid] = $true; continue }
+      if ($qual -ne [System.Security.AccessControl.AceQualifier]::AccessAllowed) { continue }
+      if (-not $allowed.Contains($sid)) { $allowed[$sid] = (AspHex ([int64]$ace.AccessMask)) }
+    }
+  }
+  return @{ allowed = $allowed; denied = $denied; aceCount = $n; nullDacl = $false }
+}
+
 function AspGmsaRetrievers($query, $ctx, [int]$limit) {
   $match = @(AspProp $query 'match' | Where-Object { $_ } | ForEach-Object { [string]$_ })
   $broad = @{}
@@ -754,25 +788,10 @@ function AspGmsaRetrievers($query, $ctx, [int]$limit) {
         if ($population.Count -lt $limit) { $population.Add([ordered]@{ dn = $dn; account = $sam; attribute = $false }) }
         continue
       }
-      # ::new y no New-Object -ArgumentList: con un byte[] como primer argumento,
-      # New-Object puede desenrollar el array y buscar un constructor de N bytes.
-      $sdBytes = [byte[]]$r.Properties['msds-groupmsamembership'][0]
-      $raw = [System.Security.AccessControl.RawSecurityDescriptor]::new($sdBytes, 0)
-      $allowed = [ordered]@{}
-      $denied = @{}
-      if ($null -ne $raw.DiscretionaryAcl) {
-        foreach ($ace in $raw.DiscretionaryAcl) {
-          $aceCount++
-          # Contra el enum y no contra un texto: una errata aqui no casaria
-          # nunca y daria un pass en silencio; contra el enum, falla al cargar.
-          # Un ACE de objeto (AccessAllowedObject) tambien es AccessAllowed.
-          $qual = $ace.AceQualifier
-          $sid = [string]$ace.SecurityIdentifier.Value
-          if ($qual -eq [System.Security.AccessControl.AceQualifier]::AccessDenied) { $denied[$sid] = $true; continue }
-          if ($qual -ne [System.Security.AccessControl.AceQualifier]::AccessAllowed) { continue }
-          if (-not $allowed.Contains($sid)) { $allowed[$sid] = (AspHex ([int64]$ace.AccessMask)) }
-        }
-      }
+      $aces = AspGmsaAces ([byte[]]$r.Properties['msds-groupmsamembership'][0])
+      $aceCount += $aces.aceCount
+      $allowed = $aces.allowed
+      $denied = $aces.denied
 
       $matched = New-Object System.Collections.Generic.List[object]
       $all = New-Object System.Collections.Generic.List[object]
@@ -1017,6 +1036,7 @@ function AspGpoSettings($query, $ctx, [int]$limit) {
   $unreadableSample = New-Object System.Collections.Generic.List[string]
   $ddpSeen = $false
   $ddpLinked = $false
+  $ddpDeclares = $false
   $ddpRead = $false
 
   $found = $gs.FindAll()
@@ -1036,6 +1056,11 @@ function AspGpoSettings($query, $ctx, [int]$limit) {
       $cse = ''
       if ($g.Properties.Contains('gpcmachineextensionnames')) { $cse = [string]$g.Properties['gpcmachineextensionnames'][0] }
       $declaresSecurity = $cse.ToUpperInvariant().Contains($SECURITY_CSE)
+      if ($guid -eq $DDP -and $declaresSecurity) { $ddpDeclares = $true }
+      # ⚠️ Sin la extension de seguridad declarada, Windows NO aplica el
+      # GptTmpl.inf aunque exista: en MSIG-DOMAIN01 (1-oct) dos GPO lo tenian
+      # sin declararla. Leerlo seria mirar forma, no efecto.
+      if (-not $declaresSecurity) { continue }
       $path = "$policies\$guid\MACHINE\Microsoft\Windows NT\SecEdit\GptTmpl.inf"
       $lines = $null
       try {
@@ -1045,10 +1070,8 @@ function AspGpoSettings($query, $ctx, [int]$limit) {
         $lines = $null
       }
       if ($null -eq $lines) {
-        if ($declaresSecurity) {
-          $unreadable++
-          if ($unreadableSample.Count -lt 10) { $unreadableSample.Add($name) }
-        }
+        $unreadable++
+        if ($unreadableSample.Count -lt 10) { $unreadableSample.Add($name) }
         continue
       }
       $filesRead++
@@ -1076,9 +1099,12 @@ function AspGpoSettings($query, $ctx, [int]$limit) {
     $found.Dispose()
   }
 
-  # El control positivo: sin ver la Default Domain Policy -- y leerla, si esta
-  # enlazada -- ningun cero de este tipo vale.
-  if (-not $ddpSeen -or ($ddpLinked -and -not $ddpRead)) {
+  # El control positivo: sin ver la Default Domain Policy -- y, si esta
+  # enlazada, ver que declara la extension de seguridad (la directiva de
+  # contrasenas va ahi) y leerla -- ningun cero de este tipo vale. Si
+  # gPCMachineExtensionNames no se pudiera leer, TODAS las GPO parecerian sin
+  # extension y se saltarian: esto es lo que lo delata.
+  if (-not $ddpSeen -or ($ddpLinked -and (-not $ddpDeclares -or -not $ddpRead))) {
     $unreadable++
     if ($unreadableSample.Count -lt 10) { $unreadableSample.Add('Default Domain Policy') }
   }
