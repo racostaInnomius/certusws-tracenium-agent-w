@@ -135,6 +135,7 @@ export async function collectLinuxPmp(ctx: AgentContext): Promise<PmpNamespace> 
     selectedCount: Number(remediationState.selectedCount ?? 0),
     lastError: remediationState.lastError,
     results: remediationState.results || [],
+    ...(remediationState.jobId ? { jobId: remediationState.jobId } : {}),
   };
 
   let posture: any = {};

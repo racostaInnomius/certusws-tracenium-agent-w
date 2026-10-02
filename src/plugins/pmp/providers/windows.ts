@@ -143,7 +143,8 @@ export async function collectWindowsPmp(
     failedCount: Number(remediationState.failedCount ?? 0),
     selectedCount: Number(remediationState.selectedCount ?? 0),
     lastError: remediationState.lastError,
-    results: remediationState.results || []
+    results: remediationState.results || [],
+    ...(remediationState.jobId ? { jobId: remediationState.jobId } : {})
   };
 
   let posture: any = {};

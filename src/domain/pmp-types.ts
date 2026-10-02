@@ -101,6 +101,12 @@ export type PmpNamespace = {
   };
   remediation?: {
     status: PmpRemediationStatus;
+    /**
+     * El patch_install que produjo este estado. Con él el control plane guarda
+     * los resultados POR KB en el propio job (device_jobs.result_json), que de
+     * otro modo sólo vivían aquí y los pisaba la siguiente instalación.
+     */
+    jobId?: string;
     mode?: "download" | "install";
     startedAtUtc?: string;
     finishedAtUtc?: string;
